@@ -3,6 +3,22 @@ import CoreGraphics
 import WebRTC
 
 final class VideoCodecPolicyTests: XCTestCase {
+    func testFactoriesKeepTheSnapshotUsedAtCreation() {
+        let conservative = NativeVideoCapabilitySnapshot(supportsLevel52: false, supportsHEVCDecode: false, supportsHEVCEncode: false)
+        let capable = NativeVideoCapabilitySnapshot(supportsLevel52: true, supportsHEVCDecode: true, supportsHEVCEncode: true)
+        let coldEncoder = PocketDeskVideoEncoderFactory(capabilitySnapshot: conservative)
+        let coldDecoder = PocketDeskVideoDecoderFactory(capabilitySnapshot: conservative)
+        let readyEncoder = PocketDeskVideoEncoderFactory(capabilitySnapshot: capable)
+        let readyDecoder = PocketDeskVideoDecoderFactory(capabilitySnapshot: capable)
+        let fallback = RTCDefaultVideoEncoderFactory().supportedCodecs()
+        XCTAssertEqual(coldEncoder.supportedCodecs().map(\.parameters), fallback.map(\.parameters))
+        XCTAssertEqual(coldDecoder.supportedCodecs().map(\.parameters), RTCDefaultVideoDecoderFactory().supportedCodecs().map(\.parameters))
+        for factoryCodecs in [readyEncoder.supportedCodecs(), readyDecoder.supportedCodecs()] {
+            XCTAssertTrue(factoryCodecs.filter { $0.name == kRTCVideoCodecH264Name }.allSatisfy { $0.parameters["profile-level-id"]?.hasSuffix("34") == true })
+        }
+        XCTAssertEqual(coldEncoder.supportedCodecs().map(\.parameters), fallback.map(\.parameters), "another ready factory does not upgrade an existing session")
+    }
+
     func testH264ProfilesAreAdvertisedAtLevel52WithoutChangingProfile() {
         let high = H264LevelPolicy.raisingLevel(["profile-level-id": "640c1f", "packetization-mode": "1",
                                                  "level-asymmetry-allowed": "1"])
@@ -25,21 +41,25 @@ final class VideoCodecPolicyTests: XCTestCase {
         XCTAssertFalse(H264LevelPolicy.fitsAt60FPS(width: 3840, height: 2496))
     }
 
-    func testEncoderFactoryPrefersH264AtLevel52AndKeepsSoftwareFallbacks() {
-        let codecs = PocketDeskVideoEncoderFactory().supportedCodecs()
+    func testEncoderFactoryPrefersH264AtLevel52AndKeepsSoftwareFallbacks() async {
+        let level52 = await NativeVideoCapabilityProbes.current.level52.ready()
+        let snapshot = NativeVideoCapabilitySnapshot(supportsLevel52: level52, supportsHEVCDecode: false, supportsHEVCEncode: false)
+        let codecs = PocketDeskVideoEncoderFactory(capabilitySnapshot: snapshot).supportedCodecs()
         XCTAssertEqual(codecs.first?.name, kRTCVideoCodecH264Name)
         let h264 = codecs.filter { $0.name == kRTCVideoCodecH264Name }
         XCTAssertFalse(h264.isEmpty)
-        if NativeCodecCapability.supportsLevel52 { XCTAssertTrue(h264.allSatisfy { $0.parameters["profile-level-id"]?.hasSuffix("34") == true }) }
+        if level52 { XCTAssertTrue(h264.allSatisfy { $0.parameters["profile-level-id"]?.hasSuffix("34") == true }) }
         XCTAssertTrue(codecs.contains { $0.name == "VP8" })
         let encoder = PocketDeskVideoEncoderFactory().createEncoder(h264[0])
         XCTAssertNotNil(encoder)
     }
 
-    func testDecoderFactoryAdvertisesLevel52() {
-        let codecs = PocketDeskVideoDecoderFactory().supportedCodecs()
+    func testDecoderFactoryAdvertisesLevel52() async {
+        let level52 = await NativeVideoCapabilityProbes.current.level52.ready()
+        let snapshot = NativeVideoCapabilitySnapshot(supportsLevel52: level52, supportsHEVCDecode: false, supportsHEVCEncode: false)
+        let codecs = PocketDeskVideoDecoderFactory(capabilitySnapshot: snapshot).supportedCodecs()
         XCTAssertEqual(codecs.first?.name, kRTCVideoCodecH264Name)
-        if NativeCodecCapability.supportsLevel52 {
+        if level52 {
             XCTAssertTrue(codecs.filter { $0.name == kRTCVideoCodecH264Name }
                 .allSatisfy { $0.parameters["profile-level-id"]?.hasSuffix("34") == true })
         }

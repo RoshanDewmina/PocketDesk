@@ -65,6 +65,8 @@ struct FileTransferFinish: Equatable {
     let savedURL: URL?
     /// The Mac's stated reason for a refusal, when it gave one.
     var reason: String? = nil
+    /// Local lifetime identity; a deferred finish must not update a newer receive's UI.
+    var admissionID: UUID? = nil
 }
 
 final class DataByteSource: FileByteSource {
@@ -225,7 +227,7 @@ final class FileTransferEngine {
     private var incomingLease: TransferEffectLease?
     private var outgoingActivity: TimeInterval = 0
     private var incomingActivity: TimeInterval = 0
-    private var incomingAdmissionID: UUID?
+    private(set) var incomingAdmissionID: UUID?
     private var requestSince: TimeInterval = 0
     private var progressThrottle = FileProgressThrottle()
     private var watchdog: Timer?
@@ -394,16 +396,16 @@ final class FileTransferEngine {
                                             total: bytes, bytes: 0, phase: .waiting)
             incomingActivity = clock()
             progressThrottle = FileProgressThrottle()
-            let lease = TransferEffectLease()
+            let lease = TransferEffectLease(nonblockingAdmission: io.usesReceiveBudget)
             incomingLease = lease
             let admission = lease.id
             incomingAdmissionID = admission
             startWatchdog()
             onChange?()
             guard incomingLease === lease, lease.isActive else { return }
-            admit(offer) { [weak self] result in
+            admit(offer) { [weak self, io] result in
                 guard let self else {
-                    if case .success(let sink) = result { sink.discard() }
+                    if case .success(let sink) = result { io.discardUnadmittedSink(sink) }
                     return
                 }
                 self.admitted(offer, result, admission: admission)
@@ -416,7 +418,7 @@ final class FileTransferEngine {
     private func admitted(_ offer: FileTransferOffer, _ result: Result<FileByteSink, FileTransferStatus>, admission: UUID) {
         guard incomingAdmissionID == admission, let lease = incomingLease, lease.id == admission, lease.isActive,
               var current = incoming, current.transfer == offer.transfer, current.phase == .waiting else {
-            if case .success(let sink) = result { sink.discard() }
+            if case .success(let sink) = result { io.discardUnadmittedSink(sink) }
             return
         }
         switch result {
@@ -442,6 +444,13 @@ final class FileTransferEngine {
     // MARK: I/O events
 
     private func handle(_ delivery: FileTransferIO.Delivery) {
+        // Overflow closes the lease at ingress, before another Data closure can be queued.
+        // This one terminal delivery is allowed through only for that exact admission.
+        if case .receiveOverflow(let transfer) = delivery.event {
+            guard incomingLease === delivery.lease else { return }
+            finishIncoming(transfer, .invalid, url: nil, notify: .result)
+            return
+        }
         guard delivery.lease.isActive else { return }
         switch delivery.event {
         case .sent, .sendFailed:
@@ -481,6 +490,7 @@ final class FileTransferEngine {
         case .sendFailed(let transfer, let status):
             guard outgoing?.transfer == transfer else { return }
             finishOutgoing(transfer, status, notify: .cancel)
+        case .receiveOverflow: break // Handled above, including the closed lease.
         }
     }
 
@@ -501,7 +511,18 @@ final class FileTransferEngine {
 
     private func finishIncoming(_ transfer: String, _ status: FileTransferStatus, url: URL?, notify: Notice) {
         guard let current = incoming, current.transfer == transfer else { return }
-        if let lease = incomingLease { io.stopReceiving(lease) }
+        let finish = FileTransferFinish(transfer: transfer, direction: .incoming, name: current.name, status: status,
+                                        savedURL: url, admissionID: incomingAdmissionID)
+        let lease = incomingLease
+        if let lease {
+            if io.usesReceiveBudget {
+                io.stopReceiving(lease) { [weak self] in
+                    DispatchQueue.main.async { MainActor.assumeIsolated { self?.onFinish?(finish) } }
+                }
+            } else {
+                io.stopReceiving(lease) // Kill switch restores the synchronous retirement fence.
+            }
+        }
         incoming = nil
         incomingAdmissionID = nil
         incomingLease = nil
@@ -511,7 +532,8 @@ final class FileTransferEngine {
         case .result: _ = sendControl?(.result(transfer, status))
         }
         stopWatchdogIfIdle()
-        onFinish?(FileTransferFinish(transfer: transfer, direction: .incoming, name: current.name, status: status, savedURL: url))
+        // UI/admission closes now; terminal completion means the admitted disk effects settled.
+        if lease == nil || !io.usesReceiveBudget { onFinish?(finish) }
         onChange?()
     }
 
@@ -561,6 +583,7 @@ final class FileTransferIO: @unchecked Sendable {
     enum Event {
         case receiverReady(String), received(String, Int64), receivedFile(String, FileTransferStatus, URL?)
         case sent(String, String), sendFailed(String, FileTransferStatus)
+        case receiveOverflow(String)
     }
     struct Delivery { let event: Event; let lease: TransferEffectLease }
     final class Outgoing: @unchecked Sendable {
@@ -581,17 +604,44 @@ final class FileTransferIO: @unchecked Sendable {
         let sink: FileByteSink, lease: TransferEffectLease
         var lastReport: TimeInterval = 0
     }
+    private struct IncomingAdmission {
+        let transfer: String
+        let lease: TransferEffectLease
+    }
     let queue: DispatchQueue
     var events: ((Delivery) -> Void)?
     private let registryLock = NSLock()
     private var outgoingAdmission: Outgoing?
-    private var incomingAdmission: TransferEffectLease?
+    private var incomingAdmission: IncomingAdmission?
+    private var reservedReceiveBytes = 0, reservedReceiveChunks = 0
+    private var wakeQueued = false
     private var sending: Sending? // IO queue only.
     private var receiving: Receiving?
     private static let chunksPerTurn = 64
     /// Refill comes from the channel's buffered-amount callbacks (`wake`); this timer is only a backstop.
     static let drainBackstop: TimeInterval = 0.02
-    init(queue: DispatchQueue = DispatchQueue(label: "Farside.file-transfer", qos: .utility)) { self.queue = queue }
+    /// One internal switch controls P32's budget and P35's two-stage receive retirement.
+    /// Explicit NO restores unbounded chunk enqueue and the old synchronous retirement fence.
+    static let receiveBudgetKey = "PocketDeskReceiveBudget"
+    static func receiveBudgetEnabled(defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: receiveBudgetKey) == nil || defaults.bool(forKey: receiveBudgetKey)
+    }
+    /// Frozen for this process; change the internal defaults key before relaunching to compare.
+    static let receiveBudgetIsOn = receiveBudgetEnabled()
+    let usesReceiveBudget: Bool
+    private let maximumPendingReceiveBytes: Int
+    private let maximumPendingReceiveChunks: Int
+    var pendingReceiveBytes: Int { registryLock.lock(); defer { registryLock.unlock() }; return reservedReceiveBytes }
+    /// Both chunk and digest closures, including a write/commit currently in flight.
+    var pendingReceiveChunks: Int { registryLock.lock(); defer { registryLock.unlock() }; return reservedReceiveChunks }
+    init(queue: DispatchQueue = DispatchQueue(label: "Farside.file-transfer", qos: .utility),
+         receiveBudgetEnabled: Bool = FileTransferIO.receiveBudgetIsOn,
+         maximumPendingReceiveBytes: Int = 2 * 1024 * 1024, maximumPendingReceiveChunks: Int = 256) {
+        self.queue = queue
+        usesReceiveBudget = receiveBudgetEnabled
+        self.maximumPendingReceiveBytes = max(1, maximumPendingReceiveBytes)
+        self.maximumPendingReceiveChunks = max(1, maximumPendingReceiveChunks)
+    }
 
     func reserveSending(transfer: String, source: FileByteSource) -> Outgoing {
         let work = Outgoing(transfer: transfer, source: source)
@@ -614,7 +664,16 @@ final class FileTransferIO: @unchecked Sendable {
             work.closeSource()
         }
     }
-    func wake() { queue.async { self.pump() } }
+    func wake() {
+        guard usesReceiveBudget else { queue.async { self.pump() }; return }
+        registryLock.lock()
+        guard !wakeQueued else { registryLock.unlock(); return }
+        wakeQueued = true; registryLock.unlock()
+        queue.async {
+            self.registryLock.lock(); self.wakeQueued = false; self.registryLock.unlock()
+            self.pump()
+        }
+    }
     private func emit(_ event: Event, lease: TransferEffectLease) {
         guard lease.isActive else { return }
         events?(Delivery(event: event, lease: lease)) // Never called inside final-effect lock.
@@ -667,8 +726,9 @@ final class FileTransferIO: @unchecked Sendable {
     }
     func beginReceiving(transfer: String, bytes: Int64, sink: FileByteSink, lease: TransferEffectLease) {
         guard lease.isActive else { queue.async { sink.discard() }; return }
-        registryLock.lock(); let old = incomingAdmission; incomingAdmission = lease; registryLock.unlock()
-        if let old, old !== lease { stopReceiving(old) }
+        registryLock.lock(); let old = incomingAdmission
+        incomingAdmission = IncomingAdmission(transfer: transfer, lease: lease); registryLock.unlock()
+        if let old, old.lease !== lease { stopReceiving(old.lease) }
         queue.async {
             guard lease.isActive else { sink.discard(); return }
             self.receiving?.sink.discard()
@@ -676,20 +736,48 @@ final class FileTransferIO: @unchecked Sendable {
             self.emit(.receiverReady(transfer), lease: lease)
         }
     }
-    func stopReceiving(_ lease: TransferEffectLease) {
-        registryLock.lock(); if incomingAdmission === lease { incomingAdmission = nil }; registryLock.unlock()
-        lease.retire()
+    /// `settled` runs on the disk queue, after any admitted write/commit and cleanup.
+    func stopReceiving(_ lease: TransferEffectLease, settled: (() -> Void)? = nil) {
+        registryLock.lock(); if incomingAdmission?.lease === lease { incomingAdmission = nil }; registryLock.unlock()
+        if usesReceiveBudget { lease.closeAdmission() } else { lease.retire() }
         queue.async {
-            guard let receiving = self.receiving, receiving.lease === lease else { return }
-            self.receiving = nil; receiving.sink.discard()
+            if self.usesReceiveBudget { lease.retire() }
+            if let receiving = self.receiving, receiving.lease === lease {
+                self.receiving = nil; receiving.sink.discard()
+            }
+            settled?()
         }
     }
+    func discardUnadmittedSink(_ sink: FileByteSink) {
+        if usesReceiveBudget { queue.async { sink.discard() } } else { sink.discard() }
+    }
     private func currentIncoming() -> TransferEffectLease? {
-        registryLock.lock(); defer { registryLock.unlock() }; return incomingAdmission
+        registryLock.lock(); defer { registryLock.unlock() }; return incomingAdmission?.lease
+    }
+    private func reserveReceiving(bytes: Int) -> TransferEffectLease? {
+        guard usesReceiveBudget else { return currentIncoming() }
+        registryLock.lock()
+        guard let admission = incomingAdmission else { registryLock.unlock(); return nil }
+        guard bytes <= maximumPendingReceiveBytes - reservedReceiveBytes,
+              reservedReceiveChunks < maximumPendingReceiveChunks else {
+            incomingAdmission = nil; registryLock.unlock()
+            admission.lease.closeAdmission()
+            events?(Delivery(event: .receiveOverflow(admission.transfer), lease: admission.lease))
+            return nil
+        }
+        reservedReceiveBytes += bytes; reservedReceiveChunks += 1
+        registryLock.unlock(); return admission.lease
+    }
+    private func releaseReceiving(bytes: Int) {
+        guard usesReceiveBudget else { return }
+        registryLock.lock(); defer { registryLock.unlock() }
+        reservedReceiveBytes -= bytes; reservedReceiveChunks -= 1
     }
     func receive(_ data: Data) {
-        guard let lease = currentIncoming() else { return }
+        guard let lease = reserveReceiving(bytes: data.count) else { return }
         queue.async {
+            // Keep reservations across retirement/replacement until the captured Data is released.
+            defer { self.releaseReceiving(bytes: data.count) }
             guard lease.isActive, var receiving = self.receiving, receiving.lease === lease else { return }
             guard let chunk = FileChunk.decode(data) else { self.settle(receiving, .invalid); return }
             guard chunk.transfer == receiving.assembler.transfer else { return }
@@ -702,8 +790,12 @@ final class FileTransferIO: @unchecked Sendable {
         }
     }
     func receiveDigest(transfer: String, digest: String) {
-        guard let lease = currentIncoming() else { return }
+        // Control ingress can drain on main while storage remains stalled; digest closures
+        // therefore share the same count/byte budget as chunks, before their disk-queue hop.
+        let bytes = digest.utf8.count
+        guard let lease = reserveReceiving(bytes: bytes) else { return }
         queue.async {
+            defer { self.releaseReceiving(bytes: bytes) }
             guard lease.isActive, var receiving = self.receiving, receiving.lease === lease, receiving.assembler.transfer == transfer else { return }
             let outcome = receiving.assembler.receiveDigest(digest)
             self.receiving = receiving; self.apply(outcome, receiving)
@@ -722,7 +814,9 @@ final class FileTransferIO: @unchecked Sendable {
             emit(.received(transfer, receiving.assembler.receivedBytes), lease: lease)
             do {
                 guard let url = try lease.performIfActive({ try receiving.sink.commit() }) else { return }
-                self.receiving = nil
+                // An admitted commit may finish after closeAdmission. Keep its sink owned until
+                // queued retirement performs cleanup and reports settlement in that case.
+                if !usesReceiveBudget || lease.isActive { self.receiving = nil }
                 emit(.receivedFile(transfer, .stored, url), lease: lease)
             } catch { settle(receiving, FolderFileSink.status(for: error)) }
         case .failed: settle(receiving, .invalid)

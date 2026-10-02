@@ -1716,39 +1716,150 @@ extension PeerMedia: RTCDataChannelDelegate {
         }
         let arrivedFrames = counters.arrivedTotal
         let arrivedAt = ProcessInfo.processInfo.systemUptime
-        guard buffer.isBinary, buffer.data.count <= 16384 else {
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.channel === dataChannel else { return }
+        if PeerControlIngress.processEnabled {
+            // didOpen schedules adoption before any early delivery. Until then only a valid
+            // control candidate may enter; once adopted, stale/foreign channels cannot spend
+            // this peer's budget or trigger its terminal failure.
+            controlLock.lock()
+            let permitted = PeerControlIngress.permitsSource(current: channel, source: dataChannel,
+                label: dataChannel.label, ordered: dataChannel.isOrdered, reliable: dataChannel.isReliable)
+            controlLock.unlock()
+            guard permitted else { return }
+        }
+        let ingress = PeerControlIngress.forPeer(self) { [weak self] in
+            PeerControlIngress(schedule: { DispatchQueue.main.async(execute: $0) }, deliver: { [weak self] value in
+                guard let dataChannel = value.source as? RTCDataChannel else { return }
+                guard let self, !self.closed, self.channel === dataChannel else { return }
+                self.controlCounters.received += 1
+                guard self.localGateOpen() else {
+                    if self.localLink != nil, self.localPathNeverAuthorized, self.preGateControl.count < 64,
+                       self.preGateBytes + value.data.count <= 256 * 1024 {
+                        self.preGateControl.append((value.data, value.frames, value.at, value.ms)); self.preGateBytes += value.data.count
+                        self.controlCounters.heldBeforeGate += 1
+                        InputLog.log.info("\(self.role, privacy: .public) control held until local path authorization (\(self.preGateControl.count, privacy: .public) held)")
+                    } else {
+                        self.controlCounters.droppedAtGate += 1
+                        if self.localLink != nil, self.localPathNeverAuthorized {
+                            PeerControlIngress.refusePeer(self) // Never authorize a reliable prefix with holes.
+                        }
+                        if InputLog.sampled(self.controlCounters.droppedAtGate) {
+                            InputLog.log.error("\(self.role, privacy: .public) control dropped at local gate count=\(self.controlCounters.droppedAtGate, privacy: .public)")
+                        }
+                    }
+                    return
+                }
+                if InputLog.sampled(self.controlCounters.received) {
+                    InputLog.log.info("\(self.role, privacy: .public) received control #\(self.controlCounters.received, privacy: .public)")
+                }
+                self.lastControlArrivedFrames = value.frames
+                self.lastControlArrivedAt = value.at
+                self.arrivalLock.lock(); self.lastControlArrivalMs = value.ms; self.arrivalLock.unlock()
+                defer { self.arrivalLock.lock(); self.lastControlArrivalMs = nil; self.arrivalLock.unlock() }
+                self.onControl?(value.data)
+            }, fail: { [weak self] value in
+                guard let self else { return }
+                if let value { // Exact legacy invalid-message path when the switch is NO.
+                    guard let dataChannel = value.source as? RTCDataChannel, self.channel === dataChannel else { return }
+                } else {
+                    guard !self.closed else { return }
+                    self.controlCounters.droppedAtGate += 1
+                }
                 self.onState?("failed")
+            })
+        }
+        ingress.offer(.init(data: buffer.data, frames: arrivedFrames, at: arrivedAt, ms: arrivedMs, source: dataChannel),
+            valid: buffer.isBinary && buffer.data.count <= 16384)
+    }
+}
+
+
+/// Per-peer admission before the main hop. A bounded drain preserves reliable order.
+/// Associated with the peer so no other lane's peer state/teardown region changes.
+final class PeerControlIngress {
+    struct Value {
+        let data: Data; let frames: Int; let at: TimeInterval; let ms: Double; let source: NSObject?
+        init(data: Data, frames: Int, at: TimeInterval, ms: Double, source: NSObject? = nil) {
+            self.data = data; self.frames = frames; self.at = at; self.ms = ms; self.source = source
+        }
+    }
+    static let defaultsKey = "PocketDeskControlIngressBudget"
+    static func isEnabled(defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: defaultsKey) == nil || defaults.bool(forKey: defaultsKey)
+    }
+    static let processEnabled = isEnabled()
+    private static let associationLock = NSLock()
+    private static var associationKey: UInt8 = 0
+    static func forPeer(_ peer: NSObject, create: () -> PeerControlIngress) -> PeerControlIngress {
+        associationLock.lock(); defer { associationLock.unlock() }
+        if let value = objc_getAssociatedObject(peer, &associationKey) as? PeerControlIngress { return value }
+        let value = create()
+        objc_setAssociatedObject(peer, &associationKey, value, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        return value
+    }
+    static func permitsSource(current: NSObject?, source: NSObject, label: String, ordered: Bool, reliable: Bool) -> Bool {
+        if let current { return current === source }
+        return label == "control" && ordered && reliable
+    }
+    static func refusePeer(_ peer: NSObject) {
+        associationLock.lock()
+        let value = objc_getAssociatedObject(peer, &associationKey) as? PeerControlIngress
+        associationLock.unlock()
+        guard let value, value.enabled else { return }
+        value.offer(.init(data: Data(), frames: 0, at: 0, ms: 0), valid: false)
+    }
+    private let enabled: Bool
+    private let schedule: (@escaping () -> Void) -> Void
+    private let deliver: (Value) -> Void
+    private let fail: (Value?) -> Void
+    private let lock = NSLock()
+    private var values: [Value] = []
+    private var count = 0, bytes = 0
+    private var scheduled = false, failed = false, failureDelivered = false
+    var pendingCount: Int { lock.lock(); defer { lock.unlock() }; return count }
+    var pendingBytes: Int { lock.lock(); defer { lock.unlock() }; return bytes }
+    init(enabled: Bool = PeerControlIngress.processEnabled,
+         schedule: @escaping (@escaping () -> Void) -> Void,
+         deliver: @escaping (Value) -> Void, fail: @escaping (Value?) -> Void) {
+        self.enabled = enabled; self.schedule = schedule; self.deliver = deliver; self.fail = fail
+    }
+    func offer(_ value: Value, valid: Bool = true) {
+        guard enabled else {
+            if valid { schedule { [self] in deliver(value) } }
+            else {
+                let failure = Value(data: Data(), frames: 0, at: 0, ms: 0, source: value.source)
+                schedule { [self] in fail(failure) }
             }
             return
         }
-        DispatchQueue.main.async { [weak self] in
-            guard let self, !self.closed, self.channel === dataChannel else { return }
-            self.controlCounters.received += 1
-            guard self.localGateOpen() else {
-                if self.localLink != nil, self.localPathNeverAuthorized, self.preGateControl.count < 64,
-                   self.preGateBytes + buffer.data.count <= 256 * 1024 {
-                    self.preGateControl.append((buffer.data, arrivedFrames, arrivedAt, arrivedMs)); self.preGateBytes += buffer.data.count
-                    self.controlCounters.heldBeforeGate += 1
-                    InputLog.log.info("\(self.role, privacy: .public) control held until local path authorization (\(self.preGateControl.count, privacy: .public) held)")
-                } else {
-                    self.controlCounters.droppedAtGate += 1
-                    if InputLog.sampled(self.controlCounters.droppedAtGate) {
-                        InputLog.log.error("\(self.role, privacy: .public) control dropped at local gate count=\(self.controlCounters.droppedAtGate, privacy: .public)")
-                    }
-                }
-                return
-            }
-            if InputLog.sampled(self.controlCounters.received) {
-                InputLog.log.info("\(self.role, privacy: .public) received control #\(self.controlCounters.received, privacy: .public)")
-            }
-            self.lastControlArrivedFrames = arrivedFrames
-            self.lastControlArrivedAt = arrivedAt
-            self.arrivalLock.lock(); self.lastControlArrivalMs = arrivedMs; self.arrivalLock.unlock()
-            defer { self.arrivalLock.lock(); self.lastControlArrivalMs = nil; self.arrivalLock.unlock() }
-            self.onControl?(buffer.data)
+        lock.lock()
+        guard !failed else { lock.unlock(); return }
+        if !valid || count >= 64 || value.data.count > 256 * 1024 - bytes {
+            failed = true
+            count -= values.count; bytes -= values.reduce(0) { $0 + $1.data.count }
+            values.removeAll(keepingCapacity: false)
+        } else { values.append(value); count += 1; bytes += value.data.count }
+        let enqueue = !scheduled; scheduled = true
+        lock.unlock()
+        if enqueue { schedule { [self] in drain() } }
+    }
+    private func drain() {
+        for _ in 0..<16 {
+            lock.lock()
+            guard !failed, !values.isEmpty else { lock.unlock(); break }
+            let value = values.removeFirst()
+            lock.unlock()
+            deliver(value)
+            // Keep an in-flight value charged until its synchronous delivery completes.
+            lock.lock(); count -= 1; bytes -= value.data.count; lock.unlock()
         }
+        lock.lock()
+        let report = failed && !failureDelivered
+        if report { failureDelivered = true }
+        let again = !failed && !values.isEmpty
+        if !again { scheduled = false }
+        lock.unlock()
+        if report { fail(nil) }
+        if again { schedule { [self] in drain() } }
     }
 }
 

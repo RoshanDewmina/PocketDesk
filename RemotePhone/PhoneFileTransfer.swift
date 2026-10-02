@@ -31,6 +31,10 @@ final class PhoneFileTransfer: ObservableObject {
     private var cleanup: [String: () -> Void] = [:]
     private var pendingLink: String?
     private var cancelledHere = false
+    // Two bounded lifetime markers survive asynchronous disk settlement without retaining
+    // old transfer names or letting a stale finish republish received-file presentation.
+    private var visibleIncomingAdmission: UUID?
+    private var locallyCancelledIncomingAdmission: UUID?
     private var noticeSerial: UInt64 = 0
 
     init(destination: @escaping () -> URL? = { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first },
@@ -107,6 +111,8 @@ final class PhoneFileTransfer: ObservableObject {
     func requestFromMac() {
         switch engine.request() {
         case .success:
+            visibleIncomingAdmission = nil
+            locallyCancelledIncomingAdmission = nil
             notice = nil
         case .failure(let status):
             post(Self.message(receiving: status), .caution)
@@ -114,6 +120,7 @@ final class PhoneFileTransfer: ObservableObject {
     }
 
     func cancel() {
+        locallyCancelledIncomingAdmission = engine.incomingAdmissionID
         cancelledHere = true
         engine.cancelAll()
         cancelledHere = false
@@ -122,6 +129,10 @@ final class PhoneFileTransfer: ObservableObject {
     /// The Mac started a new capture geometry (display, scope or Big Text change): an older Mac drops its side of
     /// the transfer without saying so, so stop here, tell it, and say why instead of hanging until the stall timeout.
     func stopForMacChange() {
+        // A stored result can be settled on disk but still awaiting its main callback after
+        // incoming UI clears. Geometry/authority changes retire that presentation too.
+        visibleIncomingAdmission = nil
+        locallyCancelledIncomingAdmission = nil
         guard isBusy else { return }
         cancelledHere = true
         engine.cancelAll(status: .cancelled)
@@ -140,6 +151,8 @@ final class PhoneFileTransfer: ObservableObject {
 
     func reset() {
         engine.reset()
+        visibleIncomingAdmission = nil
+        locallyCancelledIncomingAdmission = nil
         dropPendingLink(.connectionLost)
         received = nil
         updateIdleTimer()
@@ -168,6 +181,10 @@ final class PhoneFileTransfer: ObservableObject {
     }
 
     private func engineChanged() {
+        if let admission = engine.incomingAdmissionID {
+            visibleIncomingAdmission = admission
+            if locallyCancelledIncomingAdmission != admission { locallyCancelledIncomingAdmission = nil }
+        }
         snapshot = engine.outgoing ?? engine.incoming
         waitingForMac = engine.pendingRequest != nil || engine.incoming?.phase == .waiting
         updateIdleTimer()
@@ -179,7 +196,14 @@ final class PhoneFileTransfer: ObservableObject {
     private func finished(_ finish: FileTransferFinish) {
         cleanup.removeValue(forKey: finish.transfer)?()
         receipts?(finish.transfer, nil, finish)
-        if finish.status == .cancelled && cancelledHere {
+        var locallyCancelled = cancelledHere
+        if finish.direction == .incoming, let admission = finish.admissionID {
+            guard visibleIncomingAdmission == admission else { return }
+            locallyCancelled = locallyCancelled || locallyCancelledIncomingAdmission == admission
+            visibleIncomingAdmission = nil
+            locallyCancelledIncomingAdmission = nil
+        }
+        if finish.status == .cancelled && locallyCancelled {
             post("Transfer cancelled.", .caution)
             return
         }

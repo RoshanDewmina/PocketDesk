@@ -303,6 +303,15 @@ final class FileTransferEngineTests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        // Incoming completion now follows serial disk cleanup. Queued control deliveries may
+        // also outlive reset; detach fixture callbacks before its unowned self is released.
+        for engine in [phone, mac].compactMap({ $0 }) {
+            engine.onFinish = nil
+            engine.onRequest = nil
+            engine.sendControl = nil
+            engine.admit = nil
+            engine.isRelayed = { false }
+        }
         phone.reset(); mac.reset()
         try? FileManager.default.removeItem(at: folder)
     }
@@ -425,7 +434,7 @@ final class FileTransferEngineTests: XCTestCase {
         _ = try phone.send(DataByteSource(randomData(100_000)), name: "a.bin", type: nil).get()
         try await wait { mac.incoming?.phase == .transferring }
         mac.cancelAll()
-        try await wait { phoneFinishes.count == 1 }
+        try await wait { phoneFinishes.count == 1 && macFinishes.count == 1 }
         XCTAssertEqual(phoneFinishes.first?.status, .cancelled)
         XCTAssertEqual(files(), [])
     }
@@ -719,8 +728,13 @@ private final class RevocationSink: FileByteSink, @unchecked Sendable {
     private let lock = NSLock(); private var writes = 0, commits = 0, discards = 0
     let commitStarted = DispatchSemaphore(value: 0), commitRelease = DispatchSemaphore(value: 0)
     var blockCommit = false
+    let writeStarted = DispatchSemaphore(value: 0), writeRelease = DispatchSemaphore(value: 0)
+    var blockWrite = false
     var counts: (Int, Int, Int) { lock.lock(); defer { lock.unlock() }; return (writes, commits, discards) }
-    func write(_ data: Data) throws { lock.lock(); writes += 1; lock.unlock() }
+    func write(_ data: Data) throws {
+        writeStarted.signal(); if blockWrite { writeRelease.wait() }
+        lock.lock(); writes += 1; lock.unlock()
+    }
     func commit() throws -> URL {
         commitStarted.signal(); if blockCommit { commitRelease.wait() }
         lock.lock(); commits += 1; lock.unlock(); return URL(fileURLWithPath: "/fixture/committed")
@@ -732,6 +746,45 @@ private final class RevocationSink: FileByteSink, @unchecked Sendable {
 final class FileTransferRevocationTests: XCTestCase {
     private let id = String(repeating: "a", count: 32)
     private func drain(_ queue: DispatchQueue) async { await withCheckedContinuation { c in queue.async { c.resume() } } }
+    func testLeaseAdmissionReadsPreserveLegacyFenceUnlessExplicitlyNonblocking() async throws {
+        for nonblocking in [false, true] {
+            let lease = nonblocking ? TransferEffectLease(nonblockingAdmission: true) : TransferEffectLease()
+            let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+            let readFinished = DispatchSemaphore(value: 0), effectFinished = DispatchSemaphore(value: 0)
+            defer { release.signal() }
+            DispatchQueue.global().async {
+                _ = lease.performIfActive { entered.signal(); release.wait() }
+                effectFinished.signal()
+            }
+            XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+            if nonblocking {
+                let before = ProcessInfo.processInfo.systemUptime
+                XCTAssertTrue(lease.isActive)
+                XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - before, 0.05,
+                                  "Receive-budget admission reads never wait on the stalled effect")
+                lease.closeAdmission()
+                XCTAssertFalse(lease.isActive, "Closing admission stays quick while an effect is stalled")
+                let settled = DispatchSemaphore(value: 0)
+                DispatchQueue.global().async { lease.retire(); settled.signal() }
+                XCTAssertEqual(settled.wait(timeout: .now() + 0.05), .timedOut,
+                               "Quick admission closure must preserve the prior-effect settlement fence")
+                release.signal()
+                XCTAssertEqual(settled.wait(timeout: .now() + 2), .success)
+            } else {
+                DispatchQueue.global().async {
+                    XCTAssertTrue(lease.isActive)
+                    readFinished.signal()
+                }
+                XCTAssertEqual(readFinished.wait(timeout: .now() + 0.05), .timedOut,
+                               "Default/NO leases retain the old effect-fenced admission read")
+            }
+            release.signal()
+            XCTAssertEqual(effectFinished.wait(timeout: .now() + 2), .success)
+            if !nonblocking { XCTAssertEqual(readFinished.wait(timeout: .now() + 2), .success) }
+            lease.retire()
+            XCTAssertFalse(lease.isActive)
+        }
+    }
     func testQueuedBeginSendingCannotResurrectAfterReset() async throws {
         let queue = DispatchQueue(label: "fixture.queued-send"), gate = DispatchSemaphore(value: 0)
         queue.async { gate.wait() }; defer { gate.signal() }
@@ -784,7 +837,7 @@ final class FileTransferRevocationTests: XCTestCase {
         XCTAssertEqual(sink.counts.1, 0); XCTAssertEqual(sink.counts.2, 1)
     }
     func testRetirementLinearizesWithAlreadyEnteredCommitWithoutQueueOrMainCallbackDeadlock() async throws {
-        let queue = DispatchQueue(label: "fixture.commit"), io = FileTransferIO(queue: queue), lease = TransferEffectLease(), sink = RevocationSink()
+        let queue = DispatchQueue(label: "fixture.commit"), io = FileTransferIO(queue: queue, receiveBudgetEnabled: false), lease = TransferEffectLease(), sink = RevocationSink()
         sink.blockCommit = true; defer { sink.commitRelease.signal() }
         io.beginReceiving(transfer: id, bytes: 1, sink: sink, lease: lease)
         io.receive(try XCTUnwrap(FileChunk.encode(transfer: id, offset: 0, payload: Data([1]))))
@@ -797,6 +850,125 @@ final class FileTransferRevocationTests: XCTestCase {
         XCTAssertEqual(sink.counts.1, 1, "Commit finished before revocation returned")
         io.receiveDigest(transfer: id, digest: FileDigest.hex(SHA256.hash(data: Data([1])))); await drain(queue)
         XCTAssertEqual(sink.counts.1, 1); XCTAssertFalse(lease.isActive)
+    }
+    func testReceiveBudgetDefaultOnAndExplicitNoRestoresLegacyPolicy() {
+        let suite = "fixture.receive-policy." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertTrue(FileTransferIO.receiveBudgetEnabled(defaults: defaults))
+        defaults.set(false, forKey: FileTransferIO.receiveBudgetKey)
+        XCTAssertFalse(FileTransferIO.receiveBudgetEnabled(defaults: defaults))
+        defaults.set(true, forKey: FileTransferIO.receiveBudgetKey)
+        XCTAssertTrue(FileTransferIO.receiveBudgetEnabled(defaults: defaults))
+        XCTAssertEqual(FileTransferIO().usesReceiveBudget, FileTransferIO.receiveBudgetIsOn)
+    }
+    func testBlockedReceiverBurstReservesBeforeEnqueueAndFailsExactlyOnce() async throws {
+        let queue = DispatchQueue(label: "fixture.receive-budget"), gate = DispatchSemaphore(value: 0)
+        queue.async { gate.wait() }; defer { gate.signal() }
+        let chunk = try XCTUnwrap(FileChunk.encode(transfer: id, offset: 0, payload: Data([1])))
+        let io = FileTransferIO(queue: queue, receiveBudgetEnabled: true, maximumPendingReceiveBytes: chunk.count * 2)
+        let engine = FileTransferEngine(acceptsUnsolicitedOffers: true, io: io), sink = RevocationSink()
+        var results = 0, finishes = 0
+        let finished = expectation(description: "Overflow settled once")
+        engine.sendControl = { frame in if frame.op == "result" { results += 1 }; return true }
+        engine.admit = { _, answer in answer(.success(sink)) }
+        engine.onFinish = { finish in
+            XCTAssertEqual(finish.status, .invalid); finishes += 1; finished.fulfill()
+        }
+        engine.receive(.offer(id, name: "burst", bytes: 100, type: nil))
+        for _ in 0..<10_000 { engine.receiveChunk(chunk) }
+        XCTAssertEqual(io.pendingReceiveBytes, chunk.count * 2)
+        XCTAssertEqual(io.pendingReceiveChunks, 2)
+        XCTAssertEqual(finishes, 0, "Overflow cannot report settlement before queued disk ownership is released")
+        gate.signal(); await fulfillment(of: [finished], timeout: 2); await drain(queue)
+        XCTAssertEqual(results, 1); XCTAssertEqual(finishes, 1)
+        XCTAssertEqual(io.pendingReceiveBytes, 0); XCTAssertEqual(io.pendingReceiveChunks, 0)
+        XCTAssertEqual(sink.counts.0, 0); XCTAssertEqual(sink.counts.2, 1)
+    }
+    func testReceiveBudgetNoPreservesUnboundedAdmission() async throws {
+        let queue = DispatchQueue(label: "fixture.receive-legacy"), gate = DispatchSemaphore(value: 0)
+        queue.async { gate.wait() }; defer { gate.signal() }
+        let chunk = try XCTUnwrap(FileChunk.encode(transfer: id, offset: 0, payload: Data([1])))
+        let io = FileTransferIO(queue: queue, receiveBudgetEnabled: false, maximumPendingReceiveBytes: 1)
+        let lease = TransferEffectLease(), sink = RevocationSink()
+        io.beginReceiving(transfer: id, bytes: 1, sink: sink, lease: lease)
+        for _ in 0..<8 { io.receive(chunk) }
+        XCTAssertTrue(lease.isActive, "NO must not reject a baseline burst")
+        io.stopReceiving(lease); gate.signal(); await drain(queue)
+        XCTAssertEqual(sink.counts.2, 1)
+    }
+    func testStalledWriteCountsInReceiveBudgetAndClosesAdmissionOnBurst() async throws {
+        let queue = DispatchQueue(label: "fixture.stalled-burst")
+        let chunk = try XCTUnwrap(FileChunk.encode(transfer: id, offset: 0, payload: Data([1])))
+        let io = FileTransferIO(queue: queue, receiveBudgetEnabled: true, maximumPendingReceiveBytes: chunk.count * 8,
+                                maximumPendingReceiveChunks: 2)
+        let engine = FileTransferEngine(acceptsUnsolicitedOffers: true, io: io), sink = RevocationSink()
+        sink.blockWrite = true; defer { sink.writeRelease.signal() }
+        var finishes = 0
+        let finished = expectation(description: "Stalled burst finishes after cleanup")
+        engine.sendControl = { _ in true }; engine.admit = { _, answer in answer(.success(sink)) }
+        engine.onFinish = { finish in XCTAssertEqual(finish.status, .invalid); finishes += 1; finished.fulfill() }
+        engine.receive(.offer(id, name: "stalled-burst", bytes: 100, type: nil)); engine.receiveChunk(chunk)
+        XCTAssertEqual(sink.writeStarted.wait(timeout: .now() + 2), .success)
+        for _ in 0..<10_000 { engine.receiveChunk(chunk) }
+        XCTAssertEqual(io.pendingReceiveChunks, 2); XCTAssertEqual(io.pendingReceiveBytes, chunk.count * 2)
+        XCTAssertEqual(finishes, 0)
+        sink.writeRelease.signal(); await fulfillment(of: [finished], timeout: 2); await drain(queue)
+        XCTAssertEqual(finishes, 1); XCTAssertEqual(sink.counts.0, 1)
+        XCTAssertEqual(sink.counts.1, 0); XCTAssertEqual(sink.counts.2, 1)
+        XCTAssertEqual(io.pendingReceiveBytes, 0)
+    }
+    func testDigestBurstSharesReceiveWorkBudgetWhileWriteIsStalled() async throws {
+        let queue = DispatchQueue(label: "fixture.digest-budget")
+        let io = FileTransferIO(queue: queue, receiveBudgetEnabled: true, maximumPendingReceiveChunks: 2)
+        let engine = FileTransferEngine(acceptsUnsolicitedOffers: true, io: io), sink = RevocationSink()
+        sink.blockWrite = true; defer { sink.writeRelease.signal() }
+        let finished = expectation(description: "Digest overflow settled")
+        var finishes = 0
+        engine.sendControl = { _ in true }; engine.admit = { _, answer in answer(.success(sink)) }
+        engine.onFinish = { finish in XCTAssertEqual(finish.status, .invalid); finishes += 1; finished.fulfill() }
+        engine.receive(.offer(id, name: "digest-burst", bytes: 1, type: nil))
+        engine.receiveChunk(try XCTUnwrap(FileChunk.encode(transfer: id, offset: 0, payload: Data([1]))))
+        XCTAssertEqual(sink.writeStarted.wait(timeout: .now() + 2), .success)
+        for _ in 0..<10_000 { engine.receive(.complete(id, digest: FileDigest.hex(SHA256.hash(data: Data([1]))))) }
+        XCTAssertEqual(io.pendingReceiveChunks, 2, "Digest controls must not accumulate outside the file queue budget")
+        XCTAssertEqual(finishes, 0)
+        sink.writeRelease.signal(); await fulfillment(of: [finished], timeout: 2); await drain(queue)
+        XCTAssertEqual(finishes, 1); XCTAssertEqual(sink.counts.1, 0)
+        XCTAssertEqual(io.pendingReceiveBytes, 0)
+    }
+    func testCancelAndResetReturnOnMainDuringStalledWriteOrCommitAndFinishAfterSettlement() async throws {
+        for commit in [false, true] {
+            for reset in [false, true] {
+                let queue = DispatchQueue(label: "fixture.two-stage-cancel"), io = FileTransferIO(queue: queue, receiveBudgetEnabled: true)
+                let engine = FileTransferEngine(acceptsUnsolicitedOffers: true, io: io), sink = RevocationSink()
+                sink.blockWrite = !commit; sink.blockCommit = commit
+                defer { sink.writeRelease.signal(); sink.commitRelease.signal() }
+                var finishes = 0
+                let finished = expectation(description: "Disk settlement precedes final callback")
+                engine.sendControl = { _ in true }; engine.admit = { _, answer in answer(.success(sink)) }
+                engine.onFinish = { finish in
+                    finishes += 1; XCTAssertEqual(finish.status, reset ? .connectionLost : .cancelled)
+                    XCTAssertEqual(sink.counts.2, 1); finished.fulfill()
+                }
+                engine.receive(.offer(id, name: "stalled", bytes: 1, type: nil))
+                engine.receiveChunk(try XCTUnwrap(FileChunk.encode(transfer: id, offset: 0, payload: Data([1]))))
+                engine.receive(.complete(id, digest: FileDigest.hex(SHA256.hash(data: Data([1])))))
+                let started = commit ? sink.commitStarted : sink.writeStarted
+                XCTAssertEqual(started.wait(timeout: .now() + 2), .success)
+                // A delayed release also prevents a regressed synchronous cancel from hanging the suite.
+                DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) {
+                    if commit { sink.commitRelease.signal() } else { sink.writeRelease.signal() }
+                }
+                let before = ProcessInfo.processInfo.systemUptime
+                if reset { engine.reset() } else { engine.cancel(id) }
+                XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - before, 0.05)
+                XCTAssertTrue(engine.isIdle); XCTAssertEqual(finishes, 0)
+                await fulfillment(of: [finished], timeout: 2); await drain(queue)
+                XCTAssertEqual(finishes, 1)
+                XCTAssertEqual(sink.counts.1, commit ? 1 : 0, "Only an already-admitted commit may finish after admission closes")
+            }
+        }
     }
     func testReentrantFailedCompleteCannotCancelReplacementUsingSameWireID() async throws {
         let queue = DispatchQueue(label: "fixture.reentrant-event"), io = FileTransferIO(queue: queue)

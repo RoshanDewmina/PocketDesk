@@ -9,8 +9,9 @@ import VideoToolbox
 /// With `StreamTuning.cacheLevel52Probe` (the default), a positive result is also cached in
 /// UserDefaults, keyed by OS version (major.minor.patch) and hardware model, so later launches skip
 /// the probe; a failed or timed-out probe is never cached and is retried next launch, and
-/// `warmUp()` runs the probe on a background queue at launch so the first factory rarely waits.
-/// With the switch off the probe runs at the first factory, uncached, as it did before.
+/// With `PocketDeskAsyncCapabilitySnapshot` (default ON), readers only inspect a completed
+/// background result; an unfinished probe is conservative. NO restores the synchronous lazy
+/// gate, including its original cache switch and timeout behaviour.
 enum NativeCodecCapability {
     enum Outcome: Equatable {
         case simulator
@@ -37,7 +38,14 @@ enum NativeCodecCapability {
     static var outcomeDescription: String { outcome?.description ?? "not probed yet" }
     static let probeTimeout: DispatchTimeInterval = .seconds(3)
 
-    static let supportsLevel52: Bool = {
+    static var supportsLevel52: Bool {
+        NativeVideoCapabilitySnapshot.read(probe: NativeVideoCapabilityProbes.current.level52,
+            legacy: { synchronousSupportsLevel52 })
+    }
+
+    // This lazy value intentionally remains the exact rollback path. Only background snapshot
+    // workers evaluate it while the async switch is enabled.
+    static let synchronousSupportsLevel52: Bool = {
         #if targetEnvironment(simulator)
         state.outcome = .simulator
         return false
@@ -74,8 +82,12 @@ enum NativeCodecCapability {
 
     /// Evaluates the probe off the calling thread so a later factory creation finds it done.
     static func warmUp() {
+        if NativeVideoCapabilitySnapshot.enabled {
+            _ = NativeVideoCapabilityProbes.current.level52.snapshot
+            return
+        }
         guard StreamTuning.current.cacheLevel52Probe else { return }
-        DispatchQueue.global(qos: .userInitiated).async { _ = supportsLevel52 }
+        DispatchQueue.global(qos: .userInitiated).async { _ = synchronousSupportsLevel52 }
     }
 
     static var cacheDefaultsKey: String { "PocketDeskLevel52Probe." + systemAndModel }
@@ -254,6 +266,155 @@ enum NativeCodecCapability {
             }
         }
         return nil
+    }
+}
+
+/// Immutable format evidence captured before negotiation. It never upgrades a running factory.
+/// Connect integration should await `ready` with the async switch enabled, recheck session
+/// authority, and pass this same value to both factories and the HEVC admission gates.
+struct NativeVideoCapabilitySnapshot: Equatable, Sendable {
+    let supportsLevel52: Bool
+    let supportsHEVCDecode: Bool
+    let supportsHEVCEncode: Bool
+    let supportsHEVC444Decode: Bool
+    let supportsHEVC444Encode: Bool
+
+    init(supportsLevel52: Bool, supportsHEVCDecode: Bool, supportsHEVCEncode: Bool,
+         supportsHEVC444Decode: Bool = false, supportsHEVC444Encode: Bool = false) {
+        self.supportsLevel52 = supportsLevel52
+        self.supportsHEVCDecode = supportsHEVCDecode; self.supportsHEVCEncode = supportsHEVCEncode
+        self.supportsHEVC444Decode = supportsHEVC444Decode; self.supportsHEVC444Encode = supportsHEVC444Encode
+    }
+    static let conservative = Self(supportsLevel52: false, supportsHEVCDecode: false, supportsHEVCEncode: false)
+    /// Internal rollback is sampled once for this process, before capability/factory selection.
+    static let enabled = isEnabled()
+    static func isEnabled(defaults: UserDefaults = .standard) -> Bool {
+        let key = "PocketDeskAsyncCapabilitySnapshot"
+        return defaults.object(forKey: key) == nil || defaults.bool(forKey: key)
+    }
+    static func read(probe: NativeCapabilityProbe, legacy: () -> Bool, enabled: Bool = NativeVideoCapabilitySnapshot.enabled) -> Bool {
+        enabled ? probe.snapshot : legacy()
+    }
+    static func current(isHost: Bool) -> Self {
+        NativeVideoCapabilityProbes.current.snapshot(isHost: isHost)
+    }
+    /// Use only on the enabled path. Rollback callers keep the legacy accessor/init flow.
+    static func ready(isHost: Bool, timeout: TimeInterval = 3) async -> Self {
+        await NativeVideoCapabilityProbes.current.ready(isHost: isHost, timeout: timeout)
+    }
+}
+
+/// One launch's background result. The lock only protects publication/continuation ownership;
+/// it is never held while probing, waiting, or resuming a caller.
+final class NativeCapabilityProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private let perform: @Sendable () -> Bool
+    private var started = false
+    private var result: (value: Bool, completedAt: DispatchTime)?
+    private var waiters: [UUID: (deadline: DispatchTime, continuation: CheckedContinuation<Bool, Never>)] = [:]
+
+    init(_ perform: @escaping @Sendable () -> Bool) { self.perform = perform }
+    var snapshot: Bool {
+        start()
+        lock.lock(); defer { lock.unlock() }
+        return result?.value ?? false
+    }
+    func ready(timeout: TimeInterval = 3) async -> Bool {
+        await ready(deadline: Self.deadline(timeout: timeout))
+    }
+    static func deadline(timeout: TimeInterval) -> DispatchTime {
+        .now() + (timeout.isFinite ? min(3, max(0, timeout)) : 3)
+    }
+    func ready(deadline: DispatchTime) async -> Bool {
+        start()
+        return await withCheckedContinuation { continuation in
+            lock.lock()
+            if let result {
+                lock.unlock()
+                continuation.resume(returning: result.completedAt <= deadline ? result.value : false)
+                return
+            }
+            let id = UUID()
+            waiters[id] = (deadline, continuation)
+            lock.unlock()
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: deadline) { [self] in
+                lock.lock()
+                let waiter = waiters.removeValue(forKey: id)
+                lock.unlock()
+                waiter?.continuation.resume(returning: false)
+            }
+        }
+    }
+    private func start() {
+        lock.lock()
+        guard !started else { lock.unlock(); return }
+        started = true
+        lock.unlock()
+        DispatchQueue.global(qos: .utility).async { [self] in
+            let value = perform()
+            let completedAt = DispatchTime.now()
+            lock.lock()
+            result = (value, completedAt)
+            let completed = Array(waiters.values)
+            waiters.removeAll()
+            lock.unlock()
+            for waiter in completed {
+                waiter.continuation.resume(returning: completedAt <= waiter.deadline ? value : false)
+            }
+        }
+    }
+}
+
+/// Independently probe roles in parallel, with one shared readiness deadline (never 3 s per
+/// role). The legacy probes retain positive-cache OS/model/revision keys and failure policy.
+final class NativeVideoCapabilityProbes: @unchecked Sendable {
+    let level52: NativeCapabilityProbe
+    let hevcDecode: NativeCapabilityProbe
+    let hevcEncode: NativeCapabilityProbe
+    let hevc444Decode: NativeCapabilityProbe
+    let hevc444Encode: NativeCapabilityProbe
+    init(level52: @escaping @Sendable () -> Bool, hevcDecode: @escaping @Sendable () -> Bool,
+         hevcEncode: @escaping @Sendable () -> Bool, hevc444Decode: @escaping @Sendable () -> Bool = { false },
+         hevc444Encode: @escaping @Sendable () -> Bool = { false }) {
+        self.level52 = NativeCapabilityProbe(level52)
+        self.hevcDecode = NativeCapabilityProbe(hevcDecode); self.hevcEncode = NativeCapabilityProbe(hevcEncode)
+        self.hevc444Decode = NativeCapabilityProbe(hevc444Decode); self.hevc444Encode = NativeCapabilityProbe(hevc444Encode)
+    }
+    private static let native = NativeVideoCapabilityProbes(level52: { NativeCodecCapability.synchronousSupportsLevel52 },
+        hevcDecode: { NativeHEVCCapability.synchronousSupportsDecode }, hevcEncode: { NativeHEVCCapability.synchronousSupportsEncode },
+        hevc444Decode: { NativeHEVC444Capability.supportsDecode },
+        hevc444Encode: { NativeHEVC444Capability.supportsEncode })
+    private static let overrideLock = NSLock()
+    private static var testingOverride: NativeVideoCapabilityProbes?
+    static var current: NativeVideoCapabilityProbes {
+        overrideLock.lock(); let value = testingOverride; overrideLock.unlock()
+        return value ?? native
+    }
+    #if DEBUG
+    @discardableResult
+    static func installForTesting(_ value: NativeVideoCapabilityProbes?) -> NativeVideoCapabilityProbes? {
+        overrideLock.lock(); defer { overrideLock.unlock() }
+        let previous = testingOverride; testingOverride = value; return previous
+    }
+    #endif
+    func snapshot(isHost: Bool) -> NativeVideoCapabilitySnapshot {
+        NativeVideoCapabilitySnapshot(supportsLevel52: level52.snapshot, supportsHEVCDecode: hevcDecode.snapshot,
+            supportsHEVCEncode: isHost && hevcEncode.snapshot, supportsHEVC444Decode: HEVC444Policy.enabled && hevc444Decode.snapshot,
+            supportsHEVC444Encode: isHost && HEVC444Policy.enabled && hevc444Encode.snapshot)
+    }
+    func ready(isHost: Bool, timeout: TimeInterval = 3) async -> NativeVideoCapabilitySnapshot {
+        let deadline = NativeCapabilityProbe.deadline(timeout: timeout)
+        let fullColorEnabled = HEVC444Policy.enabled
+        async let level = level52.ready(deadline: deadline)
+        async let decode = hevcDecode.ready(deadline: deadline)
+        async let encode = ready(hevcEncode, enabled: isHost, deadline: deadline)
+        async let fullDecode = ready(hevc444Decode, enabled: fullColorEnabled, deadline: deadline)
+        async let fullEncode = ready(hevc444Encode, enabled: isHost && fullColorEnabled, deadline: deadline)
+        return await NativeVideoCapabilitySnapshot(supportsLevel52: level, supportsHEVCDecode: decode,
+            supportsHEVCEncode: encode, supportsHEVC444Decode: fullDecode, supportsHEVC444Encode: fullEncode)
+    }
+    private func ready(_ probe: NativeCapabilityProbe, enabled: Bool, deadline: DispatchTime) async -> Bool {
+        enabled ? await probe.ready(deadline: deadline) : false
     }
 }
 
