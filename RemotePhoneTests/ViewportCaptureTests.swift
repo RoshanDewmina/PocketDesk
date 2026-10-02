@@ -249,7 +249,8 @@ final class ViewportCaptureTests: XCTestCase {
         XCTAssertEqual(retirements, 1)
         XCTAssertFalse(model.connection.connected)
         XCTAssertTrue(model.macAudioMuted)
-        XCTAssertEqual(model.heartbeatAction().macAudioRequested, false)
+        XCTAssertNotEqual(model.heartbeatAction().macAudioRequested, true,
+                          "Retirement must revoke Listen consent, including if capability was cleared")
     }
 
     func testTheViewportRidesOnHeartbeatsOnlyWhileTheMacAdvertisesIt() throws {
