@@ -20,12 +20,12 @@ struct KeyboardLayoutDock<Content: View>: UIViewControllerRepresentable {
         let controller = Controller(content: content)
         controller.setContainerOnlySafeArea(containerOnlySafeArea)
         controller.onFrame = onFrame
-        controller.setContainerOnlySafeArea(containerOnlySafeArea)
         return controller
     }
 
     func updateUIViewController(_ controller: Controller, context: Context) {
         controller.onFrame = onFrame
+        controller.setContainerOnlySafeArea(containerOnlySafeArea)
         controller.update(content)
     }
 
