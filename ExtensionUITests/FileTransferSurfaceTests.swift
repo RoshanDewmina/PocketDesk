@@ -2,7 +2,7 @@ import XCTest
 import SwiftUI
 import UIKit
 
-/// Render-only catalogue of the production FileTransferCapsule body plus inert model shims.
+/// Render-only catalogue of production transfer/status and Connect prompt bodies plus inert actions/model shims.
 @MainActor
 final class FileTransferSurfaceTests: XCTestCase {
     override func setUpWithError() throws {
@@ -128,7 +128,20 @@ final class FileTransferSurfaceTests: XCTestCase {
         try capture(BigTextPendingStatusFixture(pendingTarget: 0), name: "big-text-restoring")
     }
 
-    private func capture<V: View>(_ content: V, name: String, file: StaticString = #filePath, line: UInt = #line) throws {
+    func testConnectPromptBodyAcrossDeviceOrientations() throws {
+        let names = ["connect-prompt-body-portrait-component", "connect-prompt-body-landscape-component"]
+        let plan = XCTAttachment(string: names.joined(separator: "\n"))
+        plan.name = "capture-plan"
+        plan.lifetime = .keepAlways
+        add(plan)
+
+        // Render the production question body, with inert actions. Native presentation and its
+        // public-route failure remain separate evidence; no OS chrome or detents are simulated.
+        try capture(ConnectPromptSheet(macName: "Studio Mac", connect: {}, close: {})
+            .preferredColorScheme(.dark), name: "connect-prompt-body", topInset: 0)
+    }
+
+    private func capture<V: View>(_ content: V, name: String, topInset: CGFloat? = nil, file: StaticString = #filePath, line: UInt = #line) throws {
         let screen = UIScreen.main.bounds
         for landscape in [false, true] {
         let bounds = CGRect(x: 0, y: 0, width: landscape ? max(screen.width, screen.height) : min(screen.width, screen.height),
@@ -138,7 +151,7 @@ final class FileTransferSurfaceTests: XCTestCase {
             Farside.Palette.void
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .padding(.top, max(80, bounds.height * 0.18))
+                .padding(.top, topInset ?? max(80, bounds.height * 0.18))
         }
         .frame(width: bounds.width, height: bounds.height)
         .background(Farside.Palette.void)
