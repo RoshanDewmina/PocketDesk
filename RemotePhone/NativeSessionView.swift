@@ -2332,7 +2332,7 @@ struct NativeSessionView: View {
             }
             .padding(12)
             .frame(maxWidth: 860)
-            .frame(maxHeight: max(180, min(620, canvas.height * 0.8)))
+            .frame(maxHeight: max(180, min(620, canvasFrame.height * 0.8)))
             .farsidePlate(Farside.Radius.sheet, fill: Farside.Palette.void2.opacity(0.97), stroke: Farside.Palette.line2)
             .padding(.horizontal, 8)
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { panelFrame = $0 }
