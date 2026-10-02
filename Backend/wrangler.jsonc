@@ -81,7 +81,8 @@
         "TEST_FORCE_RELAY": "0",
         "ALLOW_UNENTITLED_RELAY": "0",
         "KEEPALIVE_SECONDS": "50",
-        "REPLACE_QUIET_SECONDS": "0"
+        "REPLACE_QUIET_SECONDS": "0",
+        "MEASUREMENT_ENABLED": "1"
       }
     },
     "production": {
@@ -123,7 +124,8 @@
         "TEST_FORCE_RELAY": "0",
         "ALLOW_UNENTITLED_RELAY": "0",
         "KEEPALIVE_SECONDS": "0",
-        "REPLACE_QUIET_SECONDS": "0"
+        "REPLACE_QUIET_SECONDS": "0",
+        "MEASUREMENT_ENABLED": "1"
       }
     }
   }
