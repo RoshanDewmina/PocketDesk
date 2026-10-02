@@ -74,24 +74,50 @@ final class LiveActivityUITests: XCTestCase {
     /// The first Live Activity an app starts makes the system ask, on the Lock Screen, whether to allow
     /// them, and later asks again whether to always allow them. Both answers are remembered for the app.
     private func answerTheSystemQuestionIfAsked() {
-        let allow = springboard.buttons.matching(NSPredicate(format: "label IN {'Allow', 'Always Allow'}")).firstMatch
-        guard allow.waitForExistence(timeout: 3), allow.isHittable else { return }
-        let question = springboard.descendants(matching: .any).matching(NSPredicate(
-            format: "label CONTAINS[c] 'Farside' AND label CONTAINS[c] 'live activit' AND label CONTAINS[c] 'allow'"))
-            .allElementsBoundByIndex.first { $0.exists && $0.isHittable }
-        // Native permission copy may be split into a title and body inside an alert.
-        let namedAlert = springboard.alerts.allElementsBoundByIndex.first { alert in
-            guard alert.exists && alert.isHittable else { return false }
-            let labels = ([alert.label] + alert.staticTexts.allElementsBoundByIndex.map(\.label))
+        let actionPredicate = NSPredicate(format: "label IN {'Allow', 'Always Allow'}")
+        func verifiedAction(in dialog: XCUIElement) -> XCUIElement? {
+            guard dialog.exists && dialog.isHittable else { return nil }
+            let labels = ([dialog.label] + dialog.staticTexts.allElementsBoundByIndex
+                .filter { $0.exists && $0.isHittable }.map(\.label))
                 .joined(separator: " ").lowercased()
-            return labels.contains("farside") && labels.contains("live activit")
-                && labels.contains("allow") && alert.buttons[allow.label].exists
+            guard labels.contains("farside"), labels.contains("live activit"), labels.contains("allow") else { return nil }
+            return dialog.buttons.matching(actionPredicate).allElementsBoundByIndex
+                .first { $0.exists && $0.isHittable }
         }
-        guard question != nil || namedAlert != nil else {
-            let reason = XCTAttachment(string: "SpringBoard Allow action was not a verified Farside Live Activity question; left unanswered")
-            reason.name = "missing-state-reason"
-            reason.lifetime = .keepAlways
-            add(reason)
+        let deadline = ProcessInfo.processInfo.systemUptime + 3
+        var ownedAction: XCUIElement?
+        repeat {
+            // Prefer a native alert and take the action from that exact alert's descendants.
+            for alert in springboard.alerts.allElementsBoundByIndex {
+                if let action = verifiedAction(in: alert) { ownedAction = action; break }
+            }
+            if ownedAction == nil {
+                let screen = springboard.frame
+                let screenArea = screen.width * screen.height
+                // Lock Screen questions can be custom containers. Full-screen SpringBoard/root
+                // wrappers are excluded; use the smallest visible container owning copy and action.
+                let dialogs = springboard.otherElements.containing(actionPredicate).allElementsBoundByIndex
+                    .filter { dialog in
+                        guard dialog.exists && dialog.isHittable else { return false }
+                        let frame = dialog.frame
+                        return frame.width > 0 && frame.height > 0
+                            && frame.width * frame.height < screenArea * 0.9
+                    }
+                    .sorted { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
+                for dialog in dialogs {
+                    if let action = verifiedAction(in: dialog) { ownedAction = action; break }
+                }
+            }
+            if ownedAction != nil { break }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        guard let allow = ownedAction else {
+            if springboard.buttons.matching(actionPredicate).firstMatch.exists {
+                let reason = XCTAttachment(string: "SpringBoard Allow action had no verified common Farside Live Activity dialog container; left unanswered")
+                reason.name = "missing-state-reason"
+                reason.lifetime = .keepAlways
+                add(reason)
+            }
             return
         }
         let name = allow.label == "Always Allow"
