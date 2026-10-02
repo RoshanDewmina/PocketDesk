@@ -576,24 +576,27 @@ struct NativeSessionView: View {
                 if model.showsInlinePiPSource {
                     // Auto-start PiP needs its source inline: the same live picture, behind the visible one.
                     // Kept while concealed so a started PiP keeps its layer; the shield and concealment overlays cover it.
-                    let picture = viewport.picturePlacement(for: model.captureRegion)
+                    let picture = viewport.picturePlacement(for: model.placementRegion)
                     LivePiPPreview(layer: model.livePiP.displayLayer, inline: true)
                         .frame(width: picture.width, height: picture.height)
                         .offset(x: picture.minX, y: picture.minY)
                         .accessibilityHidden(true)
                 }
                 if let track = connection.remoteVideo, !model.contentConcealed {
-                    let picture = viewport.picturePlacement(for: model.captureRegion)
+                    let picture = viewport.picturePlacement(for: model.placementRegion)
                     RemoteVideoSurface(track: track, counters: connection.media?.counters,
                                        statistics: streamStatsEnabled && markerReadingEnabled,
-                                       sourceSize: streamStatsEnabled && model.captureRegion == nil
+                                       sourceSize: streamStatsEnabled && model.placementRegion == nil
                                         ? model.sourceSize : .zero,
                                        displayedPixelWidth: streamStatsEnabled ? rect.width * displayScale : 0,
-                                       fillsFrame: model.captureRegion != nil,
+                                       fillsFrame: model.placementRegion != nil,
                                        smoothMotion: smoothMotion, smoothMotionUpscale: smoothMotionUpscale,
                                        admission: model.inlinePresentationAdmission,
                                        onOriginalSourcePresented: { [weak model] identity, receipt in
                                            Task { @MainActor in model?.originalSourcePresented(identity, receipt: receipt) }
+                                       },
+                                       onFrameDrawn: { [weak model] envelope in
+                                           MainActor.assumeIsolated { model?.frameDrawn(envelope) }
                                        },
                                        videoFeedback: connection.media?.videoFeedback,
                                        frameTiming: connection.media?.frameTimingReceiver?.log,
@@ -2972,7 +2975,7 @@ struct NativeSessionView: View {
     }
 
     @ViewBuilder private func miniMapThumbnail(_ size: CGSize) -> some View {
-        if let track = connection.remoteVideo, !model.contentConcealed, let region = model.captureRegion {
+        if let track = connection.remoteVideo, !model.contentConcealed, let region = model.placementRegion {
             let placement = ViewportTransform.placement(of: region.rect, displaySize: model.sourceSize,
                                                         in: CGRect(origin: .zero, size: size))
             ZStack(alignment: .topLeading) {

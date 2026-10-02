@@ -168,7 +168,7 @@ struct PrecisionLoupeOverlay: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             if let tap = controller.tap, let source = viewport.sourcePoint(fromView: tap.target),
-               let geometry = LoupeGeometry.make(target: source, scale: viewport.scale, region: model.captureRegion,
+               let geometry = LoupeGeometry.make(target: source, scale: viewport.scale, region: model.placementRegion,
                                                  displaySize: viewport.sourceSize) {
                 loupe(geometry, source: source, cancelling: tap.cancelArmed)
                     .position(LoupeGeometry.placement(finger: tap.finger, safe: viewport.safeRect))

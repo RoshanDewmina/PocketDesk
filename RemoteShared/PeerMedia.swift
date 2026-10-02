@@ -1243,7 +1243,8 @@ final class PeerMedia: NSObject {
         return overflow ? nil : total
     }
     /// `displayMs` is the frame's ScreenCaptureKit display time in mach ms, 0 for a re-send.
-    func pushFrame(_ buffer: CVPixelBuffer, timeStampNs: Int64, displayMs: Double = 0, exactTiming: ExactVideoTiming? = nil) {
+    func pushFrame(_ buffer: CVPixelBuffer, timeStampNs: Int64, displayMs: Double = 0, exactTiming: ExactVideoTiming? = nil,
+                   region: CaptureRegion? = nil) {
         guard captureLock.try() else { counters.pushSkipped(); return }
         defer { captureLock.unlock() }
         guard !closed, localGateOpen(), let source, let capturer else { return }
@@ -1260,6 +1261,7 @@ final class PeerMedia: NSObject {
         }
         guard localGateOpen() else { return }
         videoFeedback.pushedTiming(exactTiming, buffer: output)
+        videoFeedback.pushedRegion(region, buffer: output)
         frameTimingLog?.pushed(ObjectIdentifier(output), displayMs: displayMs, pushMs: MachClock.nowMs())
         source.capturer(capturer, didCapture: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: output), rotation: ._0, timeStampNs: timeStampNs))
         counters.pushed()

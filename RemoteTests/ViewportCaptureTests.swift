@@ -28,11 +28,14 @@ final class ViewportCaptureTests: XCTestCase {
     }
 
     /// `phoneNative: false` is the rule before the phone-native crop, kept behind `CropPhoneNativeSwitch`.
+    /// `nearNative: false` and `keepBand: false` are the rules of build 20261002.2, kept behind
+    /// `CropNearNativeSwitch` and `CropKeepBandSwitch`; the crop maths below is checked with them off.
     private func region(_ viewport: ViewportRegion?, on display: DisplayGeometry? = nil,
                         output: CapturePixelDimensions, tuning: StreamTuning = .tuned,
-                        previous: CaptureRegion? = nil, phoneNative: Bool = true) -> CaptureRegion {
+                        previous: CaptureRegion? = nil, phoneNative: Bool = true,
+                        nearNative: Bool = false, keepBand: Bool = false) -> CaptureRegion {
         Policy.region(for: viewport, display: display ?? asus, output: output, tuning: tuning, previous: previous,
-                      phoneNative: phoneNative)
+                      phoneNative: phoneNative, nearNative: nearNative, keepBand: keepBand)
     }
 
     private func size(_ width: Int, _ height: Int) -> CapturePixelDimensions {
@@ -536,6 +539,87 @@ final class ViewportCaptureTests: XCTestCase {
         }
         XCTAssertEqual(sizes, [size(1536, 704), size(1536, 704), size(1536, 704), size(1232, 560),
                                size(1456, 672), size(2256, 1040), whole])
+    }
+
+    // MARK: Near-native and keep-band rules (b7-scroll)
+
+    /// Roshan's 2 Oct recording: 1280x828 pt @2x streamed at 2560x1656, the phone at 2.35 px per point
+    /// (1.15x of landscape Fill) re-cropped 10 times and recreated the encoder 7 times in 12 s. The whole
+    /// display was already at its own 2 px per point there, so no crop could add a single pixel.
+    func testCropGainRuleStreamsTheWholeDisplayUnlessACropAddsFifteenPercentAndReleasesWithHysteresis() throws {
+        let bigText = DisplayGeometry(size: CGSize(width: 1280, height: 828), pointPixelScale: 2)
+        let bigTextWhole = try output(bigText, fps: 60)
+        XCTAssertEqual(bigTextWhole, size(2560, 1656))
+        let recording = iPhone17(zoom: 2.35, portrait: false, on: bigText)
+        let previousCrop = region(recording, on: bigText, output: bigTextWhole, nearNative: false)
+        XCTAssertFalse(previousCrop.isWholeDisplay, "the switch restores the crop of 20261002.2")
+        XCTAssertEqual(try sharpness(previousCrop, recording, on: bigText),
+                       try sharpness(Policy.wholeDisplay(bigText, output: bigTextWhole), recording, on: bigText), accuracy: 0.001,
+                       "that crop delivered exactly what the whole display delivers")
+        XCTAssertTrue(region(recording, on: bigText, output: bigTextWhole, nearNative: true).isWholeDisplay)
+        XCTAssertTrue(region(recording, on: bigText, output: bigTextWhole, previous: previousCrop, nearNative: true).isWholeDisplay,
+                      "released even from an engaged crop: no gain at all")
+        XCTAssertTrue(region(iPhone17(zoom: 4, portrait: false, on: bigText), on: bigText, output: bigTextWhole, nearNative: true).isWholeDisplay,
+                      "at any zoom: the display has no more pixels to give")
+        let rung2 = CapturePixelDimensions(width: 1920, height: 1242)
+        XCTAssertFalse(region(recording, on: bigText, output: rung2, nearNative: true).isWholeDisplay,
+                       "a size rung below the display's pixels is where a crop adds sharpness (2 / 1.5)")
+
+        let whole = try output(moreSpace, fps: 60)
+        func at(_ zoom: Double, previous: CaptureRegion?) -> CaptureRegion {
+            region(iPhone17(zoom: zoom, portrait: false, on: moreSpace), on: moreSpace, output: whole,
+                   previous: previous, nearNative: true)
+        }
+        let crop = at(2, previous: nil)
+        XCTAssertFalse(crop.isWholeDisplay)
+        let wholeRegion = Policy.wholeDisplay(moreSpace, output: whole)
+        // The whole display gives 1.333 px per point; a phone-native crop gives the zoom: 1.38 -> 1.035,
+        // 1.45 -> 1.09, 1.6 -> 1.2.
+        XCTAssertTrue(at(1.38, previous: nil).isWholeDisplay)
+        XCTAssertTrue(at(1.38, previous: crop).isWholeDisplay, "released under 1.05")
+        XCTAssertTrue(at(1.45, previous: nil).isWholeDisplay, "not engaged under 1.15")
+        XCTAssertTrue(at(1.45, previous: wholeRegion).isWholeDisplay)
+        XCTAssertFalse(at(1.45, previous: crop).isWholeDisplay, "a crop stays engaged between 1.05 and 1.15")
+        XCTAssertFalse(at(1.6, previous: nil).isWholeDisplay)
+        XCTAssertFalse(at(1.6, previous: wholeRegion).isWholeDisplay)
+        XCTAssertEqual(try sharpness(at(1.6, previous: nil), iPhone17(zoom: 1.6, portrait: false, on: moreSpace), on: moreSpace), 1,
+                       accuracy: 0.01, "the crop that does engage is still phone-native")
+        var sequence: [Bool] = []
+        var previous: CaptureRegion?
+        for zoom in [1.5, 1.6, 1.7, 1.65, 1.62, 1.85, 1.45, 1.38, 1.45] {
+            let next = at(zoom, previous: previous)
+            sequence.append(next.isWholeDisplay)
+            previous = next
+        }
+        XCTAssertEqual(sequence, [true, false, false, false, false, false, false, true, true],
+                       "one flip per crossing of the band, none inside it")
+    }
+
+    func testKeepBandKeepsACropAcrossAZoomWobbleAndAnEdgeShrink() throws {
+        let whole = try output(asus, fps: 120)
+        let first = region(centered(zoom: 2, on: asus, epoch: 1), output: whole, keepBand: true)
+        XCTAssertEqual(first, CaptureRegion(epoch: 1, x: 512, y: 368, width: 1536, height: 704,
+                                            outputWidth: 1536, outputHeight: 704))
+        // Two-finger navigation wobbles the zoom by a few percent on every sample.
+        let wobble = region(centered(zoom: 2.1, on: asus, epoch: 2), output: whole, previous: first, keepBand: true)
+        XCTAssertEqual(wobble.rect, first.rect)
+        XCTAssertEqual(size(wobble.outputWidth, wobble.outputHeight), size(1536, 704))
+        XCTAssertFalse(Policy.needsReconfiguration(from: first, to: wobble))
+        XCTAssertNotEqual(region(centered(zoom: 2.1, on: asus, epoch: 2), output: whole, previous: first).rect, first.rect,
+                          "the switch restores the exact-size rule")
+        // At a display edge the visible rect loses the safe inset (21 pt of 603 at the bottom in landscape).
+        var edge = centered(zoom: 2, on: asus, epoch: 3)
+        edge.height *= 0.92
+        let shrunk = region(edge, output: whole, previous: first, keepBand: true)
+        XCTAssertFalse(Policy.needsReconfiguration(from: first, to: shrunk))
+        // A real zoom leaves the band and re-crops.
+        let zoomed = region(centered(zoom: 2.3, on: asus, epoch: 4), output: whole, previous: first, keepBand: true)
+        XCTAssertTrue(Policy.needsReconfiguration(from: first, to: zoomed))
+        XCTAssertTrue(zoomed.rect.contains(centered(zoom: 2.3, on: asus).rect))
+        // A pan past the margin still re-crops: the old crop no longer contains the view.
+        var panned = centered(zoom: 2.05, on: asus, epoch: 5)
+        panned.x += 200
+        XCTAssertTrue(Policy.needsReconfiguration(from: first, to: region(panned, output: whole, previous: first, keepBand: true)))
     }
 
     func testEveryPhoneNativeCropIsAlignedFitsTheEncodersAndIsAsSharpAsTheBudgetAllows() throws {

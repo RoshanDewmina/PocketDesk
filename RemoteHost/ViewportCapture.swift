@@ -56,6 +56,15 @@ enum ViewportCapturePolicy {
     static let minimumLongEdgeFraction = 0.25
     static let shrinkBelow = 0.9
     static let growFrom = 1.1
+    /// Crop-gain rule (`CropNearNativeSwitch`): a crop engages only when it delivers at least
+    /// `cropGainEngage` times the stream pixels per Mac point of the whole display at the current rung,
+    /// and once engaged stays while it delivers `cropGainRelease` times or more. A whole display streamed
+    /// at its own pixels (1280x828 pt @2x as 2560x1656) cannot be beaten by any crop, yet build 20261002.2
+    /// re-cropped it 10 times and recreated the encoder 7 times in 12 s of two-finger scrolling: each
+    /// SCStream reconfiguration stalled the capture 100-460 ms and each output change restarted the
+    /// encoder's rate control (b7-scroll NOTES, 2 Oct). The band keeps a zoom wobble from flipping the stream.
+    static let cropGainEngage = 1.15
+    static let cropGainRelease = 1.05
     static let macroblock = 16
     /// The H.264 and HEVC encoders' longest edge.
     static let maximumEdge = 4096
@@ -76,7 +85,9 @@ enum ViewportCapturePolicy {
     /// nil when the output changed (quality, client pixels, restart) and the held size must not carry over.
     static func region(for viewport: ViewportRegion?, display: DisplayGeometry, output: CapturePixelDimensions,
                        tuning: StreamTuning, previous: CaptureRegion?,
-                       phoneNative: Bool = CropPhoneNativeSwitch.isOn) -> CaptureRegion {
+                       phoneNative: Bool = CropPhoneNativeSwitch.isOn,
+                       nearNative: Bool = CropNearNativeSwitch.isOn,
+                       keepBand: Bool = CropKeepBandSwitch.isOn) -> CaptureRegion {
         let whole = wholeDisplay(display, output: output)
         // Epoch 0 means the whole display on the wire, so a crop can never carry it.
         guard tuning.viewportCapture, let viewport, viewport.epoch != 0, viewport.zoom > 1,
@@ -91,15 +102,25 @@ enum ViewportCapturePolicy {
         let scale = display.pointPixelScale
         var rect = CGRect(x: Double(crop.x) / scale, y: Double(crop.y) / scale,
                           width: Double(crop.width) / scale, height: Double(crop.height) / scale)
+        var source = CapturePixelDimensions(width: crop.width, height: crop.height)
         var held: CapturePixelDimensions?
         if let previous, !previous.isWholeDisplay {
             held = CapturePixelDimensions(width: previous.outputWidth, height: previous.outputHeight)
-            if previous.rect.size == rect.size, previous.rect.contains(visible) { rect = previous.rect }
+            if previous.rect.contains(visible),
+               previous.rect.size == rect.size || (keepBand && keepsCrop(previous.rect.size, for: rect.size)) {
+                rect = previous.rect
+                source = CapturePixelDimensions(width: Int((previous.rect.width * scale).rounded()),
+                                                height: Int((previous.rect.height * scale).rounded()))
+            }
         }
-        let source = CapturePixelDimensions(width: crop.width, height: crop.height)
         let size = phoneNative
             ? phoneNativeOutputSize(source: source, zoom: viewport.zoom, display: display, budget: output, held: held)
             : outputSize(source: source, whole: output, held: held)
+        if nearNative, phoneNative, rect.width > 0, display.size.width > 0 {
+            let gain = (Double(size.width) / rect.width) / (Double(output.width) / display.size.width)
+            let engaged = previous.map { !$0.isWholeDisplay } ?? false
+            if gain < (engaged ? cropGainRelease : cropGainEngage) { return whole }
+        }
         return CaptureRegion(epoch: viewport.epoch, x: Double(rect.minX), y: Double(rect.minY),
                              width: Double(rect.width), height: Double(rect.height),
                              outputWidth: size.width, outputHeight: size.height)
@@ -226,6 +247,15 @@ enum ViewportCapturePolicy {
                                height: max(macroblock, alignedDown(Int(Double(size.height) * fraction))))
     }
 
+    /// Keep-band rule (`CropKeepBandSwitch`): a crop that still contains the visible rect is kept while
+    /// the crop the viewport would get now is within `shrinkBelow`...`growFrom` of it on both sides, so a
+    /// zoom wobble, or the visible rect shrinking by the safe insets at a display edge, is not a new crop.
+    static func keepsCrop(_ previous: CGSize, for next: CGSize) -> Bool {
+        guard previous.width > 0, previous.height > 0, next.width > 0, next.height > 0 else { return false }
+        let ratios = [next.width / previous.width, next.height / previous.height]
+        return ratios.allSatisfy { $0 >= shrinkBelow && $0 < growFrom }
+    }
+
     /// Only the phone's regular heartbeat states its viewport. LTR acknowledgements and pointer probes
     /// also travel as heartbeats, without one, and must not drop the crop between two regular ones.
     static func describesViewport(_ heartbeat: RemoteAction) -> Bool {
@@ -263,6 +293,20 @@ enum ViewportCapturePolicy {
 /// the rung's whole-display width and height.
 enum CropPhoneNativeSwitch {
     static let defaultsKey = "PocketDeskCropPhoneNative"
+    static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+}
+
+/// Kill switch for the near-native rule (`defaults write <bundle id> PocketDeskCropNearNative -bool NO`, then
+/// relaunch the host). Off crops whenever the phone would upscale at all, as build 20261002.2 did.
+enum CropNearNativeSwitch {
+    static let defaultsKey = "PocketDeskCropNearNative"
+    static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+}
+
+/// Kill switch for the keep-band rule (`defaults write <bundle id> PocketDeskCropKeepBand -bool NO`, then
+/// relaunch the host). Off keeps a crop only while the viewport asks for exactly the same size.
+enum CropKeepBandSwitch {
+    static let defaultsKey = "PocketDeskCropKeepBand"
     static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
 }
 

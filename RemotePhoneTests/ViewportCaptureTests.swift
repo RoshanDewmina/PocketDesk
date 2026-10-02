@@ -186,6 +186,27 @@ final class ViewportCaptureTests: XCTestCase {
                        "the settle asks for exactly what is shown")
     }
 
+    /// Roshan's 2 Oct recording: at 1.15x of landscape Fill on a 1280x828 pt display the visible rect is
+    /// 1116x513 pt; twice that is the whole display, which the Mac streamed, then left at the settle.
+    func testAContinuingPinchOutNearFillNeverWidensToTheWholeDisplay() throws {
+        let bigText = CGSize(width: 1280, height: 828)
+        let visible = CGRect(x: 82, y: 157, width: 1116, height: 513)
+        let request = ViewportCaptureRequest(rect: visible, pixelWidth: 2622, pixelHeight: 1206, zoom: 2.35, displaySize: bigText)
+        let widened = request.widened(by: 2)
+        XCTAssertTrue(widened.rect.contains(visible))
+        XCTAssertLessThan(widened.rect.width * widened.rect.height, 0.86 * bigText.width * bigText.height)
+        XCTAssertEqual(widened.rect.width, 1180, accuracy: 1)
+        XCTAssertEqual(widened.rect.height, 763, accuracy: 1)
+        XCTAssertEqual(widened.rect.midX, visible.midX, accuracy: 0.5)
+        XCTAssertEqual(widened.rect.midY, visible.midY, accuracy: 0.5)
+        XCTAssertTrue(CGRect(origin: .zero, size: bigText).contains(widened.rect))
+        XCTAssertNoThrow(try widened.region(epoch: 1).validate())
+        // A view that already covers most of the display is not widened at all.
+        let wide = ViewportCaptureRequest(rect: CGRect(x: 20, y: 10, width: 1240, height: 800), pixelWidth: 2622,
+                                          pixelHeight: 1206, zoom: 2.1, displaySize: bigText)
+        XCTAssertEqual(wide.widened(by: 2).rect, wide.rect)
+    }
+
     func testAPanOrAOneOffChangePastTheCropGetsExactlyWhatItShows() throws {
         var reporter = ViewportReporter()
         let crop = CGRect(x: 300, y: 200, width: 800, height: 420)
@@ -477,6 +498,82 @@ final class ViewportCaptureTests: XCTestCase {
                                 y: (glyph.y - shownRect.minY) / shownRect.height * display.height)
             XCTAssertEqual(shown.x, pointer.x, accuracy: 1e-6, "the glyph sits on the pixel showing its Mac point")
             XCTAssertEqual(shown.y, pointer.y, accuracy: 1e-6)
+        }
+    }
+
+    /// Roshan's 2 Oct recording: the `capture` status with the new crop arrived before the first frame of
+    /// it, so old-crop frames were stretched into the new rect (a 1.3x jump between two 60 Hz frames).
+    func testThePictureIsPlacedByTheDrawnFramesOwnRegionNotByTheStatusEcho() throws {
+        let features = [SessionFeature.viewportCapture]
+        let a = CaptureRegion(epoch: 29, x: 32, y: 268, width: 1216, height: 560, outputWidth: 2432, outputHeight: 1200)
+        let b = CaptureRegion(epoch: 33, x: 32, y: 148, width: 1216, height: 600, outputWidth: 2432, outputHeight: 1200)
+        let c = CaptureRegion(epoch: 55, x: 36, y: 340, width: 1208, height: 488, outputWidth: 2416, outputHeight: 976)
+        let whole = CaptureRegion(epoch: 0, x: 0, y: 0, width: 1470, height: 956, outputWidth: 2560, outputHeight: 1656)
+        func status(_ region: CaptureRegion?, epoch: UInt64 = 4) -> RemoteAction {
+            RemoteAction(action: "capture", x: 1, epoch: epoch, features: features, captureRegion: region)
+        }
+        func tag(_ region: CaptureRegion?, geometry: UInt64 = 4) -> VideoFrameTag {
+            var tag = VideoFrameTag(generation: "g", nonce: "n", geometryEpoch: geometry, scopeEpoch: 1, ltrToken: nil)
+            tag.region = region
+            return tag
+        }
+        for byFrame in [true, false] {
+            let model = try sessionModel(features: features)
+            model.regionByFrame = byFrame
+            try deliver(status(a), to: model)
+            model.framePlacement(tag: tag(a), width: 2432, height: 1200)
+            XCTAssertEqual(model.placementRegion, a, "byFrame \(byFrame)")
+            // The echo of B arrives; three more frames of A are still on the wire.
+            try deliver(status(b), to: model)
+            XCTAssertEqual(model.captureRegion, b)
+            var misplaced = 0
+            for _ in 0..<3 {
+                model.framePlacement(tag: tag(a), width: 2432, height: 1200)
+                if model.placementRegion != a { misplaced += 1 }
+            }
+            model.framePlacement(tag: tag(b), width: 2432, height: 1200)
+            XCTAssertEqual(model.placementRegion, b)
+            XCTAssertEqual(misplaced, byFrame ? 0 : 3, "frames drawn under the wrong rect, byFrame \(byFrame)")
+            // The whole display: a frame says so, the echo says so.
+            model.framePlacement(tag: tag(whole), width: 2560, height: 1656)
+            XCTAssertEqual(model.placementRegion, byFrame ? nil : b)
+            try deliver(status(whole), to: model)
+            XCTAssertNil(model.placementRegion)
+            XCTAssertNil(model.captureRegion)
+            // While frames carry regions, a frame without one (a Smooth Motion midpoint) keeps the
+            // placement even though the echo has moved on; a tag about another geometry counts as none.
+            try deliver(status(c), to: model)
+            model.framePlacement(tag: tag(b), width: 2432, height: 1200)
+            XCTAssertEqual(model.placementRegion, byFrame ? b : c)
+            model.framePlacement(tag: nil, width: 2416, height: 976)
+            model.framePlacement(tag: tag(c, geometry: 9), width: 2416, height: 976)
+            XCTAssertEqual(model.placementRegion, byFrame ? b : c, "a midpoint never moves the picture")
+            model.framePlacement(tag: tag(c), width: 2416, height: 976)
+            XCTAssertEqual(model.placementRegion, c)
+            // A new geometry drops everything.
+            try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 5), to: model)
+            XCTAssertNil(model.placementRegion)
+            XCTAssertNil(model.captureRegion)
+            // An older Mac never tags: the frame's pixel size finds the newest echoed region of that size,
+            // then the echo itself.
+            try deliver(status(a, epoch: 5), to: model)
+            try deliver(status(b, epoch: 5), to: model)
+            try deliver(status(whole, epoch: 5), to: model)
+            try deliver(status(c, epoch: 5), to: model)
+            XCTAssertEqual(model.captureRegion, c)
+            model.framePlacement(tag: nil, width: 2560, height: 1656)
+            XCTAssertEqual(model.placementRegion, byFrame ? nil : c, "whole-display frames of an older Mac")
+            model.framePlacement(tag: nil, width: 2432, height: 1200)
+            XCTAssertEqual(model.placementRegion, byFrame ? b : c, "the newest echo of that size")
+            model.framePlacement(tag: nil, width: 1600, height: 640)
+            XCTAssertEqual(model.placementRegion, c, "no size match: the echo")
+            // A Mac that stops tagging for half a second hands the placement back to the fallbacks.
+            model.framePlacement(tag: tag(a), width: 2432, height: 1200)
+            XCTAssertEqual(model.placementRegion, byFrame ? a : c)
+            for _ in 0..<(PhoneRemoteModel.untaggedRunLimit - 1) { model.framePlacement(tag: nil, width: 2416, height: 976) }
+            XCTAssertEqual(model.placementRegion, byFrame ? a : c)
+            model.framePlacement(tag: nil, width: 2416, height: 976)
+            XCTAssertEqual(model.placementRegion, c)
         }
     }
 

@@ -33,6 +33,10 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
         get { view.onOriginalSourcePresented }
         set { view.onOriginalSourcePresented = newValue }
     }
+    var onFrameDrawn: ((VideoFrameEnvelope) -> Void)? {
+        get { view.onFrameDrawn }
+        set { view.onFrameDrawn = newValue }
+    }
     private var expiryTimer: Timer?
     private final class Registration { weak var value: VideoPresentationSession?; init(_ value: VideoPresentationSession) { self.value = value } }
     private static var registrations: [Registration] = []

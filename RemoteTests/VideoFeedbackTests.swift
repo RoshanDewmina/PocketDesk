@@ -208,6 +208,46 @@ final class VideoFeedbackTests: XCTestCase {
             XCTAssertNil(H26xVideoMarker.read(Data(marked.prefix(24)), hevc: hevc))
         }
     }
+    /// b7-scroll: the capture region rides in the access unit so the phone places each frame by it.
+    func testTheCaptureRegionRidesInTheAccessUnitAndIsFoundByThePushedBuffer() throws {
+        let context = VideoFeedbackContext(); context.configure(allowed: true, geometry: 7, scope: 3)
+        let crop = CaptureRegion(epoch: 29, x: 32, y: 268, width: 1216, height: 560, outputWidth: 2432, outputHeight: 1200)
+        let whole = CaptureRegion(epoch: 0, x: 0, y: 0, width: 1280, height: 828, outputWidth: 2560, outputHeight: 1656)
+        var tag = try XCTUnwrap(context.encoded(token: nil))
+        tag.region = crop
+        XCTAssertNoThrow(try tag.validate())
+        let json = try JSONEncoder().encode(tag)
+        XCTAssertLessThanOrEqual(json.count, H26xVideoMarker.maximumJSONBytes)
+        XCTAssertEqual(try JSONDecoder().decode(VideoFrameTag.self, from: json), tag)
+        for hevc in [false, true] {
+            let base = Data([0,0,0,1] + (hevc ? [0x26,1,0x80] : [0x65,0x80]))
+            let marked = try XCTUnwrap(H26xVideoMarker.append(tag, to: base, hevc: hevc))
+            XCTAssertEqual(H26xVideoMarker.read(marked, hevc: hevc)?.region, crop)
+        }
+        var bad = tag; bad.region = CaptureRegion(epoch: 1, x: 0, y: 0, width: 0, height: 10, outputWidth: 16, outputHeight: 16)
+        XCTAssertThrowsError(try bad.validate())
+        // An older Mac's tag has no region; an older phone reads a tag with one as if it had none.
+        struct OldTag: Codable { let version: Int; let generation: String; let nonce: String; let geometryEpoch: UInt64; let scopeEpoch: UInt64 }
+        XCTAssertEqual(try JSONDecoder().decode(OldTag.self, from: json).geometryEpoch, 7)
+
+        var a: CVPixelBuffer?, b: CVPixelBuffer?
+        CVPixelBufferCreate(nil, 64, 64, kCVPixelFormatType_32BGRA, nil, &a)
+        CVPixelBufferCreate(nil, 64, 64, kCVPixelFormatType_32BGRA, nil, &b)
+        let first = try XCTUnwrap(a), second = try XCTUnwrap(b)
+        context.pushedRegion(crop, buffer: first)
+        context.pushedRegion(whole, buffer: second)
+        XCTAssertEqual(context.submittedRegion(buffer: second), whole, "found by the buffer, not by order")
+        XCTAssertEqual(context.submittedRegion(buffer: first), crop)
+        XCTAssertNil(context.submittedRegion(buffer: first), "each push is found once")
+        context.pushedRegion(crop, buffer: first)
+        context.pushedRegion(whole, buffer: first)
+        XCTAssertEqual(context.submittedRegion(buffer: first), whole, "a re-pushed buffer carries its latest region")
+        context.pushedRegion(nil, buffer: first)
+        XCTAssertNil(context.submittedRegion(buffer: first))
+        context.configure(allowed: false, geometry: 7, scope: 3)
+        context.pushedRegion(crop, buffer: first)
+        XCTAssertNil(context.submittedRegion(buffer: first), "no tags, no regions")
+    }
     func testSubmissionDoesNotAcknowledgeAndOnlySuccessfulExactNativeOutputCanAcknowledge() throws {
         let sender = VideoFeedbackContext(), receiver = VideoFeedbackContext()
         sender.configure(allowed: true, geometry: 7, scope: 3); receiver.configure(allowed: true, geometry: 7, scope: 3)

@@ -500,6 +500,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
             }
             let submittedMs = MachClock.nowMs()
             videoTag?.timing = videoFeedback?.submittedTiming(buffer: buffer.pixelBuffer, atMs: submittedMs)
+            videoTag?.region = videoFeedback?.submittedRegion(buffer: buffer.pixelBuffer)
             let entry = Pending(epoch: currentEpoch, videoTag: videoTag, timestamp: UInt32(bitPattern: frame.timeStamp),
                 captureMs: frame.timeStampNs / 1_000_000, rotation: frame.rotation, submittedMs: submittedMs, width: width, height: height)
             gate.submitted(id, entry: entry, at: clock())

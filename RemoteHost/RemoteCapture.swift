@@ -1140,7 +1140,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         guard scopeTarget?.processIsAlive != false else { return }
         scopeLease.performIfValid {
             if idleResend { peer?.counters.idleResent() }
-            peer?.pushFrame(buffer, timeStampNs: Int64(time * 1_000_000_000), displayMs: displayMs, exactTiming: timing)
+            peer?.pushFrame(buffer, timeStampNs: Int64(time * 1_000_000_000), displayMs: displayMs, exactTiming: timing,
+                            region: appliedRegion)
             onGuestFrame?(buffer, time)
         }
     }
