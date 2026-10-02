@@ -545,10 +545,16 @@ final class SmoothMotionPipelineTests: XCTestCase {
         send(frames[0], at: 1.1)
         drawUntil { view.drawsPresented > 0 }
         XCTAssertGreaterThan(view.drawsPresented, 0, "the tagged source must submit a real Metal draw")
+        // Keep the injected display clock at 120 Hz between 60 Hz source arrivals. Without
+        // these ticks the first pump observes a 35 ms gap and correctly skips the midpoint.
+        tick(at: 1.1 + 1.0 / 120)
+        tick(at: 1.1 + 2.0 / 120)
         send(frames[1], at: 1.1 + 1.0 / 60)
         drawUntil { view.drawsPresented > 1 }
+        tick(at: 1.1 + 3.0 / 120)
+        tick(at: 1.1 + 4.0 / 120)
         send(frames[2], at: 1.1 + 2.0 / 60)
-        tick(at: 1.1 + 2.0 / 60 + 0.002)
+        tick(at: 1.1 + 5.0 / 120)
         drawUntil { drawnMidpoints > 0 }
         tick(at: clock + 1.0 / 120)
         drawUntil { view.drawsPresented > 2 }
