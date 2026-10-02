@@ -85,14 +85,14 @@ struct KeyboardLayoutDock<Content: View>: UIViewControllerRepresentable {
             let frame = host.view.convert(host.view.bounds, to: window)
             guard frame != probedFrame else { return }
             probedFrame = frame
-            print("[B7 keyboardHit] parent=\(view.bounds) host=\(host.view.bounds) frame=\(frame) enabled=\(host.view.isUserInteractionEnabled) alpha=\(host.view.alpha)")
+            NSLog("%@", "[B7 keyboardHit] parent=\(view.bounds) host=\(host.view.bounds) frame=\(frame) enabled=\(host.view.isUserInteractionEnabled) alpha=\(host.view.alpha)")
             for fraction in [CGFloat(0.5), 0.7, 0.83, 0.96] {
                 let local = CGPoint(x: host.view.bounds.width * fraction, y: min(24, host.view.bounds.height / 2))
                 let parent = host.view.convert(local, to: view)
                 let global = host.view.convert(local, to: window)
                 let target = window.hitTest(global, with: nil)
                 let targetClass = target.map { String(describing: type(of: $0)) } ?? "nil"
-                print("[B7 keyboardHit] point=\(global) hostInside=\(host.view.point(inside: local, with: nil)) parentInside=\(view.point(inside: parent, with: nil)) target=\(targetClass.prefix(100))")
+                NSLog("%@", "[B7 keyboardHit] point=\(global) hostInside=\(host.view.point(inside: local, with: nil)) parentInside=\(view.point(inside: parent, with: nil)) target=\(targetClass.prefix(100))")
             }
         }
         #endif

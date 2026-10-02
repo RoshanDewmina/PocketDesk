@@ -3302,7 +3302,7 @@ struct NativeSessionView: View {
     private func recordChromeHitProbe(_ action: String) {
         #if DEBUG
         guard offlineLayoutCheck, LaunchOptions.has("--ui-keyboard-hit-probe") else { return }
-        print("[B7 chromeHit] \(action) regular=\(regularSessionLayout) couch=\(couch) collapsed=\(controlsCollapsed) controls=\(showControls) keyboard=\(keyboardOpen) voiceLocked=\(voiceLocked)")
+        NSLog("%@", "[B7 chromeHit] \(action) regular=\(regularSessionLayout) couch=\(couch) collapsed=\(controlsCollapsed) controls=\(showControls) keyboard=\(keyboardOpen) voiceLocked=\(voiceLocked)")
         #endif
     }
 

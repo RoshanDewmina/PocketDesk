@@ -17,7 +17,7 @@ final class SessionLayoutTests: XCTestCase {
     func testRegularPortraitPictureStacksOverPadAndSurvivesKeyboard() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires an iPad simulator")
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-software-keyboard"]
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-software-keyboard", "--ui-keyboard-hit-probe"]
         app.launch()
         XCTAssertTrue(app.descendants(matching: .any)["remote.session.pill"].firstMatch.waitForExistence(timeout: 5),
                       "Regular iPad must expose the pill")
