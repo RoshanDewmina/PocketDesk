@@ -1,0 +1,677 @@
+{
+  "schema_version": 1,
+  "baseline": "20aded1",
+  "rows": [
+    {
+      "id": "G01",
+      "behavior": "Same-Wi-Fi Connect survives host session construction",
+      "build": "20260930.8 host / phone .7 at 06:49; also 20261001.2 touch receipt",
+      "quote": "Yea connection works",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/b9a43976-bd4f-4ae9-a920-572f679267a1.jsonl:3417; ledger CR01 L345",
+      "checks": [
+        {
+          "suite": "core",
+          "method": "testRealEnrollmentControlReconnectAndRevocation",
+          "class": "SessionIntegrationTests"
+        }
+      ],
+      "test": "Connect on same Wi-Fi; picture and input must arrive without host exit.",
+      "note": "This quote confirms connection, not touch: L3467 immediately reports touch failure.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G02",
+      "behavior": "Control movement reaches the Mac after local authorization",
+      "build": "30 September; exact phone build not recovered",
+      "quote": "control works now",
+      "evidence": "/Users/roshansilva/Documents/Codex/2026-10-01/farside-feature-ledger-FINAL.md:346 (CR02)",
+      "checks": [
+        {
+          "suite": "core",
+          "method": "testQuickFlickStillMovesFromTheFirstFrames",
+          "class": "NativeGestureEngineTests"
+        }
+      ],
+      "test": "Move one finger over the canvas; cursor must move.",
+      "note": "User wording is preserved by the ledger, not recovered as a primary utterance.",
+      "evidence_level": "secondary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G03",
+      "behavior": "Connected picture appears instead of black screen",
+      "build": "20260929.11",
+      "quote": "yes all works move on to the next part",
+      "evidence": "Codex 01a0ee9b-e581-7941-b18d-542800f41b58 L5355; prompt L5345",
+      "checks": [
+        {
+          "suite": "phone",
+          "method": "testDecodedOrRepeatedSourceAloneNeverSuppliesVisiblePicture",
+          "class": "UsefulSessionEvidenceTests"
+        }
+      ],
+      "test": "Connect portrait; require newly presented moving picture.",
+      "note": "Prompt explicitly asked for moving video; exact Test Pad text delivery remained unverified.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G04",
+      "behavior": "Pinch/zoom remains smooth; covered pinch/pan does not churn crop/encoder size",
+      "build": "20260930.7",
+      "quote": "Pinch is smooth now i checked",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/b9a43976-bd4f-4ae9-a920-572f679267a1.jsonl:227; ledger CR16 L360; Claude memory L28",
+      "checks": [
+        {
+          "suite": "core",
+          "method": "testAsymmetricPinchKeepsOriginalSourceUnderMovingMidpointInControlAndView",
+          "class": "NativeGestureEngineTests"
+        },
+        {
+          "suite": "core",
+          "method": "testSmallPinchAndPanReplayKeepsCoveredRegionAndEncoderSizeStable",
+          "class": "ViewportCaptureTests"
+        },
+        {
+          "suite": "core",
+          "method": "testReplayConfigurationMatchesEveryEchoedRegion",
+          "class": "ViewportCaptureTests"
+        },
+        {
+          "suite": "phone",
+          "method": "testPinchPanReplayEmitsAtMostOneEscapeAndOneSettledRegion",
+          "class": "ViewportCaptureTests"
+        }
+      ],
+      "test": "Pinch in/out 6 times and pan a zoomed page; no picture jitter or jumps.",
+      "note": "New replay imposes defensive stability/region-frame bounds; a failing host proxy does not alone prove the physical cause. Large zoom jitter was already reported on .3/.4 and .2.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "REPLAY",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G05",
+      "behavior": "No flicker/blanking across region echoes and ladder size changes",
+      "build": "20261001.2 phone / host .1",
+      "quote": "No flicker",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/b9a43976-bd4f-4ae9-a920-572f679267a1.jsonl:5599; memory L36",
+      "checks": [
+        {
+          "suite": "phone",
+          "method": "testRegionEchoAndLadderStepKeepThePresentation",
+          "class": "ViewportCaptureTests"
+        }
+      ],
+      "test": "Scroll and pinch; displayed content must never blank.",
+      "note": "Touch success on .2 is also recorded in memory L36/ledger CR08; exact independent .2 touch utterance not found.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G06",
+      "behavior": "Whole canvas tap clicks without overlay or landing-roll pointer jump",
+      "build": "20261001.2 (secondary touch receipt); earlier daily use",
+      "quote": "Touch confirmed on .10, and again on 20261001.2",
+      "evidence": "/Users/roshansilva/Documents/Codex/2026-10-01/farside-feature-ledger-FINAL.md:352 (CR08); memory L36",
+      "checks": [
+        {
+          "suite": "core",
+          "method": "testLandingRollDoesNotMoveThePointerAndStillClicks",
+          "class": "NativeGestureEngineTests"
+        }
+      ],
+      "test": "Tap a disposable button in a test page; click once at current pointer.",
+      "note": "Quote column here is the ledger wording, not verbatim Roshan.",
+      "evidence_level": "secondary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G07",
+      "behavior": "Controls panel opens and exposes its actions",
+      "build": "20260930.8 (partial); actions reconfirmed 20261001.3",
+      "quote": "Controls work",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/b9a43976-bd4f-4ae9-a920-572f679267a1.jsonl:3889; /Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:1794; prompt L1772",
+      "checks": [
+        {
+          "suite": "ui",
+          "method": "testOfflineControlsPortraitLandscapeAndKeyboard",
+          "class": "SessionLayoutTests"
+        }
+      ],
+      "test": "Reveal dock; open Controls; every action remains reachable.",
+      "note": "Offline UI verifies layout/reachability only.",
+      "evidence_level": "primary",
+      "modes": [
+        "SIM",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G08",
+      "behavior": "Spaces action switches desktop",
+      "build": "20261001.3",
+      "quote": "2 yes they work",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:1794; prompt L1772 (all five named actions)",
+      "checks": [
+        {
+          "suite": "core",
+          "method": "testControlArrowsCarryFnSoMissionControlAndSpacesHotkeysMatch",
+          "class": "HardwareKeyMapTests"
+        }
+      ],
+      "test": "Tap Spaces left/right; require exactly one desktop switch.",
+      "note": "No physical 10 s auto-drop duration approval; preserve that distinction.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G09",
+      "behavior": "Mission Control action opens Mission Control",
+      "build": "20261001.3",
+      "quote": "2 yes they work",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:1794; prompt L1772 (all five named actions)",
+      "checks": [
+        {
+          "suite": "core",
+          "method": "testControlArrowsCarryFnSoMissionControlAndSpacesHotkeysMatch",
+          "class": "HardwareKeyMapTests"
+        }
+      ],
+      "test": "Tap Mission Control; overview opens once, then return.",
+      "note": "No physical 10 s auto-drop duration approval; preserve that distinction.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G10",
+      "behavior": "Right-click action opens Mac context menu",
+      "build": "20261001.3",
+      "quote": "2 yes they work",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:1794; prompt L1772 (all five named actions)",
+      "checks": [
+        {
+          "suite": "core",
+          "method": "testSecondaryClickAndMiddleClick",
+          "class": "HardwarePointerRouterTests"
+        }
+      ],
+      "test": "Right-click a disposable file/page; context menu opens once.",
+      "note": "No physical 10 s auto-drop duration approval; preserve that distinction.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G11",
+      "behavior": "Double-click action emits a double click",
+      "build": "20261001.3",
+      "quote": "2 yes they work",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:1794; prompt L1772 (all five named actions)",
+      "checks": [
+        {
+          "suite": "core",
+          "method": "testDoubleAndTripleClicksKeepUIKitsCount",
+          "class": "HardwarePointerRouterTests"
+        }
+      ],
+      "test": "Double-click a test folder; it opens once.",
+      "note": "No physical 10 s auto-drop duration approval; preserve that distinction.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G12",
+      "behavior": "Hold click/Drop action holds and releases without stuck input",
+      "build": "20261001.3",
+      "quote": "2 yes they work",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:1794; prompt L1772 (all five named actions)",
+      "checks": [
+        {
+          "suite": "core",
+          "method": "testStillPressBecomesAHoldAndDoubleClickDragKeepsCountTwo",
+          "class": "HardwarePointerRouterTests"
+        },
+        {
+          "suite": "core",
+          "method": "testReleaseBoundaryCannotDropNewerHoldOrEpochAndAcceptsExpiredTokenForExactHold",
+          "class": "NativeInputSafetyTests"
+        }
+      ],
+      "test": "Hold a disposable window title bar, move, then Drop; pointer no longer drags.",
+      "note": "No physical 10 s auto-drop duration approval; preserve that distinction.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G13",
+      "behavior": "Text-field keyboard opens in Notes and Safari",
+      "build": "20261001.3",
+      "quote": "yea keyboard works, little finicky but its ok",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:1794; prompt L1772",
+      "checks": [
+        {
+          "suite": "phone",
+          "method": "testEditableFocusReplyOpensOnlyForNewestFreshClickOnce",
+          "class": "SessionLifecycleTests"
+        },
+        {
+          "suite": "ui",
+          "method": "testEditableFocusPreviewOpensExistingKeyboardWithoutSending",
+          "class": "SessionLayoutTests"
+        }
+      ],
+      "test": "Double-tap Notes then Safari text fields; keyboard appears and a word reaches Mac.",
+      "note": "Physical app recognition is still DEVICE; model/preview tests are proxies.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "SIM",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G14",
+      "behavior": "Text-field keyboard opens in Chrome and Claude",
+      "build": "20261001.4",
+      "quote": "yes keyboard appears",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:2641; prompt L2582 item 8",
+      "checks": [
+        {
+          "suite": "phone",
+          "method": "testEditableFocusReplyRejectsLateWrongEpochNoneditableAndDismissed",
+          "class": "SessionLifecycleTests"
+        }
+      ],
+      "test": "Double-tap Chrome and Claude text fields; keyboard opens.",
+      "note": "No Cursor editor/terminal confirmation. Rejected stale replies remain covered automatically.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G15",
+      "behavior": "Files transfer successfully phone to Mac and Mac to phone",
+      "build": "20261001.4",
+      "quote": "FIle transfer works its awesome",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:2558; prompted both directions L2554; memory L39/L41",
+      "checks": [
+        {
+          "suite": "core",
+          "method": "testPhoneToMacTransferArrivesIntactInChunks",
+          "class": "FileTransferEngineTests"
+        },
+        {
+          "suite": "core",
+          "method": "testMacToPhoneRequestDeliversThePickedFile",
+          "class": "FileTransferEngineTests"
+        },
+        {
+          "suite": "phone",
+          "method": "testImmediateFileSendsAndReportsProgress",
+          "class": "SendToMacTests"
+        }
+      ],
+      "test": "Send a tiny disposable file in each direction; open contents and compare SHA-256.",
+      "note": "User praised the grouped file round; photo/share extension individual flows were not separately acknowledged.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G16",
+      "behavior": "Scroll feel stays fine and scroll does not accidentally become pinch",
+      "build": "20261001.4",
+      "quote": "scroll feel is fine",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:2558",
+      "checks": [
+        {
+          "suite": "core",
+          "method": "testRecognizedScrollCannotTurnIntoZoomAndEndsOnceAcrossInterruptions",
+          "class": "NativeGestureEngineTests"
+        },
+        {
+          "suite": "core",
+          "method": "testUnequalParallelFingerMotionScrollsAtCloseSkewedAndThumbSpacings",
+          "class": "NativeGestureEngineTests"
+        }
+      ],
+      "test": "Flick a long page up/down at 1x and zoom; smooth continuing scroll, no unintended scale.",
+      "note": "Core motion classification cannot certify physical cadence.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G17",
+      "behavior": "Healthy idle session has no false busy/slow pill",
+      "build": "20261001.3 early idle round; .4 reiterated in state note",
+      "quote": "no theres no busy or slow pill",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:1670; memory L39/L41",
+      "checks": [
+        {
+          "suite": "core",
+          "method": "testAnIdleSourceWithAHealthyPhoneAndNetworkNeverStepsDownAndClimbsBackToTheTop",
+          "class": "LadderPolicyTests"
+        },
+        {
+          "suite": "core",
+          "method": "testBusyStaysOkWhileTheLadderHoldsTheTop",
+          "class": "LadderPolicyTests"
+        }
+      ],
+      "test": "Leave still page visible for 60 s; no false busy/slow pill.",
+      "note": "Later .3 still produced a false busy pill (assistant L1750). .4 absence is secondary-only; require fresh candidate check.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "REPLAY",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G18",
+      "behavior": "Healthy session avoids Waiting-for-screen and controls-paused notices",
+      "build": "20261001.3",
+      "quote": "Did the picture ever say \"Waiting for your Mac's screen\" or \"controls paused\"?, nope",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:1670",
+      "checks": [
+        {
+          "suite": "phone",
+          "method": "testRegionEchoAndLadderStepKeepThePresentation",
+          "class": "ViewportCaptureTests"
+        }
+      ],
+      "test": "During healthy picture/input, no waiting/paused banner or loss of input.",
+      "note": "Presentation echo test is only one causal proxy.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G19",
+      "behavior": "Big Text makes the Mac text larger when selected",
+      "build": "20261001.4",
+      "quote": "5, works perfectly, would love it if this happens automatically",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:2641; prompt L2582 item 5",
+      "checks": [
+        {
+          "suite": "phone",
+          "method": "testSavedLevelAppliesOnceWhenTheMacSupportsIt",
+          "class": "BigTextPhoneTests"
+        },
+        {
+          "suite": "ui",
+          "method": "testChoosingAStepShowsProgressThenSelection",
+          "class": "BigTextUITests"
+        }
+      ],
+      "test": "Select Big Text; real Mac display mode changes and phone text matches; no misleading failure pill.",
+      "note": "Automatic first-use selection was requested later, not approved as working on this receipt.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "SIM",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G20",
+      "behavior": "Big Text restores the Mac size after ending the session",
+      "build": "20261001.4",
+      "quote": "5, works perfectly",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:2641; prompt L2582 item 5 explicitly asks switch back",
+      "checks": [
+        {
+          "suite": "core",
+          "method": "testSessionEndRestoresModeAndWindowsWithoutResuming",
+          "class": "BigTextControllerTests"
+        }
+      ],
+      "test": "End session; original Mac display mode returns; measure restore delay.",
+      "note": ".2 user reports at least ~10 s delay (c0c606e2); no instant-restore claim.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G21",
+      "behavior": "Session check opens from Home without connecting",
+      "build": "20261001.4",
+      "quote": "7. yea session check works, it opens",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:2641; prompt L2582 item 7",
+      "checks": [
+        {
+          "suite": "phone",
+          "method": "testActualControllerCancelsQueuedProbeAndRetainsDeletableReportWithoutSend",
+          "class": "PhoneDiagnosticsTests"
+        }
+      ],
+      "test": "From Home open Session check; dismiss it and Connect remains reachable.",
+      "note": "Existing controller test covers report lifecycle, not Home navigation: missing focused UI assertion.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G22",
+      "behavior": "Couch controls the Mac without picture",
+      "build": "20261001.4",
+      "quote": "couch mode works but the mouse on the lap is so jittery and laggy, but usable",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:2641",
+      "checks": [
+        {
+          "suite": "phone",
+          "method": "testCouchControlsWithoutAPicture",
+          "class": "CouchPhoneModelTests"
+        }
+      ],
+      "test": "Enter Couch; move pointer and type one key with no picture.",
+      "note": "Preserve functional control only; smooth feel was NOT accepted.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G23",
+      "behavior": "Manual PiP can show a window on Home",
+      "build": "20261001.3",
+      "quote": "manually hitting picture in picture works i see it when i go home",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:1902",
+      "checks": [
+        {
+          "suite": "phone",
+          "method": "testInjectedPiPPreparesCategoryBeforePossibleAndReleasesRefusedStart",
+          "class": "PhoneMediaSessionIntegrationTests"
+        }
+      ],
+      "test": "Start manual PiP, go Home; window appears.",
+      "note": "Partial receipt: same sentence says stream stuck and reopening crashes. Never present as full PiP success.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G24",
+      "behavior": "Live PiP can render moving stream frames",
+      "build": "20261001.4",
+      "quote": "Live pip does seem to work but it is so unbelivable laggy and jittery",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:2558",
+      "checks": [
+        {
+          "suite": "phone",
+          "method": "testPiPSinkHandsDecodedFramesStraightToTheLayer",
+          "class": "PhonePresentationLifecycleTests"
+        }
+      ],
+      "test": "Animate clock/page on Mac; manual PiP receives new frames.",
+      "note": "Partial receipt only: auto-PiP still failed, smoothness explicitly rejected.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G25",
+      "behavior": "Phone and Mac remain awake/connected during untouched video",
+      "build": "20261001.4",
+      "quote": "9, stable , quality can improve a lot",
+      "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:2641; prompt L2582 item 9 asks 10-minute hands-off video",
+      "checks": [
+        {
+          "suite": "core",
+          "method": "testTransferCompletionCannotReleaseLiveViewOnlySession",
+          "class": "PhoneIdleTimerTests"
+        },
+        {
+          "suite": "core",
+          "method": "testIdleConnectedSessionKeepsAssertionsWithoutInputOrAudioActivityAndPauseReleasesDisplay",
+          "class": "HostAvailabilityTests"
+        }
+      ],
+      "test": "10 minutes no phone/Mac interaction; neither screen sleeps, stream continues.",
+      "note": "Quick smoke exercises 60 s symptom only; exact 10-minute duration needs unattended extension.",
+      "evidence_level": "primary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G26",
+      "behavior": "QR/pasted invitation pairing with Mac approval and no account",
+      "build": "Earlier builds; exact confirmation build absent",
+      "quote": "Daily use",
+      "evidence": "/Users/roshansilva/Documents/Codex/2026-10-01/farside-feature-ledger-FINAL.md:368 (CR24)",
+      "checks": [
+        {
+          "suite": "core",
+          "method": "testRealEnrollmentControlReconnectAndRevocation",
+          "class": "SessionIntegrationTests"
+        }
+      ],
+      "test": "On disposable pair only: scan/paste invitation, Approve on Mac, Connect without account.",
+      "note": "Secondary ledger confirmation only; no exact Roshan quote or distinct QR vs paste approval recovered. Do not replace owner pairing in quick smoke.",
+      "evidence_level": "secondary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G27",
+      "behavior": "Stream statistics and Copy Diagnostics are usable",
+      "build": "Earlier perf sessions; exact build absent",
+      "quote": "Used in perf sessions",
+      "evidence": "/Users/roshansilva/Documents/Codex/2026-10-01/farside-feature-ledger-FINAL.md:371 (CR27)",
+      "checks": [
+        {
+          "suite": "core",
+          "method": "testLogLineIsSingleLineMachineReadableJSON",
+          "class": "StreamStatisticsTests"
+        },
+        {
+          "suite": "core",
+          "method": "testReportCoversSupportFactsAndNothingPrivate",
+          "class": "HostDiagnosticsReportTests"
+        }
+      ],
+      "test": "Open stats, observe PDSTATS; Copy Diagnostics produces sanitized nonempty report.",
+      "note": "Secondary ledger receipt only; exact UI copy completion not independently spoken. Copy/Paste CONTENT feature remains unconfirmed.",
+      "evidence_level": "secondary",
+      "modes": [
+        "AUTO",
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G28",
+      "behavior": "One short staging Anywhere session can connect directly",
+      "build": "30 September 11:24; exact build absent",
+      "quote": "One ~35 s Anywhere session over direct IPv6",
+      "evidence": "/Users/roshansilva/Documents/Codex/2026-10-01/farside-feature-ledger-FINAL.md:432 (NW15); Claude memory L19",
+      "checks": [],
+      "test": "With orchestrator-approved existing staging developer entitlement, phone off home Wi-Fi; connect 35 s and confirm direct internet route.",
+      "note": "Secondary receipt only, not Roshan verbatim. No TURN, cellular or long-session approval; unavailable entitlement is BLOCKED, not PASS.",
+      "evidence_level": "secondary",
+      "modes": [
+        "DEVICE"
+      ]
+    },
+    {
+      "id": "G29",
+      "behavior": "Portrait keyboard keeps draft and Done/Hide controls reachable",
+      "build": "20260929.11",
+      "quote": "yes all works move on to the next part",
+      "evidence": "Codex 01a0ee9b-e581-7941-b18d-542800f41b58 L5355; prompt L5345",
+      "checks": [
+        {
+          "suite": "ui",
+          "method": "testKeyboardKeepsDeliberatelyTypedMultilineDraft",
+          "class": "SessionLayoutTests"
+        },
+        {
+          "suite": "ui",
+          "method": "testOfflineControlsPortraitLandscapeAndKeyboard",
+          "class": "SessionLayoutTests"
+        }
+      ],
+      "test": "Open keyboard portrait; draft/Done/Hide visible, type then Hide.",
+      "note": "Specific text delivery Farside check 11 was not independently observed; do not claim it.",
+      "evidence_level": "primary",
+      "modes": [
+        "SIM",
+        "DEVICE"
+      ]
+    }
+  ]
+}
