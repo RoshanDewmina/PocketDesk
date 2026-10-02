@@ -64,8 +64,25 @@ enum PrivacyCurtainPolicy {
     static let restoreHoldLimit: TimeInterval = 3
     /// The first Big Text change of a session waits this long for the curtain to go up first.
     static let scaleHoldLimit: TimeInterval = 1
+    /// A restore that has not begun this long after the session ended is a reconnect grace, not a
+    /// restore: the hold ends and the Mac uncovers. Must exceed the host's deliberate-End restore delay.
+    static let restoreHoldDetect: TimeInterval = 1.5
 
     enum Desired: Equatable { case up, down }
+
+    /// The post-session hold ends once an observed restore has finished and nothing is still
+    /// refreshing: Big Text clears its phase before it moves windows back, so `needsRefresh`
+    /// (the host flag set while a change is in flight) is what proves the windows are done.
+    static func restoreHoldShouldEnd(observed: Bool, engaged: Bool, changing: Bool, needsRefresh: Bool) -> Bool {
+        observed && !engaged && !changing && !needsRefresh
+    }
+
+    /// Whether the session's first Big Text change should wait for the curtain: only while the
+    /// curtain is expected to go up and nothing has already decided otherwise.
+    static func scaleShouldWait(curtainUp: Bool, expected: Bool, raiseFailed: Bool, liftedLocally: Bool,
+                                paused: Bool, bigTextEngaged: Bool) -> Bool {
+        !curtainUp && expected && !raiseFailed && !liftedLocally && !paused && !bigTextEngaged
+    }
 
     static func desired(_ inputs: PrivacyCurtainInputs, currentlyUp: Bool) -> Desired {
         // Only the Away machine's positive verifier retires awayCovered; notifications cannot.
@@ -75,7 +92,9 @@ enum PrivacyCurtainPolicy {
         if currentlyUp && inputs.restoreHold && !inputs.sessionLive { return .up }
         guard inputs.sessionLive else { return .down }
         if inputs.phonePaused { return currentlyUp && inputs.pausedFor <= pausedHold ? .up : .down }
-        if currentlyUp && inputs.phoneSilentFor > phoneSilenceLimit { return .down }
+        // Regardless of phase: Mac capture stays healthy when the phone vanishes, so a raise here
+        // would flap against the lowering below until the media link notices.
+        if inputs.phoneSilentFor > phoneSilenceLimit { return .down }
         if currentlyUp && inputs.displayReconfiguring { return .up }
         if currentlyUp {
             let lostPicture = !inputs.captureHealthy && !inputs.displayAsleep && inputs.unhealthyFor > unhealthyGrace

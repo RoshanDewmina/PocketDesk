@@ -635,7 +635,7 @@ enum HostCurtainCopy {
         if state.curtainNeedsAccessibility { return "Needs Accessibility, so Esc can always lift it" }
         if let status = state.curtainStatus { return status }
         return state.privacyCurtain
-            ? "On by default. Your phone still sees everything; press Esc three times at this Mac to show it"
+            ? "On by default. Your phone still sees everything. Esc three times at this Mac shows it"
             : "Off: anyone at the Mac can watch what the phone does"
     }
 }

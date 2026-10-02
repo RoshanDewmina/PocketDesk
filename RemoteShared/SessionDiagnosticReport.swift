@@ -111,6 +111,29 @@ struct SessionDiagnosticReport: Codable, Equatable, Identifiable {
     let facts: [DiagnosticFact]
     let artifact: DiagnosticArtifact?
     static let maximumFacts = 48
+
+    /// A report written by a newer build may carry metrics this build does not know; those facts
+    /// are dropped instead of the whole report being deleted on load.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        id = try container.decode(UUID.self, forKey: .id)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        kind = try container.decode(Kind.self, forKey: .kind)
+        outcome = try container.decode(Outcome.self, forKey: .outcome)
+        seconds = try container.decode(Double.self, forKey: .seconds)
+        samples = try container.decode(Int.self, forKey: .samples)
+        artifact = try container.decodeIfPresent(DiagnosticArtifact.self, forKey: .artifact)
+        var list = try container.nestedUnkeyedContainer(forKey: .facts)
+        var known: [DiagnosticFact] = []
+        while !list.isAtEnd {
+            if let fact = try? list.decode(DiagnosticFact.self) { known.append(fact) } else { _ = try? list.decode(UnknownFact.self) }
+        }
+        facts = known
+    }
+
+    private struct UnknownFact: Decodable {}
+
     init(kind: Kind, outcome: Outcome, seconds: Double, samples: Int, facts: [DiagnosticFact], at: Date = Date()) {
         version = 1; id = UUID(); artifact = .current; createdAt = at; self.kind = kind; self.outcome = outcome
         self.seconds = seconds.isFinite ? min(86400, max(0, seconds)) : 0

@@ -60,8 +60,35 @@ final class PrivacyCurtainPolicyTests: XCTestCase {
         XCTAssertEqual(PrivacyCurtainPolicy.desired(silent, currentlyUp: true), .up)
         silent.phoneSilentFor = PrivacyCurtainPolicy.phoneSilenceLimit + 0.1
         XCTAssertEqual(PrivacyCurtainPolicy.desired(silent, currentlyUp: true), .down)
-        XCTAssertEqual(PrivacyCurtainPolicy.desired(silent, currentlyUp: false), .up,
-                       "Silence only lowers a raised curtain; a fresh raise follows the live picture")
+        XCTAssertEqual(PrivacyCurtainPolicy.desired(silent, currentlyUp: false), .down,
+                       "Mac capture stays healthy when the phone vanishes; raising again would flap")
+        silent.phoneSilentFor = 0
+        XCTAssertEqual(PrivacyCurtainPolicy.desired(silent, currentlyUp: false), .up, "Heartbeats back: cover again")
+    }
+
+    func testPostSessionHoldEndsOnlyAfterAnObservedRestoreFinishes() {
+        XCTAssertFalse(PrivacyCurtainPolicy.restoreHoldShouldEnd(observed: false, engaged: false, changing: false, needsRefresh: false),
+                       "A reconnect grace with no restore is ended by the detect timer, not by this rule")
+        XCTAssertFalse(PrivacyCurtainPolicy.restoreHoldShouldEnd(observed: true, engaged: true, changing: true, needsRefresh: true))
+        XCTAssertFalse(PrivacyCurtainPolicy.restoreHoldShouldEnd(observed: true, engaged: false, changing: false, needsRefresh: true),
+                       "Big Text clears its phase before it moves windows back; the host flag outlives that")
+        XCTAssertTrue(PrivacyCurtainPolicy.restoreHoldShouldEnd(observed: true, engaged: false, changing: false, needsRefresh: false))
+        XCTAssertGreaterThan(PrivacyCurtainPolicy.restoreHoldLimit, PrivacyCurtainPolicy.restoreHoldDetect)
+    }
+
+    func testFirstBigTextChangeWaitsOnlyWhileTheCurtainIsExpected() {
+        XCTAssertTrue(PrivacyCurtainPolicy.scaleShouldWait(curtainUp: false, expected: true, raiseFailed: false,
+                                                           liftedLocally: false, paused: false, bigTextEngaged: false))
+        XCTAssertFalse(PrivacyCurtainPolicy.scaleShouldWait(curtainUp: true, expected: true, raiseFailed: false,
+                                                            liftedLocally: false, paused: false, bigTextEngaged: false), "Already covered")
+        XCTAssertFalse(PrivacyCurtainPolicy.scaleShouldWait(curtainUp: false, expected: false, raiseFailed: false,
+                                                            liftedLocally: false, paused: false, bigTextEngaged: false), "Privacy mode off")
+        XCTAssertFalse(PrivacyCurtainPolicy.scaleShouldWait(curtainUp: false, expected: true, raiseFailed: true,
+                                                            liftedLocally: false, paused: false, bigTextEngaged: false))
+        XCTAssertFalse(PrivacyCurtainPolicy.scaleShouldWait(curtainUp: false, expected: true, raiseFailed: false,
+                                                            liftedLocally: true, paused: false, bigTextEngaged: false))
+        XCTAssertFalse(PrivacyCurtainPolicy.scaleShouldWait(curtainUp: false, expected: true, raiseFailed: false,
+                                                            liftedLocally: false, paused: false, bigTextEngaged: true), "Later steps never wait")
     }
 
     func testTheCurtainStaysThroughBigTextRestoreAfterTheSessionEnds() {
@@ -331,6 +358,27 @@ final class PrivacyCurtainControllerTests: XCTestCase {
         XCTAssertEqual(result, .cancelled, "capture ownership was invalidated after the intentional cancellation")
         XCTAssertEqual(curtain.phase, .down)
         XCTAssertTrue(curtain.windowIDs.isEmpty)
+    }
+
+    func testCancelRaiseAbandonsAHalfRaiseAndLeavesARaisedCurtainAlone() async {
+        let curtain = PrivacyCurtainController(makeWindows: offscreenWindows())
+        let hooks = PrivacyCurtainController.CaptureHooks(exclude: { _ in
+            // A capture restart (audio toggle, display switch, resume) interrupts the raise.
+            curtain.cancelRaise()
+            return false
+        }, signature: { nil })
+        let result = await curtain.raise(hooks: hooks, settle: .zero, verifyAfter: .zero)
+        XCTAssertEqual(result, .cancelled, "Interrupted, not failed: the next reconcile tries again")
+        XCTAssertEqual(curtain.phase, .down)
+        XCTAssertTrue(curtain.windowIDs.isEmpty)
+
+        let raised = await curtain.raise(hooks: self.hooks(), settle: .zero, verifyAfter: .zero)
+        XCTAssertEqual(raised, .raised)
+        let ids = curtain.windowIDs
+        curtain.cancelRaise()
+        XCTAssertEqual(curtain.phase, .up, "Only a half-raise is cancelled; a raised curtain keeps covering")
+        XCTAssertEqual(curtain.windowIDs, ids)
+        curtain.lift()
     }
 
     func testLateOwnScreenNotificationKeepsTheSameExclusionWindows() async {

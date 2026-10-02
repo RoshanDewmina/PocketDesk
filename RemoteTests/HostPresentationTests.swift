@@ -377,7 +377,7 @@ final class HostPresentationTests: XCTestCase {
         state.privacyCurtain = true
         state.focusAccessibility = .granted
         XCTAssertEqual(HostCurtainCopy.subtitle(for: state),
-                       "On by default. Your phone still sees everything; press Esc three times at this Mac to show it")
+                       "On by default. Your phone still sees everything. Esc three times at this Mac shows it")
         state.curtainStatus = "Covering your display. Your phone still sees the desktop."
         XCTAssertEqual(HostCurtainCopy.subtitle(for: state), state.curtainStatus, "A live status replaces the explanation")
         state.curtainStatus = nil

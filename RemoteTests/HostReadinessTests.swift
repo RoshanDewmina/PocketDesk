@@ -151,6 +151,11 @@ final class HostReadinessTests: XCTestCase {
         // A pre-privacy-mode install that explicitly chose off keeps it after the upgrade.
         defaults.set(false, forKey: "privacyCurtainWhileSharing")
         XCTAssertFalse(HostPreferences(defaults: defaults).privacyCurtain)
+        // `defaults write … -int 1` and older builds' NSNumber values read as the choice they are.
+        defaults.set(1, forKey: "privacyCurtainWhileSharing")
+        XCTAssertTrue(HostPreferences(defaults: defaults).privacyCurtain)
+        defaults.set(0, forKey: "privacyCurtainWhileSharing")
+        XCTAssertFalse(HostPreferences(defaults: defaults).privacyCurtain)
     }
 
     func testPrivacyModeKillSwitchRestoresTheOldDefaultWithoutTouchingChoices() throws {
