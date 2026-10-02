@@ -75,10 +75,39 @@ final class LiveActivityUITests: XCTestCase {
     /// them, and later asks again whether to always allow them. Both answers are remembered for the app.
     private func answerTheSystemQuestionIfAsked() {
         let allow = springboard.buttons.matching(NSPredicate(format: "label IN {'Allow', 'Always Allow'}")).firstMatch
-        if allow.waitForExistence(timeout: 3) {
-            allow.tap()
-            Thread.sleep(forTimeInterval: 2.0)
+        guard allow.waitForExistence(timeout: 3), allow.isHittable else { return }
+        let question = springboard.descendants(matching: .any).matching(NSPredicate(
+            format: "label CONTAINS[c] 'Farside' AND label CONTAINS[c] 'live activit' AND label CONTAINS[c] 'allow'"))
+            .allElementsBoundByIndex.first { $0.exists && $0.isHittable }
+        // Native permission copy may be split into a title and body inside an alert.
+        let namedAlert = springboard.alerts.allElementsBoundByIndex.first { alert in
+            guard alert.exists && alert.isHittable else { return false }
+            let labels = ([alert.label] + alert.staticTexts.allElementsBoundByIndex.map(\.label))
+                .joined(separator: " ").lowercased()
+            return labels.contains("farside") && labels.contains("live activit")
+                && labels.contains("allow") && alert.buttons[allow.label].exists
         }
+        guard question != nil || namedAlert != nil else {
+            let reason = XCTAttachment(string: "SpringBoard Allow action was not a verified Farside Live Activity question; left unanswered")
+            reason.name = "missing-state-reason"
+            reason.lifetime = .keepAlways
+            add(reason)
+            return
+        }
+        let name = allow.label == "Always Allow"
+            ? "system-live-activity-always-permission" : "system-live-activity-permission"
+        let frame = springboard.frame
+        if frame.height > frame.width {
+            attach(name)
+        } else {
+            let reason = XCTAttachment(string: "Verified Farside Live Activity question did not have a portrait SpringBoard frame")
+            reason.name = "missing-state-reason"
+            reason.lifetime = .keepAlways
+            add(reason)
+            attach("missing-" + name)
+        }
+        allow.tap()
+        Thread.sleep(forTimeInterval: 2.0)
     }
 
     private var islandContainer: XCUIElement {
