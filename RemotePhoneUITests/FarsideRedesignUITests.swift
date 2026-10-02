@@ -279,88 +279,133 @@ final class ClaimsVerificationUITests: XCTestCase {
 
     @MainActor
     func testCoachLessonsUseSynthesizedGesturesAllFive() {
+        // Legacy aggregate remains selected by the original eight-method stages.
+        // Recovery selects each lesson separately so a framework exception cannot strand others.
+        for lesson in 0..<5 { verifyCoachLesson(lesson) }
+    }
+
+    @MainActor
+    func testCoachMoveUsesSynthesizedGesture() { verifyCoachLesson(0) }
+
+    @MainActor
+    func testCoachClickUsesSynthesizedGesture() { verifyCoachLesson(1) }
+
+    @MainActor
+    func testCoachScrollUsesPublicPointerScroll() { verifyCoachLesson(2) }
+
+    @MainActor
+    func testCoachDragUsesSynthesizedGesture() { verifyCoachLesson(3) }
+
+    @MainActor
+    func testCoachZoomUsesSynthesizedPinch() { verifyCoachLesson(4) }
+
+    @MainActor
+    private func verifyCoachLesson(_ lesson: Int) {
+        guard (0..<5).contains(lesson) else { return XCTFail("Unknown coach lesson") }
         let app = XCUIApplication()
-        // Each launch starts a particular lesson; only its real completion gate may reveal Next.
-        // No Skip, model call or pre-completed fixture is used to claim that lesson passed.
-        for lesson in 0..<5 {
-            app.launchArguments = ["--ui-coach", "--ui-coach-probe", "--ui-coach-lesson=\(lesson)",
-                                   "-pointerSensitivity", "1"]
-            app.launch()
-            let pad = app.descendants(matching: .any)["coach.pad"].firstMatch
-            guard pad.waitForExistence(timeout: 5) else {
-                XCTFail("Lesson \(lesson + 1) has no practice pad")
-                capture(app, "coach-\(lesson + 1)-missing")
-                app.terminate()
-                continue
-            }
-            let next = app.buttons["coach.next"]
-            XCTAssertFalse(next.exists, "A lesson must start behind its completion gate")
-            switch lesson {
-            case 0:
-                for _ in 0..<40 where !next.exists {
-                    guard let points = coachPositions(app) else { break }
-                    moveFinger(pad, delta: CGVector(dx: (points[2] - points[0]) * 0.6,
-                                                   dy: (points[3] - points[1]) * 0.6))
-                }
-            case 1:
-                // Tap far from Yes: the existing pointer, rather than the finger, chooses Yes.
-                pad.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.75)).tap()
-            case 2:
-                // Public XCTest offers no two-finger swipe. This is its public mouse-scroll API,
-                // not touch-scroll proof. A missing gate is a failure, never a forced completion.
-                receipt("coach-scroll-input-limitation", "XCTest scroll(byDeltaX:deltaY:) synthesizes pointer scrolling. "
-                        + "Two-finger touch scrolling remains a physical/manual acceptance gate even if Next appears.")
-                for _ in 0..<6 where !next.exists {
-                    pad.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
-                        .scroll(byDeltaX: 0, deltaY: -180)
-                }
-            case 3:
-                // Pointer starts on the file. Re-measure after each drop; pick it up again if
-                // a partial drag has not reached the folder. Geometry comes from this pad.
-                for _ in 0..<20 where !next.exists {
-                    guard let points = coachPositions(app) else { break }
-                    let desired = CGPoint(x: pad.frame.width - 78, y: pad.frame.height - 104)
-                    let start = pad.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.4))
-                    let delta = CGVector(dx: (desired.x - points[0]) * 0.4,
-                                         dy: (desired.y - points[1]) * 0.4)
-                    let end = start.withOffset(delta)
-                    start.tap()
-                    start.press(forDuration: 0.55, thenDragTo: end,
-                                withVelocity: .slow, thenHoldForDuration: 0.1)
-                }
-            default:
-                for _ in 0..<4 where !next.exists { pad.pinch(withScale: 2, velocity: 1) }
-            }
-            capture(app, "coach-\(lesson + 1)-completion-attempt")
-            guard next.waitForExistence(timeout: 3) else {
-                XCTFail("Lesson \(lesson + 1) did not pass through its gesture completion gate")
-                app.terminate()
-                continue
-            }
-            XCTAssertTrue(next.isHittable)
-            next.tap()
-            if lesson == 4 {
-                let done = app.buttons["coach.done"]
-                if done.waitForExistence(timeout: 3) {
-                    capture(app, "coach-done-after-pinch")
-                    XCTAssertTrue(done.isHittable)
-                    done.tap()
-                    XCTAssertTrue(app.descendants(matching: .any)["coach"].firstMatch.waitForNonExistence(timeout: 5))
-                } else { XCTFail("Finish must reveal Done") }
-            } else {
-                let caption = app.staticTexts["coach.lesson"]
-                let advanced = XCTNSPredicateExpectation(
-                    predicate: NSPredicate(format: "label CONTAINS[c] %@", "Lesson \(lesson + 2) of 5"), object: caption)
-                XCTAssertEqual(XCTWaiter.wait(for: [advanced], timeout: 3), .completed)
-            }
-            app.terminate()
+        defer { app.terminate() }
+        // Only a real gesture may reveal Next; each launch starts an uncompleted lesson.
+        receipt("coach-\(lesson + 1)-planned", "Real-gate lesson \(lesson + 1); Next required, Done only after final Zoom. "
+                + "Scroll uses public pointer-scroll API and remains failed if unsupported; two-finger touch is HANDS.")
+        app.launchArguments = ["--ui-coach", "--ui-coach-probe", "--ui-coach-lesson=\(lesson)",
+                               "-pointerSensitivity", "1"]
+        app.launch()
+        let pad = app.descendants(matching: .any)["coach.pad"].firstMatch
+        guard pad.waitForExistence(timeout: 5) else {
+            XCTFail("Lesson \(lesson + 1) has no practice pad")
+            capture(app, "coach-\(lesson + 1)-missing")
+            return
         }
+        let next = app.buttons["coach.next"]
+        let done = app.buttons["coach.done"]
+        let caption = app.staticTexts["coach.lesson"]
+        let starting = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS[c] %@", "Lesson \(lesson + 1) of 5"), object: caption)
+        guard XCTWaiter.wait(for: [starting], timeout: 3) == .completed else {
+            XCTFail("Expected starting lesson \(lesson + 1) was not shown")
+            capture(app, "coach-\(lesson + 1)-wrong-start")
+            return
+        }
+        guard !next.exists, !done.exists else {
+            XCTFail("Lesson \(lesson + 1) must start behind its real completion gate")
+            capture(app, "coach-\(lesson + 1)-precompleted-start")
+            return
+        }
+        capture(app, "coach-\(lesson + 1)-start-before-real-gesture")
+        switch lesson {
+        case 0:
+            for _ in 0..<40 where !next.exists {
+                guard let points = coachPositions(app) else { break }
+                moveFinger(pad, delta: CGVector(dx: (points[2] - points[0]) * 0.6,
+                                               dy: (points[3] - points[1]) * 0.6))
+            }
+        case 1:
+            // Tap far from Yes: the existing pointer, rather than the finger, chooses Yes.
+            pad.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.75)).tap()
+        case 2:
+            // Public XCTest offers no two-finger swipe. This is its public mouse-scroll API,
+            // not touch-scroll proof. A missing gate is a failure, never a forced completion.
+            receipt("coach-scroll-input-limitation", "XCTest scroll(byDeltaX:deltaY:) synthesizes pointer scrolling. "
+                    + "Two-finger touch scrolling remains a physical/manual acceptance gate even if Next appears.")
+            for _ in 0..<6 where !next.exists {
+                pad.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
+                    .scroll(byDeltaX: 0, deltaY: -180)
+            }
+        case 3:
+            // Pointer starts on the file. Re-measure after each drop; pick it up again if
+            // a partial drag has not reached the folder. Geometry comes from this pad.
+            for _ in 0..<20 where !next.exists {
+                guard let points = coachPositions(app) else { break }
+                let desired = CGPoint(x: pad.frame.width - 78, y: pad.frame.height - 104)
+                let start = pad.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.4))
+                let delta = CGVector(dx: (desired.x - points[0]) * 0.4,
+                                     dy: (desired.y - points[1]) * 0.4)
+                let end = start.withOffset(delta)
+                start.tap()
+                start.press(forDuration: 0.55, thenDragTo: end,
+                            withVelocity: .slow, thenHoldForDuration: 0.1)
+            }
+        default:
+            for _ in 0..<4 where !next.exists { pad.pinch(withScale: 2, velocity: 1) }
+        }
+        capture(app, "coach-\(lesson + 1)-completion-attempt")
+        guard next.waitForExistence(timeout: 3) else {
+            XCTFail("Lesson \(lesson + 1) did not pass through its gesture completion gate")
+            return
+        }
+        guard next.isHittable else {
+            XCTFail("Lesson \(lesson + 1) completion action is not reachable")
+            return
+        }
+        next.tap()
+        if lesson == 4 {
+            let done = app.buttons["coach.done"]
+            if done.waitForExistence(timeout: 3) {
+                capture(app, "coach-done-after-pinch")
+                guard done.isHittable else {
+                    XCTFail("Done after Zoom is not reachable")
+                    return
+                }
+                done.tap()
+                XCTAssertTrue(app.descendants(matching: .any)["coach"].firstMatch.waitForNonExistence(timeout: 5))
+            } else { XCTFail("Finish must reveal Done") }
+        } else {
+            let caption = app.staticTexts["coach.lesson"]
+            let advanced = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label CONTAINS[c] %@", "Lesson \(lesson + 2) of 5"), object: caption)
+            XCTAssertEqual(XCTWaiter.wait(for: [advanced], timeout: 3), .completed,
+                           "Real Next must advance from lesson \(lesson + 1)")
+            capture(app, "coach-\(lesson + 1)-after-real-next")
+        }
+        receipt("coach-\(lesson + 1)-gesture-scope", "Selected lesson \(lesson + 1) only. Its real starting gate, gesture and Next/advancement were exercised. "
+                + "Done is required only after final Zoom. No Skip or forced completion. Physical gesture feel remains HANDS.")
     }
 
     @MainActor
     func testSessionPinchChangesAccessibleZoom() {
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-controls-settings", "--ui-controls-page=view"]
+        // Admit offline input through the existing real gesture surface; keep privacy gates intact.
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-probe-quiet", "--ui-viewport-fit", "--ui-controls-settings", "--ui-controls-page=view"]
         app.launch()
         guard recoverFixtureIfNeeded(app), let before = currentZoom(app) else { return }
         capture(app, "session-zoom-before-pinch")
@@ -606,7 +651,7 @@ final class ClaimsVerificationUITests: XCTestCase {
         }
         // The helper row belongs to overlay Settings (iPad or landscape phone). Navigate it
         // through the real row; never request a packet or manufacture helper authority.
-        fixtures.append(AuditFixture(name: "settings-lan-wake", arguments: session + ["--ui-controls-settings"],
+        fixtures.append(AuditFixture(name: "settings-lan-wake", arguments: session + ["--ui-dock-open"],
                                      marker: "Owner-registered wake target ID", navigationTitle: "LAN wake",
                                      action: .openLANWake, orientation: .landscapeLeft))
         for kind in ["napping", "unreachable", "busy", "locked", "needsPlan", "codeRejected", "declined",
@@ -666,13 +711,13 @@ final class ClaimsVerificationUITests: XCTestCase {
                     }
                 }
                 if fixture.action == .openLANWake {
-                    let row = app.buttons["Wake another Mac on this LAN"].firstMatch
-                    if row.waitForExistence(timeout: 5) {
-                        let form = app.scrollViews.firstMatch
-                        for _ in 0..<6 where !row.isHittable && form.exists { form.swipeUp() }
-                        if row.isHittable { row.tap() }
-                        else { issues.append("\(name): LAN wake row is not reachable") }
-                    } else { issues.append("\(name): LAN wake row is missing from overlay Settings") }
+                    // Enter overlay Settings through its real control after landscape settles.
+                    // Its named form can virtualize the LAN row; never swipe the session canvas.
+                    if !openRecoveryLANWake(app, name: name, issues: &issues) {
+                        capture(app, "\(name)-lan-navigation-failed")
+                        app.terminate()
+                        return
+                    }
                 }
                 let marker = app.descendants(matching: .any)[fixture.marker].firstMatch
                 if !marker.waitForExistence(timeout: 5) {
@@ -729,17 +774,17 @@ final class ClaimsVerificationUITests: XCTestCase {
     }
 
     @MainActor
-    private func tapRecoveryDisplayNavigation(_ app: XCUIApplication, identifier: String,
+    private func tapRecoveryNavigation(_ app: XCUIApplication, identifier: String,
                                               name: String, issues: inout [String]) -> Bool {
         let button = app.buttons[identifier].firstMatch
         guard button.waitForExistence(timeout: 5) else {
-            issues.append("\(name): Display navigation control missing: \(identifier)")
+            issues.append("\(name): Session navigation control missing: \(identifier)")
             return false
         }
         let scroll = app.scrollViews.firstMatch
         for _ in 0..<6 where !button.isHittable && scroll.exists { scroll.swipeUp() }
         guard button.isHittable else {
-            issues.append("\(name): Display navigation control unreachable: \(identifier)")
+            issues.append("\(name): Session navigation control unreachable: \(identifier)")
             return false
         }
         button.tap()
@@ -749,14 +794,14 @@ final class ClaimsVerificationUITests: XCTestCase {
     @MainActor
     private func openRecoveryDisplay(_ app: XCUIApplication, name: String, issues: inout [String]) -> Bool {
         // Navigation only: never press a display-selection/scale control.
-        guard tapRecoveryDisplayNavigation(app, identifier: "Controls", name: name, issues: &issues) else { return false }
+        guard tapRecoveryNavigation(app, identifier: "Controls", name: name, issues: &issues) else { return false }
         if app.buttons["remote.displayRow"].firstMatch.waitForExistence(timeout: 3) {
             // Portrait phone: Settings omits this row; it lives directly under Controls' keys.
-            guard tapRecoveryDisplayNavigation(app, identifier: "remote.displayRow", name: name, issues: &issues) else { return false }
+            guard tapRecoveryNavigation(app, identifier: "remote.displayRow", name: name, issues: &issues) else { return false }
         } else {
             // iPad's overlay Settings owns the Display row.
-            guard tapRecoveryDisplayNavigation(app, identifier: "remote.controls.settings", name: name, issues: &issues),
-                  tapRecoveryDisplayNavigation(app, identifier: "remote.settings.display", name: name, issues: &issues) else { return false }
+            guard tapRecoveryNavigation(app, identifier: "remote.controls.settings", name: name, issues: &issues),
+                  tapRecoveryNavigation(app, identifier: "remote.settings.display", name: name, issues: &issues) else { return false }
         }
         guard app.navigationBars["Display"].waitForExistence(timeout: 5) else {
             issues.append("\(name): real Display navigation title missing")
@@ -769,6 +814,48 @@ final class ClaimsVerificationUITests: XCTestCase {
             }
         }
         return true
+    }
+
+    @MainActor
+    private func openRecoveryLANWake(_ app: XCUIApplication, name: String, issues: inout [String]) -> Bool {
+        let landscape = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let frame = app.windows.firstMatch.frame
+            return frame.width > frame.height && frame.height > 0
+        }, object: nil)
+        guard XCTWaiter.wait(for: [landscape], timeout: 5) == .completed else {
+            issues.append("\(name): landscape window did not settle before Settings navigation")
+            return false
+        }
+        guard tapRecoveryNavigation(app, identifier: "Controls", name: name, issues: &issues),
+              tapRecoveryNavigation(app, identifier: "remote.controls.settings", name: name, issues: &issues),
+              app.navigationBars["Settings"].waitForExistence(timeout: 5) else {
+            issues.append("\(name): real overlay Settings navigation did not complete")
+            return false
+        }
+        let form = app.descendants(matching: .any)["remote.controls.page"].firstMatch
+        guard form.waitForExistence(timeout: 5),
+              [.collectionView, .scrollView, .table].contains(form.elementType) else {
+            issues.append("\(name): named Settings scroll form is missing")
+            return false
+        }
+        let row = form.buttons.matching(NSPredicate(format: "label == %@", "Wake another Mac on this LAN")).firstMatch
+        for step in 0...6 {
+            if row.exists, row.isHittable {
+                row.tap()
+                guard app.navigationBars["LAN wake"].waitForExistence(timeout: 5),
+                      app.textFields["Owner-registered wake target ID"].waitForExistence(timeout: 5) else {
+                    issues.append("\(name): LAN wake destination title or owner target field missing")
+                    return false
+                }
+                receipt("\(name)-navigation", "Landscape Controls → Settings → LAN wake through the real row after \(step) bounded form scroll(s). "
+                        + "Owner target field and LAN wake title checked; no field entry, toggle or wake request.")
+                return true
+            }
+            guard step < 6, form.exists else { break }
+            form.swipeUp()
+        }
+        issues.append("\(name): LAN wake row not reachable in the real Settings form after six scrolls")
+        return false
     }
 
     @MainActor
@@ -921,17 +1008,12 @@ extension ClaimsVerificationUITests {
                         audit(app, name: "supplemental-\(sizeName)-help-and-more-menu", issues: &issues)
                         menuAudited = true
                     }
-                    // Your Macs also appears in the Home list underneath the menu. Exclude
-                    // that row so this audit must follow the actual Help-and-more menu path.
-                    let item = app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@",
-                                                               label, "home.pairedMacs")).firstMatch
-                    guard item.waitForExistence(timeout: 5), item.isHittable else {
+                    guard supplementalTapMenuAction(label, in: app, name: name, issues: &issues) else {
                         issues.append("\(name): expected menu action is unreachable: \(label)")
                         capture(app, "\(name)-missing-menu-item")
                         app.terminate()
                         return
                     }
-                    item.tap()
                 case .homeRow(let identifier):
                     guard supplementalTapReachable(app.buttons[identifier], in: app) else {
                         issues.append("\(name): Home row is not reachable: \(identifier)")
@@ -973,12 +1055,79 @@ extension ClaimsVerificationUITests {
         }
         receipt("supplemental-\(sizeName)-audit-inventory",
                 "Eight Home destinations plus Help-and-more menu. Initial view and up to three visible scroll slices.\n"
+                + "Lower menu navigation uses at most six drags inside its ancestor-clipped collection bounds; "
+                + "each newly visible menu slice keeps its screenshot and all audit findings.\n"
                 + "This is a fixture/tree audit, not actual VoiceOver navigation or physical usability acceptance.\n"
                 + "No setting mutation, pairing selection/removal, network action, purchase, notification request/test, "
                 + "live activity preview or Connect button was exercised. Server Data disclosure was opened only.\n"
                 + "Recorded issues/errors: \(issues.count)\n" + issues.joined(separator: "\n\n"))
         XCTAssertTrue(issues.isEmpty, "All supplemental .all findings and reachability errors are retained; "
                       + "\(issues.count) issue(s). See per-screen and inventory attachments.")
+    }
+
+    @MainActor
+    private func supplementalTapMenuAction(_ label: String, in app: XCUIApplication,
+                                           name: String, issues: inout [String]) -> Bool {
+        // Navigation-only allowlist: never choose Connect, Forget, pairing or provider actions.
+        let allowed = ["Your Macs", "Connection Details", "Third-Party Notices", "Server Data", "Settings"]
+        guard allowed.contains(label) else { return false }
+        // The finalized AX-XXXL receipt shows UIKit's popup as a collection, separate from Home.
+        // Identify it while its first rows exist; retain that bound collection as rows virtualize.
+        let menus = app.collectionViews.allElementsBoundByIndex.filter {
+            $0.buttons.matching(NSPredicate(format: "label == %@", "Your Macs")).firstMatch.exists
+                && $0.buttons.matching(NSPredicate(format: "label == %@", "How to steer")).firstMatch.exists
+        }
+        guard menus.count == 1 else {
+            issues.append("\(name): expected one identifiable Help-and-more popup collection; found \(menus.count)")
+            return false
+        }
+        let menu = menus[0]
+        let item = menu.buttons.matching(NSPredicate(format: "label == %@", label)).firstMatch
+        for step in 0...6 {
+            guard let visible = supplementalVisibleMenuBounds(menu, in: app) else {
+                issues.append("\(name): popup clipping bounds could not be established; no background gesture attempted")
+                return false
+            }
+            if item.exists, visible.contains(item.frame), item.isHittable {
+                receipt("\(name)-menu-navigation", "Exact popup action \(label) reachable after \(step) bounded menu scroll(s). "
+                        + "Collection bounds: \(menu.frame); visible ancestor intersection: \(visible).")
+                item.tap()
+                return true
+            }
+            guard step < 6 else { break }
+            // A collection's frame can extend below its clipping parent. Generic swipeUp()
+            // would start outside the popup. Both derived points stay inside its visible rect.
+            let origin = menu.coordinate(withNormalizedOffset: .zero)
+            let frame = menu.frame
+            let start = origin.withOffset(CGVector(dx: visible.midX - frame.minX,
+                                                   dy: visible.minY + visible.height * 0.8 - frame.minY))
+            let end = origin.withOffset(CGVector(dx: visible.midX - frame.minX,
+                                                 dy: visible.minY + visible.height * 0.25 - frame.minY))
+            start.press(forDuration: 0.01, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
+            audit(app, name: "\(name)-menu-scrolled-\(step + 1)", issues: &issues, includeHierarchy: false)
+        }
+        return false
+    }
+
+    @MainActor
+    private func supplementalVisibleMenuBounds(_ menu: XCUIElement, in app: XCUIApplication) -> CGRect? {
+        guard menu.exists else { return nil }
+        let frame = menu.frame
+        guard !frame.isNull, !frame.isEmpty, frame.width.isFinite, frame.height.isFinite else { return nil }
+        var visible = frame.intersection(app.frame)
+        var matchedAncestor = false
+        // Public containment queries select only ancestors of a collection. Match this one's
+        // frame so an unrelated container cannot authorize a gesture on the underlying Home.
+        for ancestor in app.otherElements.containing(.collectionView, identifier: nil).allElementsBoundByIndex {
+            guard ancestor.collectionViews.allElementsBoundByIndex.contains(where: { $0.frame == frame }) else { continue }
+            matchedAncestor = true
+            visible = visible.intersection(ancestor.frame)
+        }
+        guard matchedAncestor, !visible.isNull, !visible.isEmpty,
+              visible.minX.isFinite, visible.minY.isFinite,
+              visible.width.isFinite, visible.height.isFinite,
+              visible.width > 60, visible.height > 100 else { return nil }
+        return visible
     }
 
     @MainActor
