@@ -444,14 +444,15 @@ final class SendToMacTests: XCTestCase {
             XCTAssertNil(beacon?.liveSessionID)
             stored.fulfill()
         }
-        await fulfillment(of: [stored], timeout: 2)
+        // Utility-QoS file I/O; 2 s timed out once on a loaded simulator (2 Oct).
+        await fulfillment(of: [stored], timeout: 10)
         io.updateBeacon(nil)
         let cleared = expectation(description: "beacon cleared after queued writes")
         io.read({ SendToMacOutbox.loadBeacon(root: $0) }) { beacon in
             XCTAssertNil(beacon)
             cleared.fulfill()
         }
-        await fulfillment(of: [cleared], timeout: 2)
+        await fulfillment(of: [cleared], timeout: 10)
     }
 
     func testBackgroundBurstSendsOnceAndPersistsReceiptBeforeRemoval() async throws {

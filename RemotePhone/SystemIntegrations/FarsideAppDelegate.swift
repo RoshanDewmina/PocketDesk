@@ -23,13 +23,21 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
         Task { @MainActor in AgentAlertCenter.shared.openSettingsFromSystem() }
     }
 
-    func userNotificationCenter(_ center: UNUserNotificationCenter,
-                                didReceive response: UNNotificationResponse) async {
+    // The async form completed off the main thread, and UIKit asserts on that when it snapshots after
+    // a notification action (SIGABRT in -[UIApplication _performBlockAfterCATransactionCommitSynchronizes:]).
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
         guard let payload = AgentAlertPayload(userInfo: response.notification.request.content.userInfo),
-              let action = AgentAlertCenter.Action(actionIdentifier: response.actionIdentifier) else { return }
+              let action = AgentAlertCenter.Action(actionIdentifier: response.actionIdentifier) else {
+            completionHandler()
+            return
+        }
         let deliveredAt = response.notification.date
         let identifier = response.notification.request.identifier
-        await AgentAlertCenter.shared.respond(action, to: payload, deliveredAt: deliveredAt, notificationIdentifier: identifier)
+        Task { @MainActor in
+            await AgentAlertCenter.shared.respond(action, to: payload, deliveredAt: deliveredAt, notificationIdentifier: identifier)
+            completionHandler()
+        }
     }
 }
 
