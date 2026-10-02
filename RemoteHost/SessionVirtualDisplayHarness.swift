@@ -155,7 +155,7 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
             try await showFixture(on: screen(for: landscapeDisplay))
             let landscape60 = try await observe("iphone17-landscape-60", viewport: phoneLandscape,
                 display: landscapeDisplay, fps: 60)
-            let firstNewOutput = landscape60["firstCompleteCallbackMs"] as? Double
+            let firstNewOutput = landscape60["firstValidStreamCompleteCallbackMs"] as? Double
             var landscape120 = try await observe("iphone17-landscape-120", viewport: phoneLandscape,
                 display: landscapeDisplay, fps: 120)
             landscape120["provedStill"] = try await captureProvenWholeDisplayStill(label: "iphone17-landscape-still",
@@ -586,6 +586,10 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
         guard elapsed.isFinite, elapsed > 0 else { throw HarnessFailure("capture-measurement-window-invalid-\(label)") }
         var result = metrics.json(label: label, displayID: displayID, fps: fps, width: width, height: height,
                                   requestedSeconds: seconds)
+        let streamBounds = output.validStreamCallbackBounds
+        result["firstValidStreamCompleteCallbackMs"] = streamBounds.first as Any? ?? NSNull()
+        result["lastValidStreamCompleteCallbackMs"] = streamBounds.last as Any? ?? NSNull()
+        result["validStreamCallbackScope"] = "all valid complete callbacks from stream start through retirement; independent of steady-state measurement window"
         result["streamError"] = output.delegateError as Any? ?? NSNull()
         result["measurementKind"] = startupInclusive ? "startup-inclusive-still-proof" : "steady-state-after-start"
         result["streamStartupIncluded"] = startupInclusive
@@ -938,6 +942,8 @@ private final class SessionVirtualDisplayCaptureOutput: NSObject, SCStreamOutput
     private var measuring = false
     private var stats = HarnessMeasurement()
     private var latestBuffer: CVPixelBuffer?
+    private var firstValidStreamCompleteCallbackMs: Double?
+    private var lastValidStreamCompleteCallbackMs: Double?
     private var storedError: String?
     var delegateError: String? { errorLock.lock(); defer { errorLock.unlock() }; return storedError }
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
@@ -968,9 +974,12 @@ private final class SessionVirtualDisplayCaptureOutput: NSObject, SCStreamOutput
         guard let buffer else { return nil }
         return ciContext.createCGImage(CIImage(cvPixelBuffer: buffer), from: CGRect(x: 0, y: 0, width: width, height: height))
     }
+    var validStreamCallbackBounds: (first: Double?, last: Double?) {
+        queue.sync { (firstValidStreamCompleteCallbackMs, lastValidStreamCompleteCallbackMs) }
+    }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .screen, measuring, sampleBuffer.isValid,
+        guard type == .screen, sampleBuffer.isValid,
               let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
               let info = attachments.first, let raw = info[.status] as? Int,
               let status = SCFrameStatus(rawValue: raw) else { return }
@@ -979,10 +988,15 @@ private final class SessionVirtualDisplayCaptureOutput: NSObject, SCStreamOutput
         let barcode = correct && status == .complete ? buffer.flatMap(decodeBarcode) : nil
         let callback = MachClock.nowMs()
         let rawTime = (info[.displayTime] as? NSNumber)?.uint64Value
+        if status == .complete, correct, barcode != nil {
+            firstValidStreamCompleteCallbackMs = firstValidStreamCompleteCallbackMs ?? callback
+            lastValidStreamCompleteCallbackMs = callback
+            onFrame(callback)
+        }
+        guard measuring else { return }
         stats.record(status: status, displayTime: rawTime, barcode: barcode,
                      callbackTime: callback, geometryOK: correct)
         if correct && status == .complete { latestBuffer = buffer }
-        if status == .complete { onFrame(callback) }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
