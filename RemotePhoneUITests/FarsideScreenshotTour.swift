@@ -282,14 +282,34 @@ final class FarsideScreenshotTour: XCTestCase {
             // This deliberately invalid local string cannot identify a Mac or enroll a phone.
             field.typeText("not-a-farside-pairing-code")
             return tap(app.buttons["Pair Mac"], in: app) && require(element("pairing.feedback", in: app), "Malformed pairing feedback")
-        case "pairing-camera-unavailable":
+        case "pairing-camera-unavailable", "pairing-scanning":
+            #if targetEnvironment(simulator)
             guard tap(app.buttons["pairing.camera.continue"], in: app) else { return false }
-            return require(app.staticTexts["No camera here"], "Simulator camera unavailable")
-        case "pairing-scanning":
-            guard tap(app.buttons["pairing.camera.continue"], in: app) else { return false }
+            let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            let alert = system.alerts.firstMatch
+            if alert.waitForExistence(timeout: 2) {
+                let cameraText = alert.descendants(matching: .any)
+                    .matching(NSPredicate(format: "label CONTAINS[c] %@", "camera")).firstMatch
+                guard cameraText.exists || alert.label.localizedCaseInsensitiveContains("camera") else {
+                    return missing("Camera fixture interrupted by a different system alert")
+                }
+                let orientation = XCUIDevice.shared.orientation
+                let prefix = orientation == .landscapeLeft || orientation == .landscapeRight ? "landscape-" : "portrait-"
+                attach(prefix + "system-camera-permission")
+                guard require(alert.buttons["Allow"], "Simulator camera permission Allow") else { return false }
+                alert.buttons["Allow"].tap()
+                guard alert.waitForNonExistence(timeout: 3) else { return missing("Simulator camera permission did not dismiss") }
+            }
+            if shot.name == "pairing-camera-unavailable" {
+                return require(app.staticTexts["No camera here"], "Simulator camera unavailable")
+            }
             // Camera hardware is absent on some simulators. Never label its fallback as scanning.
+            if app.staticTexts["No camera here"].exists { return missing("Simulator has no live camera scanner") }
             return require(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Camera viewfinder")).firstMatch,
                            "Camera scanning (simulator camera may be unavailable)")
+            #else
+            return missing("Camera permission catalogue actions require an iOS Simulator")
+            #endif
         case "big-text-pending", "big-text-selected":
             // The Controls root requests the probe's display descriptors on appearance. Pushing
             // Picture directly at launch can skip that appearance and leave Big Text with no steps.
