@@ -175,6 +175,27 @@ struct EncoderInFlightGate<Entry> {
     }
 }
 
+/// Optional session settings behind `StreamTuning` switches. A setter the encoder rejects is reported in
+/// the evidence and never fails the session.
+struct OwnedEncoderOptions: Equatable {
+    var prioritizeSpeed = false
+    var hevcLowLatency = false
+    var periodicKeyFrames = true
+    var realTime = true
+    /// ExpectedFrameRate never below this, so VideoToolbox does not slow down for a lower capture rate.
+    var minimumExpectedFPS = 0
+    init(prioritizeSpeed: Bool = false, hevcLowLatency: Bool = false, periodicKeyFrames: Bool = true, realTime: Bool = true, minimumExpectedFPS: Int = 0) {
+        self.prioritizeSpeed = prioritizeSpeed; self.hevcLowLatency = hevcLowLatency; self.periodicKeyFrames = periodicKeyFrames
+        self.realTime = realTime; self.minimumExpectedFPS = minimumExpectedFPS
+    }
+    init(_ tuning: StreamTuning) {
+        self.init(prioritizeSpeed: tuning.encoderPrioritizeSpeed, hevcLowLatency: tuning.hevcLowLatency, periodicKeyFrames: tuning.encoderPeriodicKeyFrames)
+    }
+    /// Far beyond any session; VideoToolbox treats 0 as "encoder decides", not "never".
+    static let requestedKeysOnlyInterval = 1_000_000
+    static let requestedKeysOnlyDurationSeconds = 86_400.0
+}
+
 /// Public VideoToolbox encoder, with a per-peer callback and the newest-frame-wins bound.
 /// LTR references are acknowledged only by a negotiated receiver successful decode.
 final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
@@ -211,6 +232,12 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     private let newestFrameWins: () -> Bool
     private let inFlightLimit: () -> Int?
     private let maximumQPCeiling: () -> Int
+    private let options: () -> OwnedEncoderOptions
+    private var sessionOptions = OwnedEncoderOptions()
+    private var lowLatencyRefused = false
+    private var storedSpeedPriority: Bool?
+    private var storedRequestedKeysOnly: Bool?
+    var optionsEvidence: String? { serialized { optionsSummary } }
     var inFlightCounts: EncoderInFlightCounts { serialized { gate.counts } }
     private var nextID: UInt64 = 0
     private var width: Int32 = 0, height: Int32 = 0
@@ -244,7 +271,9 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
          inFlightLimit: @escaping () -> Int? = { StreamTuning.current.encoderMaxInFlight },
          maximumQPCeiling: @escaping () -> Int = { StreamTuning.current.encoderMaximumQP },
          newestFrameWins: @escaping () -> Bool = { NewestFrameWinsSwitch.isOn },
+         options: @escaping () -> OwnedEncoderOptions = { OwnedEncoderOptions(StreamTuning.current) },
          clock: @escaping () -> Double = { MachClock.nowMs() }) {
+        self.options = options
         self.videoFeedback = videoFeedback; self.textClarity = textClarity; self.propertyCatalog = propertyCatalog; self.setFrameQP = setFrameQP
         self.inFlightLimit = inFlightLimit; self.maximumQPCeiling = maximumQPCeiling; self.newestFrameWins = newestFrameWins; self.clock = clock
         self.configuration = configuration; self.counters = counters; self.frameTiming = frameTiming
@@ -265,14 +294,23 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
             maximumQP = max(1, min(ceiling, settings.qpMax == 0 ? ceiling : Int(settings.qpMax)))
             guard configuration.fits(width: Int(width), height: Int(height), fps: Int(fps)) else { return -1 }
             gate.limit = inFlightLimit()
+            sessionOptions = options()
             restart = EncoderRestartPolicy(); restart.keyFrameBudgetMs = 250
             restart.sessionStarted(kbps: Double(bitrate), at: ProcessInfo.processInfo.systemUptime)
             return createSession() == noErr ? 0 : -1
         }
     }
     private func createSession() -> OSStatus {
+        let optionalLowLatency = sessionOptions.hevcLowLatency && configuration.codecType == kCMVideoCodecType_HEVC && !configuration.fullColor444
+        lowLatencyRefused = false
+        let status = createSession(lowLatency: configuration.lowLatency || optionalLowLatency)
+        guard status != noErr, optionalLowLatency else { return status }
+        lowLatencyRefused = true
+        return createSession(lowLatency: false)
+    }
+    private func createSession(lowLatency: Bool) -> OSStatus {
         var specification: [CFString: Any] = [kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true]
-        if configuration.lowLatency { specification[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] = true }
+        if lowLatency { specification[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] = true }
         var created: VTCompressionSession?
         storedLastStage = "create"
         var status = VTCompressionSessionCreate(allocator: nil, width: width, height: height, codecType: configuration.codecType,
@@ -295,7 +333,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
                 guard VTSessionSetProperty(created, key: key, value: value) == noErr else { invalidate(); storedLastStatus = kVTPropertyNotSupportedErr; return lastStatus }
             }
         }
-        for (key, value) in [(kVTCompressionPropertyKey_RealTime, kCFBooleanTrue as CFTypeRef),
+        for (key, value) in [(kVTCompressionPropertyKey_RealTime, (sessionOptions.realTime ? kCFBooleanTrue : kCFBooleanFalse) as CFTypeRef),
                              (kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse as CFTypeRef),
                              (kVTCompressionPropertyKey_ProfileLevel, profileProperty as CFTypeRef)] {
             storedLastStage = key as String
@@ -307,6 +345,11 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         if status != noErr { invalidate(); storedLastStatus = status; return status }
         storedMaximumQPApplied = VTSessionSetProperty(created, key: kVTCompressionPropertyKey_MaxAllowedFrameQP,
                                                value: maximumQP as CFNumber) == noErr
+        storedSpeedPriority = sessionOptions.prioritizeSpeed
+            ? VTSessionSetProperty(created, key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, value: kCFBooleanTrue) == noErr : nil
+        storedRequestedKeysOnly = sessionOptions.periodicKeyFrames ? nil
+            : VTSessionSetProperty(created, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: OwnedEncoderOptions.requestedKeysOnlyInterval as CFNumber) == noErr
+                && VTSessionSetProperty(created, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: OwnedEncoderOptions.requestedKeysOnlyDurationSeconds as CFNumber) == noErr
         // Asked for only when the phone requested it and the still ceiling is tighter than the session's own.
         textClarityArmed = textClarity?.enabled == true && !textClarityRejected && storedMaximumQPApplied
             && TextClarityPolicy.stillFrameQP(hevc: configuration.codecType == kCMVideoCodecType_HEVC, sessionBound: maximumQP) < maximumQP
@@ -329,7 +372,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
               status == noErr || status == kVTPropertyNotSupportedErr else {
             invalidate(); storedLastStatus = status == noErr ? -1 : status; return lastStatus
         }
-        storedLowLatencyApplied = configuration.lowLatency
+        storedLowLatencyApplied = lowLatency
         storedLastStatus = noErr
         recordEvidence()
         counters?.encoderSessionStarted()
@@ -338,7 +381,15 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     private func recordEvidence() {
         counters?.recordEncoderEvidence(VideoEncoderEvidence(path: .ownedVideoToolbox,
             maximumQPBound: storedMaximumQPApplied ? maximumQP : nil, lowLatencyRequested: storedLowLatencyApplied,
-            hardwareRequired: true, hardwareReported: storedHardwareReported, textClarityActive: textClarityArmed ? textClarityApplied : nil))
+            hardwareRequired: true, hardwareReported: storedHardwareReported, textClarityActive: textClarityArmed ? textClarityApplied : nil,
+            options: optionsSummary))
+    }
+    private var optionsSummary: String? {
+        var parts: [String] = []
+        if lowLatencyRefused { parts.append("HEVC low-latency refused") }
+        if let storedSpeedPriority { parts.append(storedSpeedPriority ? "speed priority" : "speed priority rejected") }
+        if let storedRequestedKeysOnly { parts.append(storedRequestedKeysOnly ? "requested keys only" : "key interval rejected") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
     static func supportedProperties(_ session: VTCompressionSession) -> [String: Any]? {
         var catalog: CFDictionary?
@@ -372,7 +423,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         let limits: [Double] = [bytesPerSecond * 2, 1, bytesPerSecond * 5, 5]
         let cap = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: limits as CFArray)
         guard cap == noErr else { return cap }
-        return VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: fps as CFNumber)
+        return VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: max(Int(fps), sessionOptions.minimumExpectedFPS) as CFNumber)
     }
     func setBitrate(_ bitrateKbit: UInt32, framerate: UInt32) -> Int32 {
         serialized {
@@ -569,7 +620,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         counters?.recordEncoderEvidence(nil)
         if let session { VTCompressionSessionInvalidate(session) }
         session = nil; storedMaximumQPApplied = false; storedLowLatencyApplied = false; storedHardwareReported = nil
-        textClarityArmed = false; textClarityApplied = false
+        textClarityArmed = false; textClarityApplied = false; storedSpeedPriority = nil; storedRequestedKeysOnly = nil
     }
     func release() -> Int { serialized { invalidate(); return 0 } }
     deinit { if let session { VTCompressionSessionInvalidate(session) } }

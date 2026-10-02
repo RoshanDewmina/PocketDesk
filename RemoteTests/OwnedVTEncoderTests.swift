@@ -489,3 +489,103 @@ private final class QueueOwnedFixtureEncoder: NSObject, RTCVideoEncoder {
         }
     }
 }
+
+extension OwnedVTEncoderTests {
+    func testEncoderSpeedSwitchesParseFromDefaultsAndPreviousTuningKeepsTodaysEncoder() throws {
+        for key in [StreamTuning.encoderPrioritizeSpeedKey, StreamTuning.hevcLowLatencyKey, StreamTuning.encoderPeriodicKeyFramesKey] {
+            XCTAssertTrue(StreamTuning.experimentKeys.contains(key), key)
+        }
+        XCTAssertEqual(OwnedEncoderOptions(StreamTuning.legacy), OwnedEncoderOptions())
+        XCTAssertEqual(OwnedEncoderOptions(StreamTuning.tuned), OwnedEncoderOptions(periodicKeyFrames: false), "Requested key frames only by default")
+        XCTAssertFalse(StreamTuning.tuned.summary.contains("periodic keys"))
+        XCTAssertEqual(OwnedEncoderOptions(), OwnedEncoderOptions(prioritizeSpeed: false, hevcLowLatency: false, periodicKeyFrames: true))
+        let suite = "OwnedVTEncoderTests.options.\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(OwnedEncoderOptions(StreamTuning.resolve(defaults: defaults)), OwnedEncoderOptions(StreamTuning.tuned))
+        defaults.set(true, forKey: StreamTuning.encoderPrioritizeSpeedKey)
+        defaults.set("YES", forKey: StreamTuning.hevcLowLatencyKey)
+        defaults.set("NO", forKey: StreamTuning.encoderPeriodicKeyFramesKey)
+        let on = StreamTuning.resolve(defaults: defaults)
+        XCTAssertEqual(OwnedEncoderOptions(on), OwnedEncoderOptions(prioritizeSpeed: true, hevcLowLatency: true, periodicKeyFrames: false))
+        XCTAssertTrue(on.summary.contains("encode speed priority · HEVC low-latency"), on.summary)
+        defaults.set(false, forKey: StreamTuning.encoderPrioritizeSpeedKey)
+        defaults.set("NO", forKey: StreamTuning.hevcLowLatencyKey)
+        defaults.set(true, forKey: StreamTuning.encoderPeriodicKeyFramesKey)
+        XCTAssertEqual(OwnedEncoderOptions(StreamTuning.resolve(defaults: defaults)), OwnedEncoderOptions(), "Each switch restores the earlier encoder")
+        XCTAssertTrue(StreamTuning.resolve(defaults: defaults).summary.contains("periodic keys"))
+    }
+
+    func testRequestedKeysOnlyStillEmitsEveryRequestedAndForcedKeyFrame() throws {
+        let configuration = try XCTUnwrap(OwnedHEVCConfiguration(parameters: OwnedHEVCConfiguration.codecInfo.parameters))
+        let counters = StreamCounters()
+        let encoder = OwnedVTEncoder(configuration: configuration, counters: counters, inFlightLimit: { 1 }, maximumQPCeiling: { 26 },
+                                     newestFrameWins: { true }, options: { OwnedEncoderOptions(StreamTuning.tuned) })
+        defer { _ = encoder.release() }
+        let settings = RTCVideoEncoderSettings()
+        settings.name = "H265"; settings.width = 640; settings.height = 416; settings.startBitrate = 8000
+        settings.maxBitrate = 8000; settings.maxFramerate = 60; settings.qpMax = 30; settings.mode = .screensharing
+        XCTAssertEqual(encoder.startEncode(with: settings, numberOfCores: 1), 0, "stage=\(encoder.lastStage) status=\(encoder.lastStatus)")
+        XCTAssertEqual(encoder.optionsEvidence, "requested keys only")
+        let lock = NSLock(), signal = DispatchSemaphore(value: 0)
+        var keys: [Int] = [], outputs = 0
+        encoder.setCallback { image, _ in
+            lock.lock(); outputs += 1
+            if image.frameType == .videoFrameKey { keys.append(Int(image.timeStamp) - 1000) }
+            lock.unlock(); signal.signal(); return true
+        }
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 640, 416, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+        let buffer = try XCTUnwrap(pixels)
+        let key = [NSNumber(value: RTCFrameType.videoFrameKey.rawValue)]
+        for index in 0..<14 {
+            CVPixelBufferLockBaseAddress(buffer, [])
+            for plane in 0..<2 { memset(CVPixelBufferGetBaseAddressOfPlane(buffer, plane), plane == 0 ? Int32(40 + index * 9) : 128, CVPixelBufferGetBytesPerRowOfPlane(buffer, plane) * CVPixelBufferGetHeightOfPlane(buffer, plane)) }
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            if index == 10 { encoder.requireIndependentKeyFrame() }
+            let frame = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: 1_000_000_000 + Int64(index) * 16_666_667)
+            frame.timeStamp = Int32(1000 + index)
+            XCTAssertEqual(encoder.encode(frame, codecSpecificInfo: nil, frameTypes: [0, 7].contains(index) ? key : []), 0)
+            XCTAssertEqual(signal.wait(timeout: .now() + 2), .success, "frame \(index)")
+        }
+        lock.lock(); defer { lock.unlock() }
+        XCTAssertEqual(outputs, 14)
+        XCTAssertEqual(keys, [0, 7, 10], "PLI/FIR requests and forced recoveries still produce key frames; nothing else does")
+    }
+
+    func testOptionsEvidenceIsOwnedEncoderOnlyAndReachesTheSummary() throws {
+        let owned = VideoEncoderEvidence(path: .ownedVideoToolbox, maximumQPBound: 26, lowLatencyRequested: false, hardwareRequired: true,
+                                         hardwareReported: true, options: "HEVC low-latency refused · speed priority")
+        XCTAssertNoThrow(try owned.validate())
+        XCTAssertTrue(owned.summary.hasSuffix(" · HEVC low-latency refused · speed priority"), owned.summary)
+        XCTAssertThrowsError(try VideoEncoderEvidence(path: .compatibility, maximumQPBound: nil, lowLatencyRequested: false, hardwareRequired: false,
+                                                      hardwareReported: nil, options: "speed priority").validate())
+        let legacy = try JSONDecoder().decode(VideoEncoderEvidence.self, from: Data(#"{"path":"ownedVideoToolbox","maximumQPBound":26,"lowLatencyRequested":false,"hardwareRequired":true}"#.utf8))
+        XCTAssertNil(legacy.options)
+        XCTAssertEqual(try JSONDecoder().decode(VideoEncoderEvidence.self, from: JSONEncoder().encode(owned)), owned)
+    }
+
+    func testOptionalHEVCSpeedSettingsNeverFailTheHardwareSessionAndAreReported() throws {
+        let configuration = try XCTUnwrap(OwnedHEVCConfiguration(parameters: OwnedHEVCConfiguration.codecInfo.parameters))
+        for options in [OwnedEncoderOptions(), OwnedEncoderOptions(prioritizeSpeed: true), OwnedEncoderOptions(hevcLowLatency: true),
+                        OwnedEncoderOptions(periodicKeyFrames: false), OwnedEncoderOptions(prioritizeSpeed: true, hevcLowLatency: true, periodicKeyFrames: false)] {
+            let counters = StreamCounters()
+            let encoder = OwnedVTEncoder(configuration: configuration, counters: counters, maximumQPCeiling: { 26 }, options: { options })
+            defer { _ = encoder.release() }
+            let settings = RTCVideoEncoderSettings()
+            settings.name = "H265"; settings.width = 640; settings.height = 416; settings.startBitrate = 8000
+            settings.maxBitrate = 8000; settings.maxFramerate = 60; settings.qpMax = 30; settings.mode = .screensharing
+            XCTAssertEqual(encoder.startEncode(with: settings, numberOfCores: 1), 0, "\(options) stage=\(encoder.lastStage) status=\(encoder.lastStatus)")
+            XCTAssertNotEqual(encoder.hardwareReported, false)
+            let evidence = try XCTUnwrap(counters.drain(inputBufferedBytes: nil).encoderEvidence)
+            XCTAssertNoThrow(try evidence.validate())
+            XCTAssertEqual(evidence.options, encoder.optionsEvidence)
+            let text = evidence.options ?? ""
+            XCTAssertEqual(options.prioritizeSpeed, text.contains("speed priority"), text)
+            XCTAssertEqual(!options.periodicKeyFrames, text.contains("requested keys only") || text.contains("key interval rejected"), text)
+            XCTAssertEqual(evidence.lowLatencyRequested, encoder.lowLatencyApplied)
+            XCTAssertEqual(options.hevcLowLatency, encoder.lowLatencyApplied || text.contains("HEVC low-latency refused"), text)
+            if options == OwnedEncoderOptions() { XCTAssertNil(evidence.options); XCTAssertFalse(encoder.lowLatencyApplied) }
+        }
+    }
+}
