@@ -154,7 +154,7 @@ final class CoordinatorRenewalTests: XCTestCase {
         let rig = RenewalRig(isHost: true)
         try await rig.startHost()
         XCTAssertEqual(rig.signaling.connects.count, 1)
-        XCTAssertEqual(rig.signaling.connects[0].features, [SignalingFeature.renewal, SignalingFeature.route, "guest-v1"])
+        XCTAssertEqual(rig.signaling.connects[0].features, [SignalingFeature.renewal, SignalingFeature.route, "guest-v1", SignalingFeature.devices])
         XCTAssertTrue(rig.coordinator.hostRegistered)
         XCTAssertNotNil(rig.coordinator.renewalPlanForTesting)
 
@@ -200,7 +200,7 @@ final class CoordinatorRenewalTests: XCTestCase {
             statusAtExpiry = coordinator?.status
         }
         try await rig.startHost()
-        XCTAssertEqual(rig.signaling.connects[0].features, [SignalingFeature.route, "guest-v1"])
+        XCTAssertEqual(rig.signaling.connects[0].features, [SignalingFeature.route, "guest-v1", SignalingFeature.devices])
         XCTAssertNil(rig.coordinator.renewalPlanForTesting)
         await rig.scheduler.advance(by: 1799)
         XCTAssertEqual(rig.signaling.connects.count, 1)
@@ -221,7 +221,7 @@ final class CoordinatorRenewalTests: XCTestCase {
     func testAServiceThatDoesNotOfferRenewalIsNeverSentRenew() async throws {
         let rig = RenewalRig(isHost: true, serviceOffersRenewal: false)
         try await rig.startHost()
-        XCTAssertEqual(rig.signaling.connects[0].features, [SignalingFeature.renewal, SignalingFeature.route, "guest-v1"])
+        XCTAssertEqual(rig.signaling.connects[0].features, [SignalingFeature.renewal, SignalingFeature.route, "guest-v1", SignalingFeature.devices])
         XCTAssertNil(rig.coordinator.renewalPlanForTesting)
         await rig.scheduler.advance(by: 1700)
         XCTAssertTrue(rig.signaling.renewals.isEmpty)
