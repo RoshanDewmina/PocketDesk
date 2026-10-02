@@ -233,17 +233,21 @@ final class NativeContainerSurfaceUITests: XCTestCase {
     @MainActor
     func testFarsideWidgetInNativeGalleryAndHomePlacement() throws {
         let names = ["widget-gallery-portrait", "widget-home-placement-portrait",
-                     "widget-gallery-landscape", "widget-home-placement-landscape"]
+                     "widget-context-menu-portrait", "widget-gallery-landscape",
+                     "widget-home-placement-landscape", "widget-context-menu-landscape"]
         attachPlan(names)
         XCUIDevice.shared.orientation = .portrait
         XCUIDevice.shared.press(.home)
         guard findFarsideHomeIcon() != nil else {
             missing("widget-gallery-portrait", "Farside app icon is absent from this simulator Home Screen")
             missing("widget-home-placement-portrait", "Cannot enter native widget flow without the installed Farside app")
+            missing("widget-context-menu-portrait", "No visible Farside widget was available to target")
             missing("widget-gallery-landscape", "Farside app icon is absent from this simulator Home Screen")
             missing("widget-home-placement-landscape", "Cannot enter native widget flow without the installed Farside app")
+            missing("widget-context-menu-landscape", "No visible Farside widget was available to target")
             return
         }
+        var widgetPlaced = farsideWidgetElement() != nil
 
         for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
             let suffix = orientation == .portrait ? "portrait" : "landscape"
@@ -256,12 +260,27 @@ final class NativeContainerSurfaceUITests: XCTestCase {
                 guard springboard.frame.width > springboard.frame.height else {
                     missing("widget-gallery-landscape", "This simulator's SpringBoard Home Screen did not rotate to landscape")
                     missing("widget-home-placement-landscape", "Landscape Home Screen is unsupported on this simulator; no portrait duplicate was captured")
+                    missing("widget-context-menu-landscape", "Landscape Home Screen is unsupported; no landscape widget context menu was captured")
                     break
                 }
+            }
+            if widgetPlaced {
+                if farsideWidgetElement() != nil {
+                    attach("widget-home-placement-\(suffix)")
+                    captureWidgetContextMenu(suffix: suffix, landscape: orientation == .landscapeLeft)
+                } else {
+                    missing("widget-home-placement-\(suffix)", "Previously placed Farside widget root is not visible and hittable in this orientation")
+                    missing("widget-context-menu-\(suffix)", "No visible, hittable Farside widget root was available for a bounded long press")
+                }
+                if orientation == .landscapeLeft {
+                    missing("widget-gallery-\(suffix)", "Existing Home Screen widget was reused; gallery was not reopened to avoid placing a duplicate")
+                }
+                continue
             }
             guard let currentHomeIcon = findFarsideHomeIcon() else {
                 missing("widget-gallery-\(suffix)", "Farside app icon was not visible on the active Home Screen page")
                 missing("widget-home-placement-\(suffix)", "Could not reach the Farside app icon to begin native widget placement")
+                missing("widget-context-menu-\(suffix)", "Placement failed before a Farside widget could be safely targeted")
                 continue
             }
             currentHomeIcon.press(forDuration: 1.2)
@@ -270,6 +289,7 @@ final class NativeContainerSurfaceUITests: XCTestCase {
             guard editMenu.waitForExistence(timeout: 3) else {
                 missing("widget-gallery-\(suffix)", "SpringBoard did not expose Edit Home Screen or Edit from the Farside icon")
                 missing("widget-home-placement-\(suffix)", "Native Home Screen edit menu was unavailable")
+                missing("widget-context-menu-\(suffix)", "Placement did not reach a visible Farside widget")
                 continue
             }
             editMenu.tap()
@@ -277,6 +297,7 @@ final class NativeContainerSurfaceUITests: XCTestCase {
             guard add.waitForExistence(timeout: 6) else {
                 missing("widget-gallery-\(suffix)", "SpringBoard edit mode did not expose Add Widget")
                 missing("widget-home-placement-\(suffix)", "SpringBoard widget gallery could not be opened")
+                missing("widget-context-menu-\(suffix)", "Placement did not reach a visible Farside widget")
                 continue
             }
             add.tap()
@@ -284,6 +305,7 @@ final class NativeContainerSurfaceUITests: XCTestCase {
             guard search.waitForExistence(timeout: 8) else {
                 missing("widget-gallery-\(suffix)", "Native widget gallery opened without an accessible search field")
                 missing("widget-home-placement-\(suffix)", "Could not select Farside in the native widget gallery")
+                missing("widget-context-menu-\(suffix)", "Placement did not reach a visible Farside widget")
                 continue
             }
             search.tap()
@@ -292,6 +314,7 @@ final class NativeContainerSurfaceUITests: XCTestCase {
             guard galleryApp.waitForExistence(timeout: 8) else {
                 missing("widget-gallery-\(suffix)", "Native widget gallery search returned no Farside provider")
                 missing("widget-home-placement-\(suffix)", "No Farside widget was available to place")
+                missing("widget-context-menu-\(suffix)", "No Farside widget could be placed or safely targeted")
                 continue
             }
             galleryApp.tap()
@@ -311,14 +334,21 @@ final class NativeContainerSurfaceUITests: XCTestCase {
             let galleryDismissed = !search.exists && !addWidget.exists && !springboard.buttons["Done"].exists
             let appIconRestored = springboard.icons["Farside"].waitForExistence(timeout: 3)
                 && springboard.icons["Farside"].isHittable
-            if galleryDismissed && appIconRestored && hasFarsideWidgetRoot() {
+            let widget = farsideWidgetElement()
+            widgetPlaced = galleryDismissed && appIconRestored && widget != nil
+            if widgetPlaced {
                 attach("widget-home-placement-\(suffix)")
             } else {
                 missing("widget-home-placement-\(suffix)",
-                        "Placement was not verified: galleryDismissed=\(galleryDismissed), appIconRestored=\(appIconRestored), widgetRoot=\(hasFarsideWidgetRoot())")
+                        "Placement was not verified: galleryDismissed=\(galleryDismissed), appIconRestored=\(appIconRestored), visibleHittableWidgetRoot=\(widget != nil)")
             }
             if !galleryCaptured {
                 missing("widget-gallery-\(suffix)", "SpringBoard did not expose the native Add Widget provider preview")
+            }
+            if widgetPlaced {
+                captureWidgetContextMenu(suffix: suffix, landscape: orientation == .landscapeLeft)
+            } else {
+                missing("widget-context-menu-\(suffix)", "Placement was not verified; no Home Screen widget context menu was attempted")
             }
         }
         XCUIDevice.shared.orientation = .portrait
@@ -334,6 +364,41 @@ final class NativeContainerSurfaceUITests: XCTestCase {
             if page < 4 { springboard.swipeLeft() }
         }
         return nil
+    }
+
+    @MainActor
+    private func farsideWidgetElement() -> XCUIElement? {
+        let matches = springboard.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == 'Connect to Your Mac' OR identifier CONTAINS[c] 'ConnectWidget'"))
+            .allElementsBoundByIndex
+        return matches.first(where: { $0.exists && $0.isHittable })
+    }
+
+    @MainActor
+    private func captureWidgetContextMenu(suffix: String, landscape: Bool) {
+        let frame = springboard.frame
+        let orientationMatches = landscape ? frame.width > frame.height : frame.height > frame.width
+        guard orientationMatches else {
+            missing("widget-context-menu-\(suffix)",
+                    "SpringBoard frame does not match requested \(landscape ? "landscape" : "portrait") orientation")
+            return
+        }
+        guard let widget = farsideWidgetElement() else {
+            missing("widget-context-menu-\(suffix)", "The Connect to Your Mac widget root was not visible and hittable")
+            return
+        }
+        widget.press(forDuration: 1.2)
+        let menuLabels = ["Remove Widget", "Edit Widget"]
+        let menuAction = springboard.descendants(matching: .any)
+            .matching(NSPredicate(format: "label IN %@", menuLabels))
+            .firstMatch
+        if menuAction.waitForExistence(timeout: 4) && menuAction.isHittable {
+            attach("widget-context-menu-\(suffix)")
+        } else {
+            missing("widget-context-menu-\(suffix)",
+                    "Long press on the owned Connect to Your Mac widget exposed no widget-specific Edit Widget or Remove Widget action")
+        }
+        XCUIDevice.shared.press(.home)
     }
 
     /// Attempts only the real iPadOS windowing controls. A compact-window screenshot is attached
@@ -411,18 +476,23 @@ final class NativeContainerSurfaceUITests: XCTestCase {
 
     @MainActor
     func testFarsideShareExtensionFromSafari() throws {
-        let names = ["share-extension-safari-portrait", "share-extension-safari-landscape"]
+        let names = ["share-host-sheet-portrait", "share-host-sheet-landscape",
+                     "share-extension-safari-portrait", "share-extension-safari-landscape"]
         attachPlan(names)
         XCUIDevice.shared.orientation = .portrait
         let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
         safari.activate()
         guard safari.wait(for: .runningForeground, timeout: 8) else {
+            missing("share-host-sheet-portrait", "Safari did not become the foreground app")
+            missing("share-host-sheet-landscape", "Safari did not become the foreground app")
             missing("share-extension-safari-portrait", "Safari did not become the foreground app; prepare with simctl openurl https://www.apple.com/")
             missing("share-extension-safari-landscape", "Safari did not become the foreground app")
             return
         }
         let share = safari.buttons["Share"]
         guard share.waitForExistence(timeout: 8) else {
+            missing("share-host-sheet-portrait", "Safari Share control is unavailable")
+            missing("share-host-sheet-landscape", "Safari Share control is unavailable")
             missing("share-extension-safari-portrait", "Safari Share control is unavailable; prepare a loaded neutral public page")
             missing("share-extension-safari-landscape", "Safari Share control is unavailable")
             return
@@ -447,8 +517,29 @@ final class NativeContainerSurfaceUITests: XCTestCase {
             Thread.sleep(forTimeInterval: 0.25)
         } while Date() < deadline
         guard let farside = selection else {
+            missing("share-host-sheet-portrait", "Safari share sheet did not expose a visible, hittable Send to My Mac/Farside extension entry")
+            missing("share-host-sheet-landscape", "No verified extension entry was available for a landscape native share-sheet capture")
             missing("share-extension-safari-portrait", "Safari share sheet did not offer the installed Farside share extension")
             missing("share-extension-safari-landscape", "Safari share sheet did not offer the installed Farside share extension")
+            return
+        }
+        if waitForOrientation(of: safari, landscape: false, timeout: 5) && farside.exists && farside.isHittable {
+            attach("share-host-sheet-portrait")
+        } else {
+            missing("share-host-sheet-portrait", "The native Safari sheet and its hittable Farside entry were not verified in portrait")
+        }
+        XCUIDevice.shared.orientation = .landscapeLeft
+        if waitForOrientation(of: safari, landscape: true, timeout: 5)
+            && farside.exists && farside.isHittable {
+            attach("share-host-sheet-landscape")
+        } else {
+            missing("share-host-sheet-landscape", "The native Safari sheet did not retain its hittable Farside entry in landscape")
+        }
+        XCUIDevice.shared.orientation = .portrait
+        guard waitForOrientation(of: safari, landscape: false, timeout: 5)
+                && farside.exists && farside.isHittable else {
+            missing("share-extension-safari-portrait", "Share extension was not selected because the validated native Safari entry did not return hittable in portrait")
+            missing("share-extension-safari-landscape", "Share extension was not selected because its native Safari entry did not return hittable in portrait")
             return
         }
         farside.tap()
@@ -473,13 +564,6 @@ final class NativeContainerSurfaceUITests: XCTestCase {
                     "Landscape capture was not verified: Safari did not retain a valid extension root in landscape frame dimensions")
         }
         XCUIDevice.shared.orientation = .portrait
-    }
-
-    @MainActor
-    private func hasFarsideWidgetRoot() -> Bool {
-        springboard.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == 'Connect to Your Mac' OR identifier CONTAINS[c] 'ConnectWidget'"))
-            .firstMatch.exists
     }
 
     @MainActor
