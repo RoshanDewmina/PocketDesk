@@ -117,7 +117,8 @@ final class LocalOwnerAdmissionTests: XCTestCase {
 final class LocalSignalingLifecycleTests: XCTestCase {
     private let queue = DispatchQueue(label: "farside.test.local-signaling")
 
-    private func fixture(timeout: UInt64 = 1_000_000_000, legacyDeadline: Bool = false) async throws
+    private func fixture(timeout: UInt64 = 1_000_000_000, legacyDeadline: Bool = false,
+                         additionalDevices: Int = 0) async throws
         -> (LocalSignalingTransport, PairInvitation, NWEndpoint.Port) {
         var invitation = try HostPair.create(server: "wss://offline.invalid/signal", name: "Fixture").invitation
         invitation.durableHostID = try SecureRandom.token()
@@ -129,7 +130,18 @@ final class LocalSignalingLifecycleTests: XCTestCase {
         parameters.requiredInterfaceType = .loopback
         let host = LocalSignalingTransport(defaults: defaults,
             hostAuthenticationTimeoutNanoseconds: timeout, parameters: parameters)
+        if additionalDevices > 0 {
+            host.hostInvitations = [invitation]
+            for _ in 0..<additionalDevices {
+                var extra = invitation
+                extra.key = try SecureRandom.bytes()
+                extra.ownerPairID = try SecureRandom.token()
+                extra.localServiceName = "farside-test-" + UUID().uuidString.lowercased()
+                host.hostInvitations.append(extra)
+            }
+        }
         let ready = expectation(description: "Local listener registered")
+        ready.assertForOverFulfill = true
         host.onMessage = { if $0.type == "registered" { ready.fulfill() } }
         try host.connect(invitation: invitation, hostToken: "fixture-host", features: [])
         await fulfillment(of: [ready], timeout: 3)
@@ -170,6 +182,240 @@ final class LocalSignalingLifecycleTests: XCTestCase {
         let sent = expectation(description: "TCP write completed")
         connection.send(content: data, completion: .contentProcessed { _ in sent.fulfill() })
         await fulfillment(of: [sent], timeout: 3)
+    }
+
+    private func devicePort(_ invitation: PairInvitation, host: LocalSignalingTransport) async throws -> NWEndpoint.Port {
+        let identifier = try XCTUnwrap(invitation.ownerPairID)
+        for _ in 0..<150 {
+            if let port = host.listeningPortForTesting(ownerPairID: identifier) { return port }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return try XCTUnwrap(host.listeningPortForTesting(ownerPairID: identifier))
+    }
+
+    private func prove(_ challenge: LocalOwnerChallenge, invitation: PairInvitation,
+                       on connection: NWConnection) async throws {
+        let cipher = try SignalCipher(key: invitation.key, room: invitation.room)
+        let proof = try LocalOwnerResponse.make(challenge: challenge, invitation: invitation)
+        let payload = Data(try cipher.seal(ProtectedMessage(kind: "localProof", request: challenge.hostID,
+            session: challenge.nonce, sequence: 0, body: JSONEncoder().encode(proof)), sender: "client").utf8)
+        await send(try LocalSignalFraming.header(length: payload.count) + payload, to: connection)
+    }
+
+    private func expectClosed(_ connection: NWConnection) async {
+        let rejected = expectation(description: "Rejected local attempt closes its TCP connection")
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 4) { data, _, complete, error in
+            XCTAssertTrue(complete || error != nil)
+            XCTAssertTrue(data?.isEmpty ?? true)
+            rejected.fulfill()
+        }
+        await fulfillment(of: [rejected], timeout: 3)
+    }
+
+    func testCatalogRejectsMoreThanFiveDevicesConflictingKeysForeignHostAndDuplicateServices() async throws {
+        let (host, invitation, _) = try await fixture()
+        defer { host.close() }
+        host.hostInvitations = Array(repeating: invitation, count: 6)
+        XCTAssertThrowsError(try host.connect(invitation: invitation, hostToken: "fixture-host", features: []))
+        var conflicting = invitation; conflicting.key = try SecureRandom.bytes()
+        host.hostInvitations = [invitation, conflicting]
+        XCTAssertThrowsError(try host.connect(invitation: invitation, hostToken: "fixture-host", features: []))
+        var foreign = invitation; foreign.durableHostID = try SecureRandom.token()
+        foreign.ownerPairID = try SecureRandom.token()
+        host.hostInvitations = [invitation, foreign]
+        XCTAssertThrowsError(try host.connect(invitation: invitation, hostToken: "fixture-host", features: []))
+        var duplicateService = invitation; duplicateService.ownerPairID = try SecureRandom.token()
+        duplicateService.key = try SecureRandom.bytes()
+        host.hostInvitations = [invitation, duplicateService]
+        XCTAssertThrowsError(try host.connect(invitation: invitation, hostToken: "fixture-host", features: []))
+        duplicateService.localServiceName = invitation.localServiceName?.uppercased()
+        host.hostInvitations = [invitation, duplicateService]
+        XCTAssertThrowsError(try host.connect(invitation: invitation, hostToken: "fixture-host", features: []))
+        var foreignRoom = duplicateService; foreignRoom.room = try SecureRandom.token()
+        foreignRoom.localServiceName = "farside-test-" + UUID().uuidString.lowercased()
+        host.hostInvitations = [invitation, foreignRoom]
+        XCTAssertThrowsError(try host.connect(invitation: invitation, hostToken: "fixture-host", features: []))
+        XCTAssertNil(host.listeningPortForTesting)
+    }
+
+    func testFiveDeviceServicesGiveMatchingLegacyChallengesAndAllCloseTogether() async throws {
+        let (host, _, _) = try await fixture(timeout: 3_000_000_000, additionalDevices: 4)
+        defer { host.close() }
+        let devices = host.hostInvitations
+        XCTAssertEqual(devices.count, 5)
+        var ports: Set<NWEndpoint.Port> = []
+        for invitation in devices {
+            let port = try await devicePort(invitation, host: host)
+            ports.insert(port)
+            let phone = await peer(port: port)
+            defer { phone.cancel() }
+            let challenge = try await challenge(from: phone, invitation: invitation)
+            XCTAssertEqual(challenge.ownerPairID, invitation.ownerPairID)
+        }
+        XCTAssertEqual(ports.count, 5)
+        host.close()
+        XCTAssertNil(host.listeningPortForTesting)
+        for invitation in devices {
+            XCTAssertNil(host.listeningPortForTesting(ownerPairID: try XCTUnwrap(invitation.ownerPairID)))
+        }
+    }
+
+    func testNewSecondaryPhoneAuthenticatesSelectedPairBeforeCallbacksAndExchangesSignal() async throws {
+        let (host, _, _) = try await fixture(timeout: 3_000_000_000, additionalDevices: 1)
+        defer { host.close() }
+        let selected = try XCTUnwrap(host.hostInvitations.last)
+        let port = try await devicePort(selected, host: host)
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "farside.local.phone." + UUID().uuidString))
+        let parameters = NWParameters.tcp; parameters.requiredInterfaceType = .loopback
+        let phone = LocalSignalingTransport(defaults: defaults, hostAuthenticationTimeoutNanoseconds: 3_000_000_000,
+            parameters: parameters, endpoint: .hostPort(host: "127.0.0.1", port: port))
+        defer { phone.close() }
+        var callbacks: [String] = []
+        let hostAuthenticated = expectation(description: "Secondary host authenticated")
+        let phoneAuthenticated = expectation(description: "Secondary phone authenticated")
+        host.onSelectedHostInvitation = { invitation in
+            XCTAssertEqual(invitation, selected); callbacks.append("selected")
+        }
+        host.onAuthenticatedLocalSignaling = { challenge in
+            XCTAssertEqual(challenge.ownerPairID, selected.ownerPairID)
+            callbacks.append("authenticated"); hostAuthenticated.fulfill()
+        }
+        host.onMessage = { if $0.type == "peer" { callbacks.append("peer") } }
+        phone.onAuthenticatedLocalSignaling = { challenge in
+            XCTAssertEqual(challenge.ownerPairID, selected.ownerPairID); phoneAuthenticated.fulfill()
+        }
+        try phone.connect(invitation: selected, hostToken: nil, features: [])
+        await fulfillment(of: [hostAuthenticated, phoneAuthenticated], timeout: 3)
+        XCTAssertEqual(callbacks, ["selected", "authenticated", "peer"])
+        let delivered = expectation(description: "Secondary encrypted signal delivered")
+        host.onMessage = { if $0.type == "signal" { XCTAssertEqual($0.payload, "secondary"); delivered.fulfill() } }
+        phone.send(RelayMessage(type: "signal", payload: "secondary"))
+        await fulfillment(of: [delivered], timeout: 3)
+        XCTAssertNil(host.lastCloseReason); XCTAssertNil(phone.lastCloseReason)
+    }
+
+    func testLegacyPrimaryPhoneUsesSingleChallengeAndEncryptedProofWithMultipleDevices() async throws {
+        let (host, primary, port) = try await fixture(additionalDevices: 1)
+        defer { host.close() }
+        let authenticated = expectation(description: "Legacy primary proof accepted")
+        var callbacks: [String] = []
+        host.onSelectedHostInvitation = { XCTAssertEqual($0, primary); callbacks.append("selected") }
+        host.onAuthenticatedLocalSignaling = { _ in callbacks.append("authenticated"); authenticated.fulfill() }
+        let legacyPhone = await peer(port: port)
+        defer { legacyPhone.cancel() }
+        let challenge = try await challenge(from: legacyPhone, invitation: primary)
+        try await prove(challenge, invitation: primary, on: legacyPhone)
+        await fulfillment(of: [authenticated], timeout: 3)
+        let header = try await read(4, from: legacyPhone)
+        let payload = try await read(LocalSignalFraming.length(header), from: legacyPhone)
+        let cipher = try SignalCipher(key: primary.key, room: primary.room)
+        let ack = try cipher.open(XCTUnwrap(String(data: payload, encoding: .utf8)), sender: "host")
+        XCTAssertEqual(ack.kind, "localAck", "Legacy phone receives no alternate-key challenges")
+        XCTAssertEqual(callbacks, ["selected", "authenticated"])
+    }
+
+    func testNewPrimaryPhoneUsesLegacyHostChallengeAndProof() async throws {
+        var invitation = try HostPair.create(server: "wss://offline.invalid/signal", name: "Legacy Mac").invitation
+        invitation.durableHostID = try SecureRandom.token()
+        invitation.ownerPairID = try SecureRandom.token()
+        invitation.localServiceName = "farside-test-" + UUID().uuidString.lowercased()
+        let parameters = NWParameters.tcp; parameters.requiredInterfaceType = .loopback
+        let listener = try NWListener(using: parameters)
+        defer { listener.cancel() }
+        let listening = expectation(description: "Raw legacy host listening")
+        let connected = expectation(description: "Raw legacy host accepted new phone")
+        var legacyConnection: NWConnection?
+        listener.stateUpdateHandler = { if case .ready = $0 { listening.fulfill() } }
+        listener.newConnectionHandler = { connection in
+            Task { @MainActor in
+                legacyConnection = connection
+                connection.stateUpdateHandler = { if case .ready = $0 { connected.fulfill() } }
+                connection.start(queue: self.queue)
+            }
+        }
+        listener.start(queue: queue)
+        await fulfillment(of: [listening], timeout: 3)
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "farside.local.legacy-phone." + UUID().uuidString))
+        let phone = LocalSignalingTransport(defaults: defaults, hostAuthenticationTimeoutNanoseconds: 3_000_000_000,
+            parameters: parameters, endpoint: .hostPort(host: "127.0.0.1", port: try XCTUnwrap(listener.port)))
+        defer { phone.close(); legacyConnection?.cancel() }
+        let authenticated = expectation(description: "New phone accepted legacy host ack")
+        phone.onAuthenticatedLocalSignaling = { _ in authenticated.fulfill() }
+        try phone.connect(invitation: invitation, hostToken: nil, features: [])
+        await fulfillment(of: [connected], timeout: 3)
+        let connection = try XCTUnwrap(legacyConnection)
+        let challenge = try LocalOwnerChallenge.make(invitation: invitation)
+        let cipher = try SignalCipher(key: invitation.key, room: invitation.room)
+        let challengePayload = Data(try cipher.seal(ProtectedMessage(kind: "localChallenge", request: challenge.hostID,
+            session: challenge.nonce, sequence: 0, body: JSONEncoder().encode(challenge)), sender: "host").utf8)
+        await send(try LocalSignalFraming.header(length: challengePayload.count) + challengePayload, to: connection)
+        let header = try await read(4, from: connection)
+        let payload = try await read(LocalSignalFraming.length(header), from: connection)
+        let packet = try cipher.open(XCTUnwrap(String(data: payload, encoding: .utf8)), sender: "client")
+        XCTAssertEqual(packet.kind, "localProof")
+        let proof = try JSONDecoder().decode(LocalOwnerResponse.self, from: XCTUnwrap(packet.body))
+        try proof.validate(expected: challenge, invitation: invitation)
+        let ack = Data(try cipher.seal(ProtectedMessage(kind: "localAck", request: challenge.hostID,
+            session: challenge.nonce, sequence: 0, body: JSONEncoder().encode(proof)), sender: "host").utf8)
+        await send(try LocalSignalFraming.header(length: ack.count) + ack, to: connection)
+        await fulfillment(of: [authenticated], timeout: 3)
+        XCTAssertNil(phone.lastCloseReason)
+    }
+
+    func testLegacySecondaryPhoneUsesMatchingChallengeAndCannotBeTakenOverAcrossServices() async throws {
+        let (host, primary, primaryPort) = try await fixture(timeout: 3_000_000_000, additionalDevices: 1)
+        defer { host.close() }
+        let secondary = try XCTUnwrap(host.hostInvitations.last)
+        let secondaryPort = try await devicePort(secondary, host: host)
+        XCTAssertNotEqual(primaryPort, secondaryPort)
+        let owner = await peer(port: secondaryPort)
+        defer { owner.cancel() }
+        let challenge = try await challenge(from: owner, invitation: secondary)
+        let authenticated = expectation(description: "Legacy secondary proof accepted")
+        var callbacks: [String] = []
+        host.onSelectedHostInvitation = { XCTAssertEqual($0, secondary); callbacks.append("selected") }
+        host.onAuthenticatedLocalSignaling = { _ in callbacks.append("authenticated"); authenticated.fulfill() }
+        try await prove(challenge, invitation: secondary, on: owner)
+        await fulfillment(of: [authenticated], timeout: 3)
+        XCTAssertEqual(callbacks, ["selected", "authenticated"])
+        let primaryIntruder = await peer(port: primaryPort)
+        defer { primaryIntruder.cancel() }
+        await expectClosed(primaryIntruder)
+        let secondaryIntruder = await peer(port: secondaryPort)
+        defer { secondaryIntruder.cancel() }
+        await expectClosed(secondaryIntruder)
+        let delivered = expectation(description: "Legacy secondary retains global ownership")
+        host.onMessage = { if $0.type == "signal" { delivered.fulfill() } }
+        let cipher = try SignalCipher(key: secondary.key, room: secondary.room)
+        let signal = Data(try cipher.seal(ProtectedMessage(kind: "localSignal", request: challenge.hostID,
+            session: challenge.nonce, sequence: 1, body: JSONEncoder().encode(RelayMessage(type: "signal", payload: "secondary"))), sender: "client").utf8)
+        await send(try LocalSignalFraming.header(length: signal.count) + signal, to: owner)
+        await fulfillment(of: [delivered], timeout: 3)
+        XCTAssertEqual(callbacks, ["selected", "authenticated"])
+        XCTAssertEqual(host.listeningPortForTesting, primaryPort)
+        XCTAssertEqual(host.listeningPortForTesting(ownerPairID: try XCTUnwrap(primary.ownerPairID)), primaryPort)
+        host.close()
+        XCTAssertNil(host.listeningPortForTesting(ownerPairID: try XCTUnwrap(secondary.ownerPairID)))
+    }
+
+    func testSecondaryServiceWrongKeyCannotAuthenticateAndPrimaryStillServes() async throws {
+        let (host, primary, port) = try await fixture(additionalDevices: 1)
+        defer { host.close() }
+        var callbacks = 0
+        host.onSelectedHostInvitation = { _ in callbacks += 1 }
+        host.onAuthenticatedLocalSignaling = { _ in callbacks += 1 }
+        let secondary = try XCTUnwrap(host.hostInvitations.last)
+        let secondaryPort = try await devicePort(secondary, host: host)
+        let attacker = await peer(port: secondaryPort)
+        defer { attacker.cancel() }
+        let selectedChallenge = try await challenge(from: attacker, invitation: secondary)
+        var wrongKey = secondary; wrongKey.key = try SecureRandom.bytes()
+        try await prove(selectedChallenge, invitation: wrongKey, on: attacker)
+        try await waitForReason("Local signaling authentication failed", host: host)
+        let fresh = await peer(port: port)
+        defer { fresh.cancel() }
+        _ = try await challenge(from: fresh, invitation: primary)
+        XCTAssertEqual(callbacks, 0); XCTAssertEqual(host.listeningPortForTesting, port)
     }
 
     private func waitForReason(_ reason: String, host: LocalSignalingTransport) async throws {

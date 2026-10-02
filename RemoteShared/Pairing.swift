@@ -106,6 +106,26 @@ extension PairInvitation {
     var notificationIdentity: String { PushPairingTarget.notificationIdentity(room: room, token: token) }
 }
 
+/// Each approved device retains its own secret and pair identity within the Mac's stable room.
+struct HostPairedDevice: Codable, Equatable, Identifiable {
+    var invitation: PairInvitation
+    var phoneName: String?
+    var lastUsed: Date?
+    var id: String { invitation.ownerPairID ?? SecureRandom.digest(invitation.token) }
+}
+
+enum HostDeviceLimitError: Error, LocalizedError {
+    case full, busy, serviceChanged, disabled
+    var errorDescription: String? {
+        switch self {
+        case .full: "This Mac already remembers five devices. Remove one in Settings before pairing another."
+        case .busy: "Disconnect the current device and finish any Mac approval before pairing another."
+        case .disabled: "Adding devices is temporarily unavailable on this Mac."
+        case .serviceChanged: "Remove the saved devices before changing this Mac’s connection service."
+        }
+    }
+}
+
 struct HostPair: Codable {
     var hostToken: String
     var invitation: PairInvitation
@@ -113,6 +133,58 @@ struct HostPair: Codable {
     /// The paired phone's display name, sent inside the sealed `acceptedAck` (D39). Nil for pairs
     /// made before phones sent one; a new pairing starts without it.
     var phoneName: String? = nil
+    /// Nil is the legacy single-device record. Empty is deliberately no approved devices.
+    var devices: [HostPairedDevice]? = nil
+    var lastUsed: Date? = nil
+    var pendingInvitation: PairInvitation? = nil
+
+    var approvedDevices: [HostPairedDevice] {
+        devices ?? (paired ? [HostPairedDevice(invitation: invitation, phoneName: phoneName, lastUsed: lastUsed)] : [])
+    }
+
+    func validatedCatalog() throws -> Self {
+        try invitation.validate(enrollment: false)
+        guard SecureRandom.isToken(hostToken), SecureRandom.digest(hostToken) == invitation.room,
+              approvedDevices.count <= 5 else { throw RemoteError.invalidPairing }
+        var tokens = Set<String>(), keys = Set<Data>(), identities = Set<String>()
+        for device in approvedDevices {
+            try device.invitation.validate(enrollment: false)
+            guard device.invitation.room == invitation.room, device.invitation.server == invitation.server,
+                  device.invitation.durableHostID == invitation.durableHostID,
+                  tokens.insert(device.invitation.token).inserted, keys.insert(device.invitation.key).inserted,
+                  identities.insert(device.id).inserted else { throw RemoteError.invalidPairing }
+        }
+        if let pendingInvitation {
+            try pendingInvitation.validate(enrollment: false)
+            guard pendingInvitation.room == invitation.room, pendingInvitation.server == invitation.server,
+                  pendingInvitation.durableHostID == invitation.durableHostID,
+                  !tokens.contains(pendingInvitation.token), !keys.contains(pendingInvitation.key),
+                  !identities.contains(pendingInvitation.ownerPairID ?? SecureRandom.digest(pendingInvitation.token)),
+                  approvedDevices.count < 5 else { throw RemoteError.invalidPairing }
+        }
+        if paired, !approvedDevices.contains(where: { $0.invitation == invitation }) { throw RemoteError.invalidPairing }
+        var migrated = self
+        migrated.devices = approvedDevices
+        return migrated
+    }
+
+    func selecting(_ device: HostPairedDevice) -> Self {
+        var next = self
+        next.invitation = device.invitation; next.phoneName = device.phoneName
+        next.lastUsed = device.lastUsed; next.paired = true
+        return next
+    }
+
+    mutating func rememberCurrentDevice(at now: Date = Date()) throws {
+        var all = approvedDevices
+        let device = HostPairedDevice(invitation: invitation, phoneName: phoneName, lastUsed: now)
+        if let index = all.firstIndex(where: { $0.id == device.id }) { all[index] = device }
+        else {
+            guard all.count < 5 else { throw HostDeviceLimitError.full }
+            all.append(device)
+        }
+        devices = all; lastUsed = now
+    }
 
     static func create(server: String, name: String, identity: HostIdentityRecord? = nil) throws -> Self {
         let token = try SecureRandom.token()

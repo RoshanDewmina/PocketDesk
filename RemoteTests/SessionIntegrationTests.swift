@@ -306,14 +306,19 @@ final class SessionIntegrationTests: XCTestCase {
         XCTAssertFalse(host.hostRegistered, "A terminal failure must immediately hide the pairing code")
         XCTAssertFalse(host.connected); XCTAssertFalse(phone.connected); XCTAssertNil(phoneStore.data)
         phone.stop()
-        XCTAssertLessThan(try XCTUnwrap(host.invitation).expires, Date(), "Declining retires the exposed QR")
-        let replacement = try host.createPair(server: url, name: "Test")
+        // Declining retires only the unapproved QR grant. First pairing has no approved
+        // device to resume, so a new attempt requires a fresh code in the same Mac room.
+        host.start()
+        XCTAssertFalse(host.hostRegistered)
+        XCTAssertNil(host.pendingPairInvitation)
+        let freshInvitation = try host.createPair(server: url, name: "Test")
+        XCTAssertEqual(freshInvitation.room, invitation.room)
+        XCTAssertNotEqual(freshInvitation.key, invitation.key)
         host.start(); try await waitFor("host re-registered") { host.status == "Ready for your paired phone" }
-        try phone.enroll(replacement.code()); try await waitFor("approval pending again") { host.awaitingApproval }
+        try phone.enroll(freshInvitation.code()); try await waitFor("approval pending again") { host.awaitingApproval }
         hostStore.refuseSave = true; host.approve()
         XCTAssertFalse(host.connected); XCTAssertNil(phoneStore.data)
-        XCTAssertEqual(host.invitation?.key, replacement.key)
-        XCTAssertLessThan(try XCTUnwrap(host.invitation).expires, Date(), "A save failure also retires enrollment")
+        XCTAssertNil(host.pendingPairInvitation, "Save failure retires the exposed grant")
     }
 
     @MainActor

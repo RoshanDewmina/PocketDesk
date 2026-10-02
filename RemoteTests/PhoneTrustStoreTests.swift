@@ -320,3 +320,339 @@ final class PhoneTrustStoreTests: XCTestCase {
     }
 
 }
+
+@MainActor
+final class HostMultiDeviceTests: XCTestCase {
+    func testAddingInvitationKeepsExistingRoomAndHostProof() throws {
+        let store = MemoryPairStore()
+        var original = try HostPair.create(server: "wss://example.com/signal", name: "Mac")
+        original = try original.rotated()
+        try store.save(original)
+        let host = RemoteCoordinator(isHost: true, store: store)
+        host.restore()
+        let added = try host.createPair(server: original.invitation.server, name: "Mac")
+        XCTAssertEqual(added.room, original.invitation.room)
+        XCTAssertEqual(host.hostPair?.hostToken, original.hostToken)
+        XCTAssertNotEqual(added.token, original.invitation.token)
+        XCTAssertNotEqual(added.key, original.invitation.key)
+    }
+}
+
+
+extension HostMultiDeviceTests {
+    private func catalog(count: Int = 2) throws -> HostPair {
+        var root = try HostPair.create(server: "wss://example.com/signal", name: "Mac").rotated()
+        root.devices = []
+        root.phoneName = "iPhone"
+        try root.rememberCurrentDevice(at: Date(timeIntervalSince1970: 10))
+        for index in 1..<count {
+            var next = try HostPair.create(server: root.invitation.server, name: "Mac").rotated()
+            next.hostToken = root.hostToken; next.invitation.room = root.invitation.room
+            next.devices = root.devices; next.phoneName = "iPad \(index)"
+            try next.rememberCurrentDevice(at: Date(timeIntervalSince1970: Double(10 + index)))
+            root = next
+        }
+        return root
+    }
+
+    func testLegacyMigrationPreservesExactSecretsAndName() throws {
+        let store = MemoryPairStore()
+        var original = try HostPair.create(server: "wss://example.com/signal", name: "Mac").rotated()
+        original.phoneName = "Original iPhone"
+        try store.save(original)
+        let host = RemoteCoordinator(isHost: true, store: store)
+        host.restore()
+        XCTAssertEqual(host.invitation, original.invitation)
+        XCTAssertEqual(host.pairedDevices.count, 1)
+        XCTAssertEqual(host.pairedDevices.first?.phoneName, original.phoneName)
+        let migrated = try XCTUnwrap(store.read(HostPair.self))
+        XCTAssertEqual(migrated.hostToken, original.hostToken)
+        XCTAssertEqual(migrated.devices?.first?.invitation, original.invitation)
+        host.restore()
+        XCTAssertEqual(host.pairedDevices.count, 1)
+    }
+
+    func testSixthInvitationFailsWithoutChangingTrustOrRoom() throws {
+        let store = MemoryPairStore(), saved = try catalog(count: 5)
+        try store.save(saved)
+        let before = store.data
+        let host = RemoteCoordinator(isHost: true, store: store)
+        host.restore()
+        XCTAssertThrowsError(try host.createPair(server: saved.invitation.server, name: "Mac")) { error in
+            XCTAssertTrue(error.localizedDescription.contains("five devices"))
+        }
+        XCTAssertEqual(store.data, before)
+        XCTAssertEqual(host.pairedDevices.count, 5)
+        XCTAssertEqual(host.invitation?.room, saved.invitation.room)
+    }
+
+    func testRemoveOneKeepsOtherKeysAndRemovingLastNeverResurrectsLegacyTrust() throws {
+        let store = MemoryPairStore(), saved = try catalog()
+        try store.save(saved)
+        let host = RemoteCoordinator(isHost: true, store: store)
+        host.restore()
+        let first = saved.approvedDevices[0], second = saved.approvedDevices[1]
+        XCTAssertTrue(host.removePairedDevice(second.id))
+        host.restore()
+        XCTAssertEqual(host.pairedDevices, [first])
+        XCTAssertEqual(host.invitation, first.invitation)
+        XCTAssertTrue(host.removePairedDevice(first.id))
+        host.restore()
+        XCTAssertTrue(host.pairedDevices.isEmpty)
+        XCTAssertNil(host.invitation)
+        let next = try host.createPair(server: saved.invitation.server, name: "Mac")
+        XCTAssertEqual(next.room, saved.invitation.room)
+        XCTAssertNotEqual(next.key, first.invitation.key)
+        XCTAssertTrue(host.pairedDevices.isEmpty)
+    }
+
+    func testPrimaryLegacyRequestAndSecondaryRequestSelectOnlyTheirOwnCipher() throws {
+        let store = MemoryPairStore(), saved = try catalog()
+        try store.save(saved)
+        let transport = ScriptedSignaling()
+        let host = RemoteCoordinator(isHost: true, store: store, signaling: transport)
+        host.allowLegacyPrivateRoute = true
+        host.restore(); host.start()
+        defer { host.stop() }
+        transport.deliver(RelayMessage(type: "registered", features: [SignalingFeature.devices]))
+        XCTAssertEqual(transport.connects.first?.invitation, saved.approvedDevices[0].invitation)
+        XCTAssertEqual(transport.clientTokenHashes, saved.approvedDevices.map { SecureRandom.digest($0.invitation.token) })
+        for device in saved.approvedDevices {
+            let cipher = try SignalCipher(key: device.invitation.key, room: device.invitation.room)
+            let request = ProtectedMessage(kind: "request", request: try SecureRandom.token(), session: "", sequence: 0)
+            transport.deliver(RelayMessage(type: "signal", payload: try cipher.seal(request, sender: "client")))
+            let challenge = try XCTUnwrap(transport.sent.last?.payload)
+            let opened = try cipher.open(challenge, sender: "host")
+            XCTAssertEqual(opened.kind, "challenge")
+            XCTAssertEqual(opened.request, request.request)
+            XCTAssertEqual(host.invitation, device.invitation)
+            XCTAssertThrowsError(try host.createPair(server: saved.invitation.server, name: "Mac"))
+            let count = transport.sent.count
+            let other = saved.approvedDevices.first { $0.id != device.id }!
+            let wrongCipher = try SignalCipher(key: other.invitation.key, room: other.invitation.room)
+            transport.deliver(RelayMessage(type: "signal", payload: try wrongCipher.seal(request, sender: "client")))
+            XCTAssertEqual(transport.sent.count, count, "A second key cannot replace an active handshake/consent")
+            XCTAssertEqual(host.invitation, device.invitation)
+            transport.deliver(RelayMessage(type: "peer", online: false))
+            XCTAssertTrue(host.hostRegistered)
+        }
+    }
+
+    func testPendingEnrollmentSurvivesAnExistingPhoneRequest() throws {
+        let store = MemoryPairStore(), saved = try catalog(count: 1)
+        try store.save(saved)
+        let transport = ScriptedSignaling()
+        let host = RemoteCoordinator(isHost: true, store: store, signaling: transport)
+        host.allowLegacyPrivateRoute = true
+        host.restore()
+        let pending = try host.createPair(server: saved.invitation.server, name: "Mac")
+        host.start(); defer { host.stop() }
+        transport.deliver(RelayMessage(type: "registered", features: [SignalingFeature.devices]))
+        let original = saved.approvedDevices[0].invitation
+        let cipher = try SignalCipher(key: original.key, room: original.room)
+        let request = ProtectedMessage(kind: "request", request: try SecureRandom.token(), session: "", sequence: 0)
+        transport.deliver(RelayMessage(type: "signal", payload: try cipher.seal(request, sender: "client")))
+        XCTAssertEqual(host.invitation, original)
+        XCTAssertEqual(host.pendingPairInvitation, pending)
+        transport.deliver(RelayMessage(type: "peer", online: false))
+        XCTAssertTrue(host.hostRegistered)
+        XCTAssertEqual(host.pendingPairInvitation, pending)
+        // Complete a second enrollment through the public encrypted handshake/approval path.
+        let pendingCipher = try SignalCipher(key: pending.key, room: pending.room)
+        let nextRequest = ProtectedMessage(kind: "request", request: try SecureRandom.token(), session: "", sequence: 0)
+        transport.deliver(RelayMessage(type: "signal", payload: try pendingCipher.seal(nextRequest, sender: "client")))
+        let challenge = try pendingCipher.open(XCTUnwrap(transport.sent.last?.payload), sender: "host")
+        let proof = ProtectedMessage(kind: "proof", request: nextRequest.request, session: challenge.session, sequence: 0)
+        transport.deliver(RelayMessage(type: "signal", payload: try pendingCipher.seal(proof, sender: "client")))
+        XCTAssertTrue(host.awaitingApproval)
+        host.approve()
+        let accepted = try pendingCipher.open(XCTUnwrap(transport.sent.last?.payload), sender: "host")
+        XCTAssertEqual(accepted.kind, "accepted")
+        let published = try JSONDecoder().decode(PairInvitation.self, from: XCTUnwrap(accepted.body))
+        XCTAssertNotEqual(published.key, pending.key)
+        XCTAssertNotEqual(published.token, pending.token)
+        XCTAssertEqual(published.room, original.room)
+        XCTAssertEqual(host.pairedDevices.count, 2)
+        XCTAssertEqual(host.pairedDevices[0], saved.approvedDevices[0])
+        XCTAssertEqual(host.pairedDevices[1].invitation, published)
+        XCTAssertNil(host.pendingPairInvitation)
+        XCTAssertEqual(try store.read(HostPair.self)?.approvedDevices, host.pairedDevices)
+    }
+
+    func testKillSwitchAdvertisesOnlyOneDeviceWithoutDeletingCatalog() throws {
+        let store = MemoryPairStore(), saved = try catalog()
+        try store.save(saved)
+        let transport = ScriptedSignaling()
+        let host = RemoteCoordinator(isHost: true, store: store, signaling: transport, multiDeviceEnabled: false)
+        host.allowLegacyPrivateRoute = true
+        host.restore(); host.start(); defer { host.stop() }
+        XCTAssertFalse(transport.connects.first?.features.contains(SignalingFeature.devices) ?? true)
+        XCTAssertNil(transport.clientTokenHashes)
+        XCTAssertEqual(transport.connects.first?.invitation, saved.approvedDevices[0].invitation)
+        XCTAssertThrowsError(try host.createPair(server: saved.invitation.server, name: "Mac"))
+        XCTAssertEqual(try store.read(HostPair.self)?.approvedDevices, saved.approvedDevices)
+        transport.deliver(RelayMessage(type: "registered"))
+        let primary = saved.approvedDevices[0].invitation
+        let cipher = try SignalCipher(key: primary.key, room: primary.room)
+        let request = ProtectedMessage(kind: "request", request: try SecureRandom.token(), session: "", sequence: 0)
+        transport.deliver(RelayMessage(type: "signal", payload: try cipher.seal(request, sender: "client")))
+        let challenge = try cipher.open(XCTUnwrap(transport.sent.last?.payload), sender: "host")
+        XCTAssertEqual(challenge.kind, "challenge")
+    }
+
+    func testInvalidCatalogFailsClosedRatherThanDroppingAnotherDevicesTrust() throws {
+        let store = MemoryPairStore()
+        var saved = try catalog()
+        let duplicate = saved.approvedDevices[0]
+        saved.devices?.append(duplicate)
+        try store.save(saved)
+        let host = RemoteCoordinator(isHost: true, store: store)
+        host.restore()
+        XCTAssertNil(host.invitation)
+        XCTAssertTrue(host.pairedDevices.isEmpty)
+        XCTAssertThrowsError(try host.createPair(server: saved.invitation.server, name: "Mac"))
+        XCTAssertEqual(try store.read(HostPair.self)?.devices?.count, 3)
+    }
+
+    func testLastUsedAndNameUpdateOnlySelectedDevice() throws {
+        var saved = try catalog()
+        let first = saved.approvedDevices[0]
+        saved.phoneName = "Renamed iPad"
+        try saved.rememberCurrentDevice(at: Date(timeIntervalSince1970: 99))
+        XCTAssertEqual(saved.approvedDevices[0], first)
+        XCTAssertEqual(saved.approvedDevices[1].phoneName, "Renamed iPad")
+        XCTAssertEqual(saved.approvedDevices[1].lastUsed, Date(timeIntervalSince1970: 99))
+    }
+}
+
+
+extension HostMultiDeviceTests {
+    func testExpiredAddDeviceCodeStillListensAfterRestartWithoutRepair() throws {
+        let store = MemoryPairStore(), saved = try catalog(count: 1)
+        try store.save(saved)
+        let creator = RemoteCoordinator(isHost: true, store: store)
+        creator.restore()
+        _ = try creator.createPair(server: saved.invitation.server, name: "Mac")
+        var expired = try XCTUnwrap(store.read(HostPair.self))
+        expired.pendingInvitation?.expires = .distantPast
+        try store.save(expired)
+        let transport = ScriptedSignaling()
+        let restarted = RemoteCoordinator(isHost: true, store: store, signaling: transport)
+        restarted.restore(); restarted.start(); defer { restarted.stop() }
+        XCTAssertEqual(restarted.invitation, saved.approvedDevices[0].invitation)
+        XCTAssertNil(restarted.pendingPairInvitation)
+        XCTAssertEqual(restarted.pairedDevices, saved.approvedDevices)
+        XCTAssertEqual(transport.connects.first?.invitation, saved.approvedDevices[0].invitation)
+        XCTAssertEqual(transport.clientTokenHashes?.count, 1)
+    }
+
+    func testCancelAndDeclineAddDeviceKeepExistingGrantAndResumeAdmission() throws {
+        for decline in [false, true] {
+            let store = MemoryPairStore(), saved = try catalog(count: 1)
+            try store.save(saved)
+            let transport = ScriptedSignaling()
+            let host = RemoteCoordinator(isHost: true, store: store, signaling: transport)
+            host.allowLegacyPrivateRoute = true
+            host.restore()
+            let pending = try host.createPair(server: saved.invitation.server, name: "Mac")
+            host.start(); defer { host.stop() }
+            transport.deliver(RelayMessage(type: "registered", features: [SignalingFeature.devices]))
+            if decline {
+                let cipher = try SignalCipher(key: pending.key, room: pending.room)
+                let request = ProtectedMessage(kind: "request", request: try SecureRandom.token(), session: "", sequence: 0)
+                transport.deliver(RelayMessage(type: "signal", payload: try cipher.seal(request, sender: "client")))
+                let challenge = try cipher.open(XCTUnwrap(transport.sent.last?.payload), sender: "host")
+                let proof = ProtectedMessage(kind: "proof", request: request.request, session: challenge.session, sequence: 0)
+                transport.deliver(RelayMessage(type: "signal", payload: try cipher.seal(proof, sender: "client")))
+                XCTAssertTrue(host.awaitingApproval)
+                host.reject()
+                XCTAssertEqual(transport.connects.count, 2)
+            } else {
+                XCTAssertTrue(host.cancelPendingPairing())
+                host.start()
+            }
+            XCTAssertNil(host.pendingPairInvitation)
+            XCTAssertFalse(host.awaitingApproval)
+            XCTAssertEqual(host.pairedDevices, saved.approvedDevices)
+            XCTAssertEqual(host.invitation, saved.approvedDevices[0].invitation)
+            XCTAssertEqual(transport.clientTokenHashes, [SecureRandom.digest(saved.approvedDevices[0].invitation.token)])
+            XCTAssertNil(try store.read(HostPair.self)?.pendingInvitation)
+        }
+    }
+
+    func testBigTextIsSeparateOnTwoDevicesForTheSameStableMacRoom() throws {
+        let room = try catalog().invitation.room
+        let firstSuite = "HostMultiDeviceBigTextPhone-" + UUID().uuidString
+        let secondSuite = "HostMultiDeviceBigTextIPad-" + UUID().uuidString
+        let first = try XCTUnwrap(UserDefaults(suiteName: firstSuite))
+        let second = try XCTUnwrap(UserDefaults(suiteName: secondSuite))
+        defer { first.removePersistentDomain(forName: firstSuite); second.removePersistentDomain(forName: secondSuite) }
+        let display = DisplayDescriptor(id: 1, name: "Mac display", width: 1470, height: 956)
+        BigTextMemory(defaults: first).remember(1280, forRoom: room, display: display, among: [display])
+        BigTextMemory(defaults: second).remember(1440, forRoom: room, display: display, among: [display])
+        XCTAssertEqual(BigTextMemory(defaults: first).width(forRoom: room, display: display, among: [display]), 1280)
+        XCTAssertEqual(BigTextMemory(defaults: second).width(forRoom: room, display: display, among: [display]), 1440)
+    }
+}
+
+
+extension HostMultiDeviceTests {
+    func testKeychainSaveFailurePreservesCatalogAndStopsUnconfirmedRemoval() throws {
+        let store = MemoryPairStore(), saved = try catalog()
+        try store.save(saved)
+        let host = RemoteCoordinator(isHost: true, store: store, signaling: ScriptedSignaling())
+        host.restore()
+        store.refuseSave = true
+        XCTAssertThrowsError(try host.createPair(server: saved.invitation.server, name: "Mac"))
+        XCTAssertEqual(host.pairedDevices, saved.approvedDevices)
+        XCTAssertEqual(try store.read(HostPair.self)?.approvedDevices, saved.approvedDevices)
+        host.start()
+        XCTAssertFalse(host.removePairedDevice(saved.approvedDevices[0].id))
+        XCTAssertFalse(host.isRunning)
+        XCTAssertEqual(try store.read(HostPair.self)?.approvedDevices, saved.approvedDevices)
+        store.refuseSave = false
+        XCTAssertTrue(host.removePairedDevice(saved.approvedDevices[0].id))
+        XCTAssertEqual(host.pairedDevices, [saved.approvedDevices[1]])
+    }
+}
+
+
+extension HostMultiDeviceTests {
+    func testExpiryDuringAuthenticatedConsentRecoversOriginalAdmissionWithoutRelaunch() async throws {
+        for approveExpired in [true, false] {
+            let store = MemoryPairStore(), saved = try catalog(count: 1)
+            try store.save(saved)
+            let creator = RemoteCoordinator(isHost: true, store: store)
+            creator.restore()
+            _ = try creator.createPair(server: saved.invitation.server, name: "Mac")
+            var record = try XCTUnwrap(store.read(HostPair.self))
+            record.pendingInvitation?.expires = Date().addingTimeInterval(2)
+            let pending = try XCTUnwrap(record.pendingInvitation)
+            try store.save(record)
+            let transport = ScriptedSignaling()
+            let host = RemoteCoordinator(isHost: true, store: store, retryLimit: 1,
+                                         retryBaseNanoseconds: 1_000_000, signaling: transport)
+            host.allowLegacyPrivateRoute = true
+            host.restore(); host.start(); defer { host.stop() }
+            transport.deliver(RelayMessage(type: "registered", features: [SignalingFeature.devices]))
+            let cipher = try SignalCipher(key: pending.key, room: pending.room)
+            let request = ProtectedMessage(kind: "request", request: try SecureRandom.token(), session: "", sequence: 0)
+            transport.deliver(RelayMessage(type: "signal", payload: try cipher.seal(request, sender: "client")))
+            let challenge = try cipher.open(XCTUnwrap(transport.sent.last?.payload), sender: "host")
+            let proof = ProtectedMessage(kind: "proof", request: request.request, session: challenge.session, sequence: 0)
+            transport.deliver(RelayMessage(type: "signal", payload: try cipher.seal(proof, sender: "client")))
+            XCTAssertTrue(host.awaitingApproval)
+            try await Task.sleep(nanoseconds: 2_100_000_000)
+            if approveExpired { host.approve() }
+            else { transport.deliver(RelayMessage(type: "peer", online: false)) }
+            let deadline = Date().addingTimeInterval(2)
+            while transport.connects.count < 2 && Date() < deadline { try await Task.sleep(nanoseconds: 5_000_000) }
+            XCTAssertEqual(transport.connects.count, 2)
+            XCTAssertEqual(host.invitation, saved.approvedDevices[0].invitation)
+            XCTAssertEqual(host.pairedDevices, saved.approvedDevices)
+            XCTAssertNil(host.pendingPairInvitation)
+            XCTAssertTrue(host.isRunning)
+            XCTAssertEqual(transport.clientTokenHashes, [SecureRandom.digest(saved.approvedDevices[0].invitation.token)])
+        }
+    }
+}

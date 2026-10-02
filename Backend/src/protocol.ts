@@ -4,6 +4,8 @@ export const PROTOCOL_VERSION = 1;
 export const RENEWAL_FEATURE = "renew.1";
 export const REMOTE_FEATURE = "remote.1";
 export const ROUTE_FEATURE = "route.1";
+export const DEVICES_FEATURE = "devices.1";
+export const MAX_TRUSTED_DEVICES = 5;
 
 export const MAX_FRAME_BYTES = 256 * 1024;
 export const MAX_JSON_CHARS = 200 * 1024;
@@ -30,6 +32,7 @@ export type RegisterMessage = {
   room: string;
   token: string;
   clientTokenHash?: string;
+  clientTokenHashes?: string[];
   features: Set<string>;
   entitlement?: string;
 };
@@ -88,6 +91,14 @@ export function parseRegister(msg: Record<string, unknown>): RegisterMessage | u
   if (msg.clientTokenHash !== undefined) {
     if (typeof msg.clientTokenHash !== "string" || !HEX64.test(msg.clientTokenHash)) return undefined;
     result.clientTokenHash = msg.clientTokenHash;
+  }
+  if (msg.clientTokenHashes !== undefined) {
+    const hashes = msg.clientTokenHashes;
+    if (msg.role !== "host" || !features.has(DEVICES_FEATURE) || !result.clientTokenHash ||
+        !Array.isArray(hashes) || hashes.length === 0 || hashes.length > MAX_TRUSTED_DEVICES ||
+        hashes.some(hash => typeof hash !== "string" || !HEX64.test(hash)) ||
+        new Set(hashes).size !== hashes.length || !hashes.includes(result.clientTokenHash)) return undefined;
+    result.clientTokenHashes = hashes as string[];
   }
   if (msg.entitlement !== undefined) {
     if (typeof msg.entitlement !== "string" || msg.entitlement.length === 0 || msg.entitlement.length > MAX_ENTITLEMENT_TOKEN_CHARS) return undefined;

@@ -11,7 +11,13 @@ protocol OwnerLocalSignalingTransport: SignalingTransport {
 }
 
 @MainActor
-final class LocalSignalingTransport: OwnerLocalSignalingTransport {
+protocol MultiDeviceLocalSignalingTransport: OwnerLocalSignalingTransport {
+    var hostInvitations: [PairInvitation] { get set }
+    var onSelectedHostInvitation: ((PairInvitation) -> Void)? { get set }
+}
+
+@MainActor
+final class LocalSignalingTransport: MultiDeviceLocalSignalingTransport {
     /// Internal rollback of the shorter deadline only; admission/recovery still fail closed.
     static let legacyAuthenticationTimeoutKey = "FarsideLocalSignalingLegacyAuthenticationTimeout"
     var onMessage: ((RelayMessage) -> Void)?
@@ -19,13 +25,20 @@ final class LocalSignalingTransport: OwnerLocalSignalingTransport {
     /// Host/owner/session binding authenticated; NOT a free-route grant. Root-owned coordinator
     /// wiring uses this separate callback rather than accepting network-supplied route messages.
     var onAuthenticatedLocalSignaling: ((LocalOwnerChallenge) -> Void)?
+    /// Empty preserves single-pair behavior. The coordinator owns the internal multi-device gate.
+    var hostInvitations: [PairInvitation] = []
+    /// Called after encrypted proof succeeds, before the local authentication/peer callbacks.
+    var onSelectedHostInvitation: ((PairInvitation) -> Void)?
     private(set) var lastCloseReason: String?
     private let queue = DispatchQueue(label: "farside.local-signaling")
     private var generation = UUID()
     private var connectionGeneration = UUID()
     private var listener: NWListener?
+    private var hostListeners: [String: NWListener] = [:]
+    private var hostRegistrationAnnounced = false
     private var connection: NWConnection?
     private var invitation: PairInvitation?
+    private var hostInvitationSnapshot: [PairInvitation] = []
     private var cipher: SignalCipher?
     private var isHost = false
     private var admission: LocalOwnerAdmission?
@@ -39,21 +52,28 @@ final class LocalSignalingTransport: OwnerLocalSignalingTransport {
     private var timeout: Task<Void, Never>?
     private let hostAuthenticationTimeoutNanoseconds: UInt64
     private let parametersOverride: NWParameters?
+    private let endpointOverride: NWEndpoint?
 
     init(defaults: UserDefaults = .standard) {
         hostAuthenticationTimeoutNanoseconds = defaults.bool(forKey: Self.legacyAuthenticationTimeoutKey)
             ? 20_000_000_000 : 3_000_000_000
         parametersOverride = nil
+        endpointOverride = nil
     }
 
     #if DEBUG
     init(defaults: UserDefaults, hostAuthenticationTimeoutNanoseconds: UInt64,
-         parameters: NWParameters? = nil) {
+         parameters: NWParameters? = nil, endpoint: NWEndpoint? = nil) {
         self.hostAuthenticationTimeoutNanoseconds = defaults.bool(forKey: Self.legacyAuthenticationTimeoutKey)
             ? 20_000_000_000 : hostAuthenticationTimeoutNanoseconds
         parametersOverride = parameters
+        endpointOverride = endpoint
     }
     var listeningPortForTesting: NWEndpoint.Port? { listener?.port }
+    func listeningPortForTesting(ownerPairID: String) -> NWEndpoint.Port? {
+        guard let listener = hostListeners[ownerPairID], case .ready = listener.state else { return nil }
+        return listener.port
+    }
     #endif
 
     func connect(invitation: PairInvitation, hostToken: String?, features: [String]) throws {
@@ -63,6 +83,29 @@ final class LocalSignalingTransport: OwnerLocalSignalingTransport {
               let serviceName = invitation.localServiceName else { throw RemoteError.invalidPairing }
         self.invitation = invitation; isHost = hostToken != nil
         cipher = try SignalCipher(key: invitation.key, room: invitation.room)
+        if isHost {
+            guard hostInvitations.count <= 5 else { throw RemoteError.invalidPairing }
+            hostInvitationSnapshot = [invitation]
+            for candidate in hostInvitations {
+                try candidate.validate(enrollment: false)
+                guard candidate.durableHostID == invitation.durableHostID,
+                      candidate.server == invitation.server, candidate.room == invitation.room,
+                      candidate.localServiceName != nil, candidate.ownerPairID != nil else {
+                    throw RemoteError.invalidPairing
+                }
+                if let existing = hostInvitationSnapshot.first(where: { $0.ownerPairID == candidate.ownerPairID }) {
+                    guard existing == candidate else { throw RemoteError.invalidPairing }
+                } else {
+                    guard !hostInvitationSnapshot.contains(where: {
+                        $0.localServiceName?.lowercased() == candidate.localServiceName?.lowercased()
+                    }) else {
+                        throw RemoteError.invalidPairing
+                    }
+                    hostInvitationSnapshot.append(candidate)
+                }
+            }
+            guard hostInvitationSnapshot.count <= 5 else { throw RemoteError.invalidPairing }
+        }
         let run = generation
         let parameters = parametersOverride ?? NWParameters.tcp
         if parametersOverride == nil {
@@ -71,35 +114,51 @@ final class LocalSignalingTransport: OwnerLocalSignalingTransport {
             parameters.prohibitedInterfaceTypes = [.cellular, .loopback, .other]
         }
         if isHost {
-            let listener = try NWListener(using: parameters)
-            self.listener = listener
-            listener.service = NWListener.Service(name: serviceName, type: LocalMacDiscovery.serviceType, domain: "local.")
-            listener.newConnectionHandler = { [weak self] incoming in
-                Task { @MainActor in
-                    guard let self, self.generation == run, !self.authenticated else { incoming.cancel(); return }
-                    // A pending TCP connection has no authority to reserve the owner's only slot.
-                    self.resetConnection()
-                    self.attach(incoming, run: run)
-                }
-            }
-            listener.stateUpdateHandler = { [weak self] state in
-                Task { @MainActor in
-                    guard let self, self.generation == run else { return }
-                    switch state {
-                    case .ready: self.onMessage?(RelayMessage(type: "registered", version: 1))
-                    case .failed: self.lost("Local listener unavailable")
-                    default: break
+            do {
+                for (index, candidate) in hostInvitationSnapshot.enumerated() {
+                    guard let pairID = candidate.ownerPairID, let name = candidate.localServiceName else {
+                        throw RemoteError.invalidPairing
+                    }
+                    let listener = try NWListener(using: parameters)
+                    hostListeners[pairID] = listener
+                    if index == 0 { self.listener = listener }
+                    listener.service = NWListener.Service(name: name, type: LocalMacDiscovery.serviceType, domain: "local.")
+                    listener.newConnectionHandler = { [weak self] incoming in
+                        Task { @MainActor in
+                            guard let self, self.generation == run, self.hostRegistrationAnnounced, !self.authenticated else { incoming.cancel(); return }
+                            // All device services share one connection slot. Pending TCP is not authority.
+                            self.resetConnection()
+                            self.attach(incoming, run: run, hostInvitation: candidate)
+                        }
+                    }
+                    listener.stateUpdateHandler = { [weak self] state in
+                        Task { @MainActor in
+                            guard let self, self.generation == run else { return }
+                            switch state {
+                            case .ready:
+                                if index == 0 && !self.hostRegistrationAnnounced {
+                                    self.hostRegistrationAnnounced = true
+                                    self.onMessage?(RelayMessage(type: "registered", version: 1))
+                                }
+                            case .failed: self.lost("Local listener unavailable")
+                            default: break
+                            }
+                        }
                     }
                 }
+                // Construct every listener before starting any; partial setup failures close all.
+                for listener in hostListeners.values { listener.start(queue: queue) }
+            } catch {
+                close()
+                throw error
             }
-            listener.start(queue: queue)
         } else {
-            let endpoint = NWEndpoint.service(name: serviceName, type: LocalMacDiscovery.serviceType, domain: "local.", interface: nil)
+            let endpoint = endpointOverride ?? NWEndpoint.service(name: serviceName, type: LocalMacDiscovery.serviceType, domain: "local.", interface: nil)
             attach(NWConnection(to: endpoint, using: parameters), run: run)
         }
     }
 
-    private func attach(_ connection: NWConnection, run: UUID) {
+    private func attach(_ connection: NWConnection, run: UUID, hostInvitation: PairInvitation? = nil) {
         self.connection = connection
         let connectionRun = connectionGeneration
         timeout = Task { [weak self] in
@@ -119,10 +178,8 @@ final class LocalSignalingTransport: OwnerLocalSignalingTransport {
                     self.receiveHeader(run: connectionRun)
                     if self.isHost {
                         do {
-                            guard let invitation = self.invitation else { throw RemoteError.invalidPairing }
-                            let challenge = try LocalOwnerChallenge.make(invitation: invitation)
-                            self.admission = LocalOwnerAdmission(challenge: challenge)
-                            try self.write(kind: "localChallenge", body: JSONEncoder().encode(challenge), challenge: challenge, sequence: 0)
+                            guard let invitation = hostInvitation else { throw RemoteError.invalidPairing }
+                            try self.challengeHostInvitation(invitation)
                         } catch { self.lostConnection("Local challenge failed") }
                     }
                 case .failed, .cancelled: self.lostConnection("Local connection closed")
@@ -143,6 +200,14 @@ final class LocalSignalingTransport: OwnerLocalSignalingTransport {
             }
         }
         connection.start(queue: queue)
+    }
+
+    private func challengeHostInvitation(_ invitation: PairInvitation) throws {
+        self.invitation = invitation
+        cipher = try SignalCipher(key: invitation.key, room: invitation.room)
+        let challenge = try LocalOwnerChallenge.make(invitation: invitation)
+        admission = LocalOwnerAdmission(challenge: challenge)
+        try write(kind: "localChallenge", body: JSONEncoder().encode(challenge), challenge: challenge, sequence: 0)
     }
 
     func send(_ message: RelayMessage) {
@@ -248,8 +313,12 @@ final class LocalSignalingTransport: OwnerLocalSignalingTransport {
 
     private func didAuthenticate(_ challenge: LocalOwnerChallenge) {
         authenticated = true; timeout?.cancel(); timeout = nil
+        let run = connectionGeneration
+        if isHost, let invitation { onSelectedHostInvitation?(invitation) }
+        guard isCurrentConnection(run), authenticated else { return }
         // Callback runs before `peer`; coordinator must arm ONLY its local-proof requirement here.
         onAuthenticatedLocalSignaling?(challenge)
+        guard isCurrentConnection(run), authenticated else { return }
         if !isHost { onMessage?(RelayMessage(type: "registered", version: 1)) }
         onMessage?(RelayMessage(type: "ice", servers: [], policy: "all"))
         onMessage?(RelayMessage(type: "peer", online: true))
@@ -278,8 +347,10 @@ final class LocalSignalingTransport: OwnerLocalSignalingTransport {
     }
     func close() {
         generation = UUID()
-        listener?.cancel(); listener = nil
+        for listener in hostListeners.values { listener.cancel() }
+        hostListeners.removeAll(); hostRegistrationAnnounced = false; listener = nil
         resetConnection()
         cipher = nil; invitation = nil
+        hostInvitationSnapshot.removeAll()
     }
 }

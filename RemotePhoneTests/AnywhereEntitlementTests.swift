@@ -66,7 +66,7 @@ final class AnywhereEntitlementTests: XCTestCase {
     func testDisclosureStatesPricePeriodTrialRenewalAndCancellation() {
         let text = AnywhereCopy.disclosure(yearly)
         for part in ["7-day free trial", "$59.99 a year", "renews automatically", "charged when the trial ends",
-                     "24 hours before the end of the trial", "Settings › Apple Account › Subscriptions", "up to three of your iPhones and iPads",
+                     "24 hours before the end of the trial", "Settings › Apple Account › Subscriptions", "up to five of your iPhones and iPads",
                      "verified local network stays free"] {
             XCTAssertTrue(text.contains(part), "Missing “\(part)” in: \(text)")
         }
@@ -631,7 +631,7 @@ final class AnywhereAccessTests: XCTestCase {
         let refused = await access.refresh()
         XCTAssertFalse(refused)
         XCTAssertEqual(access.verification, .refused(reason: "device_limit"))
-        XCTAssertTrue(AnywhereCopy.refusal("device_limit").contains("three devices"))
+        XCTAssertTrue(AnywhereCopy.refusal("device_limit").contains("five devices"))
         serviceURL = nil
         let unconfigured = await access.refresh(force: true)
         XCTAssertFalse(unconfigured)

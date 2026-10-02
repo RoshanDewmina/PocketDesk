@@ -8,6 +8,7 @@ struct RelayMessage: Codable {
     var room: String?
     var token: String?
     var clientTokenHash: String?
+    var clientTokenHashes: [String]?
     var payload: String?
     var online: Bool?
     var code: String?
@@ -51,7 +52,13 @@ struct ServerRoutePolicy: Equatable {
 }
 
 @MainActor
-final class SignalingClient: SignalingTransport {
+protocol MultiDeviceSignalingTransport: SignalingTransport {
+    var clientTokenHashes: [String]? { get set }
+}
+
+@MainActor
+final class SignalingClient: MultiDeviceSignalingTransport {
+    var clientTokenHashes: [String]?
     var onMessage: ((RelayMessage) -> Void)?
     var onClose: (() -> Void)?
     private var socket: URLSessionWebSocketTask?
@@ -81,6 +88,7 @@ final class SignalingClient: SignalingTransport {
         send(RelayMessage(type: "register", version: 1, role: hostToken == nil ? "client" : "host",
             room: invitation.room, token: hostToken ?? invitation.token,
             clientTokenHash: hostToken == nil ? nil : SecureRandom.digest(invitation.token),
+            clientTokenHashes: hostToken == nil || !features.contains(SignalingFeature.devices) ? nil : clientTokenHashes,
             features: features.isEmpty ? nil : features, entitlement: hostToken == nil ? entitlement : nil))
         let keepalive = SignalingKeepalive(timing: keepaliveTiming, ping: { [weak socket] handler in
             guard let socket else { handler(URLError(.networkConnectionLost)); return }

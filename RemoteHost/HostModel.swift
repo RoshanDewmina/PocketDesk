@@ -383,7 +383,7 @@ final class RemoteHostModel: ObservableObject {
         HostInputAccess(postEvents: InputCadenceTrace.permission("post", probe: CGPreflightPostEventAccess) ? .granted : .denied,
                         accessibility: InputCadenceTrace.permission("AX", probe: AXIsProcessTrusted) ? .granted : .denied)
     }
-    var hasPairedPhone: Bool { connection.hostPair?.paired == true }
+    var hasPairedPhone: Bool { !connection.pairedDevices.isEmpty }
     var serviceAddress: String? {
         HostPreferences.resolveServiceAddress(
             saved: connection.invitation?.server,
@@ -417,8 +417,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private var pairingInProgress: Bool {
-        !pairingCode.isEmpty && !pairingExpired && connection.hostPair?.paired == false
-            && (connection.hostPair?.invitation.expires ?? .distantPast) > Date()
+        !pairingCode.isEmpty && !pairingExpired && connection.pendingPairInvitation != nil
     }
 
     var status: HostStatus {
@@ -441,10 +440,8 @@ final class RemoteHostModel: ObservableObject {
 
     var pairingState: HostPairingState {
         if connection.awaitingApproval { return .awaitingApproval }
-        if !pairingCode.isEmpty, let pair = connection.hostPair, !pair.paired {
-            // Rejection, timeout and malformed enrollment retire the invitation immediately.
-            let expires = pair.invitation.expires
-            return pairingExpired || expires <= Date() ? .expired : .showingCode(pairingCode, expires: expires)
+        if !pairingCode.isEmpty, connection.pendingPairInvitation != nil, let pairingExpires {
+            return pairingExpired ? .expired : .showingCode(pairingCode, expires: pairingExpires)
         }
         if serviceAddress == nil { return .needsService }
         if hasPairedPhone && pairingRequested { return .confirmReplace }
@@ -471,6 +468,11 @@ final class RemoteHostModel: ObservableObject {
             status: status,
             setupStep: setupStep,
             hasPairedPhone: hasPairedPhone,
+            pairedDevices: connection.pairedDevices.map { device in
+                HostPairedDeviceRow(id: device.id, name: PhoneDisplayName.display(device.phoneName),
+                                    lastUsed: device.lastUsed,
+                                    connected: connection.connected && connection.invitation == device.invitation)
+            },
             pairingRequested: pairingRequested,
             pairing: pairingState,
             pairingComparisonCode: connection.pairingComparisonCode,
@@ -836,6 +838,15 @@ final class RemoteHostModel: ObservableObject {
 
     func cancelPairing() {
         pairingRequested = false
+        guard connection.pendingPairInvitation != nil else { return }
+        let resume = wantsSharing
+        if connection.cancelPendingPairing() {
+            clearPairingCode()
+            if resume, hasPairedPhone { resumeSharing() }
+        } else {
+            wantsSharing = false; preferences.sharingEnabled = false
+            detail = "Couldn’t cancel the pairing code. Sharing is off; unlock this Mac and retry."
+        }
     }
 
     func setServiceAddress(_ value: String) {
@@ -855,6 +866,10 @@ final class RemoteHostModel: ObservableObject {
             bundled: Bundle.main.object(forInfoDictionaryKey: "PocketDeskServiceURL") as? String
         ) else { objectWillChange.send(); return }
         guard !browserSession.controller.running else { detail = "Browser access is on. Stop it before pairing a phone."; return }
+        guard !connection.connected, connection.media == nil, !connection.awaitingApproval,
+              !captureApproval.isPending, !consentPending else {
+            detail = HostDeviceLimitError.busy.localizedDescription; return
+        }
         guard canPair, let display = validatedSelectedDisplay() else {
             detail = "Farside needs Screen Recording and a display to share before pairing."
             return
@@ -894,7 +909,11 @@ final class RemoteHostModel: ObservableObject {
 
     func declinePhone() {
         connection.reject()
-        pairingExpired = true
+        clearPairingCode(); pairingRequested = false
+        detail = hasPairedPhone ? "Device wasn’t added. Your other devices stay paired." : "Pairing was declined."
+        if connection.pairingRemovalFailure != nil {
+            wantsSharing = false; preferences.sharingEnabled = false
+        }
     }
 
     func removeServerRoom() {
@@ -1021,6 +1040,23 @@ final class RemoteHostModel: ObservableObject {
         pairingRequested = false
     }
 
+    func removePairedDevice(_ id: String) {
+        guard removalAllowsSharing else { return }
+        let resume = wantsSharing
+        cancelTimedPause()
+        if !browserSession.controller.running { stop() }
+        let removed = connection.removePairedDevice(id)
+        localPairRemovalMessage = removed
+            ? "Device removed. Your other devices stay paired."
+            : "Couldn’t confirm removal. Sharing is off. Unlock this Mac and retry Remove."
+        clearPairingCode(); pairingRequested = false
+        if removed, resume, hasPairedPhone { resumeSharing() }
+        else if !hasPairedPhone || !removed {
+            wantsSharing = false; preferences.sharingEnabled = false
+        }
+        objectWillChange.send()
+    }
+
     private func clearPairingCode() {
         pairingCode = ""
         pairingExpires = nil
@@ -1032,7 +1068,7 @@ final class RemoteHostModel: ObservableObject {
         recordServiceTransition()
         refreshAgentPushRelay()
         if hasPairedPhone { clearDeferredPairing() }
-        guard !pairingCode.isEmpty, hasPairedPhone else { return }
+        guard !pairingCode.isEmpty, connection.pendingPairInvitation == nil, hasPairedPhone else { return }
         clearPairingCode()
         pairingRequested = false
     }
@@ -1307,9 +1343,9 @@ final class RemoteHostModel: ObservableObject {
             return self.hasPairedPhone && !self.serverRemovalPending && !self.serverRemovalReadFailed && !self.serverRemovalBusy
         }
         agentAlerts.pushIdentity = { [weak self] in
-            guard let self, let pair = self.connection.hostPair, pair.paired,
+            guard let self, let root = self.connection.hostPair, let primary = root.approvedDevices.first,
                   !self.serverRemovalPending, !self.serverRemovalReadFailed, !self.serverRemovalBusy else { return nil }
-            return SecureRandom.digest(pair.hostToken + "|" + pair.invitation.token + "|" + pair.invitation.server)
+            return SecureRandom.digest(root.hostToken + "|" + primary.invitation.token + "|" + primary.invitation.server)
         }
         agentAlerts.record = { [weak self] text in self?.events.record(.session, text) }
         refreshAgentPushRelay()
@@ -1318,8 +1354,11 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func refreshAgentPushRelay() {
-        let pair = connection.hostPair?.paired == true && !serverRemovalPending && !serverRemovalReadFailed && !serverRemovalBusy
-            ? connection.hostPair : nil
+        let pair: HostPair?
+        if let root = connection.hostPair, let primary = root.approvedDevices.first,
+           !serverRemovalPending, !serverRemovalReadFailed, !serverRemovalBusy {
+            pair = root.selecting(primary)
+        } else { pair = nil }
         if pair?.hostToken == agentPushPair?.hostToken &&
             pair?.invitation == agentPushPair?.invitation && pair?.paired == agentPushPair?.paired { return }
         agentPushPair = pair

@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { mintEntitlementToken } from "../src/entitlement/token";
 import { verifyEntitlementToken } from "../src/entitlement/token";
 import type { RoomDO } from "../src/room";
-import { randomHex } from "../src/util";
+import { randomHex, sha256Hex } from "../src/util";
 import { parseChain, signCompactJws, transactionPayload, type TestChain } from "./helpers/apple-chain";
 import { connectClient, connectHost, open, pairing, payload64, postJson, registerMessage, sleep, testEnv } from "./helpers/client";
 import { installTurnMock, type TurnMock } from "./helpers/turn-mock";
@@ -57,6 +57,30 @@ describe("signaling parity with the Bun service", () => {
     c.send({ ...registerMessage(p, "client"), token: "c".repeat(64) });
     expect(await c.next()).toEqual({ type: "error", code: "host_unavailable_or_unauthorized" });
     expect((await c.closed).reason).toBe("host_unavailable_or_unauthorized");
+  });
+
+  it("rejects a second trusted device while the first device's paid admission is pending", async () => {
+    turn.reset();
+    const token = await entitlementToken();
+    const p = await pairing();
+    const otherToken = randomHex();
+    const other = { ...p, clientToken: otherToken, clientTokenHash: await sha256Hex(otherToken) };
+    const host = await connectHost(p, { features: ["devices.1"], clientTokenHashes: [p.clientTokenHash, other.clientTokenHash] });
+    const release = turn.holdGenerate();
+    const pending = await open();
+    try {
+      pending.send(registerMessage(other, "client", { features: ["remote.1"], entitlement: token }));
+      for (let attempt = 0; attempt < 100 && turn.generateCalls < 2; attempt += 1) await sleep(10);
+      expect(turn.generateCalls).toBe(2);
+      const busy = await open();
+      busy.send(registerMessage(p, "client"));
+      expect((await busy.next()).code).toBe("already_connected");
+      await busy.closed;
+      expect(turn.generateCalls).toBe(2);
+      release();
+      expect(await pending.next()).toMatchObject({ type: "registered", role: "client", access: "remote" });
+      expect(await snapshot(p.room)).toMatchObject({ hostOnline: true, clientOnline: true, entitled: true, liveCredentials: 2 });
+    } finally { release(); pending.close(); host.close(); turn.reset(); }
   });
 
   it("phone-before-host is terminal on that socket but a fresh retry can join", async () => {

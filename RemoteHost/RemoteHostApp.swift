@@ -148,6 +148,7 @@ extension HostActions {
                 openSetup()
             },
             removePhone: model.revoke,
+            removePairedDevice: model.removePairedDevice,
             removeServerRoom: model.removeServerRoom,
             stopSharing: model.stopSharing,
             pauseSharing: { model.pauseSharing() },

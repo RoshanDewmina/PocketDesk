@@ -605,13 +605,13 @@ struct HostPairingPage: View {
     private var replace: some View {
         VStack(alignment: .leading, spacing: 0) {
             HostHeading(parts: [.display("Pair a"), .accent(" new "), .display("phone"), .plain("?")])
-            HostSetupText.body("Your current iPhone will stop working with this Mac. You can pair it again later.")
+            HostSetupText.body("Your other devices stay paired. Up to five devices can use this Mac, one at a time.")
                 .padding(.top, 10)
             HStack(spacing: 10) {
                 Button("Cancel", action: actions.cancelPairing)
                     .buttonStyle(HostButtonStyle(kind: .plate))
                     .accessibilityIdentifier("farside.setup.cancelPairing")
-                Button("Replace Phone", action: actions.beginPairing)
+                Button("Pair Device", action: actions.beginPairing)
                     .buttonStyle(HostButtonStyle(kind: .primary))
                     .keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier("farside.setup.replacePhone")
