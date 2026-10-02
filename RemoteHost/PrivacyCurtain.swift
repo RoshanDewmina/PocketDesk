@@ -544,22 +544,45 @@ struct PrivacyCurtainView: View {
     var body: some View {
         ZStack {
             Farside.Palette.void.ignoresSafeArea()
-            VStack(spacing: Farside.Space.s) {
-                HStack(spacing: Farside.Space.s) {
-                    Circle()
-                        .fill(Farside.Palette.ember)
-                        .frame(width: 10, height: 10)
-                        .accessibilityHidden(true)
-                    Text(title)
-                        .font(.system(size: 28, weight: .semibold))
-                        .foregroundStyle(Farside.Palette.bone)
-                }
+            VStack(spacing: Farside.Space.m) {
+                // The mark's ember tip is the live indicator here.
+                CurtainMark(height: 76)
+                    .padding(.bottom, Farside.Space.xs)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .font(.system(size: 44, weight: .semibold))
+                    .foregroundStyle(Farside.Palette.bone)
                 Text(line)
-                    .font(.system(size: 15, design: .monospaced))
+                    .font(.system(size: 20))
                     .foregroundStyle(Farside.Palette.ash)
             }
             .multilineTextAlignment(.center)
             .padding(Farside.Space.xl)
         }
+    }
+}
+
+/// The dot-matrix mark with its ember tip. Kept local because RemoteCoreTests compiles this
+/// file without the host's mark and type files.
+private struct CurtainMark: View {
+    var height: CGFloat
+    private static let rows = ["#", "##", "###", "####", "#####", "######", "#######", "########", "#########",
+                               "##########", "######", "##.##", "#...##", "....##", ".....##", ".....##"]
+
+    var body: some View {
+        let pitch = height / CGFloat(Self.rows.count)
+        Canvas { context, _ in
+            for (row, line) in Self.rows.enumerated() {
+                for (column, cell) in line.enumerated() where cell == "#" {
+                    let tip = row == 0 && column == 0
+                    let radius = pitch * (tip ? 0.5 : 0.42)
+                    let center = CGPoint(x: (CGFloat(column) + 0.5) * pitch, y: (CGFloat(row) + 0.5) * pitch)
+                    context.fill(Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius,
+                                                        width: radius * 2, height: radius * 2)),
+                                 with: .color(tip ? Farside.Palette.ember : Farside.Palette.bone))
+                }
+            }
+        }
+        .frame(width: pitch * 10, height: height)
     }
 }

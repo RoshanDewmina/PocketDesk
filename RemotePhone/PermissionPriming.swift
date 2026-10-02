@@ -90,7 +90,7 @@ struct PermissionPrimingView: View {
                 .farsidePlate()
                 .padding(.top, Farside.Space.l)
                 if adaptiveLayout {
-                    Text(copy.footnote).farsideCaption().multilineTextAlignment(.center)
+                    Text(copy.footnote).font(.footnote).foregroundStyle(Farside.Palette.ash).multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, Farside.Space.s)
                 }
@@ -109,7 +109,7 @@ struct PermissionPrimingView: View {
                 .buttonStyle(FarsidePrimaryButtonStyle(height: 60))
                 .accessibilityIdentifier("priming.continue")
                 if !adaptiveLayout {
-                    Text(copy.footnote).farsideCaption().multilineTextAlignment(.center)
+                    Text(copy.footnote).font(.footnote).foregroundStyle(Farside.Palette.ash).multilineTextAlignment(.center)
                 }
             }
             .padding(.horizontal, Farside.Space.l)

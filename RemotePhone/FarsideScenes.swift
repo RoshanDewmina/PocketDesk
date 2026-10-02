@@ -2,6 +2,18 @@ import SwiftUI
 import CoreGraphics
 
 /// Phone illustrations for the halftone renderer. Brightness is dot size; `ember` is contact glow.
+/// What the Home card draws for a saved Mac, guessed only from its name.
+enum MacKind: Equatable {
+    case laptop, desktop
+
+    static func guess(fromName name: String) -> MacKind? {
+        let lowered = name.lowercased()
+        if lowered.contains("macbook") { return .laptop }
+        if ["imac", "mac mini", "macmini", "mac studio", "mac pro"].contains(where: lowered.contains) { return .desktop }
+        return nil
+    }
+}
+
 extension FarsideArt {
     typealias Scene = (HalftoneLayers, TimeInterval) -> Void
 
@@ -19,6 +31,34 @@ extension FarsideArt {
         }
         fill(c, CGRect(x: 0, y: 0, width: w, height: h * 0.06), 0)
         fill(c, CGRect(x: w * 0.3, y: h * 0.9, width: w * 0.42, height: h * 0.05), 0.24)
+    }
+
+    /// The Home card's Mac: an open laptop, or a display on a stand, with a lit screen.
+    /// Few, large dots so the silhouette still reads at card size.
+    static func macDevice(_ kind: MacKind) -> Scene {
+        { layers, _ in
+            let w = layers.size.width, h = layers.size.height
+            let c = layers.bone
+            switch kind {
+            case .laptop:
+                let screen = CGRect(x: w * 0.17, y: h * 0.1, width: w * 0.66, height: h * 0.62)
+                fill(c, screen, 0.5)
+                fill(c, screen.insetBy(dx: w * 0.035, dy: h * 0.06), 0.16)
+                fill(c, CGRect(x: screen.minX + w * 0.07, y: screen.minY + h * 0.14, width: w * 0.3, height: h * 0.3), 0.75)
+                let base = CGMutablePath()
+                base.addLines(between: [CGPoint(x: w * 0.08, y: h * 0.76), CGPoint(x: w * 0.92, y: h * 0.76),
+                                        CGPoint(x: w * 0.97, y: h * 0.88), CGPoint(x: w * 0.03, y: h * 0.88)])
+                base.closeSubpath()
+                c.addPath(base); c.setFillColor(gray: 0.62, alpha: 1); c.fillPath()
+            case .desktop:
+                let screen = CGRect(x: w * 0.14, y: h * 0.06, width: w * 0.72, height: h * 0.62)
+                fill(c, screen, 0.5)
+                fill(c, screen.insetBy(dx: w * 0.035, dy: h * 0.06), 0.16)
+                fill(c, CGRect(x: screen.minX + w * 0.07, y: screen.minY + h * 0.14, width: w * 0.32, height: h * 0.3), 0.75)
+                fill(c, CGRect(x: w * 0.45, y: h * 0.68, width: w * 0.1, height: h * 0.14), 0.45)
+                fill(c, CGRect(x: w * 0.33, y: h * 0.82, width: w * 0.34, height: h * 0.07), 0.62)
+            }
+        }
     }
 
     /// The Mac went to sleep: a closed laptop, a moon and a trail of z's.

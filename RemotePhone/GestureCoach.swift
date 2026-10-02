@@ -553,7 +553,7 @@ struct GestureCoachView: View {
 
     private var footer: some View {
         HStack(alignment: .center) {
-            Text("Practice only · nothing reaches your Mac").farsideCaption()
+            Text("Practice only · nothing reaches your Mac").font(.footnote).foregroundStyle(Farside.Palette.ash)
                 .dynamicTypeSize(...(adaptiveLayout ? DynamicTypeSize.xxxLarge : dynamicTypeSize))
             Spacer(minLength: Farside.Space.s)
             if coach.passed {

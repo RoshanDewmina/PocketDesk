@@ -47,7 +47,7 @@ struct FileTransferRow: View {
             }
             .buttonStyle(FarsideSecondaryButtonStyle(height: 44, fullWidth: false))
             .disabled(!enabled)
-            Text(caption).farsideCaption()
+            Text(caption).font(.footnote).foregroundStyle(Farside.Palette.ash)
         }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
             guard case .success(let url) = result else { return }
