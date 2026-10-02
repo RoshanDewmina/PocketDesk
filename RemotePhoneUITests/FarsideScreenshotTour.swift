@@ -170,7 +170,13 @@ final class FarsideScreenshotTour: XCTestCase {
                 if recovery.waitForExistence(timeout: 1) { recovery.tap() }
             }
             Thread.sleep(forTimeInterval: shot.wait)
-            if shot.scrollToEnd { app.scrollViews.firstMatch.swipeUp() }
+            if shot.scrollToEnd {
+                if iPad && shot.name.hasPrefix("ipad-") {
+                    scrollVisibleFormToEnd(in: app)
+                } else {
+                    app.scrollViews.firstMatch.swipeUp()
+                }
+            }
             let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             attachment.name = shot.name
             attachment.lifetime = .keepAlways
@@ -197,5 +203,18 @@ final class FarsideScreenshotTour: XCTestCase {
             }
             app.terminate()
         }
+    }
+
+    @MainActor
+    private func scrollVisibleFormToEnd(in app: XCUIApplication) {
+        // A regular form leaves Home's scroll views in the hierarchy behind it.
+        // Search the presented form first so its covered background is never swiped.
+        let pairing = app.otherElements["pairing.sheet"]
+        let candidates = pairing.exists ? pairing.scrollViews.allElementsBoundByIndex : app.scrollViews.allElementsBoundByIndex
+        guard let scroll = candidates.first(where: { !$0.frame.isEmpty && $0.isHittable }) else {
+            XCTFail("No visible, hittable scroll view in the presented iPad form")
+            return
+        }
+        scroll.swipeUp()
     }
 }
