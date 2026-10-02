@@ -207,6 +207,10 @@ final class NativeContainerSurfaceUITests: XCTestCase {
     ]
 
     private var springboard: XCUIApplication { XCUIApplication(bundleIdentifier: "com.apple.springboard") }
+    private let ipadSimulatorIDs: Set<String> = [
+        "A69BA21A-8F6A-48BD-972B-FFCCA74036DD",
+        "419A9E16-E7F7-4269-8690-BD2E4DD4437C"
+    ]
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -330,6 +334,72 @@ final class NativeContainerSurfaceUITests: XCTestCase {
         return nil
     }
 
+    /// Attempts only the real iPadOS windowing controls. A compact-window screenshot is attached
+    /// only after the app's verified Home root remains visible in an actually narrower app frame.
+    @MainActor
+    func testIPadNativeWindowingMenuAndCompactWindow() throws {
+        let planned = ["ipad-windowing-menu", "ipad-compact-window"]
+        attachPlan(planned)
+        let requestedID = ProcessInfo.processInfo.environment["FARSIDE_NATIVE_SIMULATOR_ID"] ?? ""
+        try XCTSkipUnless(ipadSimulatorIDs.contains(requestedID),
+                          "This native windowing attempt is restricted to the b7 iPad Pro 11/13 simulators")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-demo-mac", "--ui-last-reached", "--ui-x"]
+        app.launch()
+        guard app.buttons["home.agentAlerts"].waitForExistence(timeout: 10) else {
+            missing("ipad-windowing-menu", "Seeded Farside Home root did not appear in the iPad app")
+            missing("ipad-compact-window", "Cannot attempt windowing without the verified Home root")
+            attachAccessibilityTree("ipad-windowing-no-home-tree", app)
+            return
+        }
+
+        let controlLabels = ["Window Controls", "Show Multitasking Menu",
+                             "Multitasking Controls", "Window menu"]
+        let controlPredicate = NSPredicate(format: "label IN %@", controlLabels)
+        let control = app.descendants(matching: .any).matching(controlPredicate).firstMatch
+        guard control.waitForExistence(timeout: 5) && control.isHittable else {
+            missing("ipad-windowing-menu", "No accessible native Window Controls or Multitasking Menu appeared in the landscape app")
+            missing("ipad-compact-window", "No public native window-control entry point was exposed; no synthetic compact canvas was used")
+            attachAccessibilityTree("ipad-windowing-controls-unavailable-tree", app)
+            return
+        }
+        control.tap()
+        let menuActions = ["Tile Left", "Tile Right", "Tile to Left", "Tile to Right",
+                           "Move to Left Side", "Move to Right Side", "Half Screen"]
+        let actionPredicate = NSPredicate(format: "label IN %@", menuActions)
+        let nativeAction = springboard.descendants(matching: .any).matching(actionPredicate).firstMatch
+        let appAction = app.descendants(matching: .any).matching(actionPredicate).firstMatch
+        let action = nativeAction.waitForExistence(timeout: 4) ? nativeAction : appAction
+        guard action.exists && action.isHittable else {
+            missing("ipad-windowing-menu", "Native window controls opened, but exposed no exact half-screen/tile action")
+            missing("ipad-compact-window", "No safe half-screen native action was available to select")
+            attachAccessibilityTree("ipad-windowing-menu-tree", springboard)
+            attachAccessibilityTree("ipad-windowing-app-tree", app)
+            return
+        }
+        attach("ipad-windowing-menu")
+        action.tap()
+        let deadline = Date().addingTimeInterval(8)
+        var compact = false
+        while Date() < deadline {
+            let frame = app.frame
+            compact = app.buttons["home.agentAlerts"].exists
+                && frame.width < UIScreen.main.bounds.width * 0.80
+                && frame.width < frame.height
+            if compact { break }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        if compact {
+            attach("ipad-compact-window")
+        } else {
+            missing("ipad-compact-window",
+                    "Native tile action did not leave the verified Farside Home root in a narrow app frame")
+            attachAccessibilityTree("ipad-compact-window-unverified-tree", app)
+        }
+        XCUIDevice.shared.orientation = .portrait
+    }
+
     @MainActor
     func testFarsideShareExtensionFromSafari() throws {
         let names = ["share-extension-safari-portrait", "share-extension-safari-landscape"]
@@ -420,6 +490,14 @@ final class NativeContainerSurfaceUITests: XCTestCase {
     private func attachPlan(_ names: [String]) {
         let attachment = XCTAttachment(string: names.joined(separator: "\n"))
         attachment.name = "capture-plan"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
+    private func attachAccessibilityTree(_ name: String, _ app: XCUIApplication) {
+        let attachment = XCTAttachment(string: app.debugDescription)
+        attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
     }
