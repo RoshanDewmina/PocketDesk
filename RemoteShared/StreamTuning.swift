@@ -95,9 +95,10 @@ struct StreamTuning: Equatable {
     /// Owned HEVC encoder: request VideoToolbox's low-latency rate control; creation falls back to the
     /// standard hardware session if it is refused.
     var hevcLowLatency = false
-    /// Owned encoder: leave key frame placement to VideoToolbox (today's behaviour). Off sets the maximum
-    /// key frame interval and duration so only requested key frames (start, PLI, restart) are emitted.
-    var encoderPeriodicKeyFrames = true
+    /// Owned encoder: off (default) sets the maximum key frame interval and duration so VideoToolbox emits
+    /// only requested key frames (start, PLI/FIR, restart); its own 150-500 KB key frames every few seconds
+    /// on a still screen collapsed the bandwidth estimate. On restores VideoToolbox's own placement.
+    var encoderPeriodicKeyFrames = false
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
         encoderCeilingKbps.map { $0 * 1000 } ?? quality.maximumBitrateBps
@@ -312,7 +313,7 @@ struct StreamTuning: Equatable {
         if !hevc { parts.append("no HEVC") }
         if encoderPrioritizeSpeed { parts.append("encode speed priority") }
         if hevcLowLatency { parts.append("HEVC low-latency") }
-        if !encoderPeriodicKeyFrames { parts.append("requested keys only") }
+        if encoderPeriodicKeyFrames { parts.append("periodic keys") }
         if ladder { parts.append("governor " + (!senderQueueGovernor ? "off" : senderQueueGovernorApply ? "apply" : "shadow")) }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }
