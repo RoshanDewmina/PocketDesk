@@ -161,6 +161,9 @@ final class RemoteCoordinator: ObservableObject {
     private let renewalScheduler: any RenewalScheduler
     private let advertisesRenewal: Bool
     private let handshakeTimeoutNanoseconds: UInt64
+    static let transientTimeoutRecoveryDisabledKey = "farsideTransientTimeoutRecoveryDisabled"
+    /// Snapshot at coordinator creation; changing defaults never changes a live attempt's policy.
+    private let transientTimeoutRecoveryEnabled: Bool
     private var renewalPlan: RenewalPlan?
     private var renewalTask: Task<Void, Never>?
     /// Renewal replies accepted, refreshed credentials applied, and ICE restarts started (host only)
@@ -316,6 +319,7 @@ final class RemoteCoordinator: ObservableObject {
         signaling: (any SignalingTransport)? = nil,
         renewalScheduler: any RenewalScheduler = SystemRenewalScheduler(),
         advertisesRenewal: Bool = true,
+        defaults: UserDefaults = .standard,
         handshakeTimeoutNanoseconds: UInt64 = 20_000_000_000,
         localProofTimeoutNanoseconds: UInt64 = 8_000_000_000,
         hostIdentityStore: HostIdentityStore? = nil,
@@ -335,6 +339,7 @@ final class RemoteCoordinator: ObservableObject {
         self.renewalScheduler = renewalScheduler
         self.advertisesRenewal = advertisesRenewal
         self.handshakeTimeoutNanoseconds = handshakeTimeoutNanoseconds
+        self.transientTimeoutRecoveryEnabled = !defaults.bool(forKey: Self.transientTimeoutRecoveryDisabledKey)
         self.retryLimit = max(0, retryLimit)
         self.retryBaseNanoseconds = retryBaseNanoseconds
         self.sessionLossRetryLimit = sessionLossRetryLimit.map { max(0, $0) }
@@ -1846,10 +1851,15 @@ final class RemoteCoordinator: ObservableObject {
         timeout = Task { [weak self] in
             try? await Task.sleep(nanoseconds: wait)
             guard !Task.isCancelled, let self else { return }
-            // A registered Mac keeps listening when one phone's attempt stalls; only a Mac that never
-            // reached the service, or a phone, reports the timeout as a failure.
+            let message = "Connection timed out. Check that the Mac is awake and the service is reachable."
+            // A registered Mac still retires only the stalled peer. Trusted registration/handshake
+            // attempts use the existing retry budget, with fresh route/session authority on each try.
+            // Fresh enrollment remains terminal and retires the invitation, even with recovery on.
             if self.isHost, self.hostRegistered, !self.stopped { self.peerDisconnected() }
-            else { self.fail("Connection timed out. Check that the Mac is awake and the service is reachable.") }
+            else if self.transientTimeoutRecoveryEnabled, self.scannedEnrollment == nil,
+                    !(self.isHost && self.hostPair?.paired == false && self.invitation?.version == PairEnrollment.version) {
+                self.connectionLost(finalStatus: message)
+            } else { self.fail(message) }
         }
     }
 

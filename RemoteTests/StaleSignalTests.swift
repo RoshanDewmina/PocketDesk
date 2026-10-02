@@ -41,14 +41,15 @@ private final class HostFixture {
     let phone: Counterpart
     let invitation: PairInvitation
 
-    init(handshakeTimeoutNanoseconds: UInt64 = 20_000_000_000) throws {
+    init(handshakeTimeoutNanoseconds: UInt64 = 20_000_000_000, defaults: UserDefaults = .standard) throws {
         let pair = try HostPair.create(server: "ws://127.0.0.1:9/signal", name: "Test Mac").rotated()
         let store = MemoryPairStore()
         try store.save(pair)
         invitation = pair.invitation
         host = RemoteCoordinator(isHost: true, store: store, retryLimit: 2, retryBaseNanoseconds: 10_000_000,
                                  registrationStableNanoseconds: 50_000_000, signaling: signaling,
-                                 renewalScheduler: scheduler, handshakeTimeoutNanoseconds: handshakeTimeoutNanoseconds)
+                                 renewalScheduler: scheduler, defaults: defaults,
+                                 handshakeTimeoutNanoseconds: handshakeTimeoutNanoseconds)
         host.allowLegacyPrivateRoute = true
         phone = try Counterpart(invitation: pair.invitation, plays: "client")
         host.restore()
@@ -87,6 +88,128 @@ private final class HostFixture {
 
 @MainActor
 final class StaleSignalTests: XCTestCase {
+    private func trustedTimeoutCoordinator(isHost: Bool, defaults: UserDefaults,
+                                           retriesIndefinitely: Bool = false) throws -> (RemoteCoordinator, ScriptedSignaling) {
+        let pair = try HostPair.create(server: "ws://127.0.0.1:9/signal", name: "Test Mac").rotated()
+        let store = MemoryPairStore()
+        if isHost { try store.save(pair) } else { try store.save(pair.invitation) }
+        let signaling = ScriptedSignaling()
+        let coordinator = RemoteCoordinator(isHost: isHost, store: store, retryLimit: 2,
+            retryBaseNanoseconds: 5_000_000, retriesIndefinitely: retriesIndefinitely,
+            signaling: signaling, renewalScheduler: ManualScheduler(), defaults: defaults,
+            handshakeTimeoutNanoseconds: 60_000_000)
+        coordinator.allowLegacyPrivateRoute = true
+        coordinator.restore()
+        return (coordinator, signaling)
+    }
+
+    private func waitForTimeoutState(_ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
+        XCTAssertTrue(condition())
+    }
+
+    func testTimeoutRecoverySwitchPreservesThePhoneAndHostRetryBudget() async throws {
+        for isHost in [false, true] {
+            for disabled in [false, true] {
+                let suite = "TimeoutBudget-\(UUID())"
+                let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+                defaults.set(disabled, forKey: RemoteCoordinator.transientTimeoutRecoveryDisabledKey)
+                defer { defaults.removePersistentDomain(forName: suite) }
+                let (coordinator, signaling) = try trustedTimeoutCoordinator(isHost: isHost, defaults: defaults)
+                let trustedRoom = coordinator.invitation?.room
+                coordinator.start()
+                defer { coordinator.stop() }
+                try await waitForTimeoutState { !coordinator.isRunning }
+                XCTAssertEqual(signaling.connects.count, disabled ? 1 : 3)
+                XCTAssertEqual(coordinator.retryAttempt, disabled ? 0 : 2)
+                XCTAssertFalse(coordinator.reconnecting)
+                XCTAssertTrue(coordinator.status.hasPrefix("Connection timed out"))
+                XCTAssertEqual(coordinator.invitation?.room, trustedRoom, "timeout must preserve saved trust")
+            }
+        }
+    }
+
+    func testTimeoutRecoveryPolicyIsFrozenAndIndefiniteHostRetryStillWorks() async throws {
+        let suite = "TimeoutSnapshot-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let (host, signaling) = try trustedTimeoutCoordinator(isHost: true, defaults: defaults, retriesIndefinitely: true)
+        // An absent key defaults on; a later write only applies to a new coordinator/process.
+        defaults.set(true, forKey: RemoteCoordinator.transientTimeoutRecoveryDisabledKey)
+        host.start()
+        defer { host.stop() }
+        try await waitForTimeoutState { signaling.connects.count >= 4 || !host.isRunning }
+        XCTAssertTrue(host.isRunning)
+        XCTAssertGreaterThanOrEqual(signaling.connects.count, 4, "a sharing host outlives the finite retry budget")
+    }
+
+    func testFatalServiceErrorsRemainTerminalWithEitherTimeoutSwitchState() throws {
+        for disabled in [false, true] {
+            let suite = "TimeoutFatal-\(UUID())"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defaults.set(disabled, forKey: RemoteCoordinator.transientTimeoutRecoveryDisabledKey)
+            defer { defaults.removePersistentDomain(forName: suite) }
+            for isHost in [false, true] {
+                for code in ["upgrade_required", "unauthorized", "revoked"] {
+                    let (coordinator, signaling) = try trustedTimeoutCoordinator(isHost: isHost, defaults: defaults)
+                    coordinator.start()
+                    signaling.deliver(RelayMessage(type: "error", code: code))
+                    XCTAssertFalse(coordinator.isRunning, "\(code) must remain terminal")
+                    XCTAssertFalse(coordinator.reconnecting)
+                    XCTAssertEqual(signaling.connects.count, 1)
+                    XCTAssertEqual(coordinator.retryAttempt, 0)
+                    coordinator.stop()
+                }
+            }
+        }
+    }
+
+    func testFreshEnrollmentTimeoutIsTerminalWithEitherRecoverySwitchState() async throws {
+        for disabled in [false, true] {
+            let suite = "TimeoutEnrollment-\(UUID())"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defaults.set(disabled, forKey: RemoteCoordinator.transientTimeoutRecoveryDisabledKey)
+            defer { defaults.removePersistentDomain(forName: suite) }
+            for isHost in [false, true] {
+                let store = MemoryPairStore(), signaling = ScriptedSignaling()
+                let coordinator = RemoteCoordinator(isHost: isHost, store: store,
+                    retryBaseNanoseconds: 5_000_000, signaling: signaling, defaults: defaults,
+                    handshakeTimeoutNanoseconds: 60_000_000)
+                if isHost {
+                    _ = try coordinator.createPair(server: "ws://127.0.0.1:9/signal", name: "Test Mac")
+                    coordinator.start()
+                } else {
+                    let pair = try HostPair.create(server: "ws://127.0.0.1:9/signal", name: "Test Mac")
+                    try coordinator.enroll(pair.invitation.code())
+                }
+                defer { coordinator.stop() }
+                try await waitForTimeoutState { !coordinator.isRunning }
+                XCTAssertEqual(signaling.connects.count, 1)
+                XCTAssertFalse(coordinator.awaitingApproval)
+                XCTAssertNil(coordinator.pairingComparisonCode)
+                XCTAssertNil(coordinator.media)
+                if isHost { XCTAssertLessThan(try XCTUnwrap(store.read(HostPair.self)).invitation.expires, Date()) }
+                else { XCTAssertNil(store.data, "a stalled enrollment cannot create saved trust") }
+            }
+        }
+    }
+
+    func testStopCancelsTimeoutRecoveryWithEitherSwitchState() async throws {
+        for disabled in [false, true] {
+            let suite = "TimeoutStop-\(UUID())"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defaults.set(disabled, forKey: RemoteCoordinator.transientTimeoutRecoveryDisabledKey)
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let (phone, signaling) = try trustedTimeoutCoordinator(isHost: false, defaults: defaults)
+            phone.start(); phone.stop()
+            try await Task.sleep(for: .milliseconds(120))
+            XCTAssertEqual(signaling.connects.count, 1)
+            XCTAssertFalse(phone.isRunning)
+            XCTAssertEqual(phone.status, "Disconnected")
+        }
+    }
+
     func testOfflineRetiresRouteEpochUntilTheNextPhoneGetsANewOne() throws {
         let fixture = try HostFixture()
         fixture.startRegistered()
@@ -241,11 +364,80 @@ final class StaleSignalTests: XCTestCase {
     }
 
     func testAMacThatNeverReachedTheServiceStillReportsTheTimeout() async throws {
-        let fixture = try HostFixture(handshakeTimeoutNanoseconds: 60_000_000)
+        let suite = "TimeoutRollback-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.set(true, forKey: RemoteCoordinator.transientTimeoutRecoveryDisabledKey)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let fixture = try HostFixture(handshakeTimeoutNanoseconds: 60_000_000, defaults: defaults)
         fixture.host.start()
+        defer { fixture.host.stop() }
         try await Task.sleep(nanoseconds: 300_000_000)
         XCTAssertFalse(fixture.host.isRunning)
         XCTAssertTrue(fixture.host.status.hasPrefix("Connection timed out"))
+        XCTAssertEqual(fixture.signaling.connects.count, 1, "the rollback restores terminal timeout behavior")
+    }
+
+    func testBlackholedPhoneAttemptRetriesAndAuthenticatesTheNextHandshake() async throws {
+        let suite = "TimeoutPhoneSuccess-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let pair = try HostPair.create(server: "ws://127.0.0.1:9/signal", name: "Test Mac").rotated()
+        let store = MemoryPairStore()
+        try store.save(pair.invitation)
+        let signaling = ScriptedSignaling()
+        let phone = RemoteCoordinator(isHost: false, store: store, retryLimit: 2,
+                                      retryBaseNanoseconds: 5_000_000, signaling: signaling,
+                                      renewalScheduler: ManualScheduler(), defaults: defaults,
+                                      handshakeTimeoutNanoseconds: 100_000_000)
+        phone.allowLegacyPrivateRoute = true
+        phone.restore(); phone.start()
+        defer { phone.stop() }
+        // No registration, challenge or close callback arrives on the first socket.
+        let deadline = ContinuousClock.now + .seconds(2)
+        while signaling.connects.count < 2, phone.isRunning, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        XCTAssertEqual(signaling.connects.count, 2)
+        XCTAssertTrue(phone.isRunning)
+        XCTAssertEqual(phone.retryAttempt, 1, "the timeout consumes the existing budget")
+        guard phone.isRunning else { return }
+
+        signaling.deliver(RelayMessage(type: "registered", role: "client"))
+        signaling.deliver(RelayMessage(type: "ice", servers: []))
+        signaling.deliver(RelayMessage(type: "peer", online: true))
+        let mac = try Counterpart(invitation: pair.invitation, plays: "host")
+        let request = try mac.open(try XCTUnwrap(signaling.sent.last)).request
+        let session = try SecureRandom.token()
+        signaling.deliver(try mac.seal("challenge", request: request, session: session))
+        XCTAssertEqual(try mac.open(try XCTUnwrap(signaling.sent.last)).kind, "proof")
+        signaling.deliver(try mac.seal("accepted", request: request, session: session, sequence: 1))
+        let acceptedAck = try mac.open(try XCTUnwrap(signaling.sent.last))
+        XCTAssertEqual(acceptedAck.kind, "acceptedAck")
+        XCTAssertEqual(acceptedAck.request, request)
+        XCTAssertEqual(acceptedAck.session, session)
+        XCTAssertTrue(phone.isRunning)
+        XCTAssertNotNil(phone.media, "attempt two reached media negotiation after authenticating")
+    }
+
+    func testBlackholedHostRegistrationRetriesWithoutSuspendingSharing() async throws {
+        let suite = "TimeoutHostSuccess-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let fixture = try HostFixture(handshakeTimeoutNanoseconds: 100_000_000, defaults: defaults)
+        fixture.host.start()
+        defer { fixture.host.stop() }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while fixture.signaling.connects.count < 2, fixture.host.isRunning, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        XCTAssertEqual(fixture.signaling.connects.count, 2)
+        XCTAssertTrue(fixture.host.isRunning)
+        XCTAssertTrue(HostActiveAccessPolicy.isRunning(status: fixture.host.status,
+            hostRegistered: fixture.host.hostRegistered, connected: fixture.host.connected,
+            awaitingApproval: fixture.host.awaitingApproval), "the host auto-start reconciliation must keep sharing active")
+        guard fixture.host.isRunning else { return }
+        fixture.signaling.deliver(RelayMessage(type: "registered", role: "host"))
+        XCTAssertTrue(fixture.host.hostRegistered)
     }
 
     func testAPhoneIgnoresAStaleChallengeAndFinishesTheCurrentHandshake() async throws {
