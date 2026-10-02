@@ -103,6 +103,7 @@ struct BigTextState: Equatable {
     var savedWidth: Double?
     var pendingTarget: Double?
     var pendingSince: TimeInterval?
+    var pendingPillExpired = false
     var sessionOff = false
     var autoApplied = false
 }
@@ -821,6 +822,7 @@ final class PhoneRemoteModel: ObservableObject {
         self.background = background ?? SystemBackgroundExecution()
         self.resumeStore = resumeStore
         resumeCapsule = resumeStore.load()
+        if let host = connection.presentationHostTrust { bigTextMemory.migrate(host: host) }
         NativeCodecCapability.warmUp()
         NativeHEVCCapability.warmUp()
         NativeHEVC444Capability.warmUp()
@@ -1344,6 +1346,13 @@ final class PhoneRemoteModel: ObservableObject {
     private var sessionNoticeGeneration: UInt64 = 0
     static let bigTextDebounce: Duration = .milliseconds(600)
     static let bigTextTimeout: TimeInterval = 8
+    static let bigTextPillDuration: TimeInterval = 2
+    static let bigTextStatusDisabledKey = "disableBigTextStatusReliability"
+
+    private var bigTextStatusReliabilityEnabled: Bool { !bigTextMemory.defaults.bool(forKey: Self.bigTextStatusDisabledKey) }
+    var bigTextPillTarget: Double? {
+        bigTextStatusReliabilityEnabled && bigText.pendingPillExpired ? nil : bigText.pendingTarget
+    }
 
     var bigTextSupported: Bool { sessionMode == .picture && !captureScopeViewOnly && supports(SessionFeature.displayScale) }
     var showsSharingStoppedCard: Bool { fresh && !captureHealthy && bigText.pendingTarget == nil }
@@ -1354,7 +1363,7 @@ final class PhoneRemoteModel: ObservableObject {
     /// several quick choices cost one mode change.
     func chooseBigText(_ width: Double?) {
         guard bigTextSupported, pendingModeSwitch == nil, let id = currentDisplayID, let descriptor = currentDescriptor else { return }
-        if let room = bigTextRoom { bigTextMemory.remember(width, forRoom: room, display: descriptor, among: displays) }
+        rememberBigText(width, display: descriptor)
         bigText.savedWidth = width
         bigText.sessionOff = false
         bigText.autoApplied = true
@@ -1376,12 +1385,17 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     func checkBigTextTimeout() {
-        guard let since = bigText.pendingSince, bigTextClock() - since > Self.bigTextTimeout else { return }
+        guard let since = bigText.pendingSince else { return }
+        let elapsed = bigTextClock() - since
+        if bigTextStatusReliabilityEnabled, elapsed >= Self.bigTextPillDuration, !bigText.pendingPillExpired {
+            bigText.pendingPillExpired = true
+        }
+        guard elapsed > Self.bigTextTimeout else { return }
         let timedOut = bigTextPendingRequest
         bigTextPendingRequest = nil
         bigText.pendingTarget = nil
         bigText.pendingSince = nil
-        showSessionNotice("Couldn't change text size")
+        showSessionNotice(bigTextStatusReliabilityEnabled ? "Couldn't confirm text size" : "Couldn't change text size")
         if let timedOut { bigTextTimedOut = (timedOut, sessionNoticeGeneration) }
     }
 
@@ -1427,6 +1441,7 @@ final class PhoneRemoteModel: ObservableObject {
         _ = transmit(RemoteAction(action: "displayScale", epoch: geometryEpoch, display: display, looksLikeWidth: width, scaleRequestID: id))
         bigText.pendingTarget = width
         bigText.pendingSince = bigTextClock()
+        bigText.pendingPillExpired = false
     }
 
     private func updateBigText(from action: RemoteAction) {
@@ -1442,9 +1457,13 @@ final class PhoneRemoteModel: ObservableObject {
         bigText.steps = descriptor.scaleSteps ?? []
         bigText.baselineWidth = descriptor.scaleBaselineWidth
         bigText.currentWidth = descriptor.scaleCurrentWidth
-        if let room = bigTextRoom { bigText.savedWidth = bigTextMemory.width(forRoom: room, display: descriptor, among: displays) }
+        if let host = connection.presentationHostTrust {
+            bigText.savedWidth = bigTextMemory.width(forHost: host, display: descriptor, among: displays)
+        } else if let room = bigTextRoom {
+            bigText.savedWidth = bigTextMemory.width(forRoom: room, display: descriptor, among: displays)
+        }
         let error = action.scaleError.flatMap(BigTextError.init(rawValue:))
-        if action.scaleError == nil, let timedOut = bigTextTimedOut,
+        if (bigTextStatusReliabilityEnabled || action.scaleError == nil), let timedOut = bigTextTimedOut,
            action.scaleRequestID == timedOut.request.id, timedOut.request.display == descriptor.id,
            let accepted = timedOut.request.acceptedWidth, descriptor.scaleCurrentWidth == accepted {
             bigTextTimedOut = nil
@@ -1459,12 +1478,12 @@ final class PhoneRemoteModel: ObservableObject {
             guard let accepted = pending.acceptedWidth else { return false }
             return displays.first(where: { $0.id == pending.display })?.scaleCurrentWidth == accepted
         } ?? false
-        if let pending = bigTextPendingRequest, action.scaleRequestID == pending.id, error != .busy,
-           action.scaleError != nil || pendingSucceeded {
+        if let pending = bigTextPendingRequest, action.scaleRequestID == pending.id,
+           (bigTextStatusReliabilityEnabled && pendingSucceeded) || (error != .busy && (action.scaleError != nil || pendingSucceeded)) {
             bigTextPendingRequest = nil
             bigText.pendingTarget = nil
             bigText.pendingSince = nil
-            if let error, let message = Self.bigTextMessage(error) { showSessionNotice(message) }
+            if !(bigTextStatusReliabilityEnabled && pendingSucceeded), let error, let message = Self.bigTextMessage(error) { showSessionNotice(message) }
         }
         applySavedBigText()
     }
@@ -1482,12 +1501,12 @@ final class PhoneRemoteModel: ObservableObject {
            let wanted = DisplayMemory.match(displayMemory.choice(forRoom: room), in: displays), wanted.id != id { return }
         if !bigText.sessionOff, bigText.savedWidth == nil,
            !bigTextMemory.defaults.bool(forKey: BigTextAutoLevel.disabledKey),
-           let room = bigTextRoom, let descriptor = currentDescriptor,
-           !bigTextMemory.hasSavedChoice(forRoom: room, display: descriptor, among: displays) {
+           let descriptor = currentDescriptor, bigTextRoom != nil || connection.presentationHostTrust != nil,
+           !hasSavedBigText(display: descriptor) {
             // The scene may not exist when the first host status arrives; the normal tick retries.
             guard let phonePixels = screenPixels() else { return }
             if let width = BigTextAutoLevel.choose(phonePixels: phonePixels, baselineWidth: baseline, steps: bigText.steps) {
-                bigTextMemory.remember(width, forRoom: room, display: descriptor, among: displays)
+                rememberBigText(width, display: descriptor)
                 bigText.savedWidth = width
             }
         }
@@ -1499,6 +1518,22 @@ final class PhoneRemoteModel: ObservableObject {
         }
         guard saved < baseline, saved != current else { return }
         sendBigText(display: id, width: saved)
+    }
+
+    private func rememberBigText(_ width: Double?, display: DisplayDescriptor) {
+        if let host = connection.presentationHostTrust {
+            bigTextMemory.remember(width, forHost: host, display: display, among: displays)
+        } else if let room = bigTextRoom {
+            bigTextMemory.remember(width, forRoom: room, display: display, among: displays)
+        }
+    }
+
+    private func hasSavedBigText(display: DisplayDescriptor) -> Bool {
+        if let host = connection.presentationHostTrust {
+            return bigTextMemory.hasSavedChoice(forHost: host, display: display, among: displays)
+        }
+        guard let room = bigTextRoom else { return false }
+        return bigTextMemory.hasSavedChoice(forRoom: room, display: display, among: displays)
     }
 
     func observeLinkHint(_ hint: NetworkLinkHint?) {
@@ -1964,6 +1999,9 @@ final class PhoneRemoteModel: ObservableObject {
                   try PhoneTrustStore.shared.replacementRequest(for: invitation) == pending.approval.request else {
                 throw RemoteError.invalidPairing
             }
+            if let host = try PhoneTrustStore.shared.snapshot().hosts.first(where: { $0.id == pending.approval.request.existingHostRecordID }) {
+                bigTextMemory.migrate(host: host)
+            }
             disconnect()
             try connection.enroll(pending.code, replacementApproval: pending.approval)
             pairingCode = ""
@@ -2253,7 +2291,8 @@ let now = ProcessInfo.processInfo.systemUptime
         discardResume()
         clearContinuity()
         release()
-        connection.stop()
+        if explicitEnd { connection.stopDeliberately(epoch: geometryEpoch, hostFeatures: hostFeatures) }
+        else { connection.stop() }
         end()
     }
 
@@ -2335,6 +2374,7 @@ let now = ProcessInfo.processInfo.systemUptime
         pipTransitional = false
         if mayKeepLivePiP {
             pipBackground = true
+            if DeliberateSessionEnd.isEnabled() { bigText.autoApplied = false }
             invalidatePresentation(keepingPiP: true)
             releasePiPControl()
             contentConcealed = true
@@ -2349,6 +2389,8 @@ let now = ProcessInfo.processInfo.systemUptime
         resumeTiming.cancel(.leftAgain)
         resetQuality()
         setMacAudioMuted(true)
+        // A pause restores the host's scaling lease. Reapply the saved choice after fresh foreground geometry.
+        if DeliberateSessionEnd.isEnabled() { bigText.autoApplied = false }
         let now = ProcessInfo.processInfo.systemUptime
         // A held connection can resume before the age limit. Require a new statistics sample
         // after pause so a pre-background report cannot become new ladder evidence.
@@ -2385,7 +2427,7 @@ let now = ProcessInfo.processInfo.systemUptime
         case .release:
             sessionEndReason = .timeout
             release()
-            connection.stop()
+            connection.stopDeliberately(epoch: geometryEpoch, hostFeatures: hostFeatures)
             endBackgroundExecutionSoon()
         }
     }
@@ -2398,7 +2440,7 @@ let now = ProcessInfo.processInfo.systemUptime
         if continuity.endHold() {
             sessionEndReason = .timeout
             release()
-            connection.stop()
+            connection.stopDeliberately(epoch: geometryEpoch, hostFeatures: hostFeatures)
         }
         if immediately { background.end() } else { endBackgroundExecutionSoon() }
     }
@@ -2413,6 +2455,8 @@ let now = ProcessInfo.processInfo.systemUptime
     }
 
     private func returnToForeground() {
+        // Background/PiP restoration retires scaling without retiring the authenticated peer.
+        if DeliberateSessionEnd.isEnabled() { bigText.autoApplied = false }
         if pipBackground {
             pipBackground = false
             invalidatePresentation()

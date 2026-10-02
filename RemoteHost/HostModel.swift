@@ -508,6 +508,10 @@ final class RemoteHostModel: ObservableObject {
         )
     }
 
+    private var bigTextEndedForLifecycle = false
+    private var deliberatePeerEnding = false
+    private var acceptedPhonePauseEpoch: UInt64?
+
     private var bigTextStatus: String? {
         if bigText.restorePending || bigText.phase == .restoring { return "Restoring normal size…" }
         guard let current = bigText.current else { return nil }
@@ -570,9 +574,15 @@ final class RemoteHostModel: ObservableObject {
             MacShareBlocker.current(screenRecordingGranted: CGPreflightScreenCaptureAccess(),
                                     captureApprovalPending: self?.captureApproval.isPending == true)
         }
-        connection.onAuthenticated = { [weak self] in self?.phoneConnected() }
+        connection.onAuthenticated = { [weak self] in
+            self?.bigTextEndedForLifecycle = false
+            self?.deliberatePeerEnding = false
+            self?.acceptedPhonePauseEpoch = nil
+            self?.phoneConnected()
+        }
         connection.onEnded = { [weak self] in
-            self?.bigText.connectionLost()
+            if self?.bigTextEndedForLifecycle == true { self?.bigText.sessionEnded(.sessionEnded) }
+            else { self?.bigText.connectionLost() }
             self?.endCapture()
             self?.reconcileAvailabilityAfterCoordinatorReset()
         }
@@ -2179,6 +2189,7 @@ final class RemoteHostModel: ObservableObject {
         if captureAttempt == 0 { captureAttempt = 1 }
         let attempt = captureAttempt
         phonePause.clear()
+        acceptedPhonePauseEpoch = nil
         capturedDisplayID = display.displayID
         pointerLocator.reset()
         captureTask?.cancel()
@@ -2298,6 +2309,7 @@ final class RemoteHostModel: ObservableObject {
         guests.endAll()
         _ = capture.stop()
         phonePause.clear()
+        acceptedPhonePauseEpoch = nil
         capturedDisplayID = nil
         pointerLocator.reset()
         releaseRemoteInput(notifyPhone: true)
@@ -2425,6 +2437,7 @@ final class RemoteHostModel: ObservableObject {
         #endif
         invalidateTextFocus()
         phonePause.clear()
+        acceptedPhonePauseEpoch = nil
         liveViewOnly = false
         clipboard.reset()
         fileTransfer.reset()
@@ -3052,7 +3065,10 @@ final class RemoteHostModel: ObservableObject {
             if $0 == SessionFeature.pencilInput && (!connection.allowsCausalInput || !connection.peerFeatures.contains(SessionFeature.pencilInput) || !connection.peerFeatures.contains(SessionFeature.causalInput)) { return false }
             if $0 == SessionFeature.causalInput && (!connection.allowsCausalInput || !connection.peerFeatures.contains(SessionFeature.causalInput)) { return false }
             return ($0 != SessionFeature.viewportCapture || tuning.viewportCapture) && ($0 != SessionFeature.ladder || tuning.ladder)
-        } + [SessionFeature.couch] + (wakeHelperAvailable ? [SessionFeature.lanWake] : [])
+        } + [SessionFeature.couch]
+            + (DeliberateSessionEnd.isEnabled() && connection.peerFeatures.contains(SessionFeature.deliberateEnd)
+               ? [SessionFeature.deliberateEnd] : [])
+            + (wakeHelperAvailable ? [SessionFeature.lanWake] : [])
             + (awayAvailable && !ManagedLockPolicy.isManaged() ? [SessionFeature.away] : [])
         return SharedCaptureScopePolicy.features(HostFeatureList.features(base: base,
             allowBigText: !captureScopeViewOnly && preferences.allowBigText,
@@ -3195,7 +3211,7 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Session extensions
 
     private func receiveSessionExtension(_ action: RemoteAction) {
-        let current = connection.connected && active && action.epoch == inputEpoch.value && !sessionRefused
+        let current = connection.connected && active && action.epoch == inputEpoch.value && !sessionRefused && !deliberatePeerEnding
         let controlEffective = sessionControlAllowed && controlPermission.isGranted
         switch action.action {
         case "lockMac":
@@ -3223,13 +3239,38 @@ final class RemoteHostModel: ObservableObject {
             reconcileSystemAudio()
             applyControlState(notifyPhone: true)
             sendCaptureHealth(sessionHealthy, viewOnlyRequestID: action.liveViewOnlyRequestID)
+            if DeliberateSessionEnd.isEnabled() {
+                if next {
+                    bigTextEndedForLifecycle = true
+                    bigText.sessionEnded(.sessionEnded)
+                } else if wasViewOnly { bigTextEndedForLifecycle = false }
+            }
             // Suspension retired the old capture audio epoch; enabling consent cannot revive it.
             // A real transition back starts a newly scoped stream/epoch, with owner consent intact.
             if wasViewOnly && systemAudioAllowedNow { beginCapture() }
+        case "sessionEnd":
+            // The control envelope already binds this to the authenticated current peer. A display
+            // reconfiguration may advance the geometry epoch while End travels; close is still valid.
+            guard connection.connected, active, !captureScopeViewOnly, DeliberateSessionEnd.isEnabled(),
+                  connection.peerFeatures.contains(SessionFeature.deliberateEnd) else { return }
+            deliberatePeerEnding = true
+            pauseForPhoneBackground(ending: true)
+            _ = connection.sendControl(RemoteAction(action: "sessionEnd", epoch: action.epoch))
         case "pause":
-            if current { pauseForPhoneBackground() }
+            if DeliberateSessionEnd.allowsBackgroundPause(epochMatches: action.epoch == inputEpoch.value,
+                connected: connection.connected, sharing: active, sessionRefused: sessionRefused,
+                ending: deliberatePeerEnding, peerFeatures: connection.peerFeatures,
+                enabled: DeliberateSessionEnd.isEnabled()) {
+                let wasPaused = phonePause.isPaused
+                pauseForPhoneBackground()
+                if !wasPaused && phonePause.isPaused { acceptedPhonePauseEpoch = action.epoch }
+            }
         case "resume":
-            if current { resumeAfterPhoneBackground() }
+            if DeliberateSessionEnd.allowsForegroundResume(requestedEpoch: action.epoch, currentEpoch: inputEpoch.value,
+                acceptedPauseEpoch: acceptedPhonePauseEpoch, paused: phonePause.isPaused,
+                connected: connection.connected, sharing: active, sessionRefused: sessionRefused,
+                ending: deliberatePeerEnding, peerFeatures: connection.peerFeatures,
+                enabled: DeliberateSessionEnd.isEnabled()) { resumeAfterPhoneBackground() }
         case "clipboard":
             guard let frame = action.clipboard else { return }
             clipboard.receive(frame, allowed: current && !phonePause.isPaused && !liveViewOnly && controlEffective)
@@ -3329,9 +3370,9 @@ final class RemoteHostModel: ObservableObject {
 
     /// The phone is backgrounding: stop capture and input now, but keep the peer and its
     /// session slot so a quick return resumes without renegotiation.
-    private func pauseForPhoneBackground() {
+    private func pauseForPhoneBackground(ending: Bool = false) {
         cancelPictureRefresh()
-        guard !phonePause.isPaused && !liveViewOnly else { return }
+        guard !phonePause.isPaused && (ending || !liveViewOnly) else { return }
         liftCurtain()
         phoneAudioRequested = false
         phonePause.begin(at: ProcessInfo.processInfo.systemUptime)
@@ -3354,12 +3395,18 @@ final class RemoteHostModel: ObservableObject {
         couchHealthy = false
         updatePowerAssertions()
         reconcileCurtain()
+        if DeliberateSessionEnd.isEnabled() {
+            bigTextEndedForLifecycle = true
+            bigText.sessionEnded(.sessionEnded)
+        }
     }
 
     /// A fresh epoch, geometry and capture follow, so no pre-background input can apply.
     private func resumeAfterPhoneBackground() {
-        guard phonePause.isPaused else { return }
+        guard phonePause.isPaused, !deliberatePeerEnding else { return }
+        bigTextEndedForLifecycle = false
         phonePause.clear()
+        acceptedPhonePauseEpoch = nil
         if sessionState == .couch { beginCouch() } else {
             connection.media?.counters.beginResumeCapture()
             connection.media?.rearmBandwidthSeed()
@@ -3369,6 +3416,7 @@ final class RemoteHostModel: ObservableObject {
 
     private func expirePhonePause() {
         phonePause.clear()
+        acceptedPhonePauseEpoch = nil
         connection.dropPeerSession()
     }
 
@@ -3740,7 +3788,8 @@ extension RemoteHostModel: BigTextHost {
     }
 
     private var bigTextSessionStreaming: Bool {
-      active && sessionState == .picture && connection.connected && connection.media != nil && !phonePause.isPaused && !liveViewOnly && !terminating && !screenLocked
+      active && sessionState == .picture && connection.connected && connection.media != nil && !phonePause.isPaused &&
+        (!liveViewOnly || DeliberateSessionEnd.isEnabled()) && !terminating && !screenLocked
     }
 
     fileprivate func handleScreenChange() {

@@ -37,6 +37,64 @@ private final class LifecyclePiPPlatform: LivePiPPlatformController {
 
 @MainActor
 final class SessionLifecycleTests: XCTestCase {
+    private func deliberateEndModel(background: FakeBackgroundExecution? = nil) throws -> (PhoneRemoteModel, () -> [ControlPacket]) {
+        let model = PhoneRemoteModel(background: background ?? FakeBackgroundExecution())
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "phone-deliberate-end")
+        model.geometryEpoch = 1
+        var packets: [ControlPacket] = []
+        model.connection.inputPacketSenderForTesting = { packets.append($0); return true }
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", x: 1, epoch: 1,
+            features: [SessionFeature.backgroundPause, SessionFeature.deliberateEnd])))
+        return (model, { packets })
+    }
+
+    func testExplicitEndUsesAcknowledgedCloseWhileNonexplicitFailureDoesNot() throws {
+        let (ended, endedPackets) = try deliberateEndModel()
+        defer { ended.connection.stop() }
+        ended.disconnect()
+        XCTAssertEqual(endedPackets().filter { $0.action.action == "sessionEnd" }.count, 1)
+        XCTAssertFalse(ended.connection.isRunning)
+        XCTAssertTrue(ended.connection.connected, "Only the receipt transport waits; local UI is already ended")
+        XCTAssertFalse(ended.canControl)
+        let (failed, failedPackets) = try deliberateEndModel()
+        defer { failed.connection.stop() }
+        failed.disconnect(explicitEnd: false)
+        XCTAssertFalse(failedPackets().contains { $0.action.action == "sessionEnd" })
+        XCTAssertFalse(failed.connection.connected)
+    }
+
+    func testBackgroundHoldUsesPauseAndRetainsThePeerForFreshForegroundResume() throws {
+        let (model, packets) = try deliberateEndModel()
+        defer { model.connection.stop() }
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", x: 1, epoch: 1,
+            features: [SessionFeature.backgroundPause, SessionFeature.deliberateEnd, SessionFeature.displayScale], display: 1)))
+        var display = DisplayDescriptor(id: 1, name: "Built-in", width: 1470, height: 956)
+        display.scaleBaselineWidth = 1470; display.scaleCurrentWidth = 1470
+        display.scaleSteps = [ScaleStep(width: 1280, height: 832)]
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "displays", epoch: 1,
+            displays: [display], display: 1)))
+        XCTAssertTrue(model.bigText.autoApplied)
+        model.sceneChanged(.inactive); model.sceneChanged(.background)
+        XCTAssertTrue(packets().contains { $0.action.action == "pause" })
+        XCTAssertFalse(packets().contains { $0.action.action == "sessionEnd" })
+        XCTAssertTrue(model.connection.connected)
+        XCTAssertFalse(model.bigText.autoApplied)
+        model.sceneChanged(.active)
+        XCTAssertTrue(packets().contains { $0.action.action == "resume" })
+        XCTAssertFalse(model.bigText.autoApplied)
+    }
+
+    func testBackgroundWithoutTimeUsesDeliberateCloseInsteadOfUnexpectedLoss() throws {
+        let background = FakeBackgroundExecution(); background.granted = false
+        let (model, packets) = try deliberateEndModel(background: background)
+        defer { model.connection.stop() }
+        model.sceneChanged(.inactive); model.sceneChanged(.background)
+        XCTAssertTrue(packets().contains { $0.action.action == "sessionEnd" })
+        XCTAssertFalse(model.connection.isRunning)
+        XCTAssertFalse(packets().contains { $0.action.action == "pause" })
+    }
+
     /// Downstream model + finite proof + injected public-platform operation boundary; no real native producer.
     private func activePiPModel() throws -> (PhoneRemoteModel, VideoPresentationAdmission, LifecyclePiPPlatform, () -> [ControlPacket]) {
         let registry = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {}))

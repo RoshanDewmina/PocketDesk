@@ -585,9 +585,11 @@ struct HomeView: View {
                 return
             }
             let room = intendedInvitation.room
+            let bigTextHost = connection.presentationHostTrust
             model.disconnect()
             guard connection.revoke(expectedInvitation: intendedInvitation) else { return }
-            model.bigTextMemory.forget(room: room)
+            if let bigTextHost { model.bigTextMemory.forget(host: bigTextHost) }
+            else { model.bigTextMemory.forget(room: room) }
             model.refreshSendToMac(force: true)
             model.vitalsMemory.forget(room: room)
             refreshLastBattery()

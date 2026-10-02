@@ -448,7 +448,7 @@ final class RemoteCoordinator: ObservableObject {
     }
 
     func sendInputMoves(_ actions: [RemoteAction]) -> Bool {
-        guard !isHost, connected, !inputRecoveryPending else { return false }
+        guard !isHost, connected, !inputRecoveryPending, deliberateEndSession == nil else { return false }
         guard causalContext != nil else {
             if offeredInputNonce != nil {
                 guard actions.allSatisfy({ $0.epoch == offeredInputEpoch }) else { return false }
@@ -627,7 +627,14 @@ final class RemoteCoordinator: ObservableObject {
     private func deliverControlPacket(_ packet: ControlPacket) throws {
         guard packet.version == 1, packet.session == session, packet.sequence > receivedControl else { throw RemoteError.stale }
         try packet.action.validate()
+        if packet.action.action == "sessionEnd", packet.input != nil { throw RemoteError.invalidMessage }
         receivedControl = packet.sequence
+        if !isHost, packet.action.action == "sessionEnd" {
+            // The normal packet/session/sequence validator above authenticates the receipt.
+            if deliberateEndSession == packet.session { stop() }
+            return
+        }
+        if deliberateEndSession != nil { return } // Ending never negotiates or receives more input authority.
         if packet.input != nil { try receiveCausal(packet, motion: false) }
         else {
             if isHost, causalContext != nil,
@@ -638,6 +645,7 @@ final class RemoteCoordinator: ObservableObject {
     }
 
     func sendControl(_ action: RemoteAction) -> Bool {
+        guard deliberateEndSession == nil else { return false }
         guard connected, !session.isEmpty else {
             moveCoalescer.discard()
             controlNotConnectedRefusals += 1
@@ -915,7 +923,37 @@ final class RemoteCoordinator: ObservableObject {
         e2eEnrolling = false
         #endif
     }
+    private var deliberateEndSession: String?
+    private var deliberateEndTimeout: Task<Void, Never>?
+
+    /// Initiates close before retiring the reliable channel. The phone model releases held input
+    /// first and clears its local session immediately; only the receipt transport survives briefly.
+    /// Old peers and the internal rollback keep the original immediate close behavior.
+    func stopDeliberately(epoch: UInt64, hostFeatures: Set<String>, defaults: UserDefaults = .standard) {
+        guard deliberateEndSession == nil else { return }
+        guard !isHost, connected, !session.isEmpty, epoch > 0, hostFeatures.contains(SessionFeature.deliberateEnd),
+              DeliberateSessionEnd.isEnabled(defaults) else { stop(); return }
+        let endingSession = session
+        deliberateEndSession = endingSession
+        stopped = true
+        retry?.cancel(); retry = nil
+        reconnecting = false; recoveringLiveSession = false
+        cancelRenewal()
+        moveCoalescer.discard(); moveFlush?.cancel(); moveFlush = nil
+        clearDeferredInput(); clearReliableCheckpoint()
+        inputRecoveryTimeout?.cancel(); inputRecoveryTimeout = nil
+        inputNegotiationTimeout?.cancel(); inputNegotiationTimeout = nil
+        guard transmit(RemoteAction(action: "sessionEnd", epoch: epoch)) else { stop(); return }
+        guard deliberateEndSession == endingSession else { return } // A synchronous fixture can receipt now.
+        deliberateEndTimeout = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: DeliberateSessionEnd.receiptTimeoutNanoseconds)
+            guard !Task.isCancelled, let self, self.deliberateEndSession == endingSession else { return }
+            self.stop()
+        }
+    }
+
     func stop() {
+        deliberateEndTimeout?.cancel(); deliberateEndTimeout = nil; deliberateEndSession = nil
         cancelEnrollment()
         stopped = true; retry?.cancel(); retry = nil; retryCount = 0; recoveringLiveSession = false
         reconnecting = false
@@ -949,6 +987,7 @@ final class RemoteCoordinator: ObservableObject {
         peerDisconnected()
     }
     private func resetSession() {
+        deliberateEndTimeout?.cancel(); deliberateEndTimeout = nil; deliberateEndSession = nil
         onGuestAuthorityEnded?()
         onPresentationInvalidated?()
         presentationSessionID = UUID(); presentationTrackID = UUID()
@@ -1521,6 +1560,7 @@ final class RemoteCoordinator: ObservableObject {
     }
 
     private func peerDisconnected() {
+        if deliberateEndSession != nil { stop(); return }
         if isHost, hostPair?.paired == false, invitation?.version == PairEnrollment.version {
             fail("Pairing was interrupted. Create a fresh code.")
             return
@@ -1556,6 +1596,7 @@ final class RemoteCoordinator: ObservableObject {
     }
 
     private func connectionLost(finalStatus: String = "Connection lost. Tap Connect to try again.") {
+        if deliberateEndSession != nil { stop(); return }
         SessionLog.log.error("connectionLost: \(finalStatus, privacy: .public) signaling=\(self.relay.lastCloseReason ?? "nil", privacy: .public) stopped=\(self.stopped, privacy: .public) retry=\(self.retryCount, privacy: .public)")
         guard !stopped else { return }
         if scannedEnrollment != nil || (isHost && hostPair?.paired == false && invitation?.version == PairEnrollment.version) {

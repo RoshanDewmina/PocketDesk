@@ -118,3 +118,113 @@ final class HostSessionFailureTests: XCTestCase {
         XCTAssertNil(phone.lastSessionFailure)
     }
 }
+
+
+/// Authenticated control-channel close handshake. No sockets or physical display mutations.
+@MainActor
+final class DeliberateSessionEndTests: XCTestCase {
+    private func phone() -> RemoteCoordinator {
+        let coordinator = RemoteCoordinator(isHost: false, store: MemoryPairStore(), retryLimit: 2,
+                                            signaling: ScriptedSignaling())
+        coordinator.startInputFixtureForTesting(session: "deliberate-end")
+        return coordinator
+    }
+
+    func testEndSendsOneSignalFreezesInputAndWaitsForAuthenticatedReceipt() throws {
+        let phone = phone()
+        defer { phone.stop() }
+        var packets: [ControlPacket] = []
+        phone.inputPacketSenderForTesting = { packets.append($0); return true }
+        XCTAssertTrue(phone.sendControl(RemoteAction(action: "release", epoch: 7)))
+        phone.stopDeliberately(epoch: 7, hostFeatures: [SessionFeature.deliberateEnd])
+        phone.stopDeliberately(epoch: 7, hostFeatures: [SessionFeature.deliberateEnd])
+        XCTAssertEqual(packets.map(\.action.action), ["release", "sessionEnd"])
+        XCTAssertNil(packets.last?.input, "Ending a session is never a causal input grant")
+        XCTAssertFalse(phone.sendControl(RemoteAction(action: "key", key: "a", epoch: 7)))
+        XCTAssertFalse(phone.sendInputMoves([RemoteAction(action: "move", x: 1, epoch: 7)]))
+        XCTAssertFalse(phone.isRunning, "No reconnect is permitted after deliberate End")
+        XCTAssertTrue(phone.connected, "Keep only the transport alive for the receipt")
+        XCTAssertThrowsError(try phone.receiveInputFixtureForTesting(
+            ControlPacket(session: "another-session", sequence: 1, action: RemoteAction(action: "sessionEnd"))))
+        XCTAssertTrue(phone.connected)
+        try phone.receiveInputFixtureForTesting(ControlPacket(session: "deliberate-end", sequence: 1,
+                                                              action: RemoteAction(action: "sessionEnd", epoch: 7)))
+        XCTAssertFalse(phone.connected)
+        XCTAssertFalse(phone.isRunning)
+    }
+
+    func testFailedSendAndRollbackCloseImmediatelyWithoutRetry() throws {
+        let failed = phone()
+        failed.inputPacketSenderForTesting = { _ in false }
+        failed.stopDeliberately(epoch: 7, hostFeatures: [SessionFeature.deliberateEnd])
+        XCTAssertFalse(failed.connected)
+        XCTAssertFalse(failed.isRunning)
+        let suite = "DeliberateSessionEndTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: DeliberateSessionEnd.disabledDefaultsKey)
+        let rolledBack = phone()
+        var sent = false
+        rolledBack.inputPacketSenderForTesting = { _ in sent = true; return true }
+        rolledBack.stopDeliberately(epoch: 7, hostFeatures: [SessionFeature.deliberateEnd], defaults: defaults)
+        XCTAssertFalse(sent)
+        XCTAssertFalse(rolledBack.connected)
+    }
+
+    func testMissingReceiptClosesWithinTheBoundWithoutRetrying() async throws {
+        let phone = phone()
+        defer { phone.stop() }
+        phone.inputPacketSenderForTesting = { _ in true }
+        phone.stopDeliberately(epoch: 7, hostFeatures: [SessionFeature.deliberateEnd])
+        try await Task.sleep(nanoseconds: 650_000_000)
+        XCTAssertFalse(phone.connected)
+        XCTAssertFalse(phone.isRunning)
+        XCTAssertEqual(phone.retryAttempt, 0)
+    }
+
+    func testTransportFailureDuringEndClosesWithoutRetry() {
+        let phone = phone()
+        defer { phone.stop() }
+        phone.inputPacketSenderForTesting = { _ in true }
+        phone.stopDeliberately(epoch: 7, hostFeatures: [SessionFeature.deliberateEnd])
+        phone.simulateTransportLossForTesting()
+        XCTAssertFalse(phone.connected)
+        XCTAssertFalse(phone.isRunning)
+        XCTAssertEqual(phone.retryAttempt, 0)
+    }
+
+    func testLegacyHostGetsNoUnknownActionAndUnexpectedDropGetsNoEndSignal() {
+        let legacy = phone()
+        var packets: [ControlPacket] = []
+        legacy.inputPacketSenderForTesting = { packets.append($0); return true }
+        legacy.stopDeliberately(epoch: 7, hostFeatures: [])
+        XCTAssertFalse(legacy.connected)
+        XCTAssertTrue(packets.isEmpty)
+        let dropped = phone()
+        defer { dropped.stop() }
+        dropped.inputPacketSenderForTesting = { packets.append($0); return true }
+        dropped.simulateTransportLossForTesting()
+        XCTAssertTrue(packets.isEmpty)
+    }
+
+    func testEndBeforeFirstGeometryUsesImmediateCloseWithoutSendingInvalidEpoch() {
+        let phone = phone()
+        var sent = false
+        phone.inputPacketSenderForTesting = { _ in sent = true; return true }
+        phone.stopDeliberately(epoch: 0, hostFeatures: [SessionFeature.deliberateEnd])
+        XCTAssertFalse(sent)
+        XCTAssertFalse(phone.connected)
+    }
+
+    func testResetCancelsOldCloseTimeoutBeforeAReplacementSession() async throws {
+        let phone = phone()
+        defer { phone.stop() }
+        phone.inputPacketSenderForTesting = { _ in true }
+        phone.stopDeliberately(epoch: 7, hostFeatures: [SessionFeature.deliberateEnd])
+        phone.stop()
+        phone.startInputFixtureForTesting(session: "replacement")
+        try await Task.sleep(nanoseconds: 650_000_000)
+        XCTAssertTrue(phone.connected)
+        XCTAssertTrue(phone.isRunning)
+    }
+}
