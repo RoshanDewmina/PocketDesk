@@ -173,9 +173,9 @@ final class LiveActivityUITests: XCTestCase {
         add(plan)
     }
 
-    private func attachValidated(_ name: String, valid: Bool) {
+    private func attachValidated(_ name: String, valid: Bool, reason detail: String? = nil) {
         if !valid {
-            let reason = XCTAttachment(string: "Native Live Activity state/root validation failed for " + name)
+            let reason = XCTAttachment(string: detail ?? ("Native Live Activity state/root validation failed for " + name))
             reason.name = "missing-state-reason"
             reason.lifetime = .keepAlways
             add(reason)
@@ -239,6 +239,7 @@ final class LiveActivityUITests: XCTestCase {
                 start(state.phase)
                 showLockScreen()
                 var valid = assertButtons(for: state, where: "Lock Screen")
+                var failureReason: String? = nil
                 if orientation == .landscapeLeft {
                     let deadline = ProcessInfo.processInfo.systemUptime + 4
                     var frame = springboard.frame
@@ -251,14 +252,11 @@ final class LiveActivityUITests: XCTestCase {
                         && (!state.hasReconnect || (springboard.buttons["Reconnect"].exists && springboard.buttons["Reconnect"].isHittable))
                     let landscapeVisible = frame.width > frame.height && titleVisible && actionsVisible
                     if !landscapeVisible {
-                        let reason = XCTAttachment(string: "Landscape Lock Screen \(state.phase) was not verified: SpringBoard frame \(frame.width) × \(frame.height), phase visible=\(titleVisible), expected actions visible=\(actionsVisible)")
-                        reason.name = "missing-state-reason"
-                        reason.lifetime = .keepAlways
-                        add(reason)
+                        failureReason = "Landscape Lock Screen \(state.phase) was not verified: SpringBoard frame \(frame.width) × \(frame.height), phase visible=\(titleVisible), expected actions visible=\(actionsVisible)"
                     }
                     valid = valid && landscapeVisible
                 }
-                attachValidated(name, valid: valid)
+                attachValidated(name, valid: valid, reason: failureReason)
                 attachTree(name + "-tree")
                 springboard.swipeUp()
                 Thread.sleep(forTimeInterval: 1.5)
