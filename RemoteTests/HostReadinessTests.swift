@@ -125,16 +125,65 @@ final class HostReadinessTests: XCTestCase {
                        "Stop Sharing must survive quitting and reopening the host")
     }
 
-    func testShareMacAudioIsOffByDefaultAndSurvivesRelaunch() throws {
+    func testPhoneAudioVetoIsAllowedByDefaultAndSurvivesRelaunch() throws {
         let suite = "HostReadinessTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
 
-        XCTAssertFalse(HostPreferences(defaults: defaults).allowSystemAudio, "Sound sharing stays opt-in")
+        XCTAssertTrue(HostPreferences(defaults: defaults).allowSystemAudio, "The phone Listen switch owns explicit consent")
+        XCTAssertFalse(HostPreferences(defaults: defaults).legacySystemAudioAllowed, "Older phones still require explicit Mac opt-in")
+        XCTAssertTrue(HostPreferences(defaults: defaults).systemAudioPermission(phoneRequests: true))
+        XCTAssertFalse(HostPreferences(defaults: defaults).systemAudioPermission(phoneRequests: false),
+                       "An older connected phone's Mac switch reflects missing legacy consent")
         HostPreferences(defaults: defaults).allowSystemAudio = true
         XCTAssertTrue(HostPreferences(defaults: defaults).allowSystemAudio, "The owner's choice survives a host relaunch")
         HostPreferences(defaults: defaults).allowSystemAudio = false
         XCTAssertFalse(HostPreferences(defaults: defaults).allowSystemAudio)
+    }
+
+    func testPhoneAudioRequestRequiresCurrentScopeConsentAndHonorsLegacyOptIn() throws {
+        func permits(negotiated: Bool = true, requested: Bool = true, allowed: Bool = true,
+                     legacy: Bool = false, current: Bool = true, suspended: Bool = false, narrow: Bool = false) -> Bool {
+            HostPhoneAudioPolicy.permits(negotiated: negotiated, phoneRequested: requested, macAllowed: allowed,
+                legacyAllowed: legacy, currentPicture: current, suspended: suspended, narrowScope: narrow)
+        }
+        XCTAssertTrue(permits())
+        XCTAssertFalse(permits(requested: false), "An allowed Mac never starts sound by itself")
+        XCTAssertFalse(permits(allowed: false), "Mac veto wins")
+        XCTAssertFalse(permits(current: false), "Disconnected, stale, and Couch sessions cannot listen")
+        XCTAssertFalse(permits(suspended: true), "Pause, PiP and lock revoke audio")
+        XCTAssertFalse(permits(narrow: true), "App/window sharing cannot expose all-app audio")
+        XCTAssertFalse(permits(negotiated: false), "A new default cannot opt an old phone into audio")
+        XCTAssertTrue(permits(negotiated: false, legacy: true))
+        XCTAssertFalse(permits(negotiated: false, legacy: true, suspended: true))
+        XCTAssertNoThrow(try RemoteAction(action: "heartbeat", macAudioRequested: true).validate())
+        XCTAssertThrowsError(try RemoteAction(action: "pause", macAudioRequested: true).validate())
+    }
+
+    func testFirstListenAndFailedConfigurationRetriesUseFreshPCMAdmission() {
+        var lease = HostAudioCaptureEpoch()
+        var begins: UInt64 = 0
+        var retired: [UInt64] = []
+        func begin() -> UInt64 { begins += 1; return begins }
+        lease.arm(allowed: false, begin: begin)
+        XCTAssertNil(lease.epoch, "An initially muted stream has no delivering PCM epoch")
+        lease.arm(allowed: true, begin: begin)
+        XCTAssertEqual(lease.epoch, 1, "First Listen must arm after consent")
+        lease.arm(allowed: true, begin: begin)
+        XCTAssertEqual(begins, 1, "Repeated heartbeats preserve the active epoch")
+        lease.retire { retired.append($0) }
+        XCTAssertNil(lease.epoch)
+        // An audio-off SCK failure may leave its configuration on; admission must still renew.
+        lease.arm(allowed: true, begin: begin)
+        XCTAssertEqual(lease.epoch, 2)
+        // A failed audio-on update fences PCM. A subsequent consent heartbeat can retry.
+        lease.retire { retired.append($0) }
+        lease.arm(allowed: true, begin: begin)
+        XCTAssertEqual(lease.epoch, 3)
+        XCTAssertEqual(retired, [1, 2])
+        lease.retire { retired.append($0) }
+        lease.arm(allowed: true, begin: { 0 })
+        XCTAssertNil(lease.epoch, "A retired peer cannot obtain admission")
     }
 
     func testLocalNetworkOnlyIsOffByDefaultAndSurvivesRelaunch() throws {

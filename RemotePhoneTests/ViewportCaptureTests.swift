@@ -226,6 +226,15 @@ final class ViewportCaptureTests: XCTestCase {
         XCTAssertFalse(try json(heartbeat).contains("viewport"))
     }
 
+    func testAudioConsentRidesOnlyOnNegotiatedHeartbeatsAndStartsMuted() throws {
+        let model = try sessionModel(features: [SessionFeature.phoneAudio])
+        XCTAssertTrue(model.macAudioMuted)
+        XCTAssertEqual(model.heartbeatAction().macAudioRequested, false)
+        XCTAssertNoThrow(try model.heartbeatAction().validate())
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 4, features: [SessionFeature.clipboardText]), to: model)
+        XCTAssertNil(model.heartbeatAction().macAudioRequested, "Older Macs receive no new audio field")
+    }
+
     func testTheViewportRidesOnHeartbeatsOnlyWhileTheMacAdvertisesIt() throws {
         let model = connectedModel()
         try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 4), to: model)

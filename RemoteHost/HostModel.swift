@@ -91,7 +91,23 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var displayAsleep = false
     @Published private(set) var openAtLogin = false
     @Published private(set) var chimeOnConnect: Bool
-    @Published private(set) var allowSystemAudio = false
+    @Published private(set) var allowSystemAudio = true
+    private var phoneAudioRequested = false
+    private var usesPhoneAudioRequest: Bool {
+        connection.peerFeatures.contains(SessionFeature.phoneAudio) && !UserDefaults.standard.bool(forKey: "phoneAudioRequestDisabled")
+    }
+    private var systemAudioAllowedNow: Bool {
+        HostPhoneAudioPolicy.permits(negotiated: usesPhoneAudioRequest, phoneRequested: phoneAudioRequested,
+            macAllowed: allowSystemAudio, legacyAllowed: preferences.legacySystemAudioAllowed,
+            currentPicture: connection.connected && active && sessionState == .picture && !sessionRefused,
+            suspended: liveViewOnly || away.isLocking || phonePause.isPaused, narrowScope: captureScopeViewOnly)
+    }
+    private func reconcileSystemAudio() {
+        let enabled = systemAudioAllowedNow
+        guard connection.media?.systemAudioEnabled != enabled else { return }
+        connection.media?.setSystemAudioEnabled(enabled)
+        capture.setSystemAudioEnabled(enabled)
+    }
     @Published private(set) var timedPause = HostTimedPause()
     @Published private(set) var unavailableReason: HostAvailabilityNote?
     @Published private(set) var loginItemState: HostBackgroundItemState = .off
@@ -306,8 +322,7 @@ final class RemoteHostModel: ObservableObject {
         captureScopeSelectionGeneration &+= 1
         let generation = captureScopeSelectionGeneration
         captureScopeSelectionTask?.cancel()
-        allowSystemAudio = false
-        preferences.allowSystemAudio = false
+        phoneAudioRequested = false
         connection.media?.setSystemAudioEnabled(false)
         capture.setSystemAudioEnabled(false)
         guests.endAll()
@@ -450,7 +465,7 @@ final class RemoteHostModel: ObservableObject {
             wakeHelperHostID: hasPairedPhone ? connection.invitation?.durableHostID : nil,
             wakeOwnerPairID: hasPairedPhone ? connection.invitation?.ownerPairID : nil,
             localOnly: connection.localOnly,
-            allowSystemAudio: allowSystemAudio,
+            allowSystemAudio: preferences.systemAudioPermission(phoneRequests: !connection.connected || usesPhoneAudioRequest),
             pausedUntil: timedPause.resumesAt,
             session: status.isSessionLive ? HostSessionReadout.parse(connection.diagnostics) : nil,
             sessionStartedAt: status.isSessionLive ? sessionStartedAt : nil,
@@ -1064,12 +1079,10 @@ final class RemoteHostModel: ObservableObject {
 
     func setAllowSystemAudio(_ enabled: Bool) {
         guard !enabled || !captureScopeViewOnly else { return }
-        guard allowSystemAudio != enabled else { return }
+        guard allowSystemAudio != enabled || preferences.legacySystemAudioAllowed != enabled else { return }
         allowSystemAudio = enabled
         preferences.allowSystemAudio = enabled
-        connection.media?.setSystemAudioEnabled(enabled && !liveViewOnly && !away.isLocking)
-        capture.setSystemAudioEnabled(enabled && !liveViewOnly && !away.isLocking)
-        if connection.connected, active, !phonePause.isPaused && !liveViewOnly, sessionState == .picture { beginCapture() }
+        reconcileSystemAudio()
     }
 
     /// File transfer needs a full-control sharing scope and a current, unpaused session (MS05: no Mac setting).
@@ -2136,7 +2149,7 @@ final class RemoteHostModel: ObservableObject {
         guard let display = displays.first(where: { $0.displayID == selected }), let peer = connection.media else { stop(); return }
         if HostScreenLock.isLocked() { handleAvailability(.screenLocked); return }
         peer.requestRefinementCapture(refinementNegotiated && !away.isLocking)
-        peer.setSystemAudioEnabled(!captureScopeViewOnly && allowSystemAudio && !liveViewOnly && !away.isLocking)
+        peer.setSystemAudioEnabled(systemAudioAllowedNow)
         if sessionStartedAt == nil {
             sessionStartedAt = Date()
             sessionsThisLaunch += 1
@@ -2551,6 +2564,11 @@ final class RemoteHostModel: ObservableObject {
             return
         }
         if action.action == "heartbeat" {
+            if usesPhoneAudioRequest, action.isRegularPhoneHeartbeat, action.epoch == inputEpoch.value, connection.connected, active, !sessionRefused {
+                phoneAudioRequested = action.macAudioRequested == true && sessionState == .picture &&
+                    !captureScopeViewOnly && !liveViewOnly && !away.isLocking && !phonePause.isPaused
+                reconcileSystemAudio()
+            }
             if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, sessionHealthy,
                connection.peerFeatures.contains(SessionFeature.videoLTR), let feedback = action.videoFeedback {
                 connection.media?.videoFeedback.receive(feedback, epoch: action.epoch)
@@ -3021,6 +3039,7 @@ final class RemoteHostModel: ObservableObject {
     private var advertisedFeatures: [String] {
         let tuning = StreamTuning.current
         let base = SessionFeature.host.filter {
+            if $0 == SessionFeature.phoneAudio && !usesPhoneAudioRequest { return false }
             if $0 == SessionFeature.clipboardSync && (!connection.peerFeatures.contains($0) || UserDefaults.standard.bool(forKey: "clipboardAutoSyncDisabled")) { return false }
             if ($0 == SessionFeature.videoLTR || $0 == SessionFeature.exactVideoTiming) && !connection.peerFeatures.contains($0) { return false }
             if $0 == SessionFeature.videoRefinement && !refinementNegotiated { return false }
@@ -3195,13 +3214,13 @@ final class RemoteHostModel: ObservableObject {
             invalidateTextFocus(); clipboard.reset(); fileTransfer.reset()
             // Restore only the Mac owner's existing producer consent when leaving live PiP.
             // Phone playback remains muted until the person explicitly enables it again.
-            let audio = allowSystemAudio && !captureScopeViewOnly && !next
-            connection.media?.setSystemAudioEnabled(audio); capture.setSystemAudioEnabled(audio)
+            if next { phoneAudioRequested = false }
+            reconcileSystemAudio()
             applyControlState(notifyPhone: true)
             sendCaptureHealth(sessionHealthy, viewOnlyRequestID: action.liveViewOnlyRequestID)
             // Suspension retired the old capture audio epoch; enabling consent cannot revive it.
             // A real transition back starts a newly scoped stream/epoch, with owner consent intact.
-            if wasViewOnly && audio { beginCapture() }
+            if wasViewOnly && systemAudioAllowedNow { beginCapture() }
         case "pause":
             if current { pauseForPhoneBackground() }
         case "resume":
@@ -3309,7 +3328,9 @@ final class RemoteHostModel: ObservableObject {
         cancelPictureRefresh()
         guard !phonePause.isPaused && !liveViewOnly else { return }
         liftCurtain()
+        phoneAudioRequested = false
         phonePause.begin(at: ProcessInfo.processInfo.systemUptime)
+        reconcileSystemAudio()
         clipboard.reset()
         fileTransfer.reset()
         invalidateTextFocus()
@@ -3525,6 +3546,8 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func advanceEpoch() {
+        phoneAudioRequested = false
+        if usesPhoneAudioRequest { reconcileSystemAudio() }
         clipboard.stopAutomaticSync()
         guests.endAll()
         // A transfer cannot continue across a new capture geometry. Tell the phone (it would otherwise show

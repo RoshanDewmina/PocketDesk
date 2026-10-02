@@ -107,14 +107,16 @@ final class VideoRefinementTests: XCTestCase {
         let base = MacShareBlocker.Handshake.phone.features
         let everyOptIn = MacShareBlocker.Handshake.phoneRequest([SessionFeature.videoRefinement, SessionFeature.textClarity], mode: "couch")
         XCTAssertLessThanOrEqual(everyOptIn.features.count, 8)
-        XCTAssertEqual(everyOptIn.features, base + [SessionFeature.videoRefinement]); XCTAssertEqual(everyOptIn.options, [SessionFeature.textClarity, SessionFeature.clipboardSync])
-        XCTAssertEqual(everyOptIn.requested, Set(base + [SessionFeature.videoRefinement, SessionFeature.textClarity, SessionFeature.clipboardSync]))
+        XCTAssertEqual(everyOptIn.features, base + [SessionFeature.videoRefinement]); XCTAssertEqual(everyOptIn.options, [SessionFeature.textClarity, SessionFeature.clipboardSync, SessionFeature.phoneAudio])
+        XCTAssertLessThanOrEqual(everyOptIn.options?.count ?? 0, MacShareBlocker.Handshake.maximumOptions)
+        XCTAssertEqual(everyOptIn.requested, Set(base + [SessionFeature.videoRefinement, SessionFeature.textClarity, SessionFeature.clipboardSync, SessionFeature.phoneAudio]))
         let body = try JSONEncoder().encode(everyOptIn)
         XCTAssertEqual(MacShareBlocker.Handshake.requestedMode(in: body), .couch)
         let suite = "VideoRefinementTests.clipboardOff.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set(true, forKey: "clipboardAutoSyncDisabled")
+        defaults.set(true, forKey: "phoneAudioRequestDisabled")
         XCTAssertFalse(String(decoding: try JSONEncoder().encode(MacShareBlocker.Handshake.phoneRequest([], defaults: defaults)), as: UTF8.self).contains("options"),
                        "With every opt-in off the request is the earlier wire format")
         // An earlier Mac decodes with a struct that has no `options`; its synthesized Codable ignores the key.

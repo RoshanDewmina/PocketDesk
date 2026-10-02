@@ -2487,7 +2487,7 @@ struct NativeSessionView: View {
                                                        set: { model.setMacAudioMuted(!$0) }))
                 .accessibilityIdentifier("remote.macAudio")
                 .disabled(model.captureScopeViewOnly)
-            Text(model.captureScopeViewOnly ? "Audio is off while sharing an app or window." : "Requires Share Mac audio on your Mac. Sound may come from every app. Stops when you leave Farside or dictate.")
+            Text(model.captureScopeViewOnly ? "Audio is off while sharing an app or window." : model.phoneAudioRequestSupported ? "Sound may come from every Mac app. Stops when you leave Farside or dictate. Your Mac can block listening in Settings." : "Requires Share Mac audio on your Mac. Sound may come from every app. Stops when you leave Farside or dictate.")
                 .font(.footnote).foregroundStyle(Farside.Palette.ash)
         } header: { sectionHeader("Mac audio") }
     }

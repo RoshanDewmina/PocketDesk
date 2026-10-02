@@ -279,11 +279,11 @@ final class RemoteCapture {
     private var exclusionGeneration: UInt64 = 0
     private var exclusionTask: Task<Bool, Never>?
 
-    /// System output is a separate, explicit host consent. All apps on the Mac may be audible.
-    /// The host restarts capture after this immediate fence so the SCK configuration matches consent.
+    /// Fence PCM synchronously, then serialize audio with picture configuration updates.
+    /// Listening never restarts the picture or retires its geometry/input epoch.
     func setSystemAudioEnabled(_ enabled: Bool) {
         streamPeer?.setSystemAudioEnabled(enabled)
-        session?.fenceAudio()
+        session?.requestSystemAudio(enabled)
     }
 
     func setQuality(_ quality: StreamQuality) {
@@ -719,6 +719,7 @@ private struct CaptureInputs: Equatable {
     var quality: StreamQuality
     var showsCursor: Bool
     var clientLongEdge: Int?
+    var capturesAudio: Bool = false
     /// G12: a rung below the session rate, and a picture fraction below 1; nil at rung 0.
     var ladderFPS: Int? = nil
     var sizeFraction: Double? = nil
@@ -728,8 +729,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     private let queue = DispatchQueue(label: "PocketDesk.capture", qos: .userInteractive)
     private var stream: SCStream!
     private let audioConverter = SystemAudioPCMConverter()
-    private let audioEpoch: UInt64
-    private let capturesAudio: Bool
+    private var audioLease = HostAudioCaptureEpoch()
     private let audioPeer: PeerMedia
     private let scopeLease: CaptureScopeLease
     private let scopeTarget: HostCaptureTarget?
@@ -743,7 +743,29 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         else { queue.sync(execute: clear) }
     }
 
-    func fenceAudio() { audioPeer.endSystemAudioCapture(audioEpoch) }
+    func fenceAudio() {
+        let fence = { [self] in
+            audioLease.retire(end: audioPeer.endSystemAudioCapture); audioConverter.reset()
+        }
+        if DispatchQueue.getSpecific(key: captureQueueKey) == true { fence() }
+        else { queue.sync(execute: fence) }
+    }
+
+    func requestSystemAudio(_ enabled: Bool) {
+        if !enabled { fenceAudio() }
+        queue.async { [self] in
+            guard !stopping, scopeTarget == nil else { return }
+            // A failed audio-off configuration can leave SCK on after PCM was retired.
+            // A fresh Listen still needs a new epoch even if the configuration is already on.
+            if enabled && audioLease.epoch == nil {
+                audioLease.arm(allowed: audioPeer.systemAudioEnabled, begin: audioPeer.beginSystemAudioCapture)
+                audioConverter.reset()
+            }
+            guard requested.capturesAudio != enabled else { return }
+            requested.capturesAudio = enabled
+            handle(gate.request(at: CACurrentMediaTime(), immediate: true))
+        }
+    }
     private var peer: PeerMedia?
     private var timer: DispatchSourceTimer?
     private var health = CaptureHealthState()
@@ -809,11 +831,10 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         self.display = display
         self.peer = peer
         audioPeer = peer
-        capturesAudio = resolved.target == nil && peer.systemAudioEnabled
-        audioEpoch = peer.beginSystemAudioCapture()
         self.tuning = tuning
         self.geometry = geometry
-        let inputs = CaptureInputs(quality: quality, showsCursor: true, clientLongEdge: clientLongEdge)
+        let inputs = CaptureInputs(quality: quality, showsCursor: true, clientLongEdge: clientLongEdge,
+                                   capturesAudio: resolved.target == nil && peer.systemAudioEnabled)
         requested = inputs
         applied = inputs
         initialRegion = ViewportCapturePolicy.wholeDisplay(geometry, output: output)
@@ -826,6 +847,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
                                     refresh.map { String(format: "%.0fHz", $0) } ?? "?Hz")
         super.init()
         queue.setSpecific(key: captureQueueKey, value: true)
+        audioLease.arm(allowed: resolved.target == nil && peer.systemAudioEnabled, begin: peer.beginSystemAudioCapture)
         self.stream = SCStream(filter: filter, configuration: configuration, delegate: self)
     }
 
@@ -927,7 +949,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         let configuration = RemoteCaptureConfiguration.streamConfiguration(
             output: output, region: region, showsCursor: inputs.showsCursor,
             fps: min(targetFPS, inputs.ladderFPS ?? targetFPS),
-            displayRefreshHz: displayRefreshHz, tuning: tuning, capturesAudio: capturesAudio, refinesText: peer?.refinementCaptureEnabled == true, fullColor444: peer?.fullColorCaptureEnabled == true
+            displayRefreshHz: displayRefreshHz, tuning: tuning, capturesAudio: inputs.capturesAudio, refinesText: peer?.refinementCaptureEnabled == true, fullColor444: peer?.fullColorCaptureEnabled == true
         )
         let previousRegion = appliedRegion
         let bufferVersionAtStart = bufferVersion
@@ -949,6 +971,10 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
                     publish(region)
                 } else if requested == inputs {
                     requested = applied
+                    if inputs.capturesAudio {
+                        audioPeer.setSystemAudioEnabled(false)
+                        fenceAudio() // Next admitted heartbeat retries with a fresh epoch.
+                    }
                 }
                 completeConfigurationUpdate(succeeded: error == nil)
             }
@@ -991,7 +1017,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
     func start() async throws {
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
-        if capturesAudio { try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue) }
+        if scopeTarget == nil { try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue) }
         try await stream.startCapture()
         let stoppedDuringStart = queue.sync { stopping }
         if stoppedDuringStart {
@@ -1048,7 +1074,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             return
         }
         if type == .audio {
-            guard !stopping, capturesAudio, let peer else { return }
+            guard !stopping, applied.capturesAudio, let peer, peer.systemAudioEnabled, let audioEpoch = audioLease.epoch else { return }
             for packet in audioConverter.packets(from: sampleBuffer) { peer.submitSystemAudio(packet.pcm, epoch: audioEpoch, hostTime: packet.hostTime) }
             return
         }
