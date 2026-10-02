@@ -10,7 +10,8 @@ struct DiagnosticFact: Codable, Equatable {
              networkRoundTripMs, roundTripSpreadMs, hostPacerMeanMs, decodeMeanMs, hostEncodeMeanMs,
              inputPostingP95Ms, preEncodeWaitP95Ms, wifiBurstPossible, awdlCause, billableBytes,
              oneOffFileBytes, guestBytes, energyJoules, physicalGlassMs, mediaRTPBytes, otherTransportBytes,
-             transportAverageGBPerHour, estimateLowGBPerHour, estimateHighGBPerHour, mediaAverageGBPerHour
+             transportAverageGBPerHour, estimateLowGBPerHour, estimateHighGBPerHour, mediaAverageGBPerHour,
+             curtainOn, curtainCovered, curtainLiftedAtMac, curtainFailed
         var title: String {
             switch self {
             case .authenticatedEchoes: "Authenticated replies"
@@ -55,6 +56,10 @@ struct DiagnosticFact: Codable, Equatable {
             case .estimateLowGBPerHour: "Last preset estimate GB/hour, still screen (repair not included)"
             case .estimateHighGBPerHour: "Last preset estimate GB/hour, sustained motion (repair not included)"
             case .mediaAverageGBPerHour: "Measured average video + audio RTP GB/hour"
+            case .curtainOn: "Mac privacy mode on (hide screen while connected)"
+            case .curtainCovered: "Mac screen was covered during the session"
+            case .curtainLiftedAtMac: "Curtain lifted at the Mac with Esc"
+            case .curtainFailed: "Curtain could not be confirmed hidden from the stream"
             }
         }
     }

@@ -101,6 +101,7 @@ enum PhoneSessionNotice {
     static let awayCovered = "Mac covered · requests a lock if touched"
     static let awayCantUnlock = "Away mode can’t unlock it."
     static let curtainFailed = "Your Mac couldn’t hide its screen safely, so it stayed visible."
+    static let curtainUnavailable = "Your Mac can’t hide its screen until Farside has Accessibility there."
 
     /// What changed on the Mac between two `capture` reports, if it is worth telling the person.
     static func curtainChange(from previous: PrivacyCurtainState?, to current: PrivacyCurtainState?) -> String? {
@@ -108,6 +109,8 @@ enum PhoneSessionNotice {
         switch current {
         case .liftedLocally where previous == .up: return curtainLiftedLocally
         case .failed: return curtainFailed
+        // Privacy mode is on by default, so a Mac that cannot apply it says so once per session.
+        case .unavailable: return curtainUnavailable
         default: return nil
         }
     }

@@ -240,6 +240,9 @@ struct HostPreferences {
         static let serviceAddress = "PocketDeskServiceURL"
         static let chimeOnConnect = "chimeOnConnect"
         static let privacyCurtain = "privacyCurtainWhileSharing"
+        /// Internal kill switch: `defaults write com.roshan.PocketDesk.RemoteHost privacyModeDefaultOff -bool YES`
+        /// returns to the pre-batch-7 default (curtain off until the person turns it on).
+        static let privacyModeDefaultOff = "privacyModeDefaultOff"
         static let agentAlerts = "agentAlertsEnabled"
         static let allowSystemAudio = "allowSystemAudio"
         static let localOnly = "localNetworkOnly"
@@ -319,11 +322,14 @@ struct HostPreferences {
         nonmutating set { defaults.set(newValue, forKey: Key.pairingDeferred) }
     }
 
-    /// Off unless the person turns it on; covering the Mac's screen is never a surprise.
+    /// Privacy mode (2 Oct 2026): on by default, so a connecting phone covers the Mac's screen
+    /// unless the person turned it off here or from the phone. An explicit choice always wins.
     var privacyCurtain: Bool {
-        get { defaults.bool(forKey: Key.privacyCurtain) }
+        get { (defaults.object(forKey: Key.privacyCurtain) as? Bool) ?? privacyCurtainDefault }
         nonmutating set { defaults.set(newValue, forKey: Key.privacyCurtain) }
     }
+
+    var privacyCurtainDefault: Bool { !defaults.bool(forKey: Key.privacyModeDefaultOff) }
 
     /// Off unless the person turns it on: nothing on this Mac listens for an agent until they say so.
     var agentAlerts: Bool {

@@ -119,6 +119,12 @@ final class RemoteHostModel: ObservableObject {
     private var curtainRaising = false
     private var curtainLocallyDismissed = false
     private var curtainRaiseFailed = false
+    /// Privacy mode bookkeeping for the session's diagnostic report and the end-of-session hold.
+    private var curtainCoveredThisSession = false
+    private var curtainRestoreHold = false
+    private var curtainRestoreHoldTask: Task<Void, Never>?
+    private var heldScale: (display: CGDirectDisplayID, width: Double, requestID: String?)?
+    private var scaleHoldTask: Task<Void, Never>?
     private var captureUnhealthySince: TimeInterval?
     /// Registered without Screen Recording only so the paired phone learns why it cannot connect.
     private var listeningWithoutSharing = false
@@ -1069,7 +1075,7 @@ final class RemoteHostModel: ObservableObject {
         preferences.allowSystemAudio = enabled
         connection.media?.setSystemAudioEnabled(enabled && !liveViewOnly && !away.isLocking)
         capture.setSystemAudioEnabled(enabled && !liveViewOnly && !away.isLocking)
-        if connection.connected, active, !phonePause.isPaused && !liveViewOnly, sessionState == .picture { beginCapture() }
+        if connection.connected, active, !phonePause.isPaused && !liveViewOnly, sessionState == .picture { restartCapture() }
     }
 
     /// File transfer needs a full-control sharing scope and a current, unpaused session (MS05: no Mac setting).
@@ -1730,6 +1736,7 @@ final class RemoteHostModel: ObservableObject {
     private func reconcileCurtain() {
         applyAwayCurtainSettings()
         let now = ProcessInfo.processInfo.systemUptime
+        if curtainRestoreHold && !bigText.isEngaged && !bigText.isChanging { endCurtainRestoreHold() }
         let inputs = PrivacyCurtainInputs(
             preference: !captureScopeViewOnly && curtainPreference,
             sessionLive: active && connection.connected && !terminating,
@@ -1737,6 +1744,9 @@ final class RemoteHostModel: ObservableObject {
             unhealthyFor: captureUnhealthySince.map { now - $0 } ?? 0,
             displayAsleep: displayAsleep,
             phonePaused: phonePause.isPaused,
+            pausedFor: phonePause.since.map { now - $0 } ?? 0,
+            phoneSilentFor: sessionState == .picture ? (lastPhoneHeartbeatAt.map { now - $0 } ?? 0) : 0,
+            restoreHold: curtainRestoreHold,
             screenLocked: screenLocked,
             accessibilityGranted: inputAccess.accessibility.isGranted,
             locallyDismissed: curtainLocallyDismissed,
@@ -1766,6 +1776,7 @@ final class RemoteHostModel: ObservableObject {
     private func raiseCurtain() {
         curtainRaising = true
         let raisingAway = away.wantsCover && awayMarkerCommitted
+        let attempt = captureAttempt
         let hooks = raisingAway ? awayCoverHooks : PrivacyCurtainController.CaptureHooks(
             exclude: { [weak self] ids in await self?.capture.excludeWindows(ids) ?? false },
             signature: { [weak self] in await self?.capture.lumaSignature() }
@@ -1774,12 +1785,23 @@ final class RemoteHostModel: ObservableObject {
             guard let self else { return }
             let result = await self.curtain.raise(hooks: hooks)
             self.curtainRaising = false
+            // The stream restarting underneath a raise (Big Text, display switch, audio) is not a
+            // failure; the next reconcile simply tries again against the new stream.
+            let overtaken = !raisingAway && self.captureAttempt != attempt
             switch result {
             case .raised:
+                if !raisingAway { self.curtainCoveredThisSession = true }
                 self.events.record(.curtain, "Curtain up on \(NSScreen.screens.count) display(s)")
             case .exclusionFailed, .verificationFailed, .noScreens:
-                if raisingAway { self.awayCoverRaiseFailed = true } else { self.curtainRaiseFailed = true }
-                self.events.record(.error, "Cover could not be prepared: \(result)")
+                if overtaken && result != .noScreens {
+                    self.events.record(.curtain, "Cover attempt overtaken by a capture restart")
+                } else if raisingAway {
+                    self.awayCoverRaiseFailed = true
+                    self.events.record(.error, "Cover could not be prepared: \(result)")
+                } else {
+                    self.curtainRaiseFailed = true
+                    self.events.record(.error, "Cover could not be prepared: \(result)")
+                }
             case .cancelled:
                 break
             }
@@ -1787,17 +1809,88 @@ final class RemoteHostModel: ObservableObject {
         }
     }
 
-    private func curtainLiftedLocally() {
-        curtainLocallyDismissed = true
-        events.record(.curtain, "Lifted at the Mac with Esc ×3")
-    }
-
-    /// Lifts synchronously; used where sharing ends, before anything else is torn down.
-    private func liftCurtain() {
-        if curtain.phase != .down && !away.wantsCover { curtain.lift() }
+    /// Lifts synchronously; used where sharing ends, before anything else is torn down. At a
+    /// session end with Big Text still applied, the curtain instead stays up (bounded) until the
+    /// restore finishes, so the person at the Mac never watches the mode flip and windows jump.
+    private func liftCurtain(holdingForRestore: Bool = false) {
+        if holdingForRestore, curtain.phase == .up, !away.wantsCover, !terminating, bigText.isEngaged {
+            beginCurtainRestoreHold()
+        } else if curtain.phase != .down && !away.wantsCover {
+            curtain.lift()
+        }
         let covered = curtain.phase != .down
         watchdog?.setCurtainUp(covered)
         updateHangWatchdog(curtainUp: covered)
+    }
+
+    private func beginCurtainRestoreHold() {
+        guard !curtainRestoreHold else { return }
+        curtainRestoreHold = true
+        events.record(.curtain, "Staying covered while the Mac’s own size comes back")
+        curtainRestoreHoldTask?.cancel()
+        curtainRestoreHoldTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(PrivacyCurtainPolicy.restoreHoldLimit))
+            guard let self, !Task.isCancelled else { return }
+            self.endCurtainRestoreHold()
+            self.reconcileCurtain()
+        }
+    }
+
+    private func endCurtainRestoreHold() {
+        guard curtainRestoreHold else { return }
+        curtainRestoreHold = false
+        curtainRestoreHoldTask?.cancel(); curtainRestoreHoldTask = nil
+    }
+
+    /// Restarts the picture stream inside a session. A half-raised curtain is cancelled first and a
+    /// raised one keeps its windows and exclusions, so a restart never uncovers the Mac.
+    private func restartCapture() {
+        curtain.cancelRaise()
+        beginCapture(keepingExclusions: curtain.phase == .up)
+    }
+
+    /// Privacy mode: the first Big Text change waits briefly for the curtain, so the mode switch
+    /// and the window shuffle happen under it rather than in view of the person at the Mac.
+    private var curtainWillCoverSoon: Bool {
+        curtainPreference && !captureScopeViewOnly && curtain.phase != .up && !curtainRaiseFailed
+            && !curtainLocallyDismissed && !phonePause.isPaused && inputAccess.accessibility.isGranted
+            && !crashLoopStopped && !screenLocked
+    }
+
+    private func holdScaleRequest(display: CGDirectDisplayID, width: Double, requestID: String?) {
+        if let held = heldScale, held.requestID != requestID {
+            sendDisplayList(scaleError: .busy, scaleRequestID: held.requestID)
+        }
+        heldScale = (display, width, requestID)
+        scaleHoldTask?.cancel()
+        let deadline = ProcessInfo.processInfo.systemUptime + PrivacyCurtainPolicy.scaleHoldLimit
+        scaleHoldTask = Task { @MainActor [weak self] in
+            while true {
+                guard let self, !Task.isCancelled, self.curtainWillCoverSoon,
+                      ProcessInfo.processInfo.systemUptime < deadline else { break }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            guard let self, !Task.isCancelled, let held = self.heldScale else { return }
+            self.heldScale = nil
+            self.scaleHoldTask = nil
+            guard self.sessionState == .picture, held.display == self.selected, held.display == self.capturedDisplayID else {
+                return self.sendDisplayList(scaleError: .unsupported, scaleRequestID: held.requestID)
+            }
+            self.events.record(.curtain, self.curtain.phase == .up ? "Big Text applied under the curtain"
+                                                                   : "Big Text applied before the curtain was ready")
+            self.bigText.request(display: held.display, looksLikeWidth: held.width, allowed: self.preferences.allowBigText,
+                                 accessibilityGranted: self.inputAccess.accessibility.isGranted, requestID: held.requestID)
+        }
+    }
+
+    private func cancelHeldScale() {
+        scaleHoldTask?.cancel(); scaleHoldTask = nil
+        heldScale = nil
+    }
+
+    private func curtainLiftedLocally() {
+        curtainLocallyDismissed = true
+        events.record(.curtain, "Lifted at the Mac with Esc ×3")
     }
 
     private static func curtainStatus(_ state: PrivacyCurtainState, displays: Int) -> String? {
@@ -1827,7 +1920,7 @@ final class RemoteHostModel: ObservableObject {
     func stop() {
         guests.endAll()
         bigText.sessionEnded(.sessionEnded)
-        liftCurtain()
+        liftCurtain(holdingForRestore: true)
         invalidateTextFocus()
         unavailabilityTeardown?.cancel(); unavailabilityTeardown = nil
         browserSession.stop()
@@ -2143,6 +2236,7 @@ final class RemoteHostModel: ObservableObject {
             events.record(.session, "Phone connected")
         }
         captureUnhealthySince = nil
+        endCurtainRestoreHold()
         peer.onSenderStatistics = { [weak self, weak peer] report in
             guard let self, let peer, self.connection.media === peer else { return }
             self.diagnosticRecorder.observe(report, at: ProcessInfo.processInfo.systemUptime)
@@ -2236,6 +2330,7 @@ final class RemoteHostModel: ObservableObject {
                 self.reconcileAutomaticClipboard()
                 if self.phonePause.isPaused {
                     if self.phonePause.isExpired(at: ProcessInfo.processInfo.systemUptime) { self.expirePhonePause() }
+                    else { self.reconcileCurtain() }
                     return
                 }
                 self.input.expireMomentum()
@@ -2383,14 +2478,20 @@ final class RemoteHostModel: ObservableObject {
             try? diagnosticStore.save(diagnosticRecorder.finish(at: ProcessInfo.processInfo.systemUptime, additional: [
                 .init(.hostScreenRecording, CGPreflightScreenCaptureAccess() ? 1 : 0),
                 .init(.hostPostEvents, CGPreflightPostEventAccess() ? 1 : 0),
-                .init(.hostAccessibility, inputAccess.accessibility.isGranted ? 1 : 0)]))
+                .init(.hostAccessibility, inputAccess.accessibility.isGranted ? 1 : 0),
+                .init(.curtainOn, !captureScopeViewOnly && curtainPreference ? 1 : 0),
+                .init(.curtainCovered, curtainCoveredThisSession ? 1 : 0),
+                .init(.curtainLiftedAtMac, curtainLocallyDismissed ? 1 : 0),
+                .init(.curtainFailed, curtainRaiseFailed ? 1 : 0)]))
             diagnosticReports = diagnosticStore.load()
         }
         diagnosticRecorder = DiagnosticSessionRecorder()
         cancelPictureRefresh()
-        liftCurtain()
+        cancelHeldScale()
+        liftCurtain(holdingForRestore: true)
         curtainLocallyDismissed = false
         curtainRaiseFailed = false
+        curtainCoveredThisSession = false
         captureUnhealthySince = nil
         if let sessionStartedAt {
             lastSessionDuration = Date().timeIntervalSince(sessionStartedAt)
@@ -2423,7 +2524,9 @@ final class RemoteHostModel: ObservableObject {
         captureTask?.cancel(); captureTask = nil
         endLoadMonitor()
         guests.endAll()
-        _ = capture.stop()
+        // A held curtain keeps its exclusions: nothing streams now, and the next capture start
+        // either keeps or drops them itself.
+        _ = capture.stop(keepingExclusions: curtainRestoreHold)
         couchHUD.hide()
         sessionState = .picture
         couchHealthy = false
@@ -3165,7 +3268,7 @@ final class RemoteHostModel: ObservableObject {
             return
         }
         events.record(.session, "Phone switched to the picture")
-        beginCapture()
+        restartCapture()
     }
 
     // MARK: Session extensions
@@ -3201,7 +3304,7 @@ final class RemoteHostModel: ObservableObject {
             sendCaptureHealth(sessionHealthy, viewOnlyRequestID: action.liveViewOnlyRequestID)
             // Suspension retired the old capture audio epoch; enabling consent cannot revive it.
             // A real transition back starts a newly scoped stream/epoch, with owner consent intact.
-            if wasViewOnly && audio { beginCapture() }
+            if wasViewOnly && audio { restartCapture() }
         case "pause":
             if current { pauseForPhoneBackground() }
         case "resume":
@@ -3262,6 +3365,10 @@ final class RemoteHostModel: ObservableObject {
                   displays.contains(where: { $0.displayID == requested }) else {
                 return sendDisplayList(scaleError: .unsupported, scaleRequestID: action.scaleRequestID)
             }
+            if width > 0, !bigText.isEngaged, curtainWillCoverSoon {
+                holdScaleRequest(display: requested, width: width, requestID: action.scaleRequestID)
+                return
+            }
             bigText.request(display: requested, looksLikeWidth: width, allowed: preferences.allowBigText,
                             accessibilityGranted: inputAccess.accessibility.isGranted, requestID: action.scaleRequestID)
         default:
@@ -3272,10 +3379,10 @@ final class RemoteHostModel: ObservableObject {
     /// The phone chose another display: stream it in the same session. A new epoch and geometry
     /// follow, so input meant for the old display can never land on the new one.
     private func switchSessionDisplay(to id: CGDirectDisplayID) {
+        cancelHeldScale()
         bigText.sessionEnded(.displaySwitched)
-        liftCurtain()
         selected = id
-        beginCapture()
+        restartCapture()
         sendDisplayList()
     }
 
@@ -3308,7 +3415,11 @@ final class RemoteHostModel: ObservableObject {
     private func pauseForPhoneBackground() {
         cancelPictureRefresh()
         guard !phonePause.isPaused && !liveViewOnly else { return }
-        liftCurtain()
+        cancelHeldScale()
+        // Privacy mode: a quick app switch or lock on the phone must not uncover the Mac. A raised
+        // curtain keeps its windows and their capture exclusions through the pause (bounded by
+        // PrivacyCurtainPolicy.pausedHold); a half-raised one is cancelled before the stream stops.
+        curtain.cancelRaise()
         phonePause.begin(at: ProcessInfo.processInfo.systemUptime)
         clipboard.reset()
         fileTransfer.reset()
@@ -3324,7 +3435,7 @@ final class RemoteHostModel: ObservableObject {
         captureTask?.cancel(); captureTask = nil
         endLoadMonitor()
         guests.endAll()
-        _ = capture.stop()
+        _ = capture.stop(keepingExclusions: curtain.phase == .up)
         couchHealthy = false
         updatePowerAssertions()
         reconcileCurtain()
@@ -3337,7 +3448,7 @@ final class RemoteHostModel: ObservableObject {
         if sessionState == .couch { beginCouch() } else {
             connection.media?.counters.beginResumeCapture()
             connection.media?.rearmBandwidthSeed()
-            beginCapture()
+            restartCapture()
         }
     }
 

@@ -137,6 +137,36 @@ final class HostReadinessTests: XCTestCase {
         XCTAssertFalse(HostPreferences(defaults: defaults).allowSystemAudio)
     }
 
+    func testPrivacyModeIsOnByDefaultAndAnExplicitChoiceWins() throws {
+        let suite = "HostReadinessTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        XCTAssertTrue(HostPreferences(defaults: defaults).privacyCurtain, "A connecting phone covers the Mac unless told otherwise")
+        HostPreferences(defaults: defaults).privacyCurtain = false
+        XCTAssertFalse(HostPreferences(defaults: defaults).privacyCurtain, "Off at the Mac or from the phone survives relaunch")
+        HostPreferences(defaults: defaults).privacyCurtain = true
+        XCTAssertTrue(HostPreferences(defaults: defaults).privacyCurtain)
+
+        // A pre-privacy-mode install that explicitly chose off keeps it after the upgrade.
+        defaults.set(false, forKey: "privacyCurtainWhileSharing")
+        XCTAssertFalse(HostPreferences(defaults: defaults).privacyCurtain)
+    }
+
+    func testPrivacyModeKillSwitchRestoresTheOldDefaultWithoutTouchingChoices() throws {
+        let suite = "HostReadinessTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        defaults.set(true, forKey: "privacyModeDefaultOff")
+        XCTAssertFalse(HostPreferences(defaults: defaults).privacyCurtain, "Kill switch: off until the person turns it on")
+        XCTAssertFalse(HostPreferences(defaults: defaults).privacyCurtainDefault)
+        HostPreferences(defaults: defaults).privacyCurtain = true
+        XCTAssertTrue(HostPreferences(defaults: defaults).privacyCurtain, "The kill switch never overrides an explicit on")
+        defaults.removeObject(forKey: "privacyModeDefaultOff")
+        XCTAssertTrue(HostPreferences(defaults: defaults).privacyCurtainDefault)
+    }
+
     func testLocalNetworkOnlyIsOffByDefaultAndSurvivesRelaunch() throws {
         let suite = "HostReadinessTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

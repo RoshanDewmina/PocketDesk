@@ -371,4 +371,23 @@ final class HostPresentationTests: XCTestCase {
         preferences.chimeOnConnect = false
         XCTAssertFalse(HostPreferences(defaults: defaults).chimeOnConnect)
     }
+
+    func testPrivacyModeSettingSaysWhatTheDefaultDoesAndHowToLookAtTheMac() {
+        var state = HostViewState()
+        state.privacyCurtain = true
+        state.focusAccessibility = .granted
+        XCTAssertEqual(HostCurtainCopy.subtitle(for: state),
+                       "On by default. Your phone still sees everything; press Esc three times at this Mac to show it")
+        state.curtainStatus = "Covering your display. Your phone still sees the desktop."
+        XCTAssertEqual(HostCurtainCopy.subtitle(for: state), state.curtainStatus, "A live status replaces the explanation")
+        state.curtainStatus = nil
+        state.privacyCurtain = false
+        XCTAssertEqual(HostCurtainCopy.subtitle(for: state), "Off: anyone at the Mac can watch what the phone does")
+        state.privacyCurtain = true
+        state.focusAccessibility = .denied
+        XCTAssertEqual(HostCurtainCopy.subtitle(for: state), "Needs Accessibility, so Esc can always lift it")
+        state.captureScopeViewOnly = true
+        XCTAssertEqual(HostCurtainCopy.subtitle(for: state), "Not used while sharing a single window or app",
+                       "A greyed-out switch says why")
+    }
 }
