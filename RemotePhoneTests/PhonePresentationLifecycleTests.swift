@@ -226,6 +226,7 @@ final class LiveCanvasHitTestTests: XCTestCase {
         model.connection.startInputFixtureForTesting(session: "canvas-hit")
         defer { model.connection.stop() }
         model.connection.inputPacketSenderForTesting = { _ in true }
+        model.connection.onAuthenticated?()
         func deliver(_ action: RemoteAction) throws { model.connection.onControl?(try JSONEncoder().encode(action)) }
         try deliver(RemoteAction(action: "geometry", x: 1920, y: 1243, epoch: 7))
         try deliver(RemoteAction(action: "capture", x: 1, epoch: 7, features: SessionFeature.host + [SessionFeature.away], mode: "picture"))
