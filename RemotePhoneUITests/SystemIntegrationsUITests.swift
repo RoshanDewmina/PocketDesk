@@ -191,3 +191,232 @@ final class SystemIntegrationsUITests: XCTestCase {
         XCTAssertTrue(banner.waitForNonExistence(timeout: 5))
     }
 }
+
+/// Captures the real SpringBoard widget gallery/placement and the installed Share extension inside
+/// Safari. These must be native-container captures: the test never renders a substitute widget or
+/// extension view. Run on one of the b7 lane simulators with
+/// TEST_RUNNER_FARSIDE_NATIVE_CONTAINERS=1; for the Safari test, first open a neutral public page
+/// with `xcrun simctl openurl <UDID> https://www.apple.com/`.
+final class NativeContainerSurfaceUITests: XCTestCase {
+    private let allowedSimulatorIDs: Set<String> = [
+        "23A869A5-D1DC-41F1-AF42-D127CA1DD133",
+        "48AC7927-D6D8-4B44-A24B-BB49215FD575",
+        "D724E9C9-7BEE-448C-A1A2-DDCFF03D226E",
+        "A69BA21A-8F6A-48BD-972B-FFCCA74036DD",
+        "419A9E16-E7F7-4269-8690-BD2E4DD4437C"
+    ]
+
+    private var springboard: XCUIApplication { XCUIApplication(bundleIdentifier: "com.apple.springboard") }
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["FARSIDE_NATIVE_CONTAINERS"] == "1",
+                          "Set TEST_RUNNER_FARSIDE_NATIVE_CONTAINERS=1 for native SpringBoard/Safari captures")
+        #if targetEnvironment(simulator)
+        let requestedID = ProcessInfo.processInfo.environment["FARSIDE_NATIVE_SIMULATOR_ID"] ?? ""
+        let actualID = ProcessInfo.processInfo.environment["SIMULATOR_UDID"]
+        try XCTSkipUnless(allowedSimulatorIDs.contains(requestedID)
+                          && (actualID == nil || actualID == requestedID),
+                          "Pass the destination UDID as TEST_RUNNER_FARSIDE_NATIVE_SIMULATOR_ID; only the five b7 simulator UDIDs are allowed")
+        #else
+        throw XCTSkip("Native container capture is simulator-only")
+        #endif
+        continueAfterFailure = true
+    }
+
+    @MainActor
+    func testFarsideWidgetInNativeGalleryAndHomePlacement() throws {
+        let names = ["widget-gallery-portrait", "widget-home-placement-portrait",
+                     "widget-gallery-landscape", "widget-home-placement-landscape"]
+        attachPlan(names)
+        XCUIDevice.shared.orientation = .portrait
+        XCUIDevice.shared.press(.home)
+        guard findFarsideHomeIcon() != nil else {
+            missing("widget-gallery-portrait", "Farside app icon is absent from this simulator Home Screen")
+            missing("widget-home-placement-portrait", "Cannot enter native widget flow without the installed Farside app")
+            missing("widget-gallery-landscape", "Farside app icon is absent from this simulator Home Screen")
+            missing("widget-home-placement-landscape", "Cannot enter native widget flow without the installed Farside app")
+            return
+        }
+
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+            let suffix = orientation == .portrait ? "portrait" : "landscape"
+            XCUIDevice.shared.orientation = orientation
+            if orientation == .landscapeLeft {
+                let deadline = Date().addingTimeInterval(5)
+                while springboard.frame.width <= springboard.frame.height && Date() < deadline {
+                    Thread.sleep(forTimeInterval: 0.25)
+                }
+                guard springboard.frame.width > springboard.frame.height else {
+                    missing("widget-gallery-landscape", "This simulator's SpringBoard Home Screen did not rotate to landscape")
+                    missing("widget-home-placement-landscape", "Landscape Home Screen is unsupported on this simulator; no portrait duplicate was captured")
+                    break
+                }
+            }
+            guard let currentHomeIcon = findFarsideHomeIcon() else {
+                missing("widget-gallery-\(suffix)", "Farside app icon was not visible on the active Home Screen page")
+                missing("widget-home-placement-\(suffix)", "Could not reach the Farside app icon to begin native widget placement")
+                continue
+            }
+            currentHomeIcon.press(forDuration: 1.2)
+            let edit = springboard.buttons["Edit Home Screen"]
+            let editMenu = edit.waitForExistence(timeout: 5) ? edit : springboard.buttons["Edit"]
+            guard editMenu.waitForExistence(timeout: 3) else {
+                missing("widget-gallery-\(suffix)", "SpringBoard did not expose Edit Home Screen or Edit from the Farside icon")
+                missing("widget-home-placement-\(suffix)", "Native Home Screen edit menu was unavailable")
+                continue
+            }
+            editMenu.tap()
+            let add = springboard.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'Add Widget' OR label == '+'")).firstMatch
+            guard add.waitForExistence(timeout: 6) else {
+                missing("widget-gallery-\(suffix)", "SpringBoard edit mode did not expose Add Widget")
+                missing("widget-home-placement-\(suffix)", "SpringBoard widget gallery could not be opened")
+                continue
+            }
+            add.tap()
+            let search = springboard.searchFields.firstMatch
+            guard search.waitForExistence(timeout: 8) else {
+                missing("widget-gallery-\(suffix)", "Native widget gallery opened without an accessible search field")
+                missing("widget-home-placement-\(suffix)", "Could not select Farside in the native widget gallery")
+                continue
+            }
+            search.tap()
+            search.typeText("Farside")
+            let galleryApp = springboard.staticTexts["Farside"].firstMatch
+            guard galleryApp.waitForExistence(timeout: 8) else {
+                missing("widget-gallery-\(suffix)", "Native widget gallery search returned no Farside provider")
+                missing("widget-home-placement-\(suffix)", "No Farside widget was available to place")
+                continue
+            }
+            galleryApp.tap()
+            let addWidget = springboard.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'Add Widget'")).firstMatch
+            var galleryCaptured = false
+            if addWidget.waitForExistence(timeout: 5) {
+                attach("widget-gallery-\(suffix)")
+                galleryCaptured = true
+                addWidget.tap()
+            } else {
+                let plus = springboard.buttons["+"]
+                if plus.waitForExistence(timeout: 3) { plus.tap() }
+            }
+            let done = springboard.buttons["Done"]
+            if done.waitForExistence(timeout: 5) { done.tap() }
+
+            if hasFarsideWidgetRoot() {
+                attach("widget-home-placement-\(suffix)")
+            } else {
+                missing("widget-home-placement-\(suffix)", "No Farside widget root was exposed after the native Add Widget flow")
+            }
+            if !galleryCaptured {
+                missing("widget-gallery-\(suffix)", "SpringBoard did not expose the native Add Widget provider preview")
+            }
+        }
+        XCUIDevice.shared.orientation = .portrait
+    }
+
+    @MainActor
+    private func findFarsideHomeIcon() -> XCUIElement? {
+        for page in 0..<5 {
+            let icon = springboard.icons["Farside"]
+            if icon.waitForExistence(timeout: page == 0 ? 4 : 1) && icon.isHittable {
+                return icon
+            }
+            if page < 4 { springboard.swipeLeft() }
+        }
+        return nil
+    }
+
+    @MainActor
+    func testFarsideShareExtensionFromSafari() throws {
+        let names = ["share-extension-safari-portrait", "share-extension-safari-landscape"]
+        attachPlan(names)
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        safari.activate()
+        guard safari.wait(for: .runningForeground, timeout: 8) else {
+            missing("share-extension-safari-portrait", "Safari did not become the foreground app; prepare with simctl openurl https://www.apple.com/")
+            missing("share-extension-safari-landscape", "Safari did not become the foreground app")
+            return
+        }
+        let share = safari.buttons["Share"]
+        guard share.waitForExistence(timeout: 8) else {
+            missing("share-extension-safari-portrait", "Safari Share control is unavailable; prepare a loaded neutral public page")
+            missing("share-extension-safari-landscape", "Safari Share control is unavailable")
+            return
+        }
+        share.tap()
+        let more = springboard.buttons["More"]
+        if more.waitForExistence(timeout: 5) { more.tap() }
+        let farside = springboard.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'Farside'")).firstMatch
+        guard farside.waitForExistence(timeout: 10) else {
+            missing("share-extension-safari-portrait", "Safari share sheet did not offer the installed Farside share extension")
+            missing("share-extension-safari-landscape", "Safari share sheet did not offer the installed Farside share extension")
+            return
+        }
+        farside.tap()
+        let extensionApp = XCUIApplication(bundleIdentifier: "com.roshan.PocketDesk.Remote.Share")
+        guard waitForShareRoot(safari, extensionApp, timeout: 10) else {
+            missing("share-extension-safari-portrait", "Extension selection did not expose the Send to Mac root in Safari's native share sheet")
+            missing("share-extension-safari-landscape", "Extension selection did not expose a valid Farside share-sheet root")
+            return
+        }
+        attach("share-extension-safari-portrait")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        Thread.sleep(forTimeInterval: 1)
+        if waitForShareRoot(safari, extensionApp, timeout: 3) {
+            attach("share-extension-safari-landscape")
+        } else {
+            missing("share-extension-safari-landscape", "Farside extension root disappeared after device rotation")
+        }
+        XCUIDevice.shared.orientation = .portrait
+    }
+
+    @MainActor
+    private func hasFarsideWidgetRoot() -> Bool {
+        springboard.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == 'Connect to Your Mac' OR identifier CONTAINS[c] 'ConnectWidget'"))
+            .firstMatch.exists
+    }
+
+    @MainActor
+    private func waitForShareRoot(_ safari: XCUIApplication, _ extensionApp: XCUIApplication,
+                                  timeout: TimeInterval) -> Bool {
+        let predicate = NSPredicate(format: "label == 'Send to My Mac' OR identifier == 'share.send'")
+        let candidates = [
+            safari.descendants(matching: .any).matching(predicate).firstMatch,
+            springboard.descendants(matching: .any).matching(predicate).firstMatch,
+            extensionApp.descendants(matching: .any).matching(predicate).firstMatch
+        ]
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if candidates.contains(where: { $0.exists }) { return true }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while Date() < deadline
+        return false
+    }
+
+    private func attachPlan(_ names: [String]) {
+        let attachment = XCTAttachment(string: names.joined(separator: "\n"))
+        attachment.name = "capture-plan"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
+    private func attach(_ name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func missing(_ name: String, _ reason: String) {
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "missing-\(name)"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let diagnostic = XCTAttachment(string: reason)
+        diagnostic.name = "missing-state-reason-\(name)"
+        diagnostic.lifetime = .keepAlways
+        add(diagnostic)
+    }
+}
