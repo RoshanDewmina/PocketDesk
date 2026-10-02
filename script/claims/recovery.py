@@ -15,7 +15,11 @@ GROUPS = {
     'home': ('SupplementalHomeUtilities', 9),
 }
 FEATURE_METHODS = [
-    'ClaimsVerificationUITests/testCoachLessonsUseSynthesizedGesturesAllFive',
+    'ClaimsVerificationUITests/testCoachMoveUsesSynthesizedGesture',
+    'ClaimsVerificationUITests/testCoachClickUsesSynthesizedGesture',
+    'ClaimsVerificationUITests/testCoachScrollUsesPublicPointerScroll',
+    'ClaimsVerificationUITests/testCoachDragUsesSynthesizedGesture',
+    'ClaimsVerificationUITests/testCoachZoomUsesSynthesizedPinch',
     'ClaimsVerificationUITests/testSessionPinchChangesAccessibleZoom',
     'ClaimsVerificationUITests/testKeyboardAndNonRecordingDictationRemainReachable',
     'ClaimsVerificationUITests/testOfflineConcealmentFixtureAndHomeBackgroundForeground',

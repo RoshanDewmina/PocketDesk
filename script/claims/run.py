@@ -117,7 +117,7 @@ def test(label, device, supplemental=False, recovery_methods=None, unit_only=Fal
         (LOG/(label+'-scope.json')).write_text(json.dumps({
             'scope': ('Combined bounded audit/feature/unit selection only; all findings retained; no original eight-method pass or physical acceptance' if combined else
                       '89 selected phone-unit methods only; no UI inventory/physical acceptance' if unit_only else
-                      'Selected bounded audits only' if has_audits else 'Six feature/UI methods only; no accessibility inventory completion'),
+                      'Selected bounded audits only' if has_audits else str(len(recovery_methods))+' selected feature/UI methods only; no accessibility inventory completion'),
             'auditGroups': groups,
             'auditSize': size,
             'surfacesPerSize': sum(GROUPS[g][1] for g in groups),
