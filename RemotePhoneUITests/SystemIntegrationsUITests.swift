@@ -287,7 +287,7 @@ final class NativeContainerSurfaceUITests: XCTestCase {
             }
             search.tap()
             search.typeText("Farside")
-            let galleryApp = springboard.staticTexts["Farside"].firstMatch
+            let galleryApp = springboard.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Farside")).firstMatch
             guard galleryApp.waitForExistence(timeout: 8) else {
                 missing("widget-gallery-\(suffix)", "Native widget gallery search returned no Farside provider")
                 missing("widget-home-placement-\(suffix)", "No Farside widget was available to place")
@@ -427,10 +427,25 @@ final class NativeContainerSurfaceUITests: XCTestCase {
             return
         }
         share.tap()
-        let more = springboard.buttons["More"]
-        if more.waitForExistence(timeout: 5) { more.tap() }
-        let farside = springboard.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'Farside'")).firstMatch
-        guard farside.waitForExistence(timeout: 10) else {
+        let activityPredicate = NSPredicate(format: "label == 'Send to My Mac' OR label == 'Farside'")
+        let activities = [safari, springboard].map {
+            $0.descendants(matching: .any).matching(activityPredicate).firstMatch
+        }
+        if !activities.contains(where: { $0.exists && $0.isHittable }) {
+            let moreButtons = [safari.buttons["More"], springboard.buttons["More"]]
+            for more in moreButtons where more.waitForExistence(timeout: 3) && more.isHittable {
+                more.tap()
+                break
+            }
+        }
+        let deadline = Date().addingTimeInterval(10)
+        var selection: XCUIElement?
+        repeat {
+            selection = activities.first(where: { $0.exists && $0.isHittable })
+            if selection != nil { break }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while Date() < deadline
+        guard let farside = selection else {
             missing("share-extension-safari-portrait", "Safari share sheet did not offer the installed Farside share extension")
             missing("share-extension-safari-landscape", "Safari share sheet did not offer the installed Farside share extension")
             return
