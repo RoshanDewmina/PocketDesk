@@ -1057,6 +1057,13 @@ final class LadderPolicyTests: XCTestCase {
         XCTAssertTrue(slow.withdrawn)
         XCTAssertFalse(slow.observe(provenLocalLink: true, lossPercent: 0, rttMs: 7, pacerDelayMs: 0))
 
+        var stale = LANTrustTracker()
+        _ = stale.observe(provenLocalLink: true, lossPercent: 0, rttMs: 150, pacerDelayMs: 0)
+        XCTAssertFalse(stale.observe(provenLocalLink: true, lossPercent: 0, rttMs: 150, roundTripFresh: false, pacerDelayMs: 0))
+        XCTAssertFalse(stale.withdrawn, "the same RTCP reading repeated is one strike, not two")
+        XCTAssertFalse(stale.observe(provenLocalLink: true, lossPercent: 0, rttMs: 150, pacerDelayMs: 0))
+        XCTAssertTrue(stale.withdrawn, "a fresh second reading is")
+
         var mixed = LANTrustTracker()
         _ = mixed.observe(provenLocalLink: true, lossPercent: 0, rttMs: 6, pacerDelayMs: 300)
         _ = mixed.observe(provenLocalLink: true, lossPercent: 0, rttMs: 120, pacerDelayMs: 300)

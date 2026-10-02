@@ -119,7 +119,22 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
     private weak var timing: PhoneFrameTimingLog?
     private let configuration: OwnedHEVCConfiguration
     private let onFailure: (() -> Void)?
-    init(configuration: OwnedHEVCConfiguration = OwnedHEVCConfiguration(parameters: OwnedHEVCConfiguration.codecInfo.parameters)!, timing: PhoneFrameTimingLog? = nil, onFailure: (() -> Void)? = nil) { self.configuration = configuration; self.timing = timing; self.onFailure = onFailure; super.init(); queue.setSpecific(key: key, value: 1) }
+    private let recoveryEnabled: Bool
+    private let clock: () -> Double
+    private var recoveryNeeded = false
+    private var lastRecoveryRequestMs = -Double.infinity
+    /// At most one key-frame request per this interval while bad data keeps arriving.
+    static let recoveryRequestIntervalMs = 500.0
+    /// libwebrtc treats any error from `decode` as a failed frame and asks the Mac for a key frame
+    /// (VideoReceiveStream2 sets keyframe_required and sends a PLI); the owned encoder answers at once.
+    /// Returned for one frame after an asynchronous bad-data or missing-reference error, which used to
+    /// be swallowed and left the picture to VideoToolbox's own key-frame cadence.
+    static let requestKeyFrameResult = -1
+    init(configuration: OwnedHEVCConfiguration = OwnedHEVCConfiguration(parameters: OwnedHEVCConfiguration.codecInfo.parameters)!, timing: PhoneFrameTimingLog? = nil, onFailure: (() -> Void)? = nil,
+         recovery: Bool = HEVCDecodeRecoverySwitch.isOn, clock: @escaping () -> Double = { MachClock.nowMs() }) {
+        self.configuration = configuration; self.timing = timing; self.onFailure = onFailure; self.recoveryEnabled = recovery; self.clock = clock
+        super.init(); queue.setSpecific(key: key, value: 1)
+    }
     private func serialized<T>(_ body: () -> T) -> T { DispatchQueue.getSpecific(key: key) != nil ? body() : queue.sync(execute: body) }
     func setCallback(_ callback: @escaping RTCVideoDecoderCallback) { lock.lock(); self.callback = callback; lock.unlock() }
     func startDecode(withNumberOfCores numberOfCores: Int32) -> Int { serialized { opened = true; return 0 } }
@@ -128,7 +143,10 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
         return serialized { retire(); opened = false; sets.removeAll(); format = nil; deliveryMailbox.lock(); deliveryPending = nil; deliveryMailbox.unlock(); return 0 }
     }
     private func fail(_ status: OSStatus) {
-        guard status != noErr, status != kVTVideoDecoderBadDataErr, status != kVTVideoDecoderReferenceMissingErr else { return }
+        guard status != noErr, status != kVTVideoDecoderBadDataErr, status != kVTVideoDecoderReferenceMissingErr else {
+            if status != noErr, recoveryEnabled { recoveryNeeded = true }
+            return
+        }
         retire(); opened = false
         guard !failureReported else { return }; failureReported = true
         DispatchQueue.global(qos: .utility).async { [onFailure] in onFailure?() }
@@ -188,6 +206,10 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
                 pending.remove(ticket); fail(injected); return injected == noErr ? 0 : -1
             }
             #endif
+            if recoveryNeeded, clock() - lastRecoveryRequestMs >= Self.recoveryRequestIntervalMs {
+                recoveryNeeded = false; lastRecoveryRequestMs = clock(); pending.remove(ticket)
+                return Self.requestKeyFrameResult
+            }
             // Apple public output-handler decode API (official docs checked 1 October 2026);
             // timestamp at entry before the ownership hop.
             // https://developer.apple.com/documentation/videotoolbox/vtdecompressionsessiondecodeframe(_:samplebuffer:flags:infoflagsout:outputhandler:)
@@ -245,4 +267,11 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
     }
     func implementationName() -> String { configuration.fullColor444 ? "Farside public VideoToolbox HEVC Main444" : "Farside public VideoToolbox HEVC Main" }
     deinit { if let session { VTDecompressionSessionInvalidate(session) } }
+}
+
+/// Kill switch for the decoder's key-frame request after a swallowed decode error
+/// (`defaults write <phone bundle id> PocketDeskHEVCDecodeRecovery -bool NO`, then relaunch the app).
+enum HEVCDecodeRecoverySwitch {
+    static let defaultsKey = "PocketDeskHEVCDecodeRecovery"
+    static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
 }

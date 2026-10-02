@@ -147,14 +147,17 @@ struct LANTrustTracker: Equatable {
     private(set) var withdrawn = false
     private(set) var trusted = false
 
+    /// `roundTripFresh` is false when `rttMs` is the previous sample's reading repeated (RTCP reports
+    /// arrive about once a second, not always every sample): it then neither adds nor clears a strike.
     @discardableResult
-    mutating func observe(provenLocalLink: Bool, lossPercent: Double?, rttMs: Double?, pacerDelayMs: Double?) -> Bool {
+    mutating func observe(provenLocalLink: Bool, lossPercent: Double?, rttMs: Double?, roundTripFresh: Bool = true,
+                          pacerDelayMs: Double?) -> Bool {
         let base = LANTrustPolicy.trusted(provenLocalLink: provenLocalLink, lossPercent: lossPercent, rttMs: rttMs)
         let inflated = (pacerDelayMs ?? 0) > Self.inflationLimitMs
         let longRoundTrip = provenLocalLink && (rttMs.map { !$0.isFinite || $0 > LANTrustPolicy.roundTripLimitMs } ?? false)
         let lossy = provenLocalLink && (lossPercent ?? 0) >= LANTrustPolicy.lossLimitPercent
         pacerStrikes = inflated ? pacerStrikes + 1 : 0
-        roundTripStrikes = longRoundTrip ? roundTripStrikes + 1 : 0
+        if roundTripFresh { roundTripStrikes = longRoundTrip ? roundTripStrikes + 1 : 0 }
         if pacerStrikes >= Self.strikeSamples || roundTripStrikes >= Self.strikeSamples || lossy {
             withdrawn = true
             clean = 0
