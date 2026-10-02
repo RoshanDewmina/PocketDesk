@@ -11,7 +11,7 @@ p.add_argument('--ipad', default='68F60FDF-7FA8-4129-A165-9B47D8579461')
 p.add_argument('--duo', default='663C5184-F544-4CAE-B9C3-A683C26500CE')
 a = p.parse_args()
 OUT = pathlib.Path(a.output); OUT.mkdir(parents=True, exist_ok=True)
-LOG = OUT / 'logs' / datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ'); LOG.mkdir(parents=True)
+LOG = OUT / 'logs' / datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ'); LOG.mkdir(parents=True)
 ENV = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
 from identity import source_identity, artifact_identity, verify
 GATES = pathlib.Path('/Users/roshansilva/Documents/Codex/2026-10-01/testing')
@@ -75,7 +75,7 @@ def test(label, device, supplemental=False):
     else:
         selectors=['RemotePhoneUITests/ClaimsVerificationUITests','RemotePhoneUITests/FarsideRedesignUITests/testKeyboardBarPutsCommandFirstAndInReachInPortrait','RemotePhoneUITests/SessionLayoutTests/testLongVoicePreviewKeepsDoneReachableInLandscapeWithoutRecording']
         if label=='phone': selectors += ['RemotePhoneTests/'+c for c in ['FarsideDesignTests','SessionLifecycleTests','VoiceInputTests','CommittedTextTests','ExactTextTraitsTests','TabletInputPhoneTests','IndirectInputTests','ViewportPreferenceTests','ViewportCaptureTests','ScreenRecordingApprovalPhoneTests']]
-    run(label+'-tests',common+['-configuration','Debug','-scheme','PocketDeskRemote','-destination','platform=iOS Simulator,id='+device,'ARCHS=arm64','test-without-building','-parallel-testing-enabled','NO','-collect-test-diagnostics','never','-test-timeouts-enabled','YES','-maximum-test-execution-time-allowance','3600','-resultBundlePath',str(LOG/(label+'.xcresult'))]+['-only-testing:'+s for s in selectors],True,manifest=True,shutdown=device)
+    run(label+'-tests',common+['-configuration','Debug','-scheme','PocketDeskRemote','-destination','platform=iOS Simulator,id='+device,'ARCHS=arm64','test-without-building','-parallel-testing-enabled','NO','-collect-test-diagnostics','never','-test-timeouts-enabled','YES','-default-test-execution-time-allowance','3600','-maximum-test-execution-time-allowance','3600','-resultBundlePath',str(LOG/(label+'.xcresult'))]+['-only-testing:'+s for s in selectors],True,manifest=True,shutdown=device)
     bundle=LOG/(label+'.xcresult')
     if bundle.exists():
         # Read-only report extraction also runs after a failing audit. Raw .xcresult remains

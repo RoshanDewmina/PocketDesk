@@ -1,0 +1,25 @@
+{
+  "timestamp": "2026-10-02T13:26:38.497602+00:00",
+  "scope": "DNS/HTTPS from shared Mac; no global availability inference",
+  "command": [
+    "curl",
+    "--fail",
+    "--head",
+    "--location",
+    "--max-time",
+    "20",
+    "--silent",
+    "--show-error",
+    "https://getfarside.com"
+  ],
+  "exit": 0,
+  "stdout": "HTTP/2 200 \ndate: Fri, 02 Oct 2026 13:26:38 GMT\ncontent-type: text/html; charset=utf-8\nreport-to: {\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=swJqpf8bhjpY4BcZHHVr8svNEVqFLhKBANAt0HUuFnhefk10%2FYPJiE91T1XlU96A3qKr7lQhpwKsTdCtJdnOVZk0ZS0r%2BoZgx%2FHD2f05zZA5sBVR75KeP7tR%2BaUJivIQgzQdWJYOhzjTETsQXw%3D%3D\"}]}\nnel: {\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}\naccess-control-allow-origin: *\ncache-control: public, max-age=0, must-revalidate\nlink: <https://fonts.googleapis.com>; rel=\"preconnect\"\nstrict-transport-security: max-age=31536000; includeSubDomains\ncontent-security-policy: default-src 'none'; script-src 'self'; style-src 'self' 'sha256-j6tTopRl3I/b4wMn0w17lYmFqG4L0YMbbM3Yj84B/wA=' 'sha256-zKhUc1b6Ye9ZWACjYFxfU2E6QKpfIULUMAS7tr49uhE=' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests; require-trusted-types-for 'script'; trusted-types farside\ncross-origin-opener-policy: same-origin\npermissions-policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()\nreferrer-policy: strict-origin-when-cross-origin\nx-content-type-options: nosniff\nx-frame-options: DENY\nserver: cloudflare\ncf-cache-status: DYNAMIC\ncf-ray: a4440a3b2e1539c5-YYZ\nalt-svc: h3=\":443\"; ma=86400\n\n",
+  "stderr": "",
+  "get": {
+    "exit": 0,
+    "bytes": 104223,
+    "sha256": "1525d56b5b1e17861b38bb56a2d70bf720ccc987480fb95dd215b2c70e4885ef",
+    "title": "Farside: Control your Mac from your iPhone or iPad"
+  },
+  "web_reader": "Unavailable; curl verified HTTP200 HEAD and GET from this Mac."
+}

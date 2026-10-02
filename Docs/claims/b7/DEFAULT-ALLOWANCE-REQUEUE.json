@@ -1,0 +1,24 @@
+{
+  "at": "2026-10-02T13:27:34.150033+00:00",
+  "reason": "Explicit default3600 needed in addition to maximum3600; canceled before Xcode execution while priority gate closed",
+  "waiters": [
+    {
+      "pid": 82105,
+      "parent": 81655,
+      "label": "phone",
+      "command": "/usr/bin/lockf -k /tmp/farside-xcodebuild.lock /opt/homebrew/opt/python@3.14/bin/python3.14 /Users/roshansilva/Developer/farside-b7-claims/script/claims/locked.py --manifest /Volumes/Studio/Development/Caches/b7-claims/DD --shutdown-simulator C643B2C2-3248-4AE4-B234-8F54414F3A41 xcodebuild -project PocketDesktop.xcodeproj -derivedDataPath /Volumes/Studio/Development/Caches/b7-claims/DD -clonedSourcePackagesDirPath /Users/roshansilva/Developer/PocketDesk/outputs/RemoteBuild/SourcePackages -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile -configuration Debug -scheme PocketDeskRemote -destination platform=iOS Simulator,id=C643B2C2-3248-4AE4-B234-8F54414F3A41 ARCHS=arm64 test-without-building -parallel-testing-enabled NO -collect-test-diagnostics never -test-timeouts-enabled YES -maximum-test-execution-time-allowance 3600 -resultBundlePath /Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T125028Z/phone.xcresult -only-testing:RemotePhoneUITests/ClaimsVerificationUITests -only-testing:RemotePhoneUITests/FarsideRedesignUITests/testKeyboardBarPutsCommandFirstAndInReachInPortrait -only-testing:RemotePhoneUITests/SessionLayoutTests/testLongVoicePreviewKeepsDoneReachableInLandscapeWithoutRecording -only-testing:RemotePhoneTests/FarsideDesignTests -only-testing:RemotePhoneTests/SessionLifecycleTests -only-testing:RemotePhoneTests/VoiceInputTests -only-testing:RemotePhoneTests/CommittedTextTests -only-testing:RemotePhoneTests/ExactTextTraitsTests -only-testing:RemotePhoneTests/TabletInputPhoneTests -only-testing:RemotePhoneTests/IndirectInputTests -only-testing:RemotePhoneTests/ViewportPreferenceTests -only-testing:RemotePhoneTests/ViewportCaptureTests -only-testing:RemotePhoneTests/ScreenRecordingApprovalPhoneTests",
+      "childless": true,
+      "rawLogBytes": 0,
+      "xcresultExists": false
+    },
+    {
+      "pid": 82110,
+      "parent": 81667,
+      "label": "ipad",
+      "command": "/usr/bin/lockf -k /tmp/farside-xcodebuild.lock /opt/homebrew/opt/python@3.14/bin/python3.14 /Users/roshansilva/Developer/farside-b7-claims/script/claims/locked.py --manifest /Volumes/Studio/Development/Caches/b7-claims/DD --shutdown-simulator 68F60FDF-7FA8-4129-A165-9B47D8579461 xcodebuild -project PocketDesktop.xcodeproj -derivedDataPath /Volumes/Studio/Development/Caches/b7-claims/DD -clonedSourcePackagesDirPath /Users/roshansilva/Developer/PocketDesk/outputs/RemoteBuild/SourcePackages -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile -configuration Debug -scheme PocketDeskRemote -destination platform=iOS Simulator,id=68F60FDF-7FA8-4129-A165-9B47D8579461 ARCHS=arm64 test-without-building -parallel-testing-enabled NO -collect-test-diagnostics never -test-timeouts-enabled YES -maximum-test-execution-time-allowance 3600 -resultBundlePath /Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T125029Z/ipad.xcresult -only-testing:RemotePhoneUITests/ClaimsVerificationUITests -only-testing:RemotePhoneUITests/FarsideRedesignUITests/testKeyboardBarPutsCommandFirstAndInReachInPortrait -only-testing:RemotePhoneUITests/SessionLayoutTests/testLongVoicePreviewKeepsDoneReachableInLandscapeWithoutRecording",
+      "childless": true,
+      "rawLogBytes": 0,
+      "xcresultExists": false
+    }
+  ]
+}

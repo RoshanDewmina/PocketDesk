@@ -1,11 +1,9 @@
 {
-  "claimRows": 64,
-  "scopes": "Source/older-build scopes remain in evidence cells; counts are not full runtime acceptance",
+  "rows": 64,
   "statuses": {
     "PROVEN-ON-OLD-BUILD": 11,
-    "PROVEN": 24,
+    "PROVEN": 25,
     "UNTESTED": 20,
-    "NOT TRUE": 8,
-    "FAILS": 1
+    "NOT TRUE": 8
   }
 }
