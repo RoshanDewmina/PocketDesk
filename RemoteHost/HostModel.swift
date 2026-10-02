@@ -1451,10 +1451,11 @@ final class RemoteHostModel: ObservableObject {
 
     func copyAgentHookSetup() {
         let bundled = Bundle.main.url(forResource: HostAgentAlerts.scriptName, withExtension: nil, subdirectory: "agent-hooks")
-        let path = agentAlerts.installScript(from: bundled)?.path ?? "/path/to/\(HostAgentAlerts.scriptName)"
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(HostAgentAlerts.hookSetup(scriptPath: path), forType: .string)
-        events.record(.settings, "Agent hook setup copied")
+        let copied = agentAlerts.copyHookSetup(from: bundled, failureDisabled: HostAgentAlerts.hookCopyFailureDisabled) { text in
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        }
+        if copied { events.record(.settings, "Agent hook setup copied") }
     }
 
     /// Sends the alert on the control channel now, behind any earlier ones still queued. False when no

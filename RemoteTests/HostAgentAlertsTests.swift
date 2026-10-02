@@ -264,7 +264,11 @@ final class HostAgentAlertsTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: bundled) }
         try Data("#!/bin/sh\necho one\n".utf8).write(to: bundled)
 
-        let installed = try XCTUnwrap(alerts.installScript(from: bundled))
+        let installed: URL
+        guard case .installed(let url) = alerts.installScript(from: bundled) else {
+            return XCTFail("A bundled hook script should install")
+        }
+        installed = url
         XCTAssertEqual(installed.deletingLastPathComponent().standardizedFileURL, directory.standardizedFileURL)
         XCTAssertEqual(installed.lastPathComponent, HostAgentAlerts.scriptName)
         XCTAssertEqual(try String(contentsOf: installed, encoding: .utf8), "#!/bin/sh\necho one\n")
@@ -272,10 +276,89 @@ final class HostAgentAlertsTests: XCTestCase {
         XCTAssertEqual(try mode(of: directory), 0o700)
 
         try Data("#!/bin/sh\necho two\n".utf8).write(to: bundled)
-        _ = alerts.installScript(from: bundled)
+        guard case .installed = alerts.installScript(from: bundled) else {
+            return XCTFail("A newer bundled hook script should replace the installed copy")
+        }
         XCTAssertEqual(try String(contentsOf: installed, encoding: .utf8), "#!/bin/sh\necho two\n", "A newer app replaces the copy")
 
-        XCTAssertNil(alerts.installScript(from: nil), "A build without the script says so instead of pointing at nothing")
+        XCTAssertEqual(alerts.installScript(from: nil), .missingBundledScript,
+                       "A build without the script reports the missing resource")
+    }
+
+    func testHookSetupCopiesTheInstalledPathOnSuccess() throws {
+        let bundled = FileManager.default.temporaryDirectory.appendingPathComponent("bundled-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: bundled) }
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: bundled)
+        var copiedText: String?
+
+        XCTAssertTrue(alerts.copyHookSetup(from: bundled, failureDisabled: false) { copiedText = $0 })
+        let installed = directory.appendingPathComponent(HostAgentAlerts.scriptName)
+        XCTAssertTrue(copiedText?.contains(installed.path) == true)
+        XCTAssertFalse(copiedText?.contains("/path/to/") == true)
+        XCTAssertEqual(alerts.failure, nil)
+        XCTAssertEqual(alerts.hookSetupFailure, nil)
+    }
+
+    func testMissingHookScriptShowsSetupErrorAndLeavesClipboardUnchanged() {
+        var clipboard = "previous clipboard value"
+
+        XCTAssertFalse(alerts.copyHookSetup(from: nil, failureDisabled: false) { clipboard = $0 })
+        XCTAssertEqual(clipboard, "previous clipboard value")
+        XCTAssertEqual(alerts.statusLine(), "Agent hook setup could not be copied because its script is missing.")
+    }
+
+    func testHookSetupFailureDoesNotChangeClipboardWhenFixIsEnabled() throws {
+        try Data("blocks directory creation".utf8).write(to: directory)
+        let bundled = FileManager.default.temporaryDirectory.appendingPathComponent("bundled-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: bundled) }
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: bundled)
+        var clipboard = "previous clipboard value"
+
+        XCTAssertEqual(alerts.installScript(from: bundled), .writeFailed)
+        XCTAssertFalse(alerts.copyHookSetup(from: bundled, failureDisabled: false) { clipboard = $0 })
+        XCTAssertEqual(clipboard, "previous clipboard value")
+        XCTAssertEqual(alerts.statusLine(), "Agent hook setup could not be copied because the script could not be installed.")
+    }
+
+    func testHookSetupFailureRetainsLegacyPlaceholderCopyWhenKillSwitchIsEnabled() throws {
+        try Data("blocks directory creation".utf8).write(to: directory)
+        let bundled = FileManager.default.temporaryDirectory.appendingPathComponent("bundled-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: bundled) }
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: bundled)
+        var clipboard: String?
+
+        XCTAssertTrue(alerts.copyHookSetup(from: bundled, failureDisabled: true) { clipboard = $0 })
+        XCTAssertTrue(clipboard?.contains("/path/to/\(HostAgentAlerts.scriptName)") == true)
+        XCTAssertNil(alerts.failure, "The rollback path keeps the legacy no-error behavior")
+        XCTAssertNil(alerts.hookSetupFailure, "The rollback path keeps the legacy no-error behavior")
+    }
+
+    func testMissingHookScriptRetainsLegacyPlaceholderWhenKillSwitchIsEnabled() {
+        var clipboard: String?
+
+        XCTAssertTrue(alerts.copyHookSetup(from: nil, failureDisabled: true) { clipboard = $0 })
+        XCTAssertTrue(clipboard?.contains("/path/to/\(HostAgentAlerts.scriptName)") == true)
+        XCTAssertNil(alerts.hookSetupFailure)
+    }
+
+    func testSuccessfulHookCopyClearsOnlySetupFailureAndPreservesListenerFailure() async throws {
+        try Data("blocks directory creation".utf8).write(to: directory)
+        await alerts.setEnabled(true)
+        XCTAssertEqual(alerts.failure, "Agent alerts could not start listening.")
+
+        XCTAssertFalse(alerts.copyHookSetup(from: nil, failureDisabled: false) { _ in })
+        XCTAssertEqual(alerts.hookSetupFailure, "Agent hook setup could not be copied because its script is missing.")
+        XCTAssertEqual(alerts.statusLine(), "Agent hook setup could not be copied because its script is missing.")
+
+        try FileManager.default.removeItem(at: directory)
+        let bundled = FileManager.default.temporaryDirectory.appendingPathComponent("bundled-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: bundled) }
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: bundled)
+        XCTAssertTrue(alerts.copyHookSetup(from: bundled, failureDisabled: false) { _ in })
+
+        XCTAssertNil(alerts.hookSetupFailure)
+        XCTAssertEqual(alerts.failure, "Agent alerts could not start listening.")
+        XCTAssertEqual(alerts.statusLine(), "Agent alerts could not start listening.")
     }
 
     // MARK: From a hook, through the script and the bridge, to the phone

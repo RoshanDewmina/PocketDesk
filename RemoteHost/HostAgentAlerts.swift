@@ -6,6 +6,16 @@ import Foundation
 /// pairing-scoped service may hand a generic alert to APNs.
 @MainActor
 final class HostAgentAlerts: ObservableObject {
+    enum HookScriptInstallResult: Equatable {
+        case installed(URL)
+        case missingBundledScript
+        case writeFailed
+    }
+
+    /// Emergency rollback for the hook-copy failure fix. Set before launch to restore the previous
+    /// placeholder-and-copy behavior; unset (the default) keeps the failure safe.
+    static let hookCopyFailureDisabled = UserDefaults.standard.bool(forKey: "farsideAgentHookCopyFailureDisabled")
+
     struct Record: Equatable {
         var kind: AgentKind
         var at: Date
@@ -15,6 +25,7 @@ final class HostAgentAlerts: ObservableObject {
     @Published private(set) var isOn: Bool
     @Published private(set) var last: Record?
     @Published private(set) var failure: String?
+    @Published private(set) var hookSetupFailure: String?
 
     var now: () -> Date = { Date() }
     /// A phone is connected and in a live session, so the control channel can carry the alert.
@@ -127,11 +138,10 @@ final class HostAgentAlerts: ObservableObject {
 
     nonisolated static let scriptName = "farside-notify"
 
-    /// Copies the hook script next to the discovery file and returns its path. An agent's configuration
-    /// points there, so it keeps working when the app is updated or moved. Nil when the bundle has no
-    /// script or the copy fails.
-    func installScript(from bundled: URL?) -> URL? {
-        guard let bundled else { return nil }
+    /// Copies the hook script next to the discovery file. An agent's configuration points there, so it
+    /// keeps working when the app is updated or moved.
+    func installScript(from bundled: URL?) -> HookScriptInstallResult {
+        guard let bundled else { return .missingBundledScript }
         let destination = directory.appendingPathComponent(Self.scriptName)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
@@ -141,14 +151,39 @@ final class HostAgentAlerts: ObservableObject {
                 try script.write(to: destination, options: .atomic)
             }
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: destination.path)
-            return destination
+            return .installed(destination)
         } catch {
-            return nil
+            return .writeFailed
         }
+    }
+
+    /// Builds the setup text and writes it only after a successful install. The injected writer keeps
+    /// the failure path testable without touching the system pasteboard.
+    @discardableResult
+    func copyHookSetup(from bundled: URL?, failureDisabled: Bool, writeToClipboard: (String) -> Void) -> Bool {
+        let scriptPath: String
+        switch installScript(from: bundled) {
+        case .installed(let url):
+            hookSetupFailure = nil
+            scriptPath = url.path
+        case .missingBundledScript where failureDisabled:
+            scriptPath = "/path/to/\(Self.scriptName)"
+        case .writeFailed where failureDisabled:
+            scriptPath = "/path/to/\(Self.scriptName)"
+        case .missingBundledScript:
+            hookSetupFailure = "Agent hook setup could not be copied because its script is missing."
+            return false
+        case .writeFailed:
+            hookSetupFailure = "Agent hook setup could not be copied because the script could not be installed."
+            return false
+        }
+        writeToClipboard(Self.hookSetup(scriptPath: scriptPath))
+        return true
     }
 
     /// One line for Settings: that the Mac is listening, or what the last alert did.
     func statusLine(now: Date = Date()) -> String? {
+        if let hookSetupFailure { return hookSetupFailure }
         guard isOn else { return nil }
         if let failure { return failure }
         guard let last else { return "Listening on this Mac only" }
