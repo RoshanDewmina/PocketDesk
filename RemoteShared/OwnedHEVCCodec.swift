@@ -125,11 +125,12 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
     private var lastRecoveryRequestMs = -Double.infinity
     /// At most one key-frame request per this interval while bad data keeps arriving.
     static let recoveryRequestIntervalMs = 500.0
-    /// libwebrtc treats any error from `decode` as a failed frame and asks the Mac for a key frame
-    /// (VideoReceiveStream2 sets keyframe_required and sends a PLI); the owned encoder answers at once.
-    /// Returned for one frame after an asynchronous bad-data or missing-reference error, which used to
-    /// be swallowed and left the picture to VideoToolbox's own key-frame cadence.
-    static let requestKeyFrameResult = -1
+    /// WEBRTC_VIDEO_CODEC_OK_REQUEST_KEYFRAME: the frame was taken, and libwebrtc asks the Mac for a
+    /// key frame (a PLI) without entering its own keyframe-required retry mode; the owned encoder
+    /// answers at once. Returned, at most once per `recoveryRequestIntervalMs`, while an asynchronous
+    /// bad-data or missing-reference error is latched; the latch clears when a key frame decodes or
+    /// the session is replaced. A real submission failure still returns -1.
+    static let requestKeyFrameResult = 4
     init(configuration: OwnedHEVCConfiguration = OwnedHEVCConfiguration(parameters: OwnedHEVCConfiguration.codecInfo.parameters)!, timing: PhoneFrameTimingLog? = nil, onFailure: (() -> Void)? = nil,
          recovery: Bool = HEVCDecodeRecoverySwitch.isOn, clock: @escaping () -> Double = { MachClock.nowMs() }) {
         self.configuration = configuration; self.timing = timing; self.onFailure = onFailure; self.recoveryEnabled = recovery; self.clock = clock
@@ -151,7 +152,10 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
         guard !failureReported else { return }; failureReported = true
         DispatchQueue.global(qos: .utility).async { [onFailure] in onFailure?() }
     }
-    private func retire() { generation = UUID(); pending.removeAll(); if let session { VTDecompressionSessionInvalidate(session) }; session = nil }
+    private func retire() {
+        generation = UUID(); pending.removeAll(); recoveryNeeded = false
+        if let session { VTDecompressionSessionInvalidate(session) }; session = nil
+    }
     func decode(_ image: RTCEncodedImage, missingFrames: Bool, codecSpecificInfo: (any RTCCodecSpecificInfo)?, renderTimeMs: Int64) -> Int {
         serialized {
             guard opened, abs(Double(image.captureTimeMs)) < 1e12, let nals = H26xAnnexB.split(image.buffer) else { return -1 }
@@ -206,10 +210,7 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
                 pending.remove(ticket); fail(injected); return injected == noErr ? 0 : -1
             }
             #endif
-            if recoveryNeeded, clock() - lastRecoveryRequestMs >= Self.recoveryRequestIntervalMs {
-                recoveryNeeded = false; lastRecoveryRequestMs = clock(); pending.remove(ticket)
-                return Self.requestKeyFrameResult
-            }
+            let isKey = image.frameType == .videoFrameKey
             let result = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample, flags: [._EnableAsynchronousDecompression], infoFlagsOut: nil) { [weak self] status, flags, pixels, _, _ in
                 guard let self else { return }
                 self.queue.async { [weak self] in
@@ -219,6 +220,7 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
                         return
                     }
                     guard !self.configuration.fullColor444 || HEVC444PixelTransfer.isFullColor(pixels) else { self.fail(kVTVideoDecoderUnsupportedDataFormatErr); return }
+                    if isKey { self.recoveryNeeded = false }
                     let frame = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: pixels), rotation: rotation, timeStampNs: capture * 1_000_000)
                     frame.timeStamp = Int32(bitPattern: rtp)
                     self.timing?.decoded(rtp: frame.timeStamp, atMs: MachClock.nowMs())
@@ -226,8 +228,12 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
 
                 }
             }
-            if result != noErr { pending.remove(ticket); fail(result) }
-            return result == noErr ? 0 : -1
+            if result != noErr { pending.remove(ticket); fail(result); return -1 }
+            if recoveryNeeded, clock() - lastRecoveryRequestMs >= Self.recoveryRequestIntervalMs {
+                lastRecoveryRequestMs = clock()
+                return Self.requestKeyFrameResult
+            }
+            return 0
         }
     }
     private func offerDecoded(_ frame: RTCVideoFrame, epoch: UUID) {

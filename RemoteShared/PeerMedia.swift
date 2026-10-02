@@ -1005,8 +1005,9 @@ final class PeerMedia: NSObject {
     private func followLANFloor(_ stats: inout StreamStatsReport) {
         guard isHost, nativeDesktopCodecs, !closed else { return }
         // An RTCP round trip repeats until the next receiver report; a repeat is not a second strike.
-        let fresh = stats.rtcpRttMeasurements.map { $0 != lastRoundTripMeasurements } ?? true
-        lastRoundTripMeasurements = stats.rtcpRttMeasurements
+        // Only an RTCP reading can be a repeat; a STUN fallback sample is always its own reading.
+        let fresh = stats.rtcpRttMs == nil || stats.rtcpRttMeasurements.map { $0 != lastRoundTripMeasurements } ?? true
+        if stats.rtcpRttMs != nil { lastRoundTripMeasurements = stats.rtcpRttMeasurements }
         let trusted = lanTrust.observe(provenLocalLink: provenLocalLinkActive, lossPercent: stats.remoteLossPercent,
                                        rttMs: stats.rtcpRttMs ?? stats.rttMs, roundTripFresh: fresh,
                                        pacerDelayMs: stats.pacerDelayMs)
@@ -1118,8 +1119,9 @@ final class PeerMedia: NSObject {
         guard bandwidthSeed.observe(eligible: seedRoute != nil, estimateKbps: stats.availableOutgoingKbps,
                                     lossPercent: stats.remoteLossPercent, seedKbps: Double(seedBps) / 1000) else { return }
         let maximum = bandwidthCeilingBps
-        _ = connection?.setBweMinBitrateBps(lanFloorBps.map { NSNumber(value: min($0, seedBps)) },
-                                             currentBitrateBps: NSNumber(value: seedBps), maxBitrateBps: NSNumber(value: maximum))
+        let seed = min(seedBps, maximum)
+        _ = connection?.setBweMinBitrateBps(lanFloorBps.map { NSNumber(value: min($0, seed)) },
+                                             currentBitrateBps: NSNumber(value: seed), maxBitrateBps: NSNumber(value: maximum))
         appliedBweMaxBps = maximum
     }
 
