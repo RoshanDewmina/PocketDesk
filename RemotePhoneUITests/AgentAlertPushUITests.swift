@@ -11,8 +11,12 @@ import XCTest
 ///   TAP_TEXT      the text on the banner to tap
 ///   EXPECT_SHEET  "yes" if a sheet must open, "no" if the payload must not route
 ///   EXPECT_TITLE  the sheet heading, when a sheet is expected
+///   LANDSCAPE     "1" to capture foreground push states in landscape instead of portrait
 final class AgentAlertPushUITests: XCTestCase {
     private var environment: [String: String] { ProcessInfo.processInfo.environment }
+    private var capturesLandscape: Bool {
+        environment["FARSIDE_PUSH_INJECTED"] == "1" && environment["FARSIDE_PUSH_LANDSCAPE"] == "1"
+    }
 
     override func setUpWithError() throws {
         try XCTSkipUnless(environment["FARSIDE_PUSH_INJECTED"] == "1",
@@ -26,8 +30,9 @@ final class AgentAlertPushUITests: XCTestCase {
     /// which is why the switch is not driven here.
     @MainActor
     private func launchWithAlertsOnAndSignalReady() throws -> XCUIApplication {
+        let wantedOrientation: UIDeviceOrientation = capturesLandscape ? .landscapeLeft : .portrait
         if environment["FARSIDE_PUSH_INJECTED"] == "1" {
-            XCUIDevice.shared.orientation = .portrait
+            XCUIDevice.shared.orientation = wantedOrientation
         }
         let app = XCUIApplication()
         app.launchArguments = ["--ui-seed-pairing=Studio Mac", "--ui-x", "--ui-request-notifications",
@@ -62,6 +67,7 @@ final class AgentAlertPushUITests: XCTestCase {
             }
             allow.tap()
         }
+        XCUIDevice.shared.orientation = wantedOrientation
         Thread.sleep(forTimeInterval: 1.0)
 
         let ready = environment["FARSIDE_PUSH_READY_FILE"] ?? "/tmp/farside-push-ready"
@@ -121,9 +127,24 @@ final class AgentAlertPushUITests: XCTestCase {
         attach("After Not now")
     }
 
+    @MainActor
     private func attach(_ name: String) {
+        var captureName = name
+        let explicitPermission = name == "portrait-system-notification-permission"
+            || name == "landscape-system-notification-permission"
+        if capturesLandscape && !explicitPermission {
+            captureName = "landscape-" + name
+            let frame = XCUIApplication().frame
+            if frame.width <= frame.height {
+                let reason = XCTAttachment(string: "Requested landscape push capture, but Farside app frame is \(frame.width) × \(frame.height)")
+                reason.name = "missing-reason"
+                reason.lifetime = .keepAlways
+                add(reason)
+                captureName = "missing-" + captureName
+            }
+        }
         let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        screenshot.name = name
+        screenshot.name = captureName
         screenshot.lifetime = .keepAlways
         add(screenshot)
     }
