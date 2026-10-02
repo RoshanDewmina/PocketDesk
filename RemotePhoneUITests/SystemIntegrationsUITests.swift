@@ -364,7 +364,8 @@ final class NativeContainerSurfaceUITests: XCTestCase {
             missing("share-extension-safari-landscape", "Extension selection did not expose a valid Farside share-sheet root")
             return
         }
-        if waitForOrientation(of: safari, landscape: false, timeout: 5) {
+        if waitForOrientation(of: safari, landscape: false, timeout: 5)
+            && waitForShareRoot(safari, extensionApp, timeout: 3) {
             attach("share-extension-safari-portrait")
         } else {
             missing("share-extension-safari-portrait", "Safari did not reach portrait frame dimensions before capture")
@@ -398,7 +399,7 @@ final class NativeContainerSurfaceUITests: XCTestCase {
         ]
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
-            if candidates.contains(where: { $0.exists }) { return true }
+            if candidates.contains(where: { $0.exists && $0.isHittable }) { return true }
             Thread.sleep(forTimeInterval: 0.25)
         } while Date() < deadline
         return false

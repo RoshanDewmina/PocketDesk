@@ -96,30 +96,57 @@ final class LiveActivityUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1.0)
     }
 
-    private func assertButtons(for state: SampleState, where surface: String) {
-        XCTAssertTrue(springboard.staticTexts[state.title].waitForExistence(timeout: 5),
+    private func assertButtons(for state: SampleState, where surface: String) -> Bool {
+        let titleVisible = springboard.staticTexts[state.title].waitForExistence(timeout: 5)
+        let endMatches = springboard.buttons["End session"].exists == state.hasEnd
+        let reconnectMatches = springboard.buttons["Reconnect"].exists == state.hasReconnect
+        XCTAssertTrue(titleVisible,
                       "\(surface): \(state.phase) should say \"\(state.title)\"")
         XCTAssertEqual(springboard.buttons["End session"].exists, state.hasEnd,
                        "\(surface): End session for \(state.phase)")
         XCTAssertEqual(springboard.buttons["Reconnect"].exists, state.hasReconnect,
                        "\(surface): Reconnect for \(state.phase)")
+        return titleVisible && endMatches && reconnectMatches
+    }
+
+    private func attachPlan(_ names: [String]) {
+        let plan = XCTAttachment(string: names.joined(separator: "\n"))
+        plan.name = "capture-plan"
+        plan.lifetime = .keepAlways
+        add(plan)
+    }
+
+    private func attachValidated(_ name: String, valid: Bool) {
+        if !valid {
+            let reason = XCTAttachment(string: "Native Live Activity state/root validation failed for " + name)
+            reason.name = "missing-state-reason"
+            reason.lifetime = .keepAlways
+            add(reason)
+        }
+        attach(valid ? name : "missing-" + name)
     }
 
     @MainActor
     func testEveryStateShowsInTheIslandAndExpands() throws {
+        attachPlan(states.flatMap { ["\($0.phase)-compact", "\($0.phase)-expanded"] })
         for state in states {
             let app = start(state.phase)
             toHomeScreen(settle: 8.0)
             // The first activity after an install can take a while: the system loads the widget extension cold.
-            XCTAssertTrue(islandContainer.waitForExistence(timeout: 40), "\(state.phase): the island shows the activity")
+            let islandVisible = islandContainer.waitForExistence(timeout: 40)
+            XCTAssertTrue(islandVisible, "\(state.phase): the island shows the activity")
             Thread.sleep(forTimeInterval: 4.0)
-            attach("\(state.phase)-compact")
+            // Identify this phase in the expanded activity before accepting the compact Island.
+            expandIsland()
+            if !springboard.staticTexts[state.title].waitForExistence(timeout: 4) { expandIsland() }
+            let phaseMatches = islandVisible && assertButtons(for: state, where: "island identity")
+            collapseIsland()
+            attachValidated("\(state.phase)-compact", valid: phaseMatches && islandContainer.exists)
             attachTree("\(state.phase)-compact-tree")
             expandIsland()
             if !springboard.staticTexts[state.title].waitForExistence(timeout: 4) { expandIsland() }
-            attach("\(state.phase)-expanded")
+            attachValidated("\(state.phase)-expanded", valid: islandVisible && assertButtons(for: state, where: "island"))
             attachTree("\(state.phase)-expanded-tree")
-            assertButtons(for: state, where: "island")
             collapseIsland()
             app.terminate()
         }
@@ -127,12 +154,12 @@ final class LiveActivityUITests: XCTestCase {
 
     @MainActor
     func testTheLockScreenShowsEveryStateWithTheRightButton() throws {
+        attachPlan(states.map { "\($0.phase)-lockscreen" })
         for state in states {
             start(state.phase)
             showLockScreen()
-            attach("\(state.phase)-lockscreen")
+            attachValidated("\(state.phase)-lockscreen", valid: assertButtons(for: state, where: "Lock Screen"))
             attachTree("\(state.phase)-lockscreen-tree")
-            assertButtons(for: state, where: "Lock Screen")
             springboard.swipeUp()
             Thread.sleep(forTimeInterval: 1.5)
         }
