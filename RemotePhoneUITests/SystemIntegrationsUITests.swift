@@ -367,7 +367,9 @@ final class NativeContainerSurfaceUITests: XCTestCase {
     @MainActor
     private func farsideWidgetElement() -> XCUIElement? {
         let matches = springboard.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == 'Connect to Your Mac' OR identifier CONTAINS[c] 'ConnectWidget'"))
+            .matching(NSPredicate(format:
+                "label == 'Connect to Your Mac' OR label BEGINSWITH 'Connect to Your Mac. Last seen ' OR " +
+                "label == 'Connect to Studio Mac' OR label BEGINSWITH 'Connect to Studio Mac. Last seen '"))
             .allElementsBoundByIndex
         return matches.first(where: { $0.exists && $0.isHittable })
     }
