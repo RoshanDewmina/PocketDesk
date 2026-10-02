@@ -465,7 +465,87 @@ final class ClaimsVerificationUITests: XCTestCase {
         auditInventory(sizeArguments: accessibilityXXXL, sizeName: "AX-XXXL")
     }
 
-    private enum AuditAction { case openLANWake }
+    @MainActor
+    func testAccessibilityAuditRecoveryEntryDefaultSize() {
+        auditInventory(sizeArguments: [], sizeName: "default", group: .entry)
+    }
+
+    @MainActor
+    func testAccessibilityAuditRecoveryEntryAccessibilityXXXL() {
+        auditInventory(sizeArguments: accessibilityXXXL, sizeName: "AX-XXXL", group: .entry)
+    }
+
+    @MainActor
+    func testAccessibilityAuditRecoverySessionDefaultSize() {
+        auditInventory(sizeArguments: [], sizeName: "default", group: .session)
+    }
+
+    @MainActor
+    func testAccessibilityAuditRecoverySessionAccessibilityXXXL() {
+        auditInventory(sizeArguments: accessibilityXXXL, sizeName: "AX-XXXL", group: .session)
+    }
+
+    @MainActor
+    func testAccessibilityAuditRecoveryHelpDefaultSize() {
+        auditInventory(sizeArguments: [], sizeName: "default", group: .help)
+    }
+
+    @MainActor
+    func testAccessibilityAuditRecoveryHelpAccessibilityXXXL() {
+        auditInventory(sizeArguments: accessibilityXXXL, sizeName: "AX-XXXL", group: .help)
+    }
+
+    @MainActor
+    func testAccessibilityAuditRecoveryCoachDefaultSize() {
+        auditInventory(sizeArguments: [], sizeName: "default", group: .coach)
+    }
+
+    @MainActor
+    func testAccessibilityAuditRecoveryCoachAccessibilityXXXL() {
+        auditInventory(sizeArguments: accessibilityXXXL, sizeName: "AX-XXXL", group: .coach)
+    }
+
+    @MainActor
+    func testAccessibilityAuditRecoveryDisplayDefaultSize() {
+        auditInventory(sizeArguments: [], sizeName: "default", group: .display)
+    }
+
+    @MainActor
+    func testAccessibilityAuditRecoveryDisplayAccessibilityXXXL() {
+        auditInventory(sizeArguments: accessibilityXXXL, sizeName: "AX-XXXL", group: .display)
+    }
+
+    @MainActor
+    func testAccessibilityAuditRecoverySettingsDefaultSize() {
+        auditInventory(sizeArguments: [], sizeName: "default", group: .settings)
+    }
+
+    @MainActor
+    func testAccessibilityAuditRecoverySettingsAccessibilityXXXL() {
+        auditInventory(sizeArguments: accessibilityXXXL, sizeName: "AX-XXXL", group: .settings)
+    }
+
+    @MainActor
+    func testAccessibilityAuditRecoveryErrors1DefaultSize() {
+        auditInventory(sizeArguments: [], sizeName: "default", group: .errors1)
+    }
+
+    @MainActor
+    func testAccessibilityAuditRecoveryErrors1AccessibilityXXXL() {
+        auditInventory(sizeArguments: accessibilityXXXL, sizeName: "AX-XXXL", group: .errors1)
+    }
+
+    @MainActor
+    func testAccessibilityAuditRecoveryErrors2DefaultSize() {
+        auditInventory(sizeArguments: [], sizeName: "default", group: .errors2)
+    }
+
+    @MainActor
+    func testAccessibilityAuditRecoveryErrors2AccessibilityXXXL() {
+        auditInventory(sizeArguments: accessibilityXXXL, sizeName: "AX-XXXL", group: .errors2)
+    }
+
+    private enum AuditAction { case openLANWake, openDisplay }
 
     private struct AuditFixture {
         let name: String
@@ -477,7 +557,7 @@ final class ClaimsVerificationUITests: XCTestCase {
     }
 
     @MainActor
-    private func auditInventory(sizeArguments: [String], sizeName: String) {
+    private func auditFixtures() -> [AuditFixture] {
         let session = ["--ui-layout-check", "--ui-viewport-fill"]
         var fixtures = [
             AuditFixture(name: "home-empty", arguments: ["--ui-x"], marker: "Paste a pairing code"),
@@ -516,9 +596,13 @@ final class ClaimsVerificationUITests: XCTestCase {
                              ("keyboard", "Keyboard and pointer"), ("steer", "How to steer"), ("diagnostics", "Diagnostics")]
         for (page, title) in settingsPages {
             let displayPreview = page == "display" ? ["--ui-input-probe", "--ui-probe-quiet"] : []
-            fixtures.append(AuditFixture(name: "settings-\(page)", arguments: session + displayPreview +
-                                         ["--ui-controls-settings", "--ui-controls-page=\(page)"],
-                                         marker: "remote.controls.page", navigationTitle: title))
+            // Avoid preloading two navigation destinations while the probe populates displays.
+            // Preserve portrait: phone uses Controls' Display row; iPad uses Settings > Display.
+            let arguments = page == "display" ? session + displayPreview + ["--ui-dock-open"]
+                : session + ["--ui-controls-settings", "--ui-controls-page=\(page)"]
+            fixtures.append(AuditFixture(name: "settings-\(page)", arguments: arguments,
+                                         marker: "remote.controls.page", navigationTitle: title,
+                                         action: page == "display" ? .openDisplay : nil))
         }
         // The helper row belongs to overlay Settings (iPad or landscape phone). Navigate it
         // through the real row; never request a packet or manufacture helper authority.
@@ -530,6 +614,37 @@ final class ClaimsVerificationUITests: XCTestCase {
                      "anywhereUnverified", "couchNotLocal", "couchControlOff"] {
             fixtures.append(AuditFixture(name: "error-\(kind)", arguments: ["--ui-demo-mac", "--ui-error=\(kind)"], marker: "error.primary"))
         }
+        return fixtures
+    }
+
+    // Each bounded method has its own XCTest failure boundary. A snapshot exception in
+    // Display must not prevent the later settings/errors groups from being attempted.
+    private enum RecoveryAuditGroup: String {
+        case entry, session, help, coach, display, settings, errors1, errors2
+
+        var range: Range<Int> {
+            switch self {
+            case .entry: 0..<7
+            case .session: 7..<18
+            case .help: 18..<24
+            case .coach: 24..<30
+            case .display: 30..<31
+            case .settings: 31..<40
+            case .errors1: 40..<48
+            case .errors2: 48..<55
+            }
+        }
+    }
+
+    @MainActor
+    private func auditInventory(sizeArguments: [String], sizeName: String, group: RecoveryAuditGroup? = nil) {
+        let inventory = auditFixtures()
+        guard inventory.count == 55 else {
+            return XCTFail("Audit inventory changed: reconcile all recovery groups before running (expected55, got\(inventory.count))")
+        }
+        let fixtures = group.map { Array(inventory[$0.range]) } ?? inventory
+        let receiptName = "\(sizeName)-\(group?.rawValue ?? "all")-audit-inventory"
+        receipt(receiptName + "-planned", "Planned fixtures (\(fixtures.count)): " + fixtures.map(\.name).joined(separator: ", "))
         let app = XCUIApplication()
         var issues = [String]()
         for fixture in fixtures {
@@ -541,6 +656,14 @@ final class ClaimsVerificationUITests: XCTestCase {
                 // Recovery is explicit and applies only to ordinary offline session fixtures.
                 if fixture.arguments.contains("--ui-layout-check"), fixture.name != "concealed" {
                     _ = recoverFixtureIfNeeded(app)
+                }
+                if fixture.action == .openDisplay {
+                    // Navigation only: never press a display-selection/scale control.
+                    if !openRecoveryDisplay(app, name: name, issues: &issues) {
+                        capture(app, "\(name)-display-navigation-failed")
+                        app.terminate()
+                        return
+                    }
                 }
                 if fixture.action == .openLANWake {
                     let row = app.buttons["Wake another Mac on this LAN"].firstMatch
@@ -564,12 +687,12 @@ final class ClaimsVerificationUITests: XCTestCase {
                 let scroll = app.scrollViews.firstMatch
                 if scroll.exists {
                     scroll.swipeUp()
-                    audit(app, name: "\(name)-scrolled", issues: &issues)
+                    audit(app, name: "\(name)-scrolled", issues: &issues, includeHierarchy: false)
                 }
                 app.terminate()
             }
         }
-        receipt("\(sizeName)-audit-inventory", "Fixtures attempted: \(fixtures.count)\nRecorded issues/errors: \(issues.count)\n"
+        receipt(receiptName, "Fixtures attempted: \(fixtures.count)\nRecorded issues/errors: \(issues.count)\n"
                 + "Coverage is limited to the named debug fixtures and LAN wake navigation. Native OS permission alerts, "
                 + "hardware camera scanning, live authenticated/provider states, enabled wake confirmation, purchase flows, "
                 + "and actual VoiceOver navigation are excluded and remain separate acceptance gates.\n"
@@ -579,19 +702,11 @@ final class ClaimsVerificationUITests: XCTestCase {
     }
 
     @MainActor
-    private func audit(_ app: XCUIApplication, name: String, issues: inout [String]) {
-        capture(app, "\(name)-audit")
-        let controls = app.buttons.allElementsBoundByIndex + app.switches.allElementsBoundByIndex
-            + app.sliders.allElementsBoundByIndex + app.textFields.allElementsBoundByIndex
-            + app.secureTextFields.allElementsBoundByIndex + app.textViews.allElementsBoundByIndex
-            + app.links.allElementsBoundByIndex
-        let controlLines = controls.map { element in
-            "type=\(element.elementType.rawValue); identifier=\(element.identifier); label=\(element.label); "
-                + "value=\(String(describing: element.value)); enabled=\(element.isEnabled); frame=\(element.frame)"
-        }
-        receipt("\(name)-separate-accessible-controls", "Separately exposed control inventory for VoiceOver review. "
-                + "This is an accessibility-tree receipt; actual VoiceOver navigation remains a physical acceptance gate.\n"
-                + controlLines.joined(separator: "\n"))
+    private func audit(_ app: XCUIApplication, name: String, issues: inout [String], includeHierarchy: Bool = true) {
+        capture(app, "\(name)-audit", includeHierarchy: includeHierarchy)
+        // The initial slice records one hierarchy per fixture, including accessible controls.
+        // Scrolled slices retain screenshots/audits without another full-tree query.
+        // Do not repeatedly query every control field or each issue's element snapshot.
         // SDK 27 XCUIAccessibilityAuditTypes.h: All = ~0UL; iOS availability begins at 17.
         // Returning true lets enumeration continue; every issue is retained and fails the
         // overall inventory assertion. No audit types, elements or issue classes are ignored.
@@ -599,7 +714,7 @@ final class ClaimsVerificationUITests: XCTestCase {
         do {
             try app.performAccessibilityAudit(for: .all) { issue in
                 let detail = "\(name)\nAudit type: \(issue.auditType.rawValue)\n\(issue.compactDescription)\n"
-                    + "\(issue.detailedDescription)\nElement: \(issue.element?.debugDescription ?? "nil")"
+                    + "\(issue.detailedDescription)"
                 findings.append(detail)
                 print(detail)
                 self.receipt("\(name)-issue-\(findings.count)", detail)
@@ -611,6 +726,49 @@ final class ClaimsVerificationUITests: XCTestCase {
             receipt("\(name)-audit-error", detail)
         }
         issues.append(contentsOf: findings)
+    }
+
+    @MainActor
+    private func tapRecoveryDisplayNavigation(_ app: XCUIApplication, identifier: String,
+                                              name: String, issues: inout [String]) -> Bool {
+        let button = app.buttons[identifier].firstMatch
+        guard button.waitForExistence(timeout: 5) else {
+            issues.append("\(name): Display navigation control missing: \(identifier)")
+            return false
+        }
+        let scroll = app.scrollViews.firstMatch
+        for _ in 0..<6 where !button.isHittable && scroll.exists { scroll.swipeUp() }
+        guard button.isHittable else {
+            issues.append("\(name): Display navigation control unreachable: \(identifier)")
+            return false
+        }
+        button.tap()
+        return true
+    }
+
+    @MainActor
+    private func openRecoveryDisplay(_ app: XCUIApplication, name: String, issues: inout [String]) -> Bool {
+        // Navigation only: never press a display-selection/scale control.
+        guard tapRecoveryDisplayNavigation(app, identifier: "Controls", name: name, issues: &issues) else { return false }
+        if app.buttons["remote.displayRow"].firstMatch.waitForExistence(timeout: 3) {
+            // Portrait phone: Settings omits this row; it lives directly under Controls' keys.
+            guard tapRecoveryDisplayNavigation(app, identifier: "remote.displayRow", name: name, issues: &issues) else { return false }
+        } else {
+            // iPad's overlay Settings owns the Display row.
+            guard tapRecoveryDisplayNavigation(app, identifier: "remote.controls.settings", name: name, issues: &issues),
+                  tapRecoveryDisplayNavigation(app, identifier: "remote.settings.display", name: name, issues: &issues) else { return false }
+        }
+        guard app.navigationBars["Display"].waitForExistence(timeout: 5) else {
+            issues.append("\(name): real Display navigation title missing")
+            return false
+        }
+        for identifier in ["remote.display.1", "remote.display.2"] {
+            if !app.buttons[identifier].waitForExistence(timeout: 5) {
+                issues.append("\(name): seeded display control missing: \(identifier)")
+                return false
+            }
+        }
+        return true
     }
 
     @MainActor
@@ -665,12 +823,15 @@ final class ClaimsVerificationUITests: XCTestCase {
     }
 
     @MainActor
-    private func capture(_ app: XCUIApplication, _ name: String) {
+    private func capture(_ app: XCUIApplication, _ name: String, includeHierarchy: Bool = true) {
         let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         screenshot.name = name
         screenshot.lifetime = .keepAlways
         add(screenshot)
-        receipt("\(name)-hierarchy", app.state == .runningForeground ? app.debugDescription : "App state: \(app.state.rawValue); screenshot shows system UI.")
+        if includeHierarchy {
+            receipt("\(name)-hierarchy", "One accessibility-tree receipt per fixture includes separately exposed controls; scrolled slices keep screenshots and unfiltered audits. Actual VoiceOver navigation remains a device gate.\n"
+                    + (app.state == .runningForeground ? app.debugDescription : "App state: \(app.state.rawValue); screenshot shows system UI."))
+        }
     }
 
     private func receipt(_ name: String, _ text: String) {
@@ -805,7 +966,7 @@ extension ClaimsVerificationUITests {
                     let scroll = app.scrollViews.firstMatch
                     guard scroll.exists else { break }
                     scroll.swipeUp()
-                    audit(app, name: "\(name)-scrolled-\(step)", issues: &issues)
+                    audit(app, name: "\(name)-scrolled-\(step)", issues: &issues, includeHierarchy: false)
                 }
                 app.terminate()
             }
