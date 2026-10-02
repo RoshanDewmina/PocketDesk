@@ -96,8 +96,9 @@ final class RemoteCoordinator: ObservableObject {
     private var registeredHostTokens: [String] = []
     private var serviceSupportsDevices = false
     var pairedDevices: [HostPairedDevice] { hostPair?.approvedDevices ?? [] }
+    private var pendingRetirementFailed = false
     var pendingPairInvitation: PairInvitation? {
-        guard let pair = hostPair else { return nil }
+        guard !pendingRetirementFailed, let pair = hostPair else { return nil }
         return pair.pendingInvitation ?? (!pair.paired && pair.invitation.expires > Date() ? pair.invitation : nil)
     }
     private(set) var hostPair: HostPair?
@@ -820,6 +821,7 @@ final class RemoteCoordinator: ObservableObject {
         if let first = pair.approvedDevices.first { pair = pair.selecting(first) }
         try enrollment.validate()
         try store.save(pair)
+        pendingRetirementFailed = false
         stop()
         hostPair = pair; invitation = pair.invitation; peerName = pair.phoneName
         return enrollment
@@ -891,9 +893,11 @@ final class RemoteCoordinator: ObservableObject {
                   verified.pendingInvitation == nil, verified.approvedDevices == devices else { throw RemoteError.invalidPairing }
             stop()
             hostPair = saved; invitation = devices.first?.invitation; peerName = saved.phoneName
+            pendingRetirementFailed = false
             status = devices.isEmpty ? "Pairing cancelled" : "Ready for your paired phone"
             return true
         } catch {
+            pendingRetirementFailed = true
             stop(); pairingRemovalFailure = "enrollment-cancel:failed"
             status = error.localizedDescription
             return false
@@ -926,6 +930,12 @@ final class RemoteCoordinator: ObservableObject {
         start(resetRetryBudget: true)
     }
     private func start(resetRetryBudget: Bool) {
+        // Storage did not confirm retirement of an exposed candidate. Stop/restore/retry cannot
+        // revive it; a successfully saved fresh QR or verified cancellation clears quarantine.
+        guard !isHost || !pendingRetirementFailed else {
+            status = "Pairing could not be saved. Create a fresh code to try again."
+            return
+        }
         guard startAllowed?() != false else {
             status = "Server removal is pending. Retry or cancel removal first."
             return

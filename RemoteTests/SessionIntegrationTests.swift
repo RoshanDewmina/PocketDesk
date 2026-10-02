@@ -598,6 +598,24 @@ final class SessionIntegrationTests: XCTestCase {
         hostStore.refuseSave = true; host.approve()
         XCTAssertFalse(host.connected); XCTAssertNil(phoneStore.data)
         XCTAssertNil(host.pendingPairInvitation, "Save failure retires the exposed grant")
+        XCTAssertFalse(host.isRunning)
+        host.start()
+        XCTAssertFalse(host.hostRegistered, "Failed retirement cannot re-register the QR")
+        hostStore.refuseSave = false
+        host.restore(); host.start()
+        XCTAssertNil(host.pendingPairInvitation, "Storage recovery alone cannot revive a photographed QR")
+        XCTAssertFalse(host.isRunning)
+        let recovered = try host.createPair(server: url, name: "Test")
+        XCTAssertEqual(recovered.room, freshInvitation.room)
+        XCTAssertNotEqual(recovered.key, freshInvitation.key)
+        XCTAssertNotEqual(recovered.token, freshInvitation.token)
+        phone.stop(); host.start()
+        try await waitFor("fresh code registers after storage recovers") { host.hostRegistered }
+        try phone.enroll(recovered.code())
+        try await waitFor("fresh comparison after save failure") { host.awaitingApproval }
+        XCTAssertEqual(host.pairingComparisonCode, phone.pairingComparisonCode)
+        host.approve()
+        try await waitFor("fresh approval connects after save failure", seconds: 25) { host.connected && phone.connected }
     }
 
     @MainActor
