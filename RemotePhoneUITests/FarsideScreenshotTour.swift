@@ -94,8 +94,8 @@ final class FarsideScreenshotTour: XCTestCase {
             Shot(name: "pairing-scanning", arguments: ["--ui-pairing-scan", "--ui-camera-priming"]),
             Shot(name: "couch", arguments: probe + ["--ui-couch", "--ui-demo-mac"]),
             Shot(name: "couch-controls", arguments: probe + ["--ui-couch", "--ui-demo-mac", "--ui-controls-check", "--ui-vitals=battery12"]),
-            Shot(name: "big-text-pending", arguments: probe + ["--ui-controls-settings", "--ui-controls-page=picture"]),
-            Shot(name: "big-text-selected", arguments: probe + ["--ui-controls-settings", "--ui-controls-page=picture"]),
+            Shot(name: "big-text-pending", arguments: probe + ["--ui-controls-check"]),
+            Shot(name: "big-text-selected", arguments: probe + ["--ui-controls-check"]),
             Shot(name: "controls-lan-wake", arguments: probe + ["--ui-controls-check"]),
             Shot(name: "controls-diagnostics-old-mac", arguments: probe + ["--ui-controls-settings", "--ui-controls-page=diagnostics", "--ui-vitals=old"])
         ]
@@ -286,6 +286,12 @@ final class FarsideScreenshotTour: XCTestCase {
             return require(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Camera viewfinder")).firstMatch,
                            "Camera scanning (simulator camera may be unavailable)")
         case "big-text-pending", "big-text-selected":
+            // The Controls root requests the probe's display descriptors on appearance. Pushing
+            // Picture directly at launch can skip that appearance and leave Big Text with no steps.
+            guard require(element("remote.controls.content", in: app), "Controls for Big Text"),
+                  tap(app.buttons["remote.controls.settings"].firstMatch, in: app),
+                  tap(app.buttons["remote.settings.picture"].firstMatch, in: app),
+                  require(app.navigationBars["Picture"], "Big Text picture settings") else { return false }
             let off = app.buttons["remote.bigText.off"]
             guard reveal(off, in: app) else { return false }
             if !off.isSelected {
@@ -296,7 +302,15 @@ final class FarsideScreenshotTour: XCTestCase {
             let step = app.buttons["remote.bigText.step.0"]
             guard tap(step, in: app) else { return false }
             let pill = app.descendants(matching: .any)["remote.bigText.pill"].firstMatch
-            if shot.name == "big-text-pending" { return require(pill, "Big Text change in progress", timeout: 2) }
+            if shot.name == "big-text-pending" {
+                // Show the canvas pill rather than a progress element hidden behind Settings.
+                let done = app.buttons.matching(NSPredicate(format: "label == %@", "Done"))
+                    .allElementsBoundByIndex.first(where: { $0.exists && $0.isHittable })
+                guard let done else { return missing("Big Text settings dismissal is unavailable") }
+                done.tap()
+                return require(pill, "Big Text change in progress", timeout: 2)
+            }
+            guard require(pill, "Big Text request began", timeout: 2) else { return false }
             guard selected(step) else { return false }
             guard pill.waitForNonExistence(timeout: 3) else { return missing("Big Text confirmation did not clear progress") }
             return true
