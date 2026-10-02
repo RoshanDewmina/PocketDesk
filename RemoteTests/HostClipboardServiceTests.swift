@@ -7,10 +7,12 @@ private final class FakePasteboard: HostPasteboardAccess, @unchecked Sendable {
     private var result: HostPasteboardRead = .refused(.empty)
     private var stored: [ClipboardPayload] = []
     private var readCount = 0
+    private var countReadCount = 0
     var reads: Int { lock.lock(); defer { lock.unlock() }; return readCount }
+    var countReads: Int { lock.lock(); defer { lock.unlock() }; return countReadCount }
     var readGate: DispatchSemaphore?
 
-    var changeCount: Int { lock.lock(); defer { lock.unlock() }; return count }
+    var changeCount: Int { lock.lock(); defer { lock.unlock() }; countReadCount += 1; return count }
     var writes: [ClipboardPayload] { lock.lock(); defer { lock.unlock() }; return stored }
 
     func set(_ next: HostPasteboardRead) { lock.lock(); result = next; lock.unlock() }
@@ -24,7 +26,7 @@ private final class FakePasteboard: HostPasteboardAccess, @unchecked Sendable {
     }
 
     func write(_ payload: ClipboardPayload) -> Bool {
-        lock.lock(); stored.append(payload); count += 1; lock.unlock()
+        lock.lock(); stored.append(payload); result = .text(payload); count += 1; lock.unlock()
         return true
     }
 }
@@ -37,7 +39,8 @@ final class HostClipboardServiceTests: XCTestCase {
 
     private func service(_ pasteboard: FakePasteboard, readTimeout: TimeInterval = 5, copyWait: TimeInterval = 0.3) -> HostClipboardService {
         sent = []
-        let service = HostClipboardService(pasteboard: pasteboard, readTimeout: readTimeout, copyWait: copyWait)
+        let service = HostClipboardService(pasteboard: pasteboard, readTimeout: readTimeout, copyWait: copyWait,
+                                           automaticPollInterval: 0.02)
         service.transport = { [unowned self] frame in
             XCTAssertNotNil(try? RemoteAction(action: "clipboard", clipboard: frame).validate())
             self.sent.append(frame)
@@ -60,6 +63,257 @@ final class HostClipboardServiceTests: XCTestCase {
     }
 
     private var results: [String] { sent.filter { $0.op == "result" }.compactMap(\.status) }
+
+    private func settle(_ interval: TimeInterval = 0.1) {
+        let done = expectation(description: "clipboard settled")
+        DispatchQueue.main.asyncAfter(deadline: .now() + interval) { done.fulfill() }
+        wait(for: [done], timeout: interval + 1)
+    }
+
+    func testAutomaticWatchBaselinesThenExportsOnlyChangedTextWithEveryChunkMarked() {
+        let pasteboard = FakePasteboard()
+        pasteboard.set(.text(ClipboardPayload(text: "before session")))
+        let clipboard = service(pasteboard)
+        clipboard.reconcileAutomaticSync(allowed: true, peerSupports: true)
+        waitUntil("baseline sampled") { pasteboard.countReads > 0 }
+        XCTAssertEqual(pasteboard.reads, 0)
+        XCTAssertTrue(sent.isEmpty)
+        let text = String(repeating: "new copy", count: 2_000)
+        pasteboard.set(.text(ClipboardPayload(text: text))); pasteboard.bump()
+        waitUntil("automatic transfer") { self.sent.count == ClipboardLimits.chunkCount(forBytes: text.utf8.count) }
+        XCTAssertTrue(sent.allSatisfy { $0.op == "data" && $0.automatic == true })
+        var assembler = ClipboardAssembler()
+        var outcome = ClipboardAssembler.Outcome.progress
+        for frame in sent { outcome = assembler.accept(frame, at: 0) }
+        XCTAssertEqual(outcome, .complete(transfer: sent[0].transfer, payload: ClipboardPayload(text: text)))
+        clipboard.reset()
+    }
+
+    func testAutomaticWatchSilentlyRefusesConcealedAndOversizedItems() {
+        let pasteboard = FakePasteboard()
+        let watcher = service(pasteboard)
+        watcher.reconcileAutomaticSync(allowed: true, peerSupports: true)
+        waitUntil("baseline sampled") { pasteboard.countReads > 0 }
+        pasteboard.set(.refused(.concealed)); pasteboard.bump()
+        waitUntil("concealed observed") { pasteboard.reads == 1 }
+        settle()
+        XCTAssertTrue(sent.isEmpty)
+        pasteboard.set(.text(ClipboardPayload(text: String(repeating: "x", count: ClipboardLimits.maximumBytes + 1))))
+        pasteboard.bump()
+        waitUntil("oversized observed") { pasteboard.reads == 2 }
+        settle()
+        XCTAssertTrue(sent.isEmpty)
+        watcher.reset()
+    }
+
+    func testAutomaticWatchDeduplicatesAndDoesNotEchoPhoneWrites() throws {
+        let pasteboard = FakePasteboard()
+        let watcher = service(pasteboard)
+        watcher.reconcileAutomaticSync(allowed: true, peerSupports: true)
+        waitUntil("baseline sampled") { pasteboard.countReads > 0 }
+        pasteboard.set(.text(ClipboardPayload(text: "host copy"))); pasteboard.bump()
+        waitUntil("first copy delivered") { self.sent.count == 1 }
+        pasteboard.bump()
+        waitUntil("duplicate observed") { pasteboard.reads == 2 }
+        settle()
+        XCTAssertEqual(sent.count, 1)
+        sent = []
+        for frame in try ClipboardChunker.frames(for: ClipboardPayload(text: "phone copy"), operation: "push", transfer: transfer) {
+            watcher.receive(frame, allowed: true)
+        }
+        waitUntil("phone copy stored") { self.results == ["stored"] }
+        pasteboard.bump() // A later ownership change still containing the same phone copy.
+        waitUntil("echo observed") { pasteboard.reads == 3 }
+        settle()
+        XCTAssertFalse(sent.contains { $0.op == "data" })
+        watcher.reset()
+    }
+
+    func testAutomaticWatchNeedsCurrentAuthorityAndNewPeerCapability() {
+        let pasteboard = FakePasteboard(), clipboard = service(pasteboard)
+        clipboard.reconcileAutomaticSync(allowed: true, peerSupports: false)
+        pasteboard.bump(); settle()
+        XCTAssertEqual(pasteboard.countReads, 0)
+        clipboard.reconcileAutomaticSync(allowed: false, peerSupports: true)
+        pasteboard.bump(); settle()
+        XCTAssertEqual(pasteboard.countReads, 0)
+        clipboard.reset()
+    }
+
+    func testAutomaticRevocationCancelsQueuedReadAndAlreadyReadChunksAndRebaselines() {
+        let pasteboard = FakePasteboard(), queue = DispatchQueue(label: "fixture.clipboard-automatic")
+        let clipboard = HostClipboardService(pasteboard: pasteboard, queue: queue, automaticPollInterval: 0.02)
+        sent = []; clipboard.transport = { self.sent.append($0); return true }
+        clipboard.bufferedAmount = { self.buffered }
+        clipboard.reconcileAutomaticSync(allowed: true, peerSupports: true)
+        waitUntil("baseline sampled") { pasteboard.countReads > 0 }
+        let queueGate = DispatchSemaphore(value: 0)
+        queue.async { queueGate.wait() }; defer { queueGate.signal() }
+        pasteboard.set(.text(ClipboardPayload(text: "queued secret"))); pasteboard.bump()
+        settle()
+        clipboard.reconcileAutomaticSync(allowed: false, peerSupports: true)
+        queueGate.signal(); queue.sync {}; settle()
+        XCTAssertEqual(pasteboard.reads, 0)
+        clipboard.reconcileAutomaticSync(allowed: true, peerSupports: true)
+        let baselineReads = pasteboard.countReads
+        waitUntil("new baseline sampled") { pasteboard.countReads > baselineReads }
+        buffered = ClipboardLimits.bufferedHighWater
+        pasteboard.set(.text(ClipboardPayload(text: "blocked chunks"))); pasteboard.bump()
+        waitUntil("read completed") { pasteboard.reads == 1 }
+        settle()
+        clipboard.reconcileAutomaticSync(allowed: false, peerSupports: true)
+        buffered = 0; settle()
+        XCTAssertTrue(sent.isEmpty)
+        clipboard.reset()
+    }
+
+    func testAutomaticBlockedReadDoesNotAccumulateAndResetDiscardsLateResult() {
+        let pasteboard = FakePasteboard(), clipboard = service(pasteboard)
+        clipboard.reconcileAutomaticSync(allowed: true, peerSupports: true)
+        waitUntil("baseline sampled") { pasteboard.countReads > 0 }
+        let gate = DispatchSemaphore(value: 0); pasteboard.readGate = gate; defer { gate.signal() }
+        pasteboard.set(.text(ClipboardPayload(text: "late secret"))); pasteboard.bump()
+        waitUntil("automatic read entered") { pasteboard.reads == 1 }
+        settle(0.15)
+        XCTAssertEqual(pasteboard.reads, 1)
+        let countReads = pasteboard.countReads
+        for _ in 0..<4 {
+            clipboard.reset()
+            clipboard.reconcileAutomaticSync(allowed: true, peerSupports: true)
+        }
+        settle()
+        XCTAssertEqual(pasteboard.countReads, countReads, "A replacement session must not queue polling behind a blocked provider")
+        clipboard.reset(); gate.signal(); settle()
+        XCTAssertTrue(sent.isEmpty)
+        XCTAssertTrue(clipboard.isIdle)
+    }
+
+    func testAutomaticPumpChecksLivePolicyBeforeReleasingBackpressuredChunks() {
+        let pasteboard = FakePasteboard(), clipboard = service(pasteboard)
+        var allowed = true
+        clipboard.automaticPolicy = { allowed }
+        clipboard.reconcileAutomaticSync(allowed: true, peerSupports: true)
+        waitUntil("baseline sampled") { pasteboard.countReads > 0 }
+        buffered = ClipboardLimits.bufferedHighWater
+        pasteboard.set(.text(ClipboardPayload(text: "revoked after read"))); pasteboard.bump()
+        waitUntil("automatic read completed") { pasteboard.reads == 1 }
+        settle()
+        allowed = false; buffered = 0; settle()
+        XCTAssertTrue(sent.isEmpty)
+        XCTAssertTrue(clipboard.isIdle)
+        clipboard.reset()
+    }
+
+    func testStoppingAutomaticSyncPreservesAnExplicitPullOutbox() {
+        let pasteboard = FakePasteboard(), clipboard = service(pasteboard)
+        buffered = ClipboardLimits.bufferedHighWater
+        pasteboard.set(.text(ClipboardPayload(text: "explicit request")))
+        clipboard.receive(.pull(transfer), allowed: true)
+        waitUntil("explicit read completed") { pasteboard.reads == 1 }
+        settle()
+        clipboard.reconcileAutomaticSync(allowed: false, peerSupports: false)
+        buffered = 0
+        waitUntil("explicit data still delivered") { self.sent.count == 1 }
+        XCTAssertEqual(sent.first?.transfer, transfer)
+        XCTAssertNil(sent.first?.automatic)
+        clipboard.reset()
+    }
+
+    func testIncomingPhonePushFencesAnAlreadyStartedAutomaticRead() throws {
+        let pasteboard = FakePasteboard(), clipboard = service(pasteboard)
+        clipboard.reconcileAutomaticSync(allowed: true, peerSupports: true)
+        waitUntil("baseline sampled") { pasteboard.countReads > 0 }
+        let gate = DispatchSemaphore(value: 0); pasteboard.readGate = gate; defer { gate.signal() }
+        pasteboard.set(.text(ClipboardPayload(text: "old host copy"))); pasteboard.bump()
+        waitUntil("old automatic read entered") { pasteboard.reads == 1 }
+        let text = String(repeating: "phone paste", count: 900)
+        let frames = try ClipboardChunker.frames(for: ClipboardPayload(text: text), operation: "push", transfer: transfer)
+        clipboard.receive(frames[0], allowed: true)
+        gate.signal(); settle()
+        XCTAssertFalse(sent.contains { $0.automatic == true }, "The first valid phone chunk supersedes an older automatic read")
+        for frame in frames.dropFirst() { clipboard.receive(frame, allowed: true) }
+        waitUntil("phone paste stored") { self.results == ["stored"] }
+        XCTAssertEqual(pasteboard.writes, [ClipboardPayload(text: text)])
+        XCTAssertFalse(sent.contains { $0.automatic == true })
+        clipboard.reset()
+    }
+
+    func testIncomingPhonePushCancelsBackpressuredAutomaticChunks() throws {
+        let pasteboard = FakePasteboard(), clipboard = service(pasteboard)
+        clipboard.reconcileAutomaticSync(allowed: true, peerSupports: true)
+        waitUntil("baseline sampled") { pasteboard.countReads > 0 }
+        buffered = ClipboardLimits.bufferedHighWater
+        pasteboard.set(.text(ClipboardPayload(text: String(repeating: "old host", count: 2_000)))); pasteboard.bump()
+        waitUntil("automatic read completed") { pasteboard.reads == 1 }
+        settle()
+        let text = String(repeating: "phone paste", count: 900)
+        let frames = try ClipboardChunker.frames(for: ClipboardPayload(text: text), operation: "push", transfer: transfer)
+        clipboard.receive(frames[0], allowed: true)
+        buffered = 0; settle()
+        XCTAssertFalse(sent.contains { $0.automatic == true }, "Queued host chunks must not overwrite the phone's newer clipboard")
+        for frame in frames.dropFirst() { clipboard.receive(frame, allowed: true) }
+        waitUntil("phone paste stored") { self.results == ["stored"] }
+        XCTAssertFalse(sent.contains { $0.automatic == true })
+        clipboard.reset()
+    }
+
+    func testHostCopyRepeatingAnEarlierExportAfterPhonePushIsSentAgain() throws {
+        let pasteboard = FakePasteboard(), clipboard = service(pasteboard)
+        clipboard.reconcileAutomaticSync(allowed: true, peerSupports: true)
+        waitUntil("baseline sampled") { pasteboard.countReads > 0 }
+        pasteboard.set(.text(ClipboardPayload(text: "A"))); pasteboard.bump()
+        waitUntil("A exported") { self.sent.contains { $0.automatic == true } }
+        for frame in try ClipboardChunker.frames(for: ClipboardPayload(text: "B"), operation: "push", transfer: transfer) {
+            clipboard.receive(frame, allowed: true)
+        }
+        waitUntil("B stored") { self.results == ["stored"] }
+        sent = []
+        pasteboard.set(.text(ClipboardPayload(text: "A"))); pasteboard.bump()
+        waitUntil("new A exported again") { self.sent.count == 1 }
+        XCTAssertEqual(sent.first?.data, Data("A".utf8))
+        XCTAssertEqual(sent.first?.automatic, true)
+        clipboard.reset()
+    }
+
+    func testAutomaticCopyPreparationDoesNotWaitForABlockedPasteboardProvider() {
+        let pasteboard = FakePasteboard(), clipboard = service(pasteboard)
+        clipboard.reconcileAutomaticSync(allowed: true, peerSupports: true)
+        waitUntil("baseline sampled") { pasteboard.countReads > 0 }
+        let gate = DispatchSemaphore(value: 0); pasteboard.readGate = gate; defer { gate.signal() }
+        pasteboard.set(.text(ClipboardPayload(text: "blocked old copy"))); pasteboard.bump()
+        waitUntil("automatic provider blocked") { pasteboard.reads == 1 }
+        XCTAssertNil(clipboard.prepareForCopyShortcut(automatic: true), "Automatic Copy must post input without waiting for clipboard work")
+        let explicit = clipboard.prepareForCopyShortcut(automatic: false)
+        XCTAssertNotNil(explicit)
+        XCTAssertEqual(explicit?.wait(timeout: .now()), .timedOut, "Legacy afterCopy still needs its ordered baseline")
+        clipboard.reset(); gate.signal()
+        waitUntil("explicit baseline eventually completes") { explicit?.wait(timeout: .now()) == .success }
+    }
+
+    func testHealthyCouchAuthorityExportsWithoutPictureAndStaleHeartbeatCancelsChunks() {
+        let pasteboard = FakePasteboard(), clipboard = service(pasteboard)
+        var health = CouchHealthInputs(routeLocal: true, provenLinkActive: true, heartbeatAge: 0.2,
+            screenLocked: false, consoleUserActive: true, allowControl: true, accessibility: .granted, phonePaused: false)
+        clipboard.automaticPolicy = { CouchHealth.isHealthy(health) }
+        let enabled = HostControlPolicy.isEnabled(userConsent: true, accessibilityPermission: .granted,
+            session: .couch, captureHealthy: false, couchHealthy: CouchHealth.isHealthy(health))
+        XCTAssertTrue(enabled, "Couch control does not require a Picture capture")
+        clipboard.reconcileAutomaticSync(allowed: enabled, peerSupports: true)
+        waitUntil("Couch baseline sampled") { pasteboard.countReads > 0 }
+        pasteboard.set(.text(ClipboardPayload(text: "Couch copy"))); pasteboard.bump()
+        waitUntil("Couch copy exported") { self.sent.count == 1 }
+        XCTAssertEqual(sent.first?.automatic, true)
+        sent = []; buffered = ClipboardLimits.bufferedHighWater
+        pasteboard.set(.text(ClipboardPayload(text: "queued Couch copy"))); pasteboard.bump()
+        waitUntil("second Couch read completed") { pasteboard.reads == 2 }
+        settle()
+        health.heartbeatAge = CouchHealth.heartbeatLimit
+        // No lifecycle reconciliation: the send path must recheck live Couch authority.
+        buffered = 0; settle()
+        XCTAssertTrue(sent.isEmpty)
+        XCTAssertTrue(clipboard.isIdle, "Use-time heartbeat expiry cancels queued chunks before the next health tick")
+        clipboard.reset()
+    }
 
     func testPushStoresTextOnlyAfterTheWholeTransferVerifies() throws {
         let pasteboard = FakePasteboard()

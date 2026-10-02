@@ -10,6 +10,30 @@ final class ClipboardTransferTests: XCTestCase {
         return value
     }
 
+    func testAutomaticMarkerIsDataOnlyAndCannotChangeMidTransfer() throws {
+        var frames = try ClipboardChunker.frames(for: ClipboardPayload(text: text(bytes: 5000)), operation: "data", transfer: transfer)
+        frames = frames.map { var frame = $0; frame.automatic = true; return frame }
+        XCTAssertNoThrow(try frames[0].validate())
+        var assembler = ClipboardAssembler()
+        XCTAssertEqual(assembler.accept(frames[0], at: 1), .progress)
+        var mixed = frames[1]; mixed.automatic = nil
+        XCTAssertEqual(assembler.accept(mixed, at: 1), .failed(transfer: transfer))
+        var push = frames[0]; push.op = "push"
+        XCTAssertThrowsError(try push.validate())
+        var pull = ClipboardFrame.pull(transfer); pull.automatic = true
+        XCTAssertThrowsError(try pull.validate())
+        var result = ClipboardFrame.result(transfer, .stored); result.automatic = true
+        XCTAssertThrowsError(try result.validate())
+    }
+
+    func testClipboardHandshakeOptInPreservesEightFeatureBoundWithRefinement() throws {
+        let request = MacShareBlocker.Handshake.phoneRequest([SessionFeature.videoRefinement, SessionFeature.textClarity])
+        XCTAssertLessThanOrEqual(request.features.count, 8)
+        XCTAssertLessThanOrEqual(request.options?.count ?? 0, MacShareBlocker.Handshake.maximumOptions)
+        XCTAssertTrue(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(request)).contains(SessionFeature.clipboardSync))
+        XCTAssertFalse(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(MacShareBlocker.Handshake(features: [SessionFeature.extendedFeatureList]))).contains(SessionFeature.clipboardSync))
+    }
+
     func testChunkingRoundTripsMultibyteTextSplitAcrossChunkBoundaries() throws {
         let original = text(bytes: 3 * ClipboardLimits.chunkBytes + 17)
         let frames = try ClipboardChunker.frames(for: ClipboardPayload(text: original), operation: "push", transfer: transfer)

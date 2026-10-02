@@ -9,8 +9,8 @@ struct ClipboardNotice: Equatable, Identifiable {
     let tone: Tone
 }
 
-/// Phone half of explicit clipboard transfer. Sends paced chunks, waits for the Mac's
-/// acknowledgment, and reports a visible result. Clipboard contents are never logged or shown.
+/// Phone clipboard transport: explicit sends and negotiated, quiet Mac copies.
+/// Contents are bounded and never logged; metadata alone drives the Paste chip.
 @MainActor
 final class PhoneClipboard: ObservableObject {
     enum Activity: Equatable { case idle, sending, receiving }
@@ -24,12 +24,17 @@ final class PhoneClipboard: ObservableObject {
         var lastActivity: TimeInterval
     }
 
+    static let automaticDisabledKey = "clipboardAutoSyncDisabled"
+    static let pasteChipDisabledKey = "clipboardPasteChipDisabled"
     static let pasteAfterKey = "clipboardPasteAfterSending"
     static let sendTimeout: TimeInterval = 8
     static let receiveTimeout: TimeInterval = 15
 
     @Published private(set) var activity: Activity = .idle
     @Published private(set) var notice: ClipboardNotice?
+    @Published private(set) var showsPasteChip = false
+    @Published private(set) var pasteChipChangeCount: Int?
+    @Published private(set) var automaticCopyRevision: UInt64 = 0
     @Published var pasteAfterSending: Bool {
         didSet { defaults.set(pasteAfterSending, forKey: Self.pasteAfterKey) }
     }
@@ -39,11 +44,21 @@ final class PhoneClipboard: ObservableObject {
     var pressPaste: (() -> Bool)?
     var writeToPasteboard: (ClipboardPayload) -> Void = PhoneClipboard.writeToSystemPasteboard
 
+    /// Only metadata is sampled here. PasteButton performs the single user-initiated content read.
+    var pasteboardMetadata: () -> (changeCount: Int, hasStrings: Bool) = {
+        (UIPasteboard.general.changeCount, UIPasteboard.general.hasStrings)
+    }
+
     private let defaults: UserDefaults
     private let clock: () -> TimeInterval
     private var outbox = ClipboardOutbox()
     private var assembler = ClipboardAssembler()
     private var pending: Pending?
+    private var automaticAssembler = ClipboardAssembler()
+    private var automaticLastActivity: TimeInterval = 0
+    private var lastSyncedChangeCount: Int?
+    private var sendingChangeCount: Int?
+    private var metadataTimer: Timer?
     private var pacer: Timer?
     private var watchdog: Timer?
     private var noticeSerial: UInt64 = 0
@@ -58,7 +73,7 @@ final class PhoneClipboard: ObservableObject {
     var isBusy: Bool { pending != nil }
 
     /// Paste to Mac: replaces the Mac clipboard with this text, then optionally presses ⌘V.
-    func send(_ text: String, pasteAfter: Bool? = nil) {
+    func send(_ text: String, pasteAfter: Bool? = nil, sourceChangeCount: Int? = nil, usesPhonePasteboard: Bool = true) {
         guard pending == nil else { post("Wait for the current clipboard transfer to finish.", .caution); return }
         let transfer = ClipboardTransferID.make()
         let frames: [ClipboardFrame]
@@ -69,6 +84,7 @@ final class PhoneClipboard: ObservableObject {
         } catch {
             post("Your iPhone clipboard has no text to send.", .caution); return
         }
+        sendingChangeCount = usesPhonePasteboard ? (sourceChangeCount ?? pasteboardMetadata().changeCount) : nil
         pending = Pending(transfer: transfer, direction: .toMac, pasteAfter: pasteAfter ?? pasteAfterSending,
                           characters: text.count, lastActivity: clock())
         activity = .sending
@@ -92,6 +108,12 @@ final class PhoneClipboard: ObservableObject {
     }
 
     func receive(_ frame: ClipboardFrame) {
+        if frame.automatic == true {
+            receiveAutomatic(frame)
+            return
+        }
+        // An explicit chunk cannot be appended to an unsolicited transfer.
+        if automaticAssembler.activeTransfer == frame.transfer { automaticAssembler.reset() }
         guard var current = pending, frame.transfer == current.transfer else { return }
         current.lastActivity = clock()
         pending = current
@@ -106,7 +128,7 @@ final class PhoneClipboard: ObservableObject {
             case .progress:
                 break
             case .complete(_, let payload):
-                writeToPasteboard(payload)
+                writeMacPayload(payload)
                 finish("Copied from your Mac · \(Self.characters(payload.text.count))", .success)
             case .failed:
                 finish("The clipboard transfer from your Mac failed. Try again.", .caution)
@@ -116,7 +138,60 @@ final class PhoneClipboard: ObservableObject {
         }
     }
 
+    private func receiveAutomatic(_ frame: ClipboardFrame) {
+        guard !defaults.bool(forKey: Self.automaticDisabledKey), frame.op == "data" else {
+            automaticAssembler.reset(); return
+        }
+        if clock() - automaticLastActivity > ClipboardLimits.reassemblyTimeout { automaticAssembler.reset() }
+        automaticLastActivity = clock()
+        switch automaticAssembler.accept(frame, at: clock()) {
+        case .complete(_, let payload):
+            writeMacPayload(payload)
+            automaticCopyRevision &+= 1
+        case .progress, .failed: break
+        }
+    }
+
+    private func writeMacPayload(_ payload: ClipboardPayload) {
+        writeToPasteboard(payload)
+        lastSyncedChangeCount = pasteboardMetadata().changeCount
+        if showsPasteChip { showsPasteChip = false }
+        pasteChipChangeCount = nil
+    }
+
+    func refreshPasteChip(available: Bool) {
+        let metadata = pasteboardMetadata()
+        let visible = available && !defaults.bool(forKey: Self.pasteChipDisabledKey)
+            && metadata.hasStrings && metadata.changeCount != lastSyncedChangeCount && !isBusy
+        let offeredCount = visible ? metadata.changeCount : nil
+        if pasteChipChangeCount != offeredCount { pasteChipChangeCount = offeredCount }
+        if showsPasteChip != visible { showsPasteChip = visible }
+    }
+
+    func startPasteboardMonitoring() {
+        guard metadataTimer == nil else { return }
+        refreshPasteChip(available: true)
+        metadataTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshPasteChip(available: true) }
+        }
+    }
+
+    func cancelAutomaticReceive() { automaticAssembler.reset() }
+
+    func stopPasteboardMonitoring() {
+        metadataTimer?.invalidate(); metadataTimer = nil
+        if showsPasteChip { showsPasteChip = false }
+        pasteChipChangeCount = nil
+        automaticAssembler.reset()
+    }
+
     func cancel() {
+        automaticAssembler.reset()
+        cancelExplicit()
+    }
+
+    private func cancelExplicit() {
+        sendingChangeCount = nil
         pending = nil
         activity = .idle
         outbox.cancel()
@@ -137,6 +212,9 @@ final class PhoneClipboard: ObservableObject {
             finish(Self.message(forSendRefusal: status), .caution)
             return
         }
+        if pasteboardMetadata().changeCount == sendingChangeCount {
+            lastSyncedChangeCount = sendingChangeCount
+        }
         if pasteAfter {
             let pasted = pressPaste?() == true
             finish(pasted ? "Pasted on your Mac" : "On your Mac’s clipboard. Press ⌘V on the Mac to paste.", .success)
@@ -146,7 +224,7 @@ final class PhoneClipboard: ObservableObject {
     }
 
     private func finish(_ message: String, _ tone: ClipboardNotice.Tone) {
-        cancel()
+        cancelExplicit()
         post(message, tone)
     }
 
@@ -230,7 +308,7 @@ final class PhoneClipboard: ObservableObject {
            let url = URL(string: payload.text.trimmingCharacters(in: .whitespacesAndNewlines)) {
             item[UTType.url.identifier] = url
         }
-        UIPasteboard.general.setItems([item], options: [.localOnly: true])
+        UIPasteboard.general.setItems([item], options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(300)])
     }
 }
 

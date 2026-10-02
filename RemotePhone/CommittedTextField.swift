@@ -159,6 +159,8 @@ struct CommittedTextField: UIViewRepresentable {
 
     /// Focus once after attachment, without stealing it back on subsequent draft updates.
     final class InitialFocusTextView: UITextView {
+        // The session canvas owns three-finger copy/paste even while this draft has focus.
+        override var editingInteractionConfiguration: UIEditingInteractionConfiguration { .none }
         var focusOnAppear = false
         var appliedEntry: (style: TextEntryStyle, secure: Bool) = (.exact, false)
         private var didFocus = false

@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-/// Explicit, user-initiated text clipboard transfer over the ordered control channel.
+/// Bounded text clipboard transfer over the ordered control channel.
 /// Every transfer is bounded, chunked below the 16 KiB control-message limit, paced by
 /// the channel's queued bytes so input stays responsive, and integrity-checked on arrival.
 enum ClipboardLimits {
@@ -46,13 +46,16 @@ struct ClipboardFrame: Codable, Equatable {
     var data: Data? = nil
     var status: String? = nil
     var afterCopy: Bool? = nil
+    /// Capability-negotiated Mac→phone sync. Every chunk carries the same marker.
+    var automatic: Bool? = nil
 
     static let operations: Set<String> = ["push", "pull", "data", "result"]
 
     var carriesPayload: Bool { op == "push" || op == "data" }
 
     func validate() throws {
-        guard version == 1, Self.operations.contains(op), ClipboardTransferID.isValid(transfer) else {
+        guard version == 1, Self.operations.contains(op), ClipboardTransferID.isValid(transfer),
+              automatic == nil || (op == "data" && automatic == true) else {
             throw RemoteError.invalidMessage
         }
         switch op {
@@ -167,6 +170,7 @@ struct ClipboardAssembler {
 
     private var transfer: String?
     private var kind = ""
+    private var automatic: Bool?
     private var count = 0
     private var bytes = 0
     private var digest = ""
@@ -185,13 +189,14 @@ struct ClipboardAssembler {
             reset()
             transfer = frame.transfer
             kind = frame.kind ?? ""
+            automatic = frame.automatic
             count = frame.count ?? 0
             bytes = frame.bytes ?? 0
             digest = frame.digest ?? ""
             buffer.reserveCapacity(bytes)
         } else {
             guard frame.transfer == transfer, index == nextIndex, frame.kind == kind,
-                  frame.count == count, frame.bytes == bytes, frame.digest == digest
+                  frame.count == count, frame.bytes == bytes, frame.digest == digest, frame.automatic == automatic
             else { return fail(frame.transfer) }
         }
         buffer.append(data)
@@ -215,6 +220,7 @@ struct ClipboardAssembler {
     mutating func reset() {
         transfer = nil
         kind = ""
+        automatic = nil
         count = 0
         bytes = 0
         digest = ""

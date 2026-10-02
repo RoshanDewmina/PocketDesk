@@ -28,6 +28,9 @@ enum NativeGestureCommand {
     case secondaryClick
     /// A three-finger tap: the Mac's middle mouse button.
     case middleClick
+    /// Three-finger pinch copies the Mac selection; spreading pastes the Mac clipboard.
+    case clipboardCopy
+    case clipboardPaste
     /// A mouse's Back or Forward side button.
     case auxiliaryClick(AuxiliaryMouseButton)
     case workspaceSwipe(direction: NativeSwipeDirection)
@@ -74,6 +77,10 @@ final class NativeGestureEngine {
     static let workspaceLandingSlop: CGFloat = 12
     /// Ignore resting-finger jitter when comparing each finger's direction.
     static let multiFingerMotionSlop: CGFloat = 2
+    static let clipboardGesturesDisabledKey = "clipboardGesturesDisabled"
+    /// Require both proportional and absolute radial travel, beyond landing jitter.
+    static let clipboardScaleTravel: CGFloat = 0.2
+    static let clipboardRadiusTravel: CGFloat = 12
     /// One moving finger may just lead a scroll. Allow its partner to catch up before
     /// recognizing a deliberate pinch with a stationary anchor.
     static let anchoredPinchDelay: TimeInterval = 0.12
@@ -82,6 +89,10 @@ final class NativeGestureEngine {
 
     var onCommand: (NativeGestureCommand) -> Bool
     var onPointerMotionEnded: () -> Void = {}
+    /// Internal rollback switch; injected by deterministic tests without changing global defaults.
+    var clipboardGesturesEnabled: () -> Bool = {
+        !UserDefaults.standard.bool(forKey: NativeGestureEngine.clipboardGesturesDisabledKey)
+    }
     /// The Mac posts momentum phases (`SessionFeature.momentumScroll`): a flicked scroll coasts.
     var momentumEnabled = false
     /// The Mac runs the coast from the lift velocity (`SessionFeature.hostMomentum`): one message
@@ -127,7 +138,7 @@ final class NativeGestureEngine {
     /// The canvas point a direct touch targets: where it landed, or the first tap of a double tap.
     private var directPoint: CGPoint = .zero
     private var workspaceTapEligible = false
-    private var workspaceSwipeFired = false
+    private var workspaceCommandFired = false
 
     private(set) var enabled: Bool
     private(set) var panMode: Bool
@@ -237,7 +248,7 @@ final class NativeGestureEngine {
 
         if workspaceSequence {
             if count == 0 {
-                if workspaceTapEligible && !workspaceSwipeFired && enabled && !panMode &&
+                if workspaceTapEligible && !workspaceCommandFired && enabled && !panMode &&
                     time - startTime <= Self.threeFingerTapDuration {
                     fireMiddleClick()
                 }
@@ -372,6 +383,7 @@ final class NativeGestureEngine {
         stopMomentum()
         cancelOwnedCommand()
         lastTap = nil
+        workspaceTapEligible = false
         if !active.isEmpty { mode = .blocked }
     }
 
@@ -678,7 +690,7 @@ final class NativeGestureEngine {
         workspaceSequence = true
         workspaceOrigins = touches
         workspaceTapEligible = eligible && touches.count == 3
-        workspaceSwipeFired = false
+        workspaceCommandFired = false
         lastTap = nil
         hadTwo = true
         mode = eligible ? .workspaceCandidate : .blocked
@@ -709,6 +721,7 @@ final class NativeGestureEngine {
     private func processWorkspace(_ touches: [UInt64: CGPoint], at time: TimeInterval) {
         guard mode == .workspaceCandidate, enabled, !panMode else { return }
         guard time - startTime <= 1 else { mode = .blocked; return }
+        if clipboardGesturesEnabled(), processClipboardGesture(touches) { return }
         let deltas = touches.compactMap { id, point -> CGSize? in
             guard let origin = workspaceOrigins[id] else { return nil }
             return CGSize(width: point.x - origin.x, height: point.y - origin.y)
@@ -725,9 +738,66 @@ final class NativeGestureEngine {
             direction = dy > 0 ? .down : .up
         } else { return }
         mode = .workspaceFired
-        workspaceSwipeFired = true
+        workspaceCommandFired = true
         workspaceTapEligible = false
         _ = onCommand(.workspaceSwipe(direction: direction))
+    }
+
+    private func processClipboardGesture(_ touches: [UInt64: CGPoint]) -> Bool {
+        let ids = workspaceOrigins.keys.sorted()
+        guard ids.count == 3 else { return false }
+        let origins = ids.compactMap { workspaceOrigins[$0] }
+        let points = ids.compactMap { touches[$0] }
+        guard points.count == 3 else { return false }
+        func center(_ points: [CGPoint]) -> CGPoint {
+            CGPoint(x: points.reduce(0) { $0 + $1.x } / 3,
+                    y: points.reduce(0) { $0 + $1.y } / 3)
+        }
+        let originCenter = center(origins), currentCenter = center(points)
+        func radius(_ points: [CGPoint], around center: CGPoint) -> CGFloat {
+            sqrt(points.reduce(0) { sum, point in
+                let span = distance(point, center)
+                return sum + span * span
+            } / 3)
+        }
+        let initialRadius = radius(origins, around: originCenter)
+        guard initialRadius >= Self.clipboardRadiusTravel else { return false }
+        let currentRadius = radius(points, around: currentCenter)
+        let radialTravel = currentRadius - initialRadius
+        let scale = currentRadius / initialRadius
+        guard abs(radialTravel) >= Self.clipboardRadiusTravel,
+              abs(scale - 1) >= Self.clipboardScaleTravel,
+              distance(originCenter, currentCenter) <= abs(radialTravel) * 0.8 else { return false }
+
+        // A pinch changes each separation in the same direction. One wandering finger,
+        // or uneven parallel swipes, cannot borrow the average span to become copy/paste.
+        let sign: CGFloat = radialTravel > 0 ? 1 : -1
+        var changingPairs = 0
+        for first in 0..<2 {
+            for second in (first + 1)..<3 {
+                let before = distance(origins[first], origins[second])
+                guard before >= Self.clipboardRadiusTravel else { continue }
+                let after = distance(points[first], points[second])
+                guard (after - before) * sign >= 4 else { return false }
+                changingPairs += 1
+            }
+        }
+        guard changingPairs >= 2 else { return false }
+
+        // Reject rotation/shear: each contact must stay near its scaled radial path.
+        let error = sqrt(zip(origins, points).reduce(CGFloat.zero) { sum, pair in
+            let expected = CGPoint(x: currentCenter.x + (pair.0.x - originCenter.x) * scale,
+                                   y: currentCenter.y + (pair.0.y - originCenter.y) * scale)
+            let deviation = distance(expected, pair.1)
+            return sum + deviation * deviation
+        } / 3)
+        guard error <= abs(radialTravel) * 0.55 else { return false }
+        mode = .workspaceFired
+        workspaceCommandFired = true
+        workspaceTapEligible = false
+        // Rejection still consumes this physical gesture; never retry or emit another action.
+        _ = onCommand(radialTravel < 0 ? .clipboardCopy : .clipboardPaste)
+        return true
     }
 
     private func endPointerMotion() {
@@ -765,7 +835,7 @@ final class NativeGestureEngine {
         workspaceSequence = false
         workspaceOrigins = [:]
         workspaceTapEligible = false
-        workspaceSwipeFired = false
+        workspaceCommandFired = false
         hadTwo = false
         multiTapEligible = false
         multiOrigins = [:]

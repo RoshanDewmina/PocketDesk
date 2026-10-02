@@ -80,6 +80,22 @@ final class CouchPhoneModelTests: XCTestCase {
         XCTAssertFalse(model.canControl)
     }
 
+    func testCouchClipboardNeedsCurrentOwnerControl() throws {
+        let model = try liveCouch()
+        model.sceneChanged(.active)
+        XCTAssertTrue(model.clipboardAvailable)
+        model.ageCouchStatusForTesting(by: 1.01)
+        XCTAssertFalse(model.clipboardAvailable, "A stale Couch heartbeat must also stop clipboard effects")
+        try deliver(status(true, mode: "couch", features: couchFeatures), to: model)
+        XCTAssertTrue(model.clipboardAvailable)
+        try deliver(status(false, mode: "couch", features: couchFeatures), to: model)
+        XCTAssertFalse(model.clipboardAvailable)
+        try deliver(status(true, mode: "couch", features: couchFeatures), to: model)
+        try deliver(RemoteAction(action: "viewing", x: 0, epoch: 2), to: model)
+        XCTAssertFalse(model.clipboardAvailable, "Control consent remains required")
+        model.disconnect()
+    }
+
     func testAStaleCouchStatusStopsControl() throws {
         let model = try liveCouch()
         model.ageCouchStatusForTesting(by: 1.01)

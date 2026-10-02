@@ -333,7 +333,15 @@ struct NativeSessionView: View {
             }
             #endif
         }
-        .onDisappear { cancelGesture(); cancelVoiceInput() }
+        .task(id: model.clipboardAvailable && unifiedClipboard) {
+            if model.clipboardAvailable && unifiedClipboard {
+                model.clipboard.startPasteboardMonitoring()
+            } else {
+                model.clipboard.stopPasteboardMonitoring()
+            }
+        }
+        .onDisappear { cancelGesture(); cancelVoiceInput(); model.clipboard.stopPasteboardMonitoring() }
+        .sensoryFeedback(.success, trigger: model.clipboard.automaticCopyRevision)
         .task(id: model.acceptedClicks) {
             guard model.acceptedClicks > 0 else { return }
             clickAcknowledged = true
@@ -519,12 +527,12 @@ struct NativeSessionView: View {
         micOrReleaseTile
             .frame(maxWidth: wide ? CGFloat.infinity : nil)
             .accessibilityIdentifier("remote.couch.mic")
-        Button(action: toggleClipboardRow) { Label("Clip", systemImage: "list.clipboard") }
+        Button(action: toggleClipboardRow) { Label(unifiedClipboard ? "Files" : "Clip", systemImage: unifiedClipboard ? "folder" : "list.clipboard") }
             .buttonStyle(FarsideTileButtonStyle(selected: showClipboardRow))
             .frame(maxWidth: wide ? CGFloat.infinity : nil)
-            .disabled(!showsClipboard || showVoiceInput)
-            .accessibilityLabel("Clipboard")
-            .accessibilityHint(showsClipboard ? "Paste to or copy from your Mac" : "Clipboard needs the updated Farside on your Mac")
+            .disabled(!(unifiedClipboard ? model.fileTransferSupported : showsClipboard) || showVoiceInput)
+            .accessibilityLabel(unifiedClipboard ? "Files" : "Clipboard")
+            .accessibilityHint(unifiedClipboard ? "Send a file or photo, or get a file from your Mac" : "Paste to or copy from your Mac")
             .accessibilityIdentifier("remote.couch.clip")
         Button { _ = model.requestMode(.picture) } label: { Label("Picture", systemImage: "photo") }
             .buttonStyle(FarsideTileButtonStyle())
@@ -803,6 +811,11 @@ struct NativeSessionView: View {
 
     private var dock: some View {
         VStack(spacing: 10) {
+            if unifiedClipboard && model.clipboardAvailable && model.clipboard.showsPasteChip && !keyboardOpen {
+                pasteToMacButton
+                    .labelStyle(.titleAndIcon)
+                    .buttonBorderShape(.capsule)
+            }
             if controlsCollapsed && !couch {
                 if model.dragging { holdChip.transition(.opacity) }
                 if dockHintVisible && !model.dragging {
@@ -899,12 +912,12 @@ struct NativeSessionView: View {
                 .frame(maxWidth: .infinity)
                 .accessibilityLabel("Keyboard")
             micOrReleaseTile.frame(maxWidth: .infinity)
-            Button(action: toggleClipboardRow) { Label("Clip", systemImage: "list.clipboard") }
+            Button(action: toggleClipboardRow) { Label(unifiedClipboard ? "Files" : "Clip", systemImage: unifiedClipboard ? "folder" : "list.clipboard") }
                 .buttonStyle(FarsideTileButtonStyle(selected: showClipboardRow))
                 .frame(maxWidth: .infinity)
-                .disabled(!showsClipboard || showVoiceInput)
-                .accessibilityLabel("Clipboard")
-                .accessibilityHint(showsClipboard ? "Paste to or copy from your Mac" : "Clipboard needs the updated Farside on your Mac")
+                .disabled(!(unifiedClipboard ? model.fileTransferSupported : showsClipboard) || showVoiceInput)
+                .accessibilityLabel(unifiedClipboard ? "Files" : "Clipboard")
+                .accessibilityHint(unifiedClipboard ? "Send a file or photo, or get a file from your Mac" : "Paste to or copy from your Mac")
             Button { toggleMode() } label: {
                 Label("Fit", systemImage: viewport.mode == .fill ? "arrow.down.right.and.arrow.up.left"
                                                                  : "arrow.up.left.and.arrow.down.right")
@@ -1124,27 +1137,29 @@ struct NativeSessionView: View {
 
     private var clipboardRow: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                pasteToMacButton
-                    .labelStyle(.titleAndIcon)
-                    .buttonBorderShape(.capsule)
-                Button { model.copySelectionFromMac() } label: {
-                    Label("Copy from Mac", systemImage: "doc.on.doc")
-                        .font(.subheadline.weight(.semibold))
+            if !unifiedClipboard {
+                HStack(spacing: 8) {
+                    pasteToMacButton
+                        .labelStyle(.titleAndIcon)
+                        .buttonBorderShape(.capsule)
+                    Button { model.copySelectionFromMac() } label: {
+                        Label("Copy from Mac", systemImage: "doc.on.doc")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .buttonStyle(FarsideSecondaryButtonStyle(height: 44, fullWidth: false))
+                    .disabled(!model.canControl || !model.clipboardAvailable || model.clipboard.isBusy)
+                    .accessibilityHint("Presses Command-C on your Mac, then copies the selection to this iPhone")
                 }
-                .buttonStyle(FarsideSecondaryButtonStyle(height: 44, fullWidth: false))
-                .disabled(!model.canControl || !model.clipboardAvailable || model.clipboard.isBusy)
-                .accessibilityHint("Presses Command-C on your Mac, then copies the selection to this iPhone")
+                HStack {
+                    Text("Text · 256 KB max").farsideCaption()
+                    Spacer(minLength: 8)
+                    Button("Get Mac clipboard") { model.fetchMacClipboard() }
+                        .buttonStyle(FarsideLinkButtonStyle())
+                        .disabled(!model.clipboardAvailable || model.clipboard.isBusy)
+                        .accessibilityHint("Copies what is already on your Mac’s clipboard to this iPhone")
+                }
+                Divider().overlay(Farside.Palette.line)
             }
-            HStack {
-                Text("Text · 256 KB max").farsideCaption()
-                Spacer(minLength: 8)
-                Button("Get Mac clipboard") { model.fetchMacClipboard() }
-                    .buttonStyle(FarsideLinkButtonStyle())
-                    .disabled(!model.clipboardAvailable || model.clipboard.isBusy)
-                    .accessibilityHint("Copies what is already on your Mac’s clipboard to this iPhone")
-            }
-            Divider().overlay(Farside.Palette.line)
             FileTransferRow(model: model, files: model.files)
         }
         .padding(14)
@@ -1174,7 +1189,7 @@ struct NativeSessionView: View {
                         keySeparator
                         keyButton("Delete", "delete.left", "delete")
                         keyButton("Return", "return", "return")
-                        if showsClipboard {
+                        if !unifiedClipboard && showsClipboard {
                             keySeparator
                             pasteToMacButton
                                 .labelStyle(.iconOnly)
@@ -1193,6 +1208,11 @@ struct NativeSessionView: View {
                 .clipShape(.capsule)
                 .accessibilityIdentifier("remote.keys")
 
+                if unifiedClipboard && model.clipboardAvailable && model.clipboard.showsPasteChip {
+                    pasteToMacButton
+                        .labelStyle(.titleAndIcon)
+                        .buttonBorderShape(.capsule)
+                }
                 if model.dragging {
                     Button { model.cancelInput() } label: {
                         Image(systemName: "hand.raised.fill").frame(width: 46, height: 46)
@@ -1490,13 +1510,18 @@ struct NativeSessionView: View {
         .farsidePlate(23, fill: Farside.Palette.panel.opacity(0.97), stroke: Farside.Palette.line2)
     }
 
+    private var unifiedClipboard: Bool {
+        model.automaticClipboardSupported && !UserDefaults.standard.bool(forKey: PhoneClipboard.pasteChipDisabledKey)
+    }
+
     private var showsClipboard: Bool { model.clipboardSupported || offlineLayoutCheck }
 
     /// The system paste control reads the iPhone clipboard without a paste prompt because the
     /// person tapped it; Farside never reads the iPhone clipboard on its own.
     private var pasteToMacButton: some View {
-        PasteButton(payloadType: String.self) { strings in
-            Task { @MainActor in model.pasteToMac(strings) }
+        let offeredCount = model.clipboard.pasteChipChangeCount
+        return PasteButton(payloadType: String.self) { strings in
+            Task { @MainActor in model.pasteToMac(strings, sourceChangeCount: offeredCount) }
         }
         .tint(Farside.Palette.panel2)
         .disabled(!model.clipboardAvailable || model.clipboard.isBusy)
@@ -2026,7 +2051,7 @@ struct NativeSessionView: View {
                 summaryRow("Picture", "photo", value: model.streamQuality.title, page: .picture)
                 summaryRow("Pointer", "cursorarrow", value: "", page: .pointer)
                 summaryRow("View", "arrow.up.left.and.arrow.down.right", value: zoomDescription, page: .view)
-                if showsClipboard {
+                if showsClipboard && !model.automaticClipboardSupported {
                     summaryRow("Clipboard", "list.clipboard",
                                value: model.clipboard.pasteAfterSending ? "⌘V after sending" : "Send only", page: .clipboard)
                 }
@@ -2296,12 +2321,16 @@ struct NativeSessionView: View {
     @ViewBuilder private var clipboardSettingsSection: some View {
         if showsClipboard {
             Section {
-                Toggle("Press ⌘V after sending", isOn: Binding(get: { model.clipboard.pasteAfterSending },
-                                                               set: { model.clipboard.pasteAfterSending = $0 }))
-                    .toggleStyle(FarsideSwitchStyle())
-                    .listRowBackground(Farside.Palette.panel)
+                if !model.automaticClipboardSupported {
+                    Toggle("Press ⌘V after sending", isOn: Binding(get: { model.clipboard.pasteAfterSending },
+                                                                   set: { model.clipboard.pasteAfterSending = $0 }))
+                        .toggleStyle(FarsideSwitchStyle())
+                        .listRowBackground(Farside.Palette.panel)
+                }
             } footer: {
-                Text("Send and copy from the dock’s Clip button. Text only, up to 256 KB. Farside reads your Mac’s clipboard only when you ask, and never shares items marked as passwords.")
+                Text(model.automaticClipboardSupported
+                     ? "Mac text copies arrive here automatically while you control it. Paste sends iPhone text only when you tap. Text only, up to 256 KB; items marked as passwords are never shared."
+                     : "Send and copy from the dock’s Clip button. Text only, up to 256 KB. Farside reads your Mac’s clipboard only when you ask, and never shares items marked as passwords.")
                     .foregroundStyle(Farside.Palette.ash)
             }
         }

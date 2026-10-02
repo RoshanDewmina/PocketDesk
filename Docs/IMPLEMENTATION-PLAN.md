@@ -8,6 +8,15 @@ Receipts and continuation: /Users/roshansilva/Documents/Codex/2026-10-01/perf-pu
 
 # Active full-feature swarm — 30 September 2026
 
+## Clipboard lane — 1 October 2026 (D56 / ND22 reversal)
+
+Roshan approved automatic Mac→iPhone text sharing during live owner Picture or healthy Couch control sessions, single-tap system Paste on phone→Mac, three-finger pinch/spread Mac shortcuts, and Files-only transfer panel for negotiated peers. Worktree `~/Developer/farside-codex-clipboard`, branch `claude/codex-clipboard`, baseline `3273f63` (20261001.4). Root owns protocol/phone/UI/integration, Sol/high workers own host and gestures, fresh Sol/high review approved after cancellation/dedupe/discoverability/focused-responder fixes. No Astra workers and no external coding agents.
+
+Contract: `clipboard.sync.1` is a bounded known handshake option (feature list remains ≤8), `automatic: true` marks every unsolicited `data` chunk, host advertisement/polling requires phone opt-in. Watcher baselines on activation, polls 0.5 s, filters private types, enforces 256 KB, deduplicates latest synchronized value and fences reads/outbox when phone push or authority changes. Phone samples `changeCount`/`hasStrings`, carries offered generation through the system PasteButton callback, writes local-only with five-minute expiration, and keeps independent automatic reassembly. Legacy peers keep explicit controls; Couch additionally requires current healthy control status. Internal rollback keys: `clipboardAutoSyncDisabled`, `clipboardPasteChipDisabled`, `clipboardGesturesDisabled`; no new settings.
+
+Fresh source review approved with no blocking/major findings. First host build passed (`host-build.log`, exit 0); a later small Cmd-C preparation fix requires final incremental host verification. Core/phone builds and tests are waiting on the shared lock, so no final automated acceptance claim is made. Logs: `outputs/clipboard/`. Required checks: core clipboard/gesture/handshake dependencies, phone clipboard and focused-text regressions, host/phone builds. Device installation is prohibited in this lane; orchestrator must integrate before any combined candidate install. Physical gesture feel/iOS editing arbitration, paste privacy, actual layout fit, mixed-version devices and LAN timing remain unverified. Exact device steps/pass criteria: `~/Documents/Codex/2026-10-01/perf-push/codex/clipboard-NOTES.md`, NEEDS ORCHESTRATOR.
+
+
 Direct user authorization: execute the reviewed proposal in parallel, notify when done and ready for testing. This supersedes discussion-only holds for the scoped implementation. Hands-on/provider/publication gates remain deferred. Current main and existing dirty ledger were left intact; root integration branch began at7c81913.
 
 Runtime: root +3 maximum active workers, GPT6.1Sol high for sensitive packages, no Astra; native collaboration only. Parent owns protocol, dependencies, generated project and integration. Stable Xcode + shared /tmp/farside-xcodebuild.lock; quiet host for later physical measurements. Source/fixture/build readiness is distinct from installed/provider/physical acceptance.

@@ -1658,21 +1658,27 @@ final class PhoneRemoteModel: ObservableObject {
     }
     #endif
 
+    var automaticClipboardSupported: Bool {
+        hostFeatures.contains(SessionFeature.clipboardSync)
+            && connection.requestedFeatures.contains(SessionFeature.clipboardSync)
+            && !UserDefaults.standard.bool(forKey: PhoneClipboard.automaticDisabledKey)
+    }
+
     var clipboardSupported: Bool { hostFeatures.contains(SessionFeature.clipboardText) }
 
     /// Clipboard transfer needs a live session with control allowed on the Mac, but not a
     /// fresh picture: it changes pasteboards, not the screen.
     var clipboardAvailable: Bool {
-        !viewOnlyConfirmed && !pendingViewOnlyStart && !awaitingViewOnlyExit && !pipBackground && clipboardSupported && connection.connected && controlAllowed && !privacyShield && !contentConcealed
+        sceneIsActive && (sessionMode != .couch || canControl) && !captureScopeViewOnly && !viewOnlyConfirmed && !pendingViewOnlyStart && !awaitingViewOnlyExit && !pipBackground && clipboardSupported && connection.connected && controlAllowed && !privacyShield && !contentConcealed
     }
 
-    func pasteToMac(_ strings: [String]) {
+    func pasteToMac(_ strings: [String], sourceChangeCount: Int? = nil) {
         guard clipboardAvailable else { clipboard.postUnavailable(clipboardUnavailableMessage); return }
         guard let text = strings.first(where: { !$0.isEmpty }) else {
             clipboard.postUnavailable("Your iPhone clipboard has no text to send.")
             return
         }
-        clipboard.send(text)
+        clipboard.send(text, pasteAfter: automaticClipboardSupported ? true : nil, sourceChangeCount: sourceChangeCount)
     }
 
     /// Presses ⌘C on the Mac through the admitted key path, then brings the copied text here.
@@ -1683,7 +1689,7 @@ final class PhoneRemoteModel: ObservableObject {
             clipboard.postUnavailable("Copy needs control of your Mac and a fresh picture.")
             return
         }
-        clipboard.requestFromMac(afterCopy: true)
+        if !automaticClipboardSupported { clipboard.requestFromMac(afterCopy: true) }
     }
 
     func fetchMacClipboard() {
@@ -1759,7 +1765,7 @@ final class PhoneRemoteModel: ObservableObject {
         sendToMac.pendingTransfer = { [weak self] in self?.files.engine.outgoing?.transfer }
         sendToMac.sendText = { [weak self] text in
             guard let self, self.clipboardAvailable else { return false }
-            self.clipboard.send(text, pasteAfter: false)
+            self.clipboard.send(text, pasteAfter: false, usesPhonePasteboard: false)
             return true
         }
         sendToMac.sendLink = { [weak self] url in self?.files.sendLink(url) ?? false }
@@ -2061,6 +2067,16 @@ let now = ProcessInfo.processInfo.systemUptime
             return sendInput("click", count: count, probeTextFocus: count == 1 || count == 2)
         case .secondaryClick:
             return sendInput("right", count: 1)
+        case .clipboardCopy:
+            guard !UserDefaults.standard.bool(forKey: "clipboardGesturesDisabled"),
+                  !dragging, activeHold == nil, clipboardAvailable else { return false }
+            guard automaticClipboardSupported || !clipboard.isBusy, commandShortcut("c") else { return false }
+            if !automaticClipboardSupported { clipboard.requestFromMac(afterCopy: true) }
+            return true
+        case .clipboardPaste:
+            guard !UserDefaults.standard.bool(forKey: "clipboardGesturesDisabled"),
+                  !dragging, activeHold == nil, clipboardAvailable else { return false }
+            return commandShortcut("v")
         case .middleClick:
             return middleClick()
         case .auxiliaryClick(let button):
@@ -2695,7 +2711,15 @@ let now = ProcessInfo.processInfo.systemUptime
             guard action.epoch == geometryEpoch else { return }
             receiveDisplays(action)
         case "clipboard":
-            if let frame = action.clipboard { clipboard.receive(frame) }
+            if let frame = action.clipboard {
+                if frame.automatic == true {
+                    guard action.epoch == geometryEpoch, clipboardAvailable, hostPresence == nil, automaticClipboardSupported else {
+                        clipboard.cancelAutomaticReceive()
+                        return
+                    }
+                }
+                clipboard.receive(frame)
+            }
         case "file":
             if let frame = action.file { files.engine.receive(frame) }
         case "release":

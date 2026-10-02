@@ -63,15 +63,23 @@ final class SystemHostPasteboard: HostPasteboardAccess, @unchecked Sendable {
     }
 }
 
-/// Answers explicit phone requests only. It never observes the pasteboard on its own and
-/// never logs contents; frames carry only sizes, digests and opaque transfer identifiers.
+/// Answers explicit requests and observes new copies only during an opted-in control session.
+/// Contents stay in memory, pass the same privacy filter, and are never logged.
 @MainActor
 final class HostClipboardService {
     var transport: ((ClipboardFrame) -> Bool)?
     var bufferedAmount: (() -> UInt64?)?
+    /// Rechecked on the main actor before admitting a read or sending each automatic chunk.
+    var automaticPolicy: (() -> Bool)?
 
     private final class Baseline: @unchecked Sendable {
         var changeCount: Int?
+    }
+
+    /// Accessed only on the pasteboard queue; each activation has a fresh observation.
+    private final class AutomaticObservation: @unchecked Sendable {
+        var changeCount: Int?
+        var phoneDigest: String?
     }
 
     private let pasteboard: HostPasteboardAccess
@@ -79,6 +87,7 @@ final class HostClipboardService {
     private let clock: () -> TimeInterval
     private let readTimeout: TimeInterval
     private let copyWait: TimeInterval
+    private let automaticPollInterval: TimeInterval
     private let baseline = Baseline()
     private var assembler = ClipboardAssembler()
     private var outbox = ClipboardOutbox()
@@ -87,20 +96,107 @@ final class HostClipboardService {
     private var pendingRead: String?
     private var pacer: Timer?
     private var maintenance: Timer?
+    private var automaticTimer: Timer?
+    private var automaticObservation: AutomaticObservation?
+    private var automaticLease = TransferEffectLease()
+    private var automaticGeneration: UInt64 = 0
+    // Survives stop/reset until the actual queue job returns: a blocked provider cannot
+    // accumulate queued polling jobs across rapid policy or session changes.
+    private var automaticReadInFlight = false
+    private var automaticDigest: String?
+    private var automaticOutbox = false
 
     init(pasteboard: HostPasteboardAccess = SystemHostPasteboard(),
          queue: DispatchQueue = DispatchQueue(label: "PocketDesk.clipboard", qos: .userInitiated),
          clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
          readTimeout: TimeInterval = 12,
-         copyWait: TimeInterval = 1.2) {
+         copyWait: TimeInterval = 1.2,
+         automaticPollInterval: TimeInterval = 0.5) {
         self.pasteboard = pasteboard
         self.queue = queue
         self.clock = clock
         self.readTimeout = readTimeout
         self.copyWait = copyWait
+        self.automaticPollInterval = automaticPollInterval
     }
 
+    deinit { automaticTimer?.invalidate() }
+
     var isIdle: Bool { pendingRead == nil && outbox.isEmpty && assembler.activeTransfer == nil }
+
+    func reconcileAutomaticSync(allowed: Bool, peerSupports: Bool) {
+        guard allowed, peerSupports, automaticPolicy?() != false else { stopAutomaticSync(); return }
+        guard automaticObservation == nil else { return }
+        automaticObservation = AutomaticObservation()
+        automaticLease = TransferEffectLease()
+        automaticTimer = Timer(timeInterval: automaticPollInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pollAutomaticClipboard() }
+        }
+        if let automaticTimer { RunLoop.main.add(automaticTimer, forMode: .common) }
+        pollAutomaticClipboard() // Metadata baseline only; never export pre-session contents.
+    }
+
+    func stopAutomaticSync() {
+        automaticLease.retire()
+        automaticGeneration &+= 1
+        automaticTimer?.invalidate(); automaticTimer = nil
+        automaticObservation = nil
+        automaticDigest = nil
+        if automaticOutbox {
+            outbox.cancel()
+            automaticOutbox = false
+            pacer?.invalidate(); pacer = nil
+        }
+    }
+
+    private func pollAutomaticClipboard() {
+        guard let observation = automaticObservation else { return }
+        guard automaticPolicy?() != false else { stopAutomaticSync(); return }
+        guard !automaticReadInFlight, pendingRead == nil, outbox.isEmpty, assembler.activeTransfer == nil else { return }
+        automaticReadInFlight = true
+        let generation = automaticGeneration, lease = automaticLease, pasteboard = self.pasteboard
+        queue.async { [weak self] in
+            var result: HostPasteboardRead?
+            if lease.isActive {
+                let count = pasteboard.changeCount
+                if let previous = observation.changeCount, previous != count {
+                    observation.changeCount = count
+                    if lease.isActive {
+                        let read = pasteboard.read(limit: ClipboardLimits.maximumBytes)
+                        // Ownership may change while a lazy provider or privacy prompt is blocking.
+                        if lease.isActive, pasteboard.changeCount == count {
+                            if case .text(let payload) = read {
+                                let digest = ClipboardDigest.hex(Data(payload.text.utf8))
+                                if digest != observation.phoneDigest {
+                                    observation.phoneDigest = nil
+                                    result = read
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    observation.changeCount = count
+                }
+            }
+            let completed = result
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.automaticReadInFlight = false
+                guard self.automaticGeneration == generation, self.automaticObservation != nil,
+                      lease.isActive else { return }
+                guard self.automaticPolicy?() != false else { self.stopAutomaticSync(); return }
+                guard let completed, case .text(let payload) = completed,
+                      self.pendingRead == nil, self.outbox.isEmpty else { return }
+                guard var frames = try? ClipboardChunker.frames(for: payload, operation: "data", transfer: ClipboardTransferID.make()),
+                      let digest = frames.first?.digest, digest != self.automaticDigest else { return }
+                for index in frames.indices { frames[index].automatic = true }
+                self.automaticDigest = digest
+                self.automaticOutbox = true
+                self.outbox.load(frames)
+                self.pump()
+            }
+        }
+    }
 
     func receive(_ frame: ClipboardFrame, allowed: Bool) {
         guard allowed else {
@@ -117,6 +213,10 @@ final class HostClipboardService {
 
     /// Records the pasteboard generation before a phone-sent ⌘C is posted, so a following
     /// `afterCopy` request can wait for the copy instead of returning the previous item.
+    func prepareForCopyShortcut(automatic: Bool) -> DispatchGroup? {
+        automatic ? nil : prepareForCopyShortcut()
+    }
+
     @discardableResult
     func prepareForCopyShortcut() -> DispatchGroup {
         let pasteboard = self.pasteboard, baseline = self.baseline
@@ -130,6 +230,7 @@ final class HostClipboardService {
     }
 
     func reset() {
+        stopAutomaticSync()
         effectLease.retire()
         effectLease = TransferEffectLease()
         generation &+= 1
@@ -143,15 +244,35 @@ final class HostClipboardService {
     }
 
     private func receivePush(_ frame: ClipboardFrame) {
+        if frame.index == 0, (try? frame.validate()) != nil {
+            // The phone's newer clipboard supersedes any earlier Mac observation as soon
+            // as its transfer starts, including reads already awaiting a main-actor result.
+            automaticLease.retire()
+            automaticLease = TransferEffectLease()
+            automaticGeneration &+= 1
+            if automaticOutbox {
+                outbox.cancel()
+                automaticOutbox = false
+                pacer?.invalidate(); pacer = nil
+            }
+        }
         switch assembler.accept(frame, at: clock()) {
         case .progress:
             scheduleMaintenance()
         case .failed(let transfer):
             reply(transfer, .invalid)
         case .complete(let transfer, let payload):
+            // Dedupe against the latest synchronized value, including phone-origin copies.
+            // A -> phone B -> new Mac A must export A again.
+            automaticDigest = ClipboardDigest.hex(Data(payload.text.utf8))
             let generation = self.generation, pasteboard = self.pasteboard, lease = effectLease
+            let observation = automaticObservation
             queue.async { [weak self] in
                 guard let stored = lease.performIfActive({ pasteboard.write(payload) }) else { return }
+                if stored, let observation {
+                    observation.changeCount = pasteboard.changeCount
+                    observation.phoneDigest = ClipboardDigest.hex(Data(payload.text.utf8))
+                }
                 Task { @MainActor [weak self] in
                     guard let self, self.generation == generation else { return }
                     self.reply(transfer, stored ? .stored : .invalid)
@@ -210,10 +331,13 @@ final class HostClipboardService {
     }
 
     private func pump() {
+        if automaticOutbox, automaticPolicy?() == false { stopAutomaticSync(); return }
         for frame in outbox.release(bufferedAmount: bufferedAmount?()) {
+            if frame.automatic == true, automaticPolicy?() == false { stopAutomaticSync(); break }
             guard transport?(frame) == true else { outbox.cancel(); break }
         }
         if outbox.isEmpty {
+            automaticOutbox = false
             pacer?.invalidate(); pacer = nil
         } else if pacer == nil {
             pacer = Timer.scheduledTimer(withTimeInterval: ClipboardLimits.pacingInterval, repeats: true) { [weak self] _ in

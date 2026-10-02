@@ -126,6 +126,9 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
         } else {
             accessibilityHint = "One finger moves the pointer. Two fingers scroll or pinch to zoom. Three fingers switch Mac workspaces."
         }
+        if !panMode && engine.clipboardGesturesEnabled() {
+            accessibilityHint = (accessibilityHint ?? "") + " Pinch three fingers to copy from your Mac. Spread three fingers to paste to your Mac."
+        }
         var actions = panMode
             ? [UIAccessibilityCustomAction(name: "Zoom view", target: self,
                                            selector: #selector(accessibilityDoubleClick))]

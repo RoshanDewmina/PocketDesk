@@ -17,6 +17,7 @@ enum SessionFeature {
     static let textClarity = "video.clarity.1"
     static let pencilInput = "input.pencil.1"
     static let clipboardText = "clipboard.text.1"
+    static let clipboardSync = "clipboard.sync.1"
     static let backgroundPause = "pause.1"
     static let displayWake = "display.wake.1"
     static let privacyCurtain = "curtain.1"
@@ -54,7 +55,7 @@ enum SessionFeature {
   static let legacyHost = [clipboardText, backgroundPause, displayWake, privacyCurtain,
                        absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder,
                        momentumScroll, auxiliaryButtons, secureFocus, fileTransfer, focusGeometry, macVitals]
-    static let host = [causalInput, liveViewOnly, captureScope, inputReceipt, pencilInput, videoLTR, videoRefinement, exactVideoTiming, hostMomentum] + legacyHost
+    static let host = [clipboardSync, causalInput, liveViewOnly, captureScope, inputReceipt, pencilInput, videoLTR, videoRefinement, exactVideoTiming, hostMomentum] + legacyHost
 }
 
 /// Availability the Mac itself reports on `capture` status. The phone states only these as
