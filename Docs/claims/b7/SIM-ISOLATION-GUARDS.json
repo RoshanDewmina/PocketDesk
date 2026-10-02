@@ -1,0 +1,14 @@
+{
+  "checks": 7,
+  "cases": [
+    "Native Xcode matching destination detected; wrapper/other destination ignored",
+    "Own PID excluded",
+    "Missing/unavailable explicit override rejected",
+    "Unavailable required runtime rejected without creation",
+    "Correct dedicated name/runtime/device type reused",
+    "Wrong dedicated device type rejected",
+    "Duplicate dedicated name rejected"
+  ],
+  "result": "passed",
+  "scope": "synthetic harness selection/conflict checks, not app acceptance"
+}

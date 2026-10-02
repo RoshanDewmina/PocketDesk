@@ -1,0 +1,18 @@
+{
+  "recorded_utc": "2026-10-02T15:25:55.140597+00:00",
+  "simulator": "C643B2C2-3248-4AE4-B234-8F54414F3A41",
+  "own_xcode_pid": 48543,
+  "other_xcode_pid": 89441,
+  "other_lane_dd": "/Volumes/Studio/Development/Caches/b8-vdisplay/DD",
+  "other_start": "Fri Oct  2 11:20:27 2026",
+  "own_completed_before_collision": [
+    "89 selected phone unit tests",
+    "original AX-XXXL audit:305 combined issues/errors"
+  ],
+  "interrupted": [
+    "default original audit lost app at1132.42s",
+    "supplemental AX-XXXL stuck at launch",
+    "remaining methods not accepted"
+  ],
+  "actions": "Canceled only own parent/childless iPad waiter and own locked Python/Xcode; suppressed own simulator shutdown to avoid disrupting the other lane; no other lane process or simulator touched."
+}

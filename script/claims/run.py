@@ -6,14 +6,25 @@ p = argparse.ArgumentParser()
 p.add_argument('stage', nargs='?', choices=['all','auto','settings','build','phone','ipad','phone-more','ipad-more','duo','core','backend','host'], default='all')
 p.add_argument('--output', default='/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims')
 p.add_argument('--dd', default='/Volumes/Studio/Development/Caches/b7-claims/DD')
-p.add_argument('--phone', default='C643B2C2-3248-4AE4-B234-8F54414F3A41')
-p.add_argument('--ipad', default='68F60FDF-7FA8-4129-A165-9B47D8579461')
+p.add_argument('--phone', help='Explicit lane-owned simulator override; default is a dedicated claims iPhone')
+p.add_argument('--ipad', help='Explicit lane-owned simulator override; default is a dedicated claims iPad')
 p.add_argument('--duo', default='663C5184-F544-4CAE-B9C3-A683C26500CE')
 a = p.parse_args()
 OUT = pathlib.Path(a.output); OUT.mkdir(parents=True, exist_ok=True)
 LOG = OUT / 'logs' / datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ'); LOG.mkdir(parents=True)
 ENV = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
 from identity import source_identity, artifact_identity, verify
+selected_devices = {}
+def device(family):
+    if family not in selected_devices:
+        record=LOG/(family+'-device.json')
+        requested=getattr(a,family)
+        code=run('select-'+family,[sys.executable,str(ROOT/'script/claims/simulators.py'),family,str(record)]+([requested] if requested else []),True)
+        if code: raise SystemExit('Dedicated simulator selection failed; no test started.')
+        selected_devices[family] = json.loads(record.read_text())
+        (LOG/'selected-devices.json').write_text(json.dumps(selected_devices,indent=2))
+        print('Dedicated '+family+': '+selected_devices[family]['udid'],flush=True)
+    return selected_devices[family]['udid']
 GATES = pathlib.Path('/Users/roshansilva/Documents/Codex/2026-10-01/testing')
 def gate():
     while any((GATES / x).exists() for x in ['PAUSE-BUILDS','PRIORITY-BUILD']) or list(GATES.glob('QUIET-GRANTED-*')):
@@ -57,7 +68,7 @@ def settings():
         run('build-settings-'+config,common+['-configuration',config,'-scheme','PocketDeskRemoteHost','-showBuildSettings','-json'],True)
 def build():
     before=source_identity()
-    code = run('phone-build',common+['-configuration','Debug','-scheme','PocketDeskRemote','-destination','platform=iOS Simulator,id='+a.phone,'ARCHS=arm64','build-for-testing'],True)
+    code = run('phone-build',common+['-configuration','Debug','-scheme','PocketDeskRemote','-destination','platform=iOS Simulator,id='+device('phone'),'ARCHS=arm64','build-for-testing'],True)
     if code == 0:
         if source_identity()!=before:
             raise SystemExit('Source changed during build; receipt invalid, rebuild.')
@@ -140,8 +151,8 @@ def duo():
 if a.stage=='auto': auto()
 elif a.stage=='settings': settings()
 elif a.stage=='build': build()
-elif a.stage in ['phone','ipad']: test(a.stage,getattr(a,a.stage))
-elif a.stage in ['phone-more','ipad-more']: test(a.stage,getattr(a,a.stage.split('-')[0]),supplemental=True)
+elif a.stage in ['phone','ipad']: test(a.stage,device(a.stage))
+elif a.stage in ['phone-more','ipad-more']: test(a.stage,device(a.stage.split('-')[0]),supplemental=True)
 elif a.stage=='duo': duo()
 elif a.stage=='core': core()
 elif a.stage=='backend': backend()
@@ -149,7 +160,7 @@ elif a.stage=='host': host()
 else:
     auto(); duo(); backend()
     if build()==0:
-        test('phone',a.phone); test('ipad',a.ipad)
+        test('phone',device('phone')); test('ipad',device('ipad'))
     core(); host()
 print('Evidence: '+str(LOG),flush=True)
 sys.exit(1 if any(r['exit'] for r in results if not r['name'].endswith('-shutdown')) else 0)

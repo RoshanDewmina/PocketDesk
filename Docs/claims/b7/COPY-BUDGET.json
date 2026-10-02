@@ -11,5 +11,16 @@
   },
   "all_revised_added": 868,
   "conservative_draft": 519,
-  "conservative_remaining": 481
+  "conservative_remaining": 481,
+  "helpful_details": {
+    "current": 358,
+    "narrower_C8_append": 464,
+    "narrower_C8_replacement_with_leading_space": 420,
+    "narrower_C8_replacement_trimmed": 419,
+    "replacement_remaining": 81,
+    "gate": "Both platform screen-audit inventories must actually finish; describe outstanding fixes/device checks, not a clean audit or Supports labels.",
+    "findings_disclosed_replacement": 407,
+    "findings_disclosed_remaining": 93,
+    "findings_disclosed_text": "Accessibility: I ran iPhone and iPad simulator screen audits; fixes and device checks remain."
+  }
 }

@@ -19,4 +19,4 @@ C8 decision: keep “Accessibility work continues through launch.” “I audite
 
 ## Simulator audit receipts
 
-Pending runtime execution; no automated audit pass is currently claimed.
+Native execution is in progress. The first completed iPhone original AX-XXXL method failed its final zero-issues assertion in1628.997s with305 combined findings/errors. Preliminary completed-method console tally:302 audit callbacks (Dynamic Type150, contrast93, clipped text40, potentially inaccessible text16, non-human-readable labels2, missing disabled trait1), plus three other inventory errors. Repeated initial/scrolled findings are not unique defects; exact reached-fixture/error classification awaits finalized xcresult attachments. Default-size, supplemental and feature methods plus iPad remain pending. No clean screen audit or Supports label is claimed.
