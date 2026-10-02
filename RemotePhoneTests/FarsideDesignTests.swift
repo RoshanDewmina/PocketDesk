@@ -85,6 +85,20 @@ final class FarsideDesignTests: XCTestCase {
     }
 
     @MainActor
+    func testMicrophoneDoesNotPrimeAgainWhilePermissionsAreStillUndetermined() {
+        let suiteName = "FarsideDesignTests.microphone.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertTrue(PermissionPrimer.needsPriming(.microphone, in: defaults,
+                                                    microphoneNeedsAuthorization: { true }))
+        PermissionPrimer.markPrimed(.microphone, in: defaults)
+        XCTAssertFalse(PermissionPrimer.needsPriming(.microphone, in: defaults,
+                                                     microphoneNeedsAuthorization: { true }),
+                       "Continue must reach the iOS prompts even while permissions are undetermined")
+    }
+
+    @MainActor
     func testMoveLessonCompletesEvenWhenThePadResizesMidAttempt() {
         let coach = GestureCoachModel()
         coach.layout(CGSize(width: 350, height: 392))
