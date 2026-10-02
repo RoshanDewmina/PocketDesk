@@ -86,8 +86,10 @@ final class HostFileTransferService {
         effectLease.retire(); effectLease = TransferEffectLease()
         if let linkOfferID { linkOffer.dismiss(matching: linkOfferID) }; linkOfferID = nil
         authorityGeneration = UUID()
+        let picking = panelTransfer // Closing the panel never runs its completion; answer the phone ourselves.
         closePicker(matching: nil)
         engine.cancelAll(status: .notAllowed)
+        if let picking { engine.answerRequest(picking, .notAllowed) }
     }
 
     /// The session ended or paused: stop without messages, since the phone is gone or backgrounded.

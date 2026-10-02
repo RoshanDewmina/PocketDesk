@@ -3527,7 +3527,9 @@ final class RemoteHostModel: ObservableObject {
     private func advanceEpoch() {
         clipboard.stopAutomaticSync()
         guests.endAll()
-        fileTransfer.reset()
+        // A transfer cannot continue across a new capture geometry. Tell the phone (it would otherwise show
+        // progress until the stall timeout), before the epoch moves; with no phone there is nobody to tell.
+        if connection.connected { fileTransfer.revoke() } else { fileTransfer.reset() }
         // Retire both posted and admitted holds before publishing the new scope.
         releaseRemoteInput(notifyPhone: true)
         invalidateTextFocus()

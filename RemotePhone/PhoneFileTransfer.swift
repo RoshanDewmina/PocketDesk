@@ -119,16 +119,28 @@ final class PhoneFileTransfer: ObservableObject {
         cancelledHere = false
     }
 
+    /// The Mac started a new capture geometry (display, scope or Big Text change): an older Mac drops its side of
+    /// the transfer without saying so, so stop here, tell it, and say why instead of hanging until the stall timeout.
+    func stopForMacChange() {
+        guard isBusy else { return }
+        cancelledHere = true
+        engine.cancelAll(status: .cancelled)
+        cancelledHere = false
+        dropPendingLink(.cancelled)
+        updateIdleTimer()
+        post("Your Mac changed what it’s sharing, so the transfer stopped. Send it again.", .caution)
+    }
+
     /// Transfers are foreground-only in 1.0; leaving the screen stops them and tells the Mac.
     func stopForBackground() {
         engine.cancelAll(status: .backgrounded)
-        pendingLink = nil
+        dropPendingLink(.backgrounded)
         updateIdleTimer()
     }
 
     func reset() {
         engine.reset()
-        pendingLink = nil
+        dropPendingLink(.connectionLost)
         received = nil
         updateIdleTimer()
     }
@@ -182,6 +194,13 @@ final class PhoneFileTransfer: ObservableObject {
         case (.incoming, let status):
             post(Self.message(refusal: finish.reason, status: status) ?? Self.message(receiving: status, fileOffered: finish.name != nil), .caution)
         }
+    }
+
+    /// A link nobody will answer now still finishes for its sender (the share inbox waits on it).
+    private func dropPendingLink(_ status: FileTransferStatus) {
+        guard pendingLink != nil else { return }
+        pendingLink = nil
+        onLinkResult?(status)
     }
 
     private func linkResult(_ transfer: String, _ status: FileTransferStatus) {

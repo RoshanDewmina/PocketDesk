@@ -87,6 +87,26 @@ final class PhoneFileTransferTests: XCTestCase {
         files.reset()
     }
 
+    /// Batch-5 review: an older Mac drops its transfer on a new capture geometry without saying so.
+    func testAMacGeometryChangeStopsTheTransferAndSaysWhy() throws {
+        let files = PhoneFileTransfer(destination: { self.folder }, staging: folder, availableSpace: { _ in nil })
+        var sent: [FileFrame] = []
+        files.engine.sendControl = { sent.append($0); return true }
+        files.stopForMacChange()
+        XCTAssertTrue(sent.isEmpty, "nothing to stop, nothing sent")
+        let request = try files.engine.request().get()
+        files.stopForMacChange()
+        XCTAssertFalse(files.isBusy)
+        XCTAssertEqual(sent.last?.op, "cancel"); XCTAssertEqual(sent.last?.transfer, request)
+        XCTAssertEqual(files.notice?.message, "Your Mac changed what it’s sharing, so the transfer stopped. Send it again.")
+        var linkResults: [FileTransferStatus] = []
+        files.onLinkResult = { linkResults.append($0) }
+        XCTAssertTrue(files.sendLink(URL(string: "https://example.com/a")!))
+        files.stopForMacChange()
+        XCTAssertEqual(linkResults, [.cancelled], "the share inbox waiting on the link is released")
+        XCTAssertFalse(files.isBusy)
+    }
+
     /// 1 Oct device report: File, Photo and From Mac all said only "isn't accepting files". A newer Mac says why.
     func testAMacRefusalSaysWhichConditionRefused() throws {
         let files = PhoneFileTransfer(destination: { self.folder }, staging: folder, availableSpace: { _ in nil })
