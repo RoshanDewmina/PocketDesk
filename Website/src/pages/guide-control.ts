@@ -89,7 +89,7 @@ export function controlGuidePage(assets: Assets) {
   <div class="prose">
     <h2 id="need">What you need</h2>
     <ul>
-      <li>A Mac running ${R.mac}, with the free Farside helper.</li>
+      <li>${R.mac}, with the free Farside helper.</li>
       <li>An iPhone on ${R.iphone}, or an iPad on ${R.ipad}, with the Farside app.</li>
       <li>Both on the same network for free use. To reach your Mac over the internet, the Anywhere plan.</li>
     </ul>
@@ -139,7 +139,7 @@ ${ctaBand()}`;
         howTo(PATH, {
           name: "How to control your Mac from your iPhone with Farside",
           description: DESC,
-          tools: ["Mac with macOS 26 or later", "iPhone with iOS 26 or later", "Farside helper for Mac", "Farside app for iPhone"],
+          tools: ["Mac with macOS 26 or later and Apple silicon (M1 or later)", "iPhone with iOS 26 or later", "Farside helper for Mac", "Farside app for iPhone"],
           steps: STEP_DATA.map((s) => ({ name: s.title, text: s.text, image: s.img ? assets.img[s.img]?.src : undefined })),
         }),
         faqPage(PATH, QAS),

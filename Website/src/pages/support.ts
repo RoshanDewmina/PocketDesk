@@ -263,7 +263,7 @@ ${pageHero({
         howTo(PATH, {
           name: "How to set up Farside",
           description: "Set up Farside to see and control your Mac from your iPhone or iPad.",
-          tools: ["Mac with macOS 26 or later", "iPhone or iPad with iOS or iPadOS 26 or later"],
+          tools: ["Mac with macOS 26 or later and Apple silicon (M1 or later)", "iPhone or iPad with iOS or iPadOS 26 or later"],
           steps: SETUP.map((s) => ({ name: s.name, text: s.text })),
         }),
         faqPage(PATH, MSG_QAS),
