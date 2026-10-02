@@ -126,6 +126,80 @@ final class FarsideScreenshotTour: XCTestCase {
         super.tearDown()
     }
 
+    /// The host driver opens the public URL on the owned simulator after each readiness marker.
+    /// Opening it from this background UI-test runner is refused by the system trust check.
+    @MainActor
+    func testCaptureExternallyOpenedPublicConnectPrompt() throws {
+        let environment = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(environment["FARSIDE_EXTERNAL_PUBLIC_URL_INJECTED"] == "1",
+                          "Set TEST_RUNNER_FARSIDE_EXTERNAL_PUBLIC_URL_INJECTED=1 for host-injected public URL captures")
+        #if targetEnvironment(simulator)
+        let allowedSimulatorIDs: Set<String> = [
+            "23A869A5-D1DC-41F1-AF42-D127CA1DD133",
+            "48AC7927-D6D8-4B44-A24B-BB49215FD575",
+            "D5594C97-5480-4F5F-A1D1-70306523A92E",
+            "D724E9C9-7BEE-448C-A1A2-DDCFF03D226E",
+            "A69BA21A-8F6A-48BD-972B-FFCCA74036DD",
+            "419A9E16-E7F7-4269-8690-BD2E4DD4437C"
+        ]
+        let simulatorID = environment["FARSIDE_NATIVE_SIMULATOR_ID"] ?? ""
+        try XCTSkipUnless(allowedSimulatorIDs.contains(simulatorID)
+                          && environment["SIMULATOR_UDID"] == simulatorID,
+                          "Public URL injection requires a known simulator ID matching actual SIMULATOR_UDID")
+        let names = ["home-system-connect-prompt", "landscape-home-system-connect-prompt"]
+        let plan = XCTAttachment(string: names.joined(separator: "\n"))
+        plan.name = "capture-plan"
+        plan.lifetime = .keepAlways
+        add(plan)
+        let app = XCUIApplication()
+        defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
+        for (index, orientation) in [UIDeviceOrientation.portrait, .landscapeLeft].enumerated() {
+            let name = names[index]
+            let phase = index == 0 ? "portrait" : "landscape"
+            XCUIDevice.shared.orientation = orientation
+            // This in-memory pairing suppresses surprise onboarding without replacing Home,
+            // its system-route modifier, or the production ConnectPromptSheet presenter.
+            app.launchArguments = ["--ui-seed-pairing=Studio Mac"]
+            app.launch()
+            let home = element("phone.home", in: app)
+            let prompt = element("connectPrompt", in: app)
+            let connect = app.buttons["connectPrompt.connect"]
+            let close = app.buttons["connectPrompt.close"]
+            let seededName = app.staticTexts["Studio Mac"]
+            guard home.waitForExistence(timeout: 4), seededName.exists, !prompt.exists else {
+                _ = missing("Seeded Studio Mac Home was not ready for external \(phase) public URL injection")
+                attach("missing-" + name)
+                app.terminate()
+                continue
+            }
+            guard captureOrientationMatches(orientation, in: app) else {
+                attach("missing-" + name)
+                app.terminate()
+                continue
+            }
+            // NSLog goes directly to the live xcodebuild stream; one distinct marker per phase.
+            NSLog("FARSIDE_EXTERNAL_PUBLIC_URL_READY %@ %@", phase, simulatorID)
+            let appeared = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                prompt.exists && connect.exists && close.exists
+            }, object: app)
+            var reached = XCTWaiter().wait(for: [appeared], timeout: 30) == .completed
+            if !reached {
+                _ = missing("External farside://open did not present Connect question root and both actions within 30 seconds (\(phase))")
+            } else if XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists
+                        || visibleNavigationFrame(connect, in: app) == nil
+                        || visibleNavigationFrame(close, in: app) == nil {
+                reached = missing("External Connect question actions were covered or outside the visible viewport (\(phase))")
+            }
+            if !captureOrientationMatches(orientation, in: app) { reached = false }
+            attach(reached ? name : "missing-" + name)
+            NSLog("FARSIDE_EXTERNAL_PUBLIC_URL_FINISHED %@ %@", phase, simulatorID)
+            app.terminate()
+        }
+        #else
+        throw XCTSkip("External public URL capture is simulator-only")
+        #endif
+    }
+
     /// FARSIDE_ALL_ORIENTATIONS=1 repeats every base shot in portrait and landscape.
     /// FARSIDE_ACCESSIBILITY_SHOTS=1 selects eight key screens at AX-XXXL for a short pass.
     /// All runner variables use the TEST_RUNNER_ prefix when passed through xcodebuild.
