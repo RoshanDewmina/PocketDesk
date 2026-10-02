@@ -256,7 +256,7 @@ final class LocalLinkProof {
         do {
             let proof = try LocalLinkProof(room: room, epoch: epoch, session: session,
                                            pairingKey: pairingKey, physical: physical)
-            log.info("created on \(physical.name, privacy: .public)#\(physical.index, privacy: .public) local=\(physical.address, privacy: .public):\(proof.endpoint.port, privacy: .public)")
+            log.info("created on \(physical.name, privacy: .public)#\(physical.index, privacy: .public)")
             return proof
         } catch {
             log.error("socket setup failed on \(physical.name, privacy: .public) errno=\(errno, privacy: .public)")
@@ -346,18 +346,18 @@ final class LocalLinkProof {
             guard let self, !self.closed else { return }
             guard self.peer == nil, endpoint.port > 0,
                   endpoint.address != self.localAddress, Self.validIPv4(endpoint.address) else {
-                self.log.error("peer endpoint ignored: duplicate=\(self.peer != nil, privacy: .public) port=\(endpoint.port, privacy: .public) self=\(endpoint.address == self.localAddress, privacy: .public) ipv4=\(Self.validIPv4(endpoint.address), privacy: .public)")
+                self.log.error("peer endpoint ignored: duplicate=\(self.peer != nil, privacy: .public) self=\(endpoint.address == self.localAddress, privacy: .public) ipv4=\(Self.validIPv4(endpoint.address), privacy: .public)")
                 return
             }
             self.peer = endpoint
             self.stage.peerSet = true
-            self.log.info("gate peer set \(endpoint.address, privacy: .public):\(endpoint.port, privacy: .public)")
+            self.log.info("gate peer set")
             guard let port = NWEndpoint.Port(rawValue: endpoint.port) else { self.invalidate("peer-port"); return }
             let connection = NWConnection(host: NWEndpoint.Host(endpoint.address), port: port, using: .udp)
             connection.stateUpdateHandler = { [weak self, weak connection] state in
                 guard let self, !self.closed, let connection else { return }
                 self.stage.routeState = Self.stateName(state)
-                self.log.info("route probe state \(String(describing: state), privacy: .public)")
+                self.log.info("route probe state \(Self.stateName(state), privacy: .public)")
                 switch state {
                 case .ready:
                     guard !self.routeReady, let path = connection.currentPath else {
@@ -578,8 +578,7 @@ final class LocalLinkProof {
             let count = stage.rejections[rejection.reason] ?? 0
             if count <= 3 || count % 20 == 0 {
                 let ttl = result.1.map(String.init) ?? "nil", index = result.2.map(String.init) ?? "nil"
-                let port = result.4.map(String.init) ?? "nil", source = result.3 ?? "nil"
-                log.error("packet rejected: \(rejection.reason.rawValue, privacy: .public) count=\(count, privacy: .public) ttl=\(ttl, privacy: .public) if=\(index, privacy: .public)/\(self.interfaceIndex, privacy: .public) src=\(source, privacy: .public):\(port, privacy: .public) peer=\(peer.address, privacy: .public):\(peer.port, privacy: .public)")
+                log.error("packet rejected: \(rejection.reason.rawValue, privacy: .public) count=\(count, privacy: .public) ttl=\(ttl, privacy: .public) if=\(index, privacy: .public)/\(self.interfaceIndex, privacy: .public)")
             }
             return
         }

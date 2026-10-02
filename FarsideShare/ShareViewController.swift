@@ -129,9 +129,12 @@ final class ShareSendModel: ObservableObject {
                 let target = folder.appendingPathComponent(url.lastPathComponent, isDirectory: false)
                 do {
                     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                    try SendToMacOutbox.protectStagedContent(at: folder)
                     try FileManager.default.copyItem(at: url, to: target)
+                    try SendToMacOutbox.protectStagedContent(at: target)
                     continuation.resume(returning: target)
                 } catch {
+                    if SendToMacOutbox.protectionEnabled { try? FileManager.default.removeItem(at: folder) }
                     continuation.resume(returning: nil)
                 }
             }
@@ -139,6 +142,9 @@ final class ShareSendModel: ObservableObject {
         guard let staged,
               let values = try? staged.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
               values.isRegularFile == true, let size = values.fileSize else {
+            if SendToMacOutbox.protectionEnabled, let staged {
+                try? FileManager.default.removeItem(at: staged.deletingLastPathComponent())
+            }
             phase = .unavailable("Farside couldn’t read that item. Folders can’t be sent; zip them first.")
             return
         }
@@ -200,7 +206,8 @@ final class ShareSendModel: ObservableObject {
                         return
                     }
                 } else if !taken, Date().timeIntervalSince(started) > 2.5 {
-                    self.phase = .handedOff("Open Farside to finish sending to \(name). It asks before sending, and this expires in 10 minutes.")
+                    let cleanup = SendToMacOutbox.protectionEnabled ? " Expired items are cleared on next use." : ""
+                    self.phase = .handedOff("Open Farside to finish sending to \(name). It asks before sending, and this expires in 10 minutes." + cleanup)
                     return
                 }
             }
