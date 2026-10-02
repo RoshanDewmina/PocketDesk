@@ -940,6 +940,7 @@ final class RemoteHostModel: ObservableObject {
             else {
                 listeningWithoutSharing = true
                 connection.start()
+                reconcileSharing()
             }
         } catch {
             detail = error.localizedDescription
