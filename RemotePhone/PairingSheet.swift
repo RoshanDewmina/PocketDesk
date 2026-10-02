@@ -172,14 +172,23 @@ struct PairingSheet: View {
             Button("Replace pairing") {
                 beginPairingAttempt()
                 if model.confirmPairReplacement(pending) { waitingForApproval = true }
+                clearStagedReplacementCode()
             }
-            Button("Cancel", role: .cancel) { model.cancelPairReplacement(); entry = .paste }
+            Button("Cancel", role: .cancel) {
+                model.cancelPairReplacement()
+                clearStagedReplacementCode()
+                entry = .paste
+            }
         } message: { pending in
             Text("Replace the saved pairing for \(pending.oldName) with this QR for \(pending.approval.enrollment.name)? The current session ends first. Your Mac must still approve this \(DeviceWord.current).")
         }
         .onChange(of: model.pendingPairReplacement?.id) { _, id in showsReplacementConfirmation = id != nil }
         .onChange(of: showsReplacementConfirmation) { _, shown in
-            if !shown, model.pendingPairReplacement != nil { model.cancelPairReplacement(); entry = .paste }
+            if !shown, model.pendingPairReplacement != nil {
+                model.cancelPairReplacement()
+                clearStagedReplacementCode()
+                entry = .paste
+            }
         }
         .onDisappear {
             cancelNetworkCheck()
@@ -531,6 +540,13 @@ struct PairingSheet: View {
         burst = true
         onPaired()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { dismiss() }
+    }
+
+    /// Release the staged card only after confirmation consumed its exact local-network approval.
+    private func clearStagedReplacementCode() {
+        cancelNetworkCheck()
+        model.cancelPairingLocalAccess()
+        foundCode = nil; foundMacName = ""; networkResult = nil
     }
 
     private func beginPairingAttempt() {
