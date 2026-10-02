@@ -8,6 +8,56 @@ final class BigTextPhoneTests: XCTestCase {
     private let builtIn = DisplayDescriptor(id: 1, name: "Built-in Retina Display", width: 1470, height: 956)
     private let studio = DisplayDescriptor(id: 7, name: "Studio Display", width: 2560, height: 1440)
 
+    func testConfirmedAppliedModeSuppressesCorrelatedFailure() throws {
+        try connect()
+        model.chooseBigTextNow(1024)
+        try reply(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1024)], display: 1, scaleError: "failed"))
+        XCTAssertNil(model.bigText.pendingTarget)
+        XCTAssertNil(model.sessionNotice, "the applied size is stronger evidence than a stale host error")
+    }
+
+    func testLateConfirmedAppliedModeClearsTimeoutEvenWithHostError() throws {
+        try connect()
+        var now: TimeInterval = 100
+        model.bigTextClock = { now }
+        model.chooseBigTextNow(1024)
+        now += 8.5
+        model.checkBigTextTimeout()
+        XCTAssertEqual(model.sessionNotice, "Couldn't confirm text size")
+        try reply(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1024)], display: 1, scaleError: "failed"))
+        XCTAssertNil(model.sessionNotice)
+    }
+
+    func testProgressPillExpiresWithoutDiscardingRequestCorrelationOrInputGuard() throws {
+        try connect()
+        var now: TimeInterval = 100
+        model.bigTextClock = { now }
+        model.chooseBigTextNow(1024)
+        XCTAssertEqual(model.bigTextPillTarget, 1024)
+        now += 2.1
+        model.checkBigTextTimeout()
+        XCTAssertNil(model.bigTextPillTarget)
+        XCTAssertEqual(model.bigText.pendingTarget, 1024)
+        XCTAssertFalse(model.canControl)
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1024)], display: 1))
+        XCTAssertEqual(model.bigText.pendingTarget, 1024, "generic catalogs still cannot complete requests")
+        try reply(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1024)], display: 1))
+        XCTAssertNil(model.bigText.pendingTarget)
+    }
+
+    func testStatusReliabilityKillSwitchRestoresLegacyPendingPillAndErrors() throws {
+        defaults.set(true, forKey: PhoneRemoteModel.bigTextStatusDisabledKey)
+        try connect()
+        var now: TimeInterval = 100
+        model.bigTextClock = { now }
+        model.chooseBigTextNow(1024)
+        now += 2.1
+        model.checkBigTextTimeout()
+        XCTAssertEqual(model.bigTextPillTarget, 1024)
+        try reply(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1024)], display: 1, scaleError: "failed"))
+        XCTAssertEqual(model.sessionNotice, PhoneRemoteModel.bigTextMessage(.failed))
+    }
+
     override func setUp() {
         super.setUp()
         defaults = makeTestDefaults("BigTextPhoneTests")
@@ -61,6 +111,56 @@ final class BigTextPhoneTests: XCTestCase {
         var packets: [ControlPacket] = []
         model.connection.inputPacketSenderForTesting = { packets.append($0); return true }
         return { packets }
+    }
+
+    private func identifiedInvitation() throws -> PairInvitation {
+        var invitation = try HostPair.create(server: "wss://offline.invalid/signal", name: "Mac").rotated().invitation
+        invitation.durableHostID = try SecureRandom.token()
+        invitation.ownerPairID = try SecureRandom.token()
+        invitation.localServiceName = "fixture"
+        return invitation
+    }
+
+    private func useTrustedModel(_ invitation: PairInvitation) throws {
+        model.disconnect()
+        let trust = PhoneTrustStore(records: MemoryStore(), legacy: MemoryStore())
+        try trust.saveApproved(invitation)
+        model = PhoneRemoteModel(background: FakeBackgroundExecution(),
+                                 coordinator: RemoteCoordinator(isHost: false, store: PhonePairPersistence(trust: trust)))
+        model.bigTextMemory = BigTextMemory(defaults: defaults)
+        model.connection.inputPacketSenderForTesting = { _ in true }
+    }
+
+    func testKnownManualChoiceWinsOverAutoAfterRePairingTheSameMac() throws {
+        defaults.set(false, forKey: "disableBigTextAutoLevel")
+        let old = try identifiedInvitation()
+        BigTextMemory(defaults: defaults).remember(1024, forRoom: old.room, display: builtIn, among: [builtIn])
+        try useTrustedModel(old)
+        try connect()
+        XCTAssertEqual(model.lastBigTextRequest?.width, 1024)
+        var replacement = try identifiedInvitation()
+        replacement.durableHostID = old.durableHostID
+        try useTrustedModel(replacement)
+        try connect()
+        XCTAssertEqual(model.bigText.savedWidth, 1024)
+        XCTAssertEqual(model.lastBigTextRequest?.width, 1024, "the first-use 1280 level cannot overwrite the remembered manual level")
+    }
+
+    func testKnownPersistentOffWinsOverAutoAfterRePairingTheSameMac() throws {
+        defaults.set(false, forKey: "disableBigTextAutoLevel")
+        let old = try identifiedInvitation()
+        BigTextMemory(defaults: defaults).remember(nil, forRoom: old.room, display: builtIn, among: [builtIn])
+        try useTrustedModel(old)
+        try connect()
+        XCTAssertNil(model.lastBigTextRequest)
+        var replacement = try identifiedInvitation()
+        replacement.durableHostID = old.durableHostID
+        try useTrustedModel(replacement)
+        try connect(current: 1280)
+        XCTAssertNil(model.bigText.savedWidth)
+        XCTAssertEqual(model.lastBigTextRequest?.width, 0, "persistent Off restores the baseline instead of choosing an automatic level")
+        let trusted = try XCTUnwrap(model.connection.presentationHostTrust)
+        XCTAssertTrue(model.bigTextMemory.hasSavedChoice(forHost: trusted, display: builtIn, among: [builtIn]))
     }
 
     func testFirstConnectAutomaticallyAppliesAndSavesAnOfferedLevel() throws {
@@ -299,7 +399,7 @@ final class BigTextPhoneTests: XCTestCase {
         now += 1
         model.checkBigTextTimeout()
         XCTAssertNil(model.bigText.pendingTarget)
-        XCTAssertEqual(model.sessionNotice, "Couldn't change text size")
+        XCTAssertEqual(model.sessionNotice, "Couldn't confirm text size")
     }
 
     func testErrorsBecomeFriendlyNotices() throws {
@@ -429,9 +529,9 @@ final class BigTextPhoneTests: XCTestCase {
         model.chooseBigTextNow(1280)
         now += 8.5
         model.checkBigTextTimeout()
-        XCTAssertEqual(model.sessionNotice, "Couldn't change text size")
+        XCTAssertEqual(model.sessionNotice, "Couldn't confirm text size")
         try reply(RemoteAction(action: "displays", epoch: 1, displays: [described()], display: 1))
-        XCTAssertEqual(model.sessionNotice, "Couldn't change text size", "a list without the change is not the late answer")
+        XCTAssertEqual(model.sessionNotice, "Couldn't confirm text size", "a list without the change is not the late answer")
         try reply(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1280)], display: 1))
         XCTAssertNil(model.sessionNotice, "the change did happen, only late")
     }
@@ -507,7 +607,7 @@ final class BigTextPhoneTests: XCTestCase {
         now += 8.5
         model.checkBigTextTimeout()
         try send(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1024)], display: 1, scaleRequestID: id))
-        XCTAssertEqual(model.sessionNotice, "Couldn't change text size")
+        XCTAssertEqual(model.sessionNotice, "Couldn't confirm text size")
     }
 
     func testLateNearestWidthSuccessClearsOnlyItsTimeoutNotice() throws {
@@ -523,10 +623,10 @@ final class BigTextPhoneTests: XCTestCase {
         model.checkBigTextTimeout()
         nearby.scaleCurrentWidth = 1024
         try send(RemoteAction(action: "displays", epoch: 1, displays: [nearby], display: 1, scaleRequestID: id))
-        XCTAssertEqual(model.sessionNotice, "Couldn't change text size", "unrelated offered mode does not confirm success")
+        XCTAssertEqual(model.sessionNotice, "Couldn't confirm text size", "unrelated offered mode does not confirm success")
         nearby.scaleCurrentWidth = 1290
         try send(RemoteAction(action: "displays", epoch: 1, displays: [nearby], display: 1))
-        XCTAssertEqual(model.sessionNotice, "Couldn't change text size", "mode alone is not request ownership")
+        XCTAssertEqual(model.sessionNotice, "Couldn't confirm text size", "mode alone is not request ownership")
         try send(RemoteAction(action: "displays", epoch: 1, displays: [nearby], display: 1, scaleRequestID: id))
         XCTAssertNil(model.sessionNotice)
     }
@@ -539,9 +639,9 @@ final class BigTextPhoneTests: XCTestCase {
         let id = model.lastBigTextRequest!.requestID
         now += 8.5
         model.checkBigTextTimeout()
-        model.announce("Couldn't change text size")
+        model.announce("Couldn't confirm text size")
         try send(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1280)], display: 1, scaleRequestID: id))
-        XCTAssertEqual(model.sessionNotice, "Couldn't change text size", "notice ownership is a generation, not text equality")
+        XCTAssertEqual(model.sessionNotice, "Couldn't confirm text size", "notice ownership is a generation, not text equality")
     }
 
     func testEndClearsSessionState() throws {

@@ -19,6 +19,8 @@ enum SessionFeature {
     static let clipboardText = "clipboard.text.1"
     static let clipboardSync = "clipboard.sync.1"
     static let backgroundPause = "pause.1"
+    /// Opt-in reliable close request/receipt; absent peers retain ordinary disconnect behavior.
+    static let deliberateEnd = "session.end.1"
     static let displayWake = "display.wake.1"
     static let privacyCurtain = "curtain.1"
     /// Advertised only when the host release gate and prerequisites allow Away mode.
@@ -113,8 +115,36 @@ enum PhoneSessionNotice {
     }
 }
 
+/// Internal rollback applies from the next handshake. No user-facing preference.
+enum DeliberateSessionEnd {
+    static let disabledDefaultsKey = "farsideDeliberateSessionEndDisabled"
+    static let receiptTimeoutNanoseconds: UInt64 = 500_000_000
+    static func isEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        !defaults.bool(forKey: disabledDefaultsKey)
+    }
+
+    /// Pause releases authority; its authenticated session identity is sufficient even when a
+    /// display change overtook the phone's geometry status. Earlier peers retain the epoch guard.
+    static func allowsBackgroundPause(epochMatches: Bool, connected: Bool, sharing: Bool,
+                                      sessionRefused: Bool, ending: Bool, peerFeatures: Set<String>,
+                                      enabled: Bool) -> Bool {
+        guard connected, sharing, !sessionRefused, !ending else { return false }
+        return epochMatches || (enabled && peerFeatures.contains(SessionFeature.deliberateEnd))
+    }
+
+    /// Resume can refer only to the current geometry or the exact pause this same session accepted.
+    static func allowsForegroundResume(requestedEpoch: UInt64, currentEpoch: UInt64,
+                                       acceptedPauseEpoch: UInt64?, paused: Bool, connected: Bool,
+                                       sharing: Bool, sessionRefused: Bool, ending: Bool,
+                                       peerFeatures: Set<String>, enabled: Bool) -> Bool {
+        guard paused, connected, sharing, !sessionRefused, !ending else { return false }
+        return requestedEpoch == currentEpoch || (enabled && peerFeatures.contains(SessionFeature.deliberateEnd)
+            && acceptedPauseEpoch == requestedEpoch)
+    }
+}
+
 extension RemoteAction {
-    static let sessionExtensionActions: Set<String> = ["clipboard", "pause", "resume", "wake", "curtain", "file", "viewOnly", "lockMac"]
+    static let sessionExtensionActions: Set<String> = ["clipboard", "pause", "resume", "wake", "curtain", "file", "viewOnly", "lockMac", "sessionEnd"]
 
     /// Validates the appended clipboard/pause/presence/curtain fields. Returns true when the action
     /// is a session-extension action that is now fully validated.
@@ -151,6 +181,13 @@ extension RemoteAction {
               x == 0, y == 0, text.isEmpty, key.isEmpty, modifiers.isEmpty
         else { throw RemoteError.invalidMessage }
         guard (action == "viewOnly") == (liveViewOnly != nil) else { throw RemoteError.invalidMessage }
+        if action == "sessionEnd" {
+            // This lifecycle signal cannot smuggle unchecked fields through the extension early return.
+            let allowed: Set<String> = ["action", "epoch", "x", "y", "text", "key", "modifiers"]
+            guard epoch > 0,
+                  let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(self)) as? [String: Any],
+                  Set(encoded.keys).isSubset(of: allowed) else { throw RemoteError.invalidMessage }
+        }
         if action == "clipboard" {
             guard let clipboard else { throw RemoteError.invalidMessage }
             try clipboard.validate()

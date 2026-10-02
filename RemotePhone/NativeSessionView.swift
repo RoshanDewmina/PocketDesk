@@ -799,7 +799,7 @@ struct NativeSessionView: View {
     }
 
     @ViewBuilder private var bigTextStatus: some View {
-        if let target = model.bigText.pendingTarget {
+        if let target = model.bigTextPillTarget {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small).tint(Farside.Palette.bone)
                 Text(target == 0 ? "Restoring text size…" : "Making text bigger…")

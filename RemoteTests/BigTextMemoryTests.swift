@@ -14,6 +14,115 @@ final class BigTextMemoryTests: XCTestCase {
     private let builtIn = DisplayDescriptor(id: 1, name: "Built-in Retina Display", width: 1470, height: 956)
     private let studio = DisplayDescriptor(id: 7, name: "Studio Display", width: 2560, height: 1440)
 
+    private func host(room: String, identity: String?, record: String = "local-record") throws -> PhoneHostTrust {
+        var invitation = try HostPair.create(server: "wss://offline.invalid/signal", name: "Mac").rotated().invitation
+        invitation.room = room
+        invitation.durableHostID = identity
+        return PhoneHostTrust(id: record, durableHostID: identity, ownerPairID: nil,
+                              invitation: invitation, legacyAliases: [])
+    }
+
+    func testTrustedMacMemorySurvivesRePairingAndStaysPhoneLocal() throws {
+        let memory = BigTextMemory(defaults: defaults)
+        let old = try host(room: "room-a", identity: "mac-a")
+        let replacement = try host(room: "room-b", identity: "mac-a", record: "another-record")
+        memory.remember(1024, forHost: old, display: builtIn, among: [builtIn])
+        XCTAssertEqual(memory.width(forHost: replacement, display: builtIn, among: [builtIn]), 1024)
+        XCTAssertNil(memory.width(forHost: try host(room: "room-b", identity: "mac-b"), display: builtIn, among: [builtIn]))
+        let otherPhone = UserDefaults(suiteName: "BigTextMemoryTests-other-\(UUID().uuidString)")!
+        XCTAssertNil(BigTextMemory(defaults: otherPhone).width(forHost: old, display: builtIn, among: [builtIn]))
+    }
+
+    func testKnownRoomMigrationPreservesExplicitOffAcrossRePairing() throws {
+        let memory = BigTextMemory(defaults: defaults)
+        memory.remember(nil, forRoom: "room-a", display: builtIn, among: [builtIn])
+        let trusted = try host(room: "room-a", identity: "mac-a")
+        memory.migrate(host: trusted)
+        let replacement = try host(room: "room-b", identity: "mac-a")
+        XCTAssertTrue(memory.hasSavedChoice(forHost: replacement, display: builtIn, among: [builtIn]))
+        XCTAssertNil(memory.width(forHost: replacement, display: builtIn, among: [builtIn]))
+        XCTAssertTrue(memory.hasSavedChoice(forRoom: "room-a", display: builtIn, among: [builtIn]), "room shadow supports rollback")
+    }
+
+    func testMigratedRoomNeverOverwritesStableManualChoice() throws {
+        let memory = BigTextMemory(defaults: defaults)
+        let old = try host(room: "room-a", identity: "mac-a")
+        memory.remember(nil, forHost: old, display: builtIn, among: [builtIn])
+        memory.remember(1280, forRoom: "room-b", display: builtIn, among: [builtIn])
+        let replacement = try host(room: "room-b", identity: "mac-a")
+        XCTAssertNil(memory.width(forHost: replacement, display: builtIn, among: [builtIn]))
+        XCTAssertTrue(memory.hasSavedChoice(forHost: replacement, display: builtIn, among: [builtIn]))
+    }
+
+    func testUnknownOldRoomIsNeverAssignedToATrustedMac() throws {
+        let memory = BigTextMemory(defaults: defaults)
+        memory.remember(1024, forRoom: "unknown-old-room", display: builtIn, among: [builtIn])
+        XCTAssertFalse(memory.hasSavedChoice(forHost: try host(room: "current-room", identity: "mac-a"), display: builtIn, among: [builtIn]))
+        XCTAssertEqual(memory.width(forRoom: "unknown-old-room", display: builtIn, among: [builtIn]), 1024)
+    }
+
+    func testSameTrustedLegacyRecordCarriesItsChoiceIntoDurableIdentity() throws {
+        let memory = BigTextMemory(defaults: defaults)
+        let legacy = try host(room: "room-a", identity: nil, record: "same-record")
+        memory.remember(1024, forHost: legacy, display: builtIn, among: [builtIn])
+        let upgraded = try host(room: "room-a", identity: "mac-a", record: "same-record")
+        XCTAssertEqual(memory.width(forHost: upgraded, display: builtIn, among: [builtIn]), 1024)
+        let replacement = try host(room: "room-b", identity: "mac-a", record: "same-record")
+        XCTAssertEqual(memory.width(forHost: replacement, display: builtIn, among: [builtIn]), 1024)
+        memory.forget(host: replacement)
+        XCTAssertNil(memory.width(forRoom: "room-a", display: builtIn, among: [builtIn]))
+    }
+
+    func testForgettingTrustedMacClearsStableAndCurrentRoomChoices() throws {
+        let memory = BigTextMemory(defaults: defaults)
+        let trusted = try host(room: "room-a", identity: "mac-a")
+        memory.remember(1024, forHost: trusted, display: builtIn, among: [builtIn])
+        memory.remember(1280, forRoom: "room-a", display: studio, among: [studio])
+        memory.forget(host: trusted)
+        XCTAssertFalse(memory.hasSavedChoice(forHost: trusted, display: builtIn, among: [builtIn]))
+        XCTAssertNil(memory.width(forRoom: "room-a", display: studio, among: [studio]))
+    }
+
+    func testForgettingReplacementClearsOnlyKnownRoomShadowsForThatMac() throws {
+        let memory = BigTextMemory(defaults: defaults)
+        let old = try host(room: "room-a", identity: "mac-a")
+        memory.remember(1024, forHost: old, display: builtIn, among: [builtIn])
+        let replacement = try host(room: "room-b", identity: "mac-a")
+        memory.migrate(host: replacement)
+        memory.remember(1280, forRoom: "unknown-room", display: builtIn, among: [builtIn])
+        memory.forget(host: replacement)
+        XCTAssertNil(memory.width(forRoom: "room-a", display: builtIn, among: [builtIn]))
+        XCTAssertNil(memory.width(forRoom: "room-b", display: builtIn, among: [builtIn]))
+        XCTAssertEqual(memory.width(forRoom: "unknown-room", display: builtIn, among: [builtIn]), 1280)
+    }
+
+    func testStableMemoryKillSwitchKeepsRoomBehavior() throws {
+        defaults.set(true, forKey: BigTextMemory.stableMemoryDisabledKey)
+        let memory = BigTextMemory(defaults: defaults)
+        let trusted = try host(room: "room-a", identity: "mac-a")
+        memory.remember(1024, forHost: trusted, display: builtIn, among: [builtIn])
+        XCTAssertEqual(memory.width(forRoom: "room-a", display: builtIn, among: [builtIn]), 1024)
+        XCTAssertNil(memory.width(forHost: try host(room: "room-b", identity: "mac-a"), display: builtIn, among: [builtIn]))
+    }
+
+    func testStableMemoryRollbackRetainsMigratedAndNewManualChoices() throws {
+        let memory = BigTextMemory(defaults: defaults)
+        let trusted = try host(room: "room-a", identity: "mac-a")
+        memory.remember(1024, forRoom: "room-a", display: builtIn, among: [builtIn])
+        memory.migrate(host: trusted)
+        defaults.set(true, forKey: BigTextMemory.stableMemoryDisabledKey)
+        XCTAssertEqual(memory.width(forHost: trusted, display: builtIn, among: [builtIn]), 1024)
+        defaults.set(false, forKey: BigTextMemory.stableMemoryDisabledKey)
+        memory.remember(nil, forHost: trusted, display: builtIn, among: [builtIn])
+        let replacement = try host(room: "room-b", identity: "mac-a")
+        memory.migrate(host: replacement)
+        defaults.set(true, forKey: BigTextMemory.stableMemoryDisabledKey)
+        XCTAssertTrue(memory.hasSavedChoice(forHost: trusted, display: builtIn, among: [builtIn]))
+        XCTAssertNil(memory.width(forHost: trusted, display: builtIn, among: [builtIn]))
+        XCTAssertTrue(memory.hasSavedChoice(forHost: replacement, display: builtIn, among: [builtIn]), "replacement room has the authoritative rollback shadow")
+        XCTAssertNil(memory.width(forHost: replacement, display: builtIn, among: [builtIn]))
+    }
+
     func testRememberedPerMacAndPerDisplay() {
         let memory = BigTextMemory(defaults: defaults)
         memory.remember(1280, forRoom: "room-a", display: builtIn, among: [builtIn, studio])

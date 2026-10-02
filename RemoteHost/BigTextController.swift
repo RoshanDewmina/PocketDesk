@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import os
 
 struct BigTextOffer: Equatable {
     let baseline: DisplayModeInfo
@@ -73,6 +74,8 @@ final class BigTextController {
     static let settle: TimeInterval = 0.3
     static let poll: TimeInterval = 0.1
     static let disconnectGrace: TimeInterval = 20
+    static let verifiedCompletionDisabledKey = "disableBigTextVerifiedCompletion"
+    private static let log = Logger(subsystem: "com.roshan.PocketDesk", category: "big-text")
 
     private enum Request: Equatable {
         case apply(CGDirectDisplayID, Double, String?)
@@ -95,6 +98,7 @@ final class BigTextController {
     private let windows: BigTextWindowKeeping
     private let now: () -> TimeInterval
     private let sleep: (TimeInterval) async -> Void
+    private let verifiedCompletion: Bool
     private var recognizer: OwnChangeRecognizer?
     private var completedSnapshot: BigTextScreenSnapshot?
     private var activeRequestID: String?
@@ -103,11 +107,13 @@ final class BigTextController {
     private var grace: Task<Void, Never>?
 
     init(switcher: DisplayModeSwitching, windows: BigTextWindowKeeping,
-         now: @escaping () -> TimeInterval, sleep: @escaping (TimeInterval) async -> Void) {
+         now: @escaping () -> TimeInterval, sleep: @escaping (TimeInterval) async -> Void,
+         defaults: UserDefaults = .standard) {
         self.switcher = switcher
         self.windows = windows
         self.now = now
         self.sleep = sleep
+        verifiedCompletion = !defaults.bool(forKey: Self.verifiedCompletionDisabledKey)
     }
 
     func offer(for display: CGDirectDisplayID) -> BigTextOffer? {
@@ -138,6 +144,12 @@ final class BigTextController {
             if recognizer?.applicationStarted == false,
                event.flags.isDisjoint(with: [.addFlag, .removeFlag, .enabledFlag, .disabledFlag, .mirrorFlag, .unMirrorFlag]),
                configurationIsOurs(applied: false) { return }
+            // CoreGraphics notifies every online display. A redundant mode flag for an
+            // unchanged neighbour is not a foreign change; actual mode/topology changes
+            // still fail the full live snapshot check below and in the worker.
+            if verifiedCompletion, let recognizer, event.display != recognizer.display,
+               event.flags.isDisjoint(with: [.addFlag, .removeFlag, .enabledFlag, .disabledFlag, .mirrorFlag, .unMirrorFlag]),
+               configurationIsOurs(applied: recognizer.applicationStarted) { return }
             recognizer?.observe(event)
             return
         }
@@ -146,6 +158,7 @@ final class BigTextController {
     }
 
     func sessionEnded(_ reason: RestoreReason) {
+        Self.log.info("restore requested reason=\(reason.rawValue, privacy: .public)")
         grace?.cancel()
         grace = nil
         guard isEngaged || worker != nil else { return }
@@ -153,6 +166,7 @@ final class BigTextController {
     }
 
     func connectionLost() {
+        Self.log.info("unexpected disconnect; restore grace=\(Self.disconnectGrace, privacy: .public)s")
         grace?.cancel()
         grace = nil
         guard isEngaged || worker != nil else { return }
@@ -279,7 +293,10 @@ final class BigTextController {
                 return
             }
             completedSnapshot = screenSnapshot()
-            reply(target, resumed ? nil : .failed)
+            // The scaling result is established above. Capture can still be unavailable;
+            // its existing safety/readiness path must not turn an applied mode into failure.
+            if !resumed { Self.log.error("mode applied; capture resume unverified display=\(target, privacy: .public)") }
+            reply(target, resumed || verifiedCompletion ? nil : .failed)
         case .failed:
             if first { forget() } else { phase = .applied }
             _ = await host?.bigTextResume(display: target)
@@ -343,7 +360,10 @@ final class BigTextController {
         case .cancelled:
             return
         }
-        if sessionContinues, await host?.bigTextResume(display: target) != true { failed = true }
+        if sessionContinues, await host?.bigTextResume(display: target) != true {
+            Self.log.error("restore complete; capture resume unverified display=\(target, privacy: .public)")
+            if !verifiedCompletion { failed = true }
+        }
         if configurationIsOurs(applied: !failed) { completedSnapshot = screenSnapshot() }
         if let replyTo { reply(replyTo, failed ? .failed : nil) }
         host?.bigTextStateChanged()
@@ -431,7 +451,13 @@ final class BigTextController {
                                                 frames: live.frames, modeIDs: live.modeIDs) == .foreign {
                 return .foreign
             }
-            switch recognizer.verdict(now: now(), online: switcher.onlineDisplays(), current: switcher.currentMode(of: target)) {
+            // A successful apply plus the complete target snapshot proves completion.
+            // Requiring a setMode callback as well made an applied mode time out at 10 s,
+            // after the phone's 8 s deadline, when that flag was absent or delayed.
+            let verdict = verifiedCompletion && recognizer.applicationStarted && configurationIsOurs(applied: true)
+                ? OwnChangeRecognizer.Verdict.ours
+                : recognizer.verdict(now: now(), online: switcher.onlineDisplays(), current: switcher.currentMode(of: target))
+            switch verdict {
             case .ours:
                 await self.sleep(Self.settle)
                 guard !Task.isCancelled else { return .cancelled }
@@ -467,6 +493,7 @@ final class BigTextController {
     }
 
     private func reply(_ display: CGDirectDisplayID, _ error: BigTextError?) {
+        Self.log.info("scale result display=\(display, privacy: .public) error=\(error?.rawValue ?? "none", privacy: .public) currentWidth=\(self.switcher.currentMode(of: display)?.width ?? 0, privacy: .public)")
         host?.bigTextReply(display: display, error: error, requestID: activeRequestID)
     }
 }

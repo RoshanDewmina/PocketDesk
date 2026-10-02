@@ -92,3 +92,71 @@ final class BigTextProtocolTests: XCTestCase {
         XCTAssertFalse(SessionFeature.host.contains(SessionFeature.displayScale), "advertised only when the Mac allows it")
     }
 }
+
+
+final class DeliberateEndProtocolTests: XCTestCase {
+    func testBareEndActionValidatesAndRejectsInputAndMetadata() throws {
+        XCTAssertNoThrow(try RemoteAction(action: "sessionEnd", epoch: 7).validate())
+        let malformed = [RemoteAction(action: "sessionEnd", text: "x"),
+                         RemoteAction(action: "sessionEnd", key: "a"),
+                         RemoteAction(action: "sessionEnd", x: 1),
+                         RemoteAction(action: "sessionEnd", modifiers: ["command"]),
+                         RemoteAction(action: "sessionEnd", display: 1),
+                         RemoteAction(action: "sessionEnd", textFocusEditable: true),
+                         RemoteAction(action: "sessionEnd", interaction: NativeInteraction(token: "x"))]
+        for action in malformed { XCTAssertThrowsError(try action.validate()) }
+    }
+
+    func testBackgroundPauseSurvivesRetiredGeometryOnlyForOptedAuthenticatedLivePeers() {
+        func accepts(epochMatches: Bool = false, connected: Bool = true, sharing: Bool = true,
+                     refused: Bool = false, ending: Bool = false, opted: Bool = true, enabled: Bool = true) -> Bool {
+            DeliberateSessionEnd.allowsBackgroundPause(epochMatches: epochMatches, connected: connected,
+                sharing: sharing, sessionRefused: refused, ending: ending,
+                peerFeatures: opted ? [SessionFeature.deliberateEnd] : [], enabled: enabled)
+        }
+        XCTAssertTrue(accepts(), "A Big Text geometry update cannot swallow the authenticated background notice")
+        XCTAssertFalse(accepts(opted: false), "Legacy pause retains its geometry requirement")
+        XCTAssertFalse(accepts(enabled: false), "Rollback retains the original requirement")
+        XCTAssertTrue(accepts(epochMatches: true, opted: false, enabled: false))
+        XCTAssertFalse(accepts(connected: false))
+        XCTAssertFalse(accepts(sharing: false))
+        XCTAssertFalse(accepts(refused: true))
+        XCTAssertFalse(accepts(ending: true), "A late pause cannot reopen an ending session")
+        XCTAssertFalse(accepts(epochMatches: true, connected: false))
+        XCTAssertFalse(accepts(epochMatches: true, ending: true))
+    }
+
+    func testForegroundResumeAcceptsOnlyCurrentOrExactAcceptedPauseEpoch() {
+        func accepts(requested: UInt64, pausedEpoch: UInt64? = 7, opted: Bool = true,
+                     enabled: Bool = true, paused: Bool = true, connected: Bool = true,
+                     ending: Bool = false) -> Bool {
+            DeliberateSessionEnd.allowsForegroundResume(requestedEpoch: requested, currentEpoch: 8,
+                acceptedPauseEpoch: pausedEpoch, paused: paused, connected: connected, sharing: true,
+                sessionRefused: false, ending: ending,
+                peerFeatures: opted ? [SessionFeature.deliberateEnd] : [], enabled: enabled)
+        }
+        XCTAssertTrue(accepts(requested: 7), "The foreground can resume from the exact admitted background epoch")
+        XCTAssertTrue(accepts(requested: 8))
+        XCTAssertFalse(accepts(requested: 6), "An unrelated retired geometry never authorizes resume")
+        XCTAssertFalse(accepts(requested: 7, pausedEpoch: nil))
+        XCTAssertFalse(accepts(requested: 7, opted: false))
+        XCTAssertFalse(accepts(requested: 7, enabled: false))
+        XCTAssertTrue(accepts(requested: 8, opted: false, enabled: false))
+        XCTAssertFalse(accepts(requested: 7, paused: false))
+        XCTAssertFalse(accepts(requested: 7, connected: false))
+        XCTAssertFalse(accepts(requested: 7, ending: true))
+    }
+
+    func testHandshakeOptInPreservesFeatureAndOptionBoundsAndRollback() throws {
+        let suite = "DeliberateEndProtocolTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let request = MacShareBlocker.Handshake.phoneRequest([SessionFeature.videoRefinement, SessionFeature.textClarity], defaults: defaults)
+        XCTAssertEqual(request.features.count, 8)
+        XCTAssertLessThanOrEqual(request.options?.count ?? 0, MacShareBlocker.Handshake.maximumOptions)
+        XCTAssertTrue(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(request)).contains(SessionFeature.deliberateEnd))
+        defaults.set(true, forKey: DeliberateSessionEnd.disabledDefaultsKey)
+        XCTAssertFalse(MacShareBlocker.Handshake.phoneRequest([], defaults: defaults).requested.contains(SessionFeature.deliberateEnd))
+        XCTAssertFalse(SessionFeature.host.contains(SessionFeature.deliberateEnd), "The host advertises only to a peer that opted in")
+    }
+}

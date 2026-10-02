@@ -267,21 +267,45 @@ final class BigTextControllerTests: XCTestCase {
         XCTAssertFalse(controller.isEngaged)
     }
 
-    func testUnverifiedResumeAfterApplyRepliesFailed() async {
+    func testUnverifiedCaptureResumeDoesNotMisreportAnAppliedMode() async {
         host.resumeVerifies = false
         await apply(1280)
-        XCTAssertEqual(errors, [.failed], "the host treats the unverified display list as foreign and stops")
+        XCTAssertEqual(errors, [nil], "capture readiness is separate from the verified display-mode result")
         XCTAssertEqual(controller.current, large, "the mode is still ours to restore at session end")
         XCTAssertEqual(controller.baseline, base)
     }
 
-    func testUnverifiedResumeAfterOffForThisSessionRepliesFailed() async {
+    func testUnverifiedCaptureResumeDoesNotMisreportARestoredMode() async {
         await apply(1280)
         host.resumeVerifies = false
         await apply(0)
-        XCTAssertEqual(errors, [nil, .failed])
+        XCTAssertEqual(errors, [nil, nil])
         XCTAssertEqual(switcher.currentByDisplay[1], base)
         XCTAssertFalse(controller.isEngaged)
+    }
+
+    func testAppliedModeWithoutSetModeCallbackCompletesBeforePhoneTimeout() async {
+        switcher.onApply = nil
+        await apply(1280)
+        XCTAssertEqual(errors, [nil])
+        XCTAssertEqual(controller.current, large)
+        XCTAssertLessThan(clock, 1, "full live configuration proves completion without waiting ten seconds for a flag")
+        controller.sessionEnded(.sessionEnded)
+        let endedAt = clock
+        await controller.drain()
+        XCTAssertEqual(switcher.currentByDisplay[1], base)
+        XCTAssertLessThan(clock - endedAt, 1)
+    }
+
+    func testRedundantNeighbourModeCallbackDoesNotMakeOurChangeForeign() async {
+        switcher.onApply = { [unowned self] _, display in
+            self.controller.observe(DisplayReconfigurationEvent(display: display, flags: [.setModeFlag]))
+            self.controller.observe(DisplayReconfigurationEvent(display: 2, flags: [.setModeFlag]))
+        }
+        await apply(1280)
+        XCTAssertEqual(errors, [nil])
+        XCTAssertEqual(host.foreign, 0)
+        XCTAssertTrue(controller.ownsLiveConfiguration)
     }
 
     func testForeignChangeIsNeverOverwrittenWhenTheSessionEnds() async {
