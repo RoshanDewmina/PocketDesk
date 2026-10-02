@@ -831,6 +831,27 @@ final class First60PhoneTests: XCTestCase {
         XCTAssertEqual(restored.first60HintStage, .finished)
         restored.disconnect()
     }
+    func testAppliedDoneClickCompletesHintWhileDeferredScaleTemporarilyBlocksControl() async throws {
+        try start(features: [SessionFeature.displayScale, SessionFeature.inputReceipt])
+        try rememberWidth(1024)
+        try model.connection.setFirst60SetupStatusForTesting(.init(open: true, mediaReady: true))
+        try catalog()
+        model.frameReceived()
+        XCTAssertTrue(model.gesture(.move(CGSize(width: 1, height: 0))))
+        XCTAssertEqual(model.first60InlineHint, "Tap to click")
+        XCTAssertTrue(model.gesture(.click(count: 1)))
+        let doneClick = try lastClick()
+        XCTAssertEqual(model.first60HintStage, .click, "Sending Done does not prove it was posted")
+
+        try model.connection.setFirst60SetupStatusForTesting(.init(open: false, mediaReady: true))
+        await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+        XCTAssertEqual(model.bigText.pendingTarget, 1024)
+        XCTAssertFalse(model.canControl)
+        XCTAssertNil(model.first60InlineHint)
+        try applied(doneClick, accepted: true)
+        XCTAssertEqual(model.first60HintStage, .finished, "Exact posted Done still counts while its resize is pending")
+        XCTAssertEqual(defaults.integer(forKey: PhoneRemoteModel.first60HintStageKey), First60HintStage.finished.rawValue)
+    }
     func testMixedPeerDoesNotPretendToConfirmClickAndKillSwitchRestoresNormalPresentation() throws {
         try start()
         model.frameReceived()

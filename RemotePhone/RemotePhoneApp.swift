@@ -880,7 +880,9 @@ final class PhoneRemoteModel: ObservableObject {
               let receipt = action.inputAppliedReceipt,
               appliedReceiptTracker.consume(receipt, epoch: action.epoch, context: context, at: now) else { return }
         usefulSession.applied(context: context, now: now)
-        if receipt.kind == "click", first60HintStage == .click, first60InlineHint != nil {
+        // Setup Done can start Big Text before this ACK arrives and hide the hint.
+        // The consumed receipt remains authoritative within its exact original context.
+        if first60Enabled, receipt.kind == "click", first60HintStage == .click {
             advanceFirst60Hint(.finished)
         }
     }
