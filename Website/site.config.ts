@@ -77,12 +77,12 @@ export const config = {
      * `bun scripts/add-mac-download.ts <path to the DMG>` to copy it into dist/downloads/ (DEPLOY.md).
      * The /mac page offers it; the App Store switch above stays separate.
      */
-    macDownloadUrl: "/downloads/Farside-for-Mac-1.0-20261002.3.dmg",
+    macDownloadUrl: "/downloads/Farside-for-Mac-1.0-20261002.5.dmg",
     appStoreUrl: null,
     appStoreId: null,
-    macVersion: "1.0 (20261002.3)",
-    macSha256: "0c39638ae4a370aec4cedf5be68a2203ce466ede4351be5e215715f9a946832b",
-    macBytes: 17408265,
+    macVersion: "1.0 (20261002.5)",
+    macSha256: "2c027b3e74779f1aee8444090c664a619ace26f28711972b3f4a06e0220ea5cd",
+    macBytes: 17549183,
   } satisfies Launch as Launch,
 
   /**
