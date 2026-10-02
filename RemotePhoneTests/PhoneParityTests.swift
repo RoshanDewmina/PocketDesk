@@ -13,13 +13,15 @@ final class SessionWindowLayoutTests: XCTestCase {
 
     func testRegularWindowBandsFollowPictureCoverage() {
         for window in [CGSize(width: 744, height: 1133), CGSize(width: 834, height: 1210),
-                       CGSize(width: 1032, height: 1376), CGSize(width: 683, height: 1032)] {
+                       CGSize(width: 1032, height: 1376), CGSize(width: 683, height: 1032),
+                       CGSize(width: 680, height: 834)] {
             XCTAssertTrue(SessionWindowLayout.stacked(regular: true, window: window, source: mac, wasStacked: false))
             XCTAssertEqual(SessionWindowLayout.pictureSize(window: window, source: mac, stacked: true).height,
                            window.width / 1.6, accuracy: 0.01)
         }
         for window in [CGSize(width: 1210, height: 834), CGSize(width: 1376, height: 1032),
-                       CGSize(width: 900, height: 834), CGSize(width: 1920, height: 1080)] {
+                       CGSize(width: 808, height: 834), CGSize(width: 900, height: 834),
+                       CGSize(width: 1920, height: 1080)] {
             XCTAssertFalse(SessionWindowLayout.stacked(regular: true, window: window, source: mac, wasStacked: false))
         }
     }

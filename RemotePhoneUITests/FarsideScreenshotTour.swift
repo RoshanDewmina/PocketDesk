@@ -60,7 +60,7 @@ final class FarsideScreenshotTour: XCTestCase {
             ("slide-over", 400, 834, "compact"),
             ("split-portrait-two-thirds", 556, 1180, "compact"),
             ("split-portrait-third", 278, 1180, "compact"),
-            ("split-two-thirds11", 680, 834, "regular"),
+            ("split-two-thirds11", 808, 834, "regular"),
             ("split-two-thirds13", 900, 1032, "regular"),
             ("stage-manager-tall", 690, 1032, "regular"),
             ("stage-manager-wide", 900, 700, "regular")
