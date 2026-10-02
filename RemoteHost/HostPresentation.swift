@@ -383,7 +383,7 @@ enum HostSetupFlow {
             case .ready: return false
             }
         }
-        switch page {
+        return switch page {
         case .hello: current > .hello || state.setupStep > .screenRecording
         case .permissions: state.setupStep > .accessibility
         case .pair: state.hasPairedPhone && !state.pairingRequested
