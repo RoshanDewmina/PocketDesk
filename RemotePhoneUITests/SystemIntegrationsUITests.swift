@@ -272,9 +272,7 @@ final class NativeContainerSurfaceUITests: XCTestCase {
                     missing("widget-home-placement-\(suffix)", "Previously placed Farside widget root is not visible and hittable in this orientation")
                     missing("widget-context-menu-\(suffix)", "No visible, hittable Farside widget root was available for a bounded long press")
                 }
-                if orientation == .landscapeLeft {
-                    missing("widget-gallery-\(suffix)", "Existing Home Screen widget was reused; gallery was not reopened to avoid placing a duplicate")
-                }
+                captureFarsideWidgetGallery(suffix: suffix, landscape: orientation == .landscapeLeft)
                 continue
             }
             guard let currentHomeIcon = findFarsideHomeIcon() else {
@@ -399,6 +397,63 @@ final class NativeContainerSurfaceUITests: XCTestCase {
                     "Long press on the owned Connect to Your Mac widget exposed no widget-specific Edit Widget or Remove Widget action")
         }
         XCUIDevice.shared.press(.home)
+    }
+
+    /// Reopens the real provider preview from an existing Home Screen without adding a duplicate.
+    @MainActor
+    private func captureFarsideWidgetGallery(suffix: String, landscape: Bool) {
+        defer { XCUIDevice.shared.press(.home) }
+        let frame = springboard.frame
+        let orientationMatches = landscape ? frame.width > frame.height : frame.height > frame.width
+        guard orientationMatches else {
+            missing("widget-gallery-\(suffix)",
+                    "SpringBoard frame does not match requested \(landscape ? "landscape" : "portrait") gallery orientation")
+            return
+        }
+        guard let icon = findFarsideHomeIcon() else {
+            missing("widget-gallery-\(suffix)", "Could not find the Farside app icon to reopen the native widget provider gallery")
+            return
+        }
+        icon.press(forDuration: 1.2)
+        let editHome = springboard.buttons["Edit Home Screen"]
+        let edit = editHome.waitForExistence(timeout: 5) ? editHome : springboard.buttons["Edit"]
+        guard edit.waitForExistence(timeout: 3) && edit.isHittable else {
+            missing("widget-gallery-\(suffix)", "SpringBoard exposed neither Edit Home Screen nor Edit")
+            return
+        }
+        edit.tap()
+        let add = springboard.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'Add Widget' OR label == '+'")).firstMatch
+        guard add.waitForExistence(timeout: 6) && add.isHittable else {
+            missing("widget-gallery-\(suffix)", "Home Screen edit mode did not expose the native Add Widget control")
+            return
+        }
+        add.tap()
+        let search = springboard.searchFields.firstMatch
+        guard search.waitForExistence(timeout: 8) && search.isHittable else {
+            missing("widget-gallery-\(suffix)", "Native widget gallery did not expose a hittable provider search field")
+            return
+        }
+        search.tap()
+        search.typeText("Farside")
+        let provider = springboard.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Farside")).firstMatch
+        guard provider.waitForExistence(timeout: 8) && provider.isHittable else {
+            missing("widget-gallery-\(suffix)", "Native widget gallery search did not expose a hittable Farside provider")
+            return
+        }
+        provider.tap()
+        let addWidget = springboard.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'Add Widget'")).firstMatch
+        let galleryFrame = springboard.frame
+        let galleryHasRequestedOrientation = landscape
+            ? galleryFrame.width > galleryFrame.height
+            : galleryFrame.height > galleryFrame.width
+        guard galleryHasRequestedOrientation && addWidget.waitForExistence(timeout: 5) && addWidget.isHittable else {
+            missing("widget-gallery-\(suffix)",
+                    "Farside provider Add Widget preview was not visible and hittable in the requested SpringBoard orientation")
+            return
+        }
+        attach("widget-gallery-\(suffix)")
+        // Deliberately leave Add Widget untouched: the existing Home Screen placement is retained.
     }
 
     /// Attempts only the real iPadOS windowing controls. A compact-window screenshot is attached
