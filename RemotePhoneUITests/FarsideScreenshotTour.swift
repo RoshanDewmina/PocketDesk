@@ -163,7 +163,12 @@ final class FarsideScreenshotTour: XCTestCase {
                 XCUIDevice.shared.orientation = orientation
                 // These preferences affect fixture appearance. Keep every launch deterministic;
                 // launch-domain overrides expire with this simulator process.
-                app.launchArguments = shot.arguments + ["-bigTextByMac", "{}", "-disableBigTextAutoLevel", "YES"]
+                app.launchArguments = shot.arguments + ["-disableBigTextAutoLevel", "YES"]
+                // Big Text's request/acknowledgment must be allowed to read its own saved choice
+                // when a fixture has a pairing. Its navigation resets Off explicitly instead.
+                if !["big-text-pending", "big-text-selected"].contains(shot.name) {
+                    app.launchArguments += ["-bigTextByMac", "{}"]
+                }
                 if accessibility {
                     app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
                 }
@@ -313,7 +318,7 @@ final class FarsideScreenshotTour: XCTestCase {
             guard require(pill, "Big Text request began", timeout: 2) else { return false }
             guard selected(step) else { return false }
             guard pill.waitForNonExistence(timeout: 3) else { return missing("Big Text confirmation did not clear progress") }
-            return true
+            return selected(step)
         case "controls-lan-wake":
             guard tap(app.buttons["remote.controls.settings"].firstMatch, in: app) else { return false }
             guard tap(app.buttons["Wake another Mac on this LAN"], in: app) else { return false }
