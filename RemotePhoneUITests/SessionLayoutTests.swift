@@ -310,11 +310,13 @@ final class SessionLayoutTests: XCTestCase {
         XCTAssertTrue(app.buttons["Keyboard"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["End session"].isHittable)
         let fitWholeDisplay = app.buttons["Fit whole display"]
-        XCTAssertTrue(fitWholeDisplay.waitForExistence(timeout: 3), "Fill is the default viewport mode")
-        fitWholeDisplay.tap()
-        XCTAssertTrue(app.buttons["Fill screen"].waitForExistence(timeout: 3))
-        app.buttons["Fill screen"].tap()
+        let fillScreen = app.buttons["Fill screen"]
         XCTAssertTrue(fitWholeDisplay.waitForExistence(timeout: 3))
+        XCTAssertTrue(fillScreen.isSelected, "Fill is the default viewport mode")
+        fitWholeDisplay.tap()
+        XCTAssertTrue(fitWholeDisplay.waitForSelected(timeout: 3))
+        fillScreen.tap()
+        XCTAssertTrue(fillScreen.waitForSelected(timeout: 3))
         attachScreenshot("Revealed dock - offline layout")
 
         if app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists { hideControls.tap() }
@@ -385,15 +387,15 @@ final class SessionLayoutTests: XCTestCase {
         launchOfflineFixture(app)
         revealDock(app)
         app.buttons["Fit whole display"].tap()
-        XCTAssertTrue(app.buttons["Fill screen"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Fit whole display"].waitForSelected(timeout: 3))
         app.terminate()
 
         app.launchArguments = ["--ui-layout-check"]
         launchOfflineFixture(app)
         revealDock(app)
-        XCTAssertTrue(app.buttons["Fill screen"].waitForExistence(timeout: 3), "Fit must be remembered after relaunch")
+        XCTAssertTrue(app.buttons["Fit whole display"].waitForSelected(timeout: 3), "Fit must be remembered after relaunch")
         app.buttons["Fill screen"].tap()
-        XCTAssertTrue(app.buttons["Fit whole display"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Fill screen"].waitForSelected(timeout: 3))
     }
 
     @MainActor
@@ -717,5 +719,12 @@ final class SessionLayoutTests: XCTestCase {
         }
         returnButton.tap()
         XCTAssertTrue(showControls.waitForExistence(timeout: 5), "Explicit privacy recovery must restore the offline fixture")
+    }
+}
+
+private extension XCUIElement {
+    func waitForSelected(timeout: TimeInterval) -> Bool {
+        let predicate = NSPredicate(format: "isSelected == true")
+        return XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: self)], timeout: timeout) == .completed
     }
 }

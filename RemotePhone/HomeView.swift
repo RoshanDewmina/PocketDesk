@@ -148,6 +148,7 @@ struct HomeView: View {
     @State private var contactRipples: [HalftoneRipple] = []
     @State private var artSize: CGSize = .zero
     @State private var regularIntroHeight: CGFloat = 302
+    @State private var regularContentHeight: CGFloat = 640
     /// When the current connect started waiting; drives the "still trying" rings (D38).
     @State private var searchStart: Date?
     /// The art's reaction to a known failure, shown briefly before the error cover.
@@ -180,7 +181,7 @@ struct HomeView: View {
         GeometryReader { proxy in
             if FarsideShellLayout.twoColumns(horizontal: horizontalSizeClass, typeSize: typeSize,
                                             enabled: FarsideShellLayout.enabled) {
-                regularHome(windowWidth: proxy.size.width)
+                regularHome(windowWidth: proxy.size.width, windowHeight: proxy.size.height)
             } else if verticalSizeClass == .compact && !(horizontalSizeClass == .regular && typeSize.isAccessibilitySize && FarsideShellLayout.enabled) {
                 // Landscape phone: art on the left, the Mac and Connect always in view on the right.
                 HStack(alignment: .top, spacing: Farside.Space.l) {
@@ -327,8 +328,11 @@ struct HomeView: View {
         .padding(.top, Farside.Space.xs)
     }
 
-    private func regularHome(windowWidth: CGFloat) -> some View {
+    private func regularHome(windowWidth: CGFloat, windowHeight: CGFloat) -> some View {
         let columns = FarsideShellLayout.columns(windowWidth: windowWidth)
+        // A tall iPad window otherwise leaves the bottom half empty; both columns share one inset
+        // so the Mac card and the list stay level.
+        let centerInset = max(0, (windowHeight - regularContentHeight) / 2 - Farside.Space.xl)
         return HStack(alignment: .top, spacing: 20) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -340,6 +344,8 @@ struct HomeView: View {
                     homePrimary
                 }
                 .padding(.bottom, Farside.Space.m)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { regularContentHeight = $0 }
+                .padding(.top, centerInset)
             }
             .scrollBounceBehavior(.basedOnSize)
             .frame(width: columns.leading)
@@ -347,7 +353,7 @@ struct HomeView: View {
             ScrollView {
                 if macName != nil || savedMacState == .choose {
                     homeUtilities
-                        .padding(.top, regularIntroHeight)
+                        .padding(.top, regularIntroHeight + centerInset)
                         .padding(.bottom, Farside.Space.m)
                 }
             }

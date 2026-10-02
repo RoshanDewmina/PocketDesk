@@ -353,7 +353,8 @@ struct FarsideTileButtonStyle: ButtonStyle {
                                       lineWidth: selected ? 1.5 : 1))
                     .shadow(color: on ? Farside.Palette.ember.opacity(0.45) : .clear, radius: 12)
                 configuration.title
-                    .farsideCaption(on ? Farside.Palette.bone : Farside.Palette.ash)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(on || selected ? Farside.Palette.bone : Farside.Palette.ash)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
@@ -434,6 +435,10 @@ struct FarsideSegmented<Value: Hashable>: View {
     let options: [(value: Value, title: String)]
     @Binding var selection: Value
     var accessibilityStacked = false
+    /// Fuller names for VoiceOver and Voice Control when the visible title is one short word.
+    var spokenTitles: [Value: String] = [:]
+    /// Optional leading symbols, so the choice reads at a glance.
+    var symbols: [Value: String] = [:]
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var stacked: Bool {
@@ -459,7 +464,14 @@ struct FarsideSegmented<Value: Hashable>: View {
         ForEach(options, id: \.value) { option in
             let selected = option.value == selection
             Button { selection = option.value } label: {
-                Text(option.title)
+                HStack(spacing: 5) {
+                    if let symbol = symbols[option.value] {
+                        Image(systemName: symbol)
+                            .font(.caption.weight(.semibold))
+                            .accessibilityHidden(true)
+                    }
+                    Text(option.title)
+                }
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(selected ? Farside.Palette.bone : Farside.Palette.ash)
                     .lineLimit(stacked ? nil : 1)
@@ -475,7 +487,8 @@ struct FarsideSegmented<Value: Hashable>: View {
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(option.title)
+            .accessibilityLabel(spokenTitles[option.value] ?? option.title)
+            .accessibilityInputLabels([spokenTitles[option.value] ?? option.title, option.title])
             .accessibilityShowsLargeContentViewer()
             .accessibilityAddTraits(selected ? .isSelected : [])
         }

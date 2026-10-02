@@ -92,17 +92,19 @@ final class FarsideRedesignUITests: XCTestCase {
     }
 
     @MainActor
-    func testDockOffersKeysMicClipFitModeSegmentsAndEnd() {
+    func testDockOffersActionTilesSegmentsAndEnd() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill"]
         launchOfflineFixture(app)
         let handle = app.buttons["Show controls"]
         handle.swipeUp()
         XCTAssertTrue(app.buttons["Hide controls"].waitForExistence(timeout: 5))
-        for label in ["Keyboard", "Voice input", "Clipboard", "Fit whole display", "Move view",
-                      "Fit", "Fill", "View", "Control", "Controls", "End session"] {
+        for label in ["Keyboard", "Voice input", "Clipboard", "Controls", "Control desktop", "Move view",
+                      "Fit whole display", "Fill screen", "End session"] {
             XCTAssertTrue(app.buttons[label].exists, "Dock is missing \(label)")
         }
+        XCTAssertTrue(app.buttons["Control desktop"].isSelected, "Control is the default touch mode")
+        XCTAssertTrue(app.buttons["Fill screen"].isSelected, "The fixture starts in Fill")
         app.buttons["Clipboard"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["remote.clipboard.row"].firstMatch.waitForExistence(timeout: 3))
         attach("Dock - clipboard row")
