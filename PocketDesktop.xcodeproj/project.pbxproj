@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B8C000000000000000000001 /* OwnedVideo.metal in Sources */ = {isa = PBXBuildFile; fileRef = B8C000000000000000000002 /* OwnedVideo.metal */; };
 		005F0E21A9B5F115D059E52E /* HostViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F688011A8DDECAEAAE11132 /* HostViewState.swift */; };
 		006A8061FB0C8D061C4CCC71 /* LegalNoticesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AE917A2022CA1A828BFA243 /* LegalNoticesView.swift */; };
 		006FD13C8DD71202ABAF0D69 /* OFL-Doto.txt in Resources */ = {isa = PBXBuildFile; fileRef = D6F48E835098ABC5915960B7 /* OFL-Doto.txt */; };
@@ -1329,6 +1330,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		B8C000000000000000000002 /* OwnedVideo.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = OwnedVideo.metal; sourceTree = "<group>"; };
 		003A7C0A4B2EA370009A1BAE /* PhoneDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneDiagnostics.swift; sourceTree = "<group>"; };
 		00F0DF441D246AB09E49CA88 /* AwayModeProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AwayModeProtocol.swift; sourceTree = "<group>"; };
 		016F8B3CBE5527AEDB685144 /* PhoneDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneDiagnosticsTests.swift; sourceTree = "<group>"; };
@@ -2508,6 +2510,7 @@
 			isa = PBXGroup;
 			children = (
 				28D92B6AD7D41A4908CB80B9 /* OwnedMetalVideoView.swift */,
+				B8C000000000000000000002 /* OwnedVideo.metal */,
 				8ACE562249808722A5D37ACC /* VideoFrameEnvelope.swift */,
 				1CAB0AA6E53D8944C5B17B28 /* VideoPixelGeometry.swift */,
 				53F26F1ADF91A721763FC5D6 /* VideoPresentationAdmission.swift */,
@@ -4528,6 +4531,7 @@
 				EDF78FE37E2BB0D183ACD214 /* OneTimeOfferPolicy.swift in Sources */,
 				7F38BF0EAA79216D0B0B6948 /* OwnedHEVCCodec.swift in Sources */,
 				F19904A5D1649950536D4AF3 /* OwnedMetalVideoView.swift in Sources */,
+				B8C000000000000000000001 /* OwnedVideo.metal in Sources */,
 				6C90944AC346E19DB74B00D5 /* OwnedVTEncoder.swift in Sources */,
 				649237EB105DFAF1BF0DCB44 /* PacketRepairPolicy.swift in Sources */,
 				4CBB83D15E88C29784EF24CD /* PairedMacSelection.swift in Sources */,

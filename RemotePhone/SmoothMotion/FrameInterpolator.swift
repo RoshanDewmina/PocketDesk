@@ -49,6 +49,53 @@ struct InterpolatedFrames {
     let upscaledSource: CVPixelBuffer?
 }
 
+/// A pair must describe the same supported SDR domain; other tags are not guessed.
+/// Snapshot before processing, and apply only after the engine returns buffer ownership.
+struct InterpolationColorTags: Equatable {
+    let primaries: String
+    let transfer: String
+    let matrix: String
+
+    static let keys = [kCVImageBufferColorPrimariesKey, kCVImageBufferTransferFunctionKey,
+                       kCVImageBufferYCbCrMatrixKey]
+
+    init?(_ buffer: CVPixelBuffer) {
+        guard let primaries = CVBufferCopyAttachment(buffer, Self.keys[0], nil) as? String,
+              primaries == kCVImageBufferColorPrimaries_ITU_R_709_2 as String,
+              let transfer = CVBufferCopyAttachment(buffer, Self.keys[1], nil) as? String,
+              [kCVImageBufferTransferFunction_ITU_R_709_2 as String,
+               kCVImageBufferTransferFunction_sRGB as String].contains(transfer),
+              let matrix = CVBufferCopyAttachment(buffer, Self.keys[2], nil) as? String,
+              [kCVImageBufferYCbCrMatrix_ITU_R_601_4 as String,
+               kCVImageBufferYCbCrMatrix_ITU_R_709_2 as String].contains(matrix) else { return nil }
+        self.primaries = primaries
+        self.transfer = transfer
+        self.matrix = matrix
+    }
+
+    /// Pool buffers can retain attachments from their last use. Call before giving them to VT.
+    static func clear(_ buffer: CVPixelBuffer) {
+        for key in keys { CVBufferRemoveAttachment(buffer, key) }
+    }
+
+    func apply(to buffer: CVPixelBuffer) {
+        Self.clear(buffer)
+        for (key, value) in zip(Self.keys, [primaries, transfer, matrix]) {
+            CVBufferSetAttachment(buffer, key, value as CFString, .shouldPropagate)
+        }
+    }
+}
+
+enum InterpolationColorTagsSwitch {
+    static let defaultsKey = "PocketDeskInterpolationColorTags"
+    /// Process-start A/B. NO restores the old untagged output and unchecked color pairing.
+    static let isOn = read(defaults: .standard)
+
+    static func read(defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: defaultsKey) == nil ? true : defaults.bool(forKey: defaultsKey)
+    }
+}
+
 /// Largest source the interpolator accepts. iOS 27 reports it per scale factor; the iOS/macOS 27
 /// release notes document "arbitrary source dimensions up to 1080p", used when nothing is reported.
 struct InterpolationLimits: Equatable {
@@ -138,6 +185,7 @@ final class FrameInterpolator: @unchecked Sendable {
 
     let queue: DispatchQueue
     private let makeEngine: () -> FrameInterpolationEngine?
+    private let colorTags: Bool
     private let lock = NSLock()
     private var engine: FrameInterpolationEngine?
     private var phase: Phase = .idle
@@ -152,8 +200,10 @@ final class FrameInterpolator: @unchecked Sendable {
     private var reference: (buffer: CVPixelBuffer, time: TimeInterval, generation: Int)?
 
     init(queue: DispatchQueue = DispatchQueue(label: "Farside.smooth-motion", qos: .userInteractive),
+         colorTags: Bool = InterpolationColorTagsSwitch.isOn,
          makeEngine: @escaping () -> FrameInterpolationEngine?) {
         self.queue = queue
+        self.colorTags = colorTags
         self.makeEngine = makeEngine
     }
 
@@ -267,11 +317,22 @@ final class FrameInterpolator: @unchecked Sendable {
                   setup.input.matches(previous.buffer) else {
                 return finish(.primed(input: input), completion)
             }
+            let tags = InterpolationColorTags(input)
+            if colorTags, tags == nil || tags != InterpolationColorTags(previous.buffer) {
+                // A color-domain transition primes a new reference rather than counting as a
+                // processor failure. The source still goes directly to its normal renderer.
+                return finish(.primed(input: input), completion)
+            }
             engine.interpolate(previous: previous.buffer, previousTime: previous.time,
                                current: input, currentTime: time) { [self] result in
                 let ms = MachClock.nowMs() - started
                 switch result {
-                case .success(let frames): finish(.interpolated(frames, input: input, processingMs: ms), completion)
+                case .success(let frames):
+                    if colorTags, let tags {
+                        tags.apply(to: frames.middle)
+                        if let upscaled = frames.upscaledSource { tags.apply(to: upscaled) }
+                    }
+                    finish(.interpolated(frames, input: input, processingMs: ms), completion)
                 case .failure(let error): finish(.failed(error, input: input, processingMs: ms), completion)
                 }
             }

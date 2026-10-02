@@ -33,6 +33,9 @@ final class SmoothMotionController: @unchecked Sendable {
         var queue: DispatchQueue
         var fitOversize = SmoothMotionFitOversizeSwitch.isOn
         var midpointDeadline = SmoothMotionMidpointDeadlineSwitch.isOn
+        var colorTags = InterpolationColorTagsSwitch.isOn
+        var lowPower: () -> Bool = { ProcessInfo.processInfo.isLowPowerModeEnabled }
+        var lowPowerBypass = InterpolationLPMBypassSwitch.isOn
 
         static var live: Environment {
             Environment(makeEngine: InterpolationAvailability.makeEngine,
@@ -73,6 +76,7 @@ final class SmoothMotionController: @unchecked Sendable {
     private var lastArrival: TimeInterval?
     private var sourceInterval: TimeInterval = 1.0 / 60
     private var displayCapable: Bool?
+    private var displayCadence = SmoothMotionDisplayCadence()
     private var busyTimes: [TimeInterval] = []
     private var cooldownUntil = -TimeInterval.infinity
     private var consecutiveErrors = 0
@@ -88,7 +92,8 @@ final class SmoothMotionController: @unchecked Sendable {
     init(mode: SmoothMotionMode = .stored(), environment: Environment = .live) {
         self.environment = environment
         policy = SmoothMotionPolicy(mode: mode)
-        interpolator = FrameInterpolator(queue: environment.queue, makeEngine: environment.makeEngine)
+        interpolator = FrameInterpolator(queue: environment.queue, colorTags: environment.colorTags,
+                                         makeEngine: environment.makeEngine)
         presenter = SmoothMotionPresenter<Output>(deliver: { [sink] in sink.deliver?($0) })
         diagnostics.reset(mode: mode)
     }
@@ -138,6 +143,10 @@ final class SmoothMotionController: @unchecked Sendable {
         policy = SmoothMotionPolicy(mode: mode)
         sampler.reset()
         lastArrival = nil
+        if environment.lowPowerBypass {
+            displayCapable = nil
+            displayCadence = SmoothMotionDisplayCadence()
+        }
         busyTimes.removeAll()
         cooldownUntil = -.infinity
         consecutiveErrors = 0
@@ -169,15 +178,27 @@ final class SmoothMotionController: @unchecked Sendable {
     /// Start of each video view draw, before WebRTC's renderer draws: hands over the paced
     /// midpoint or held source frame that is due, so it is drawn in this same display tick.
     func displayTick(_ view: MTKView) {
+        if let owned = view.superview as? OwnedMetalVideoView { owned.renderDiagnostics = diagnostics }
         let screenMaximum = view.window?.windowScene?.screen.maximumFramesPerSecond ?? 60
         displayTick(at: environment.now(), framesPerSecond: view.preferredFramesPerSecond,
                     capable: StreamTuning.current.presentAtDisplayMaximum && screenMaximum >= 100)
     }
 
     func displayTick(at now: TimeInterval, framesPerSecond: Int, capable: Bool) {
-        lock.lock(); displayCapable = capable; lock.unlock()
-        let tick = 1.0 / Double(min(120, max(30, framesPerSecond)))
-        if let delivery = presenter.pump(at: now, tick: tick), let delay = delivery.addedDelay {
+        lock.lock()
+        displayCapable = capable
+        if environment.lowPowerBypass { displayCadence.observe(at: now) }
+        let bypass = environment.lowPowerBypass &&
+            (environment.lowPower() || !capable || !displayCadence.permitsInterpolation)
+        let stop = bypass && wasEngaged
+        if stop { wasEngaged = false }
+        let tick = environment.lowPowerBypass
+            ? min(1.0 / 30, max(1.0 / 120, displayCadence.interval ?? 1.0 / 60))
+            : 1.0 / Double(min(120, max(30, framesPerSecond)))
+        lock.unlock()
+        if stop { interpolator.stop() }
+        let delivery = bypass ? presenter.flush(at: now) : presenter.pump(at: now, tick: tick)
+        if let delay = delivery?.addedDelay {
             diagnostics.addedLatency(delay)
         }
         let dropped = presenter.dropped
@@ -293,7 +314,18 @@ final class SmoothMotionController: @unchecked Sendable {
         let now = environment.now()
         switch outcome {
         case .interpolated(let frames, let input, let ms):
-            lock.lock(); consecutiveErrors = 0; lock.unlock()
+            lock.lock()
+            consecutiveErrors = 0
+            let bypass = environment.lowPowerBypass &&
+                (environment.lowPower() || displayCapable != true || !displayCadence.permitsInterpolation)
+            lock.unlock()
+            if bypass {
+                // Power/cadence may change while VT owns the pair. Never enqueue its midpoint
+                // after a bypass flushed the presenter; show the decoded source directly.
+                diagnostics.processed(ms: ms, interpolated: false)
+                presentDirect(frame, marker, order: order, at: now, arrival: arrival)
+                return
+            }
             diagnostics.processed(ms: ms, interpolated: true)
             if ms > interval * 900 { noteBusy(at: now) }
             let shown = frames.upscaledSource ?? (plan.fitted ? input : nil)
@@ -344,7 +376,9 @@ final class SmoothMotionController: @unchecked Sendable {
     private func currentBlock(at now: TimeInterval, source: SmoothMotionSource?, plan: InterpolationPlan?) -> SmoothMotionBlock? {
         if !environment.supported { return .unsupported }
         if case .unavailable = interpolator.currentPhase { return .unsupported }
+        if environment.lowPowerBypass, environment.lowPower() { return .lowPower }
         if displayCapable != true { return .display }
+        if environment.lowPowerBypass, !displayCadence.permitsInterpolation { return .display }
         if failed { return .failed }
         switch environment.thermal() {
         case .serious, .critical: return .thermal

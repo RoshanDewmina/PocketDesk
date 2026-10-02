@@ -20,6 +20,11 @@ final class SmoothMotionDiagnostics: @unchecked Sendable {
         var lastFallback: String?
         var setup: String?
         var sessionStartMs: Double?
+        var drawableWaitP50Ms: Double?
+        var drawableWaitP95Ms: Double?
+        var drawableWaitMaxMs: Double?
+        var drawableWaitSamples = 0
+        var rendererFallbackCreations = 0
 
         var overlayLine: String {
             func ms(_ value: Double?) -> String { value.map { String(format: "%.1f", $0) } ?? "–" }
@@ -28,6 +33,7 @@ final class SmoothMotionDiagnostics: @unchecked Sendable {
                 + " · proc \(ms(processingP50Ms))/\(ms(processingP95Ms))ms · interp \(interpolatedFrames)"
                 + " · drop \(droppedFrames) · busy \(busyFrames) · fallback \(fallbacks)"
             if let lastFallback { line += " (\(lastFallback))" }
+            line += " · drawable p50/p95/max \(ms(drawableWaitP50Ms))/\(ms(drawableWaitP95Ms))/\(ms(drawableWaitMaxMs))ms n \(drawableWaitSamples) · renderer fallback \(rendererFallbackCreations)"
             return line
         }
 
@@ -41,6 +47,8 @@ final class SmoothMotionDiagnostics: @unchecked Sendable {
                     + (sessionStartMs.map { String(format: " · start %.0f ms", $0) } ?? ""),
                 "Frames: \(interpolatedFrames) interpolated · \(droppedFrames) dropped · \(busyFrames) shown directly while busy",
                 "Fallbacks: \(fallbacks)" + (lastFallback.map { " · last: \($0)" } ?? ""),
+                "Drawable wait: p50 \(ms(drawableWaitP50Ms)) · p95 \(ms(drawableWaitP95Ms)) · max \(ms(drawableWaitMaxMs)) · \(drawableWaitSamples) samples",
+                "Renderer fallback views created: \(rendererFallbackCreations)",
             ]
         }
     }
@@ -56,6 +64,7 @@ final class SmoothMotionDiagnostics: @unchecked Sendable {
     private var lastFrameAt: TimeInterval?
     private var added = SampleRing(capacity: sampleCapacity)
     private var processing = SampleRing(capacity: sampleCapacity)
+    private var drawableWaits = SampleRing(capacity: sampleCapacity)
 
     func reset(mode: SmoothMotionMode) {
         lock.lock(); defer { lock.unlock() }
@@ -65,6 +74,7 @@ final class SmoothMotionDiagnostics: @unchecked Sendable {
         lastFrameAt = nil
         added = SampleRing(capacity: Self.sampleCapacity)
         processing = SampleRing(capacity: Self.sampleCapacity)
+        drawableWaits = SampleRing(capacity: Self.sampleCapacity)
     }
 
     func frameArrived(engaged: Bool, state: String, mode: SmoothMotionMode, at now: TimeInterval) {
@@ -88,6 +98,20 @@ final class SmoothMotionDiagnostics: @unchecked Sendable {
         processing.record(ms)
         if interpolated { current.interpolatedFrames += 1 }
         lock.unlock()
+    }
+
+    func drawableAcquisition(ms: Double) {
+        lock.lock(); drawableWaits.record(ms); lock.unlock()
+    }
+
+    func adoptDrawableWaits(_ samples: SampleRing, fallbackCreations: Int) {
+        lock.lock(); defer { lock.unlock() }
+        drawableWaits = samples
+        current.rendererFallbackCreations = fallbackCreations
+    }
+
+    func rendererFallbackCreated() {
+        lock.lock(); current.rendererFallbackCreations += 1; lock.unlock()
     }
 
     func dropped(_ count: Int) {
@@ -123,6 +147,10 @@ final class SmoothMotionDiagnostics: @unchecked Sendable {
         result.addedLatencyP95Ms = added.percentile(0.95)
         result.processingP50Ms = processing.percentile(0.5)
         result.processingP95Ms = processing.percentile(0.95)
+        result.drawableWaitP50Ms = drawableWaits.percentile(0.5)
+        result.drawableWaitP95Ms = drawableWaits.percentile(0.95)
+        result.drawableWaitMaxMs = drawableWaits.percentile(1)
+        result.drawableWaitSamples = drawableWaits.count
         return result
     }
 }

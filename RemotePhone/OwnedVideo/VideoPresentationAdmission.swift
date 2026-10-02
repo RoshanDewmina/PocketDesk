@@ -142,6 +142,11 @@ final class NewestFrameMailbox<Frame>: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }; return pending.map(predicate) ?? false
     }
     var hasPending: Bool { lock.lock(); defer { lock.unlock() }; return pending != nil }
+    /// A geometry swap must wait for both GPU and public presentation ownership of older draws.
+    func isOnlyFlight(_ id: UInt64) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return !closed && flights.union(presentationFlights) == [id]
+    }
     var retainedSlots: Int {
         lock.lock(); defer { lock.unlock() }
         return (pending == nil ? 0 : 1) + (shown == nil ? 0 : 1) + flights.union(presentationFlights).count

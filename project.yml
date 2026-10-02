@@ -81,6 +81,7 @@ targets:
     type: application
     platform: iOS
     deploymentTarget: '26.0'
+    # RemotePhone glob includes OwnedVideo/OwnedVideo.metal in the app default Metal library.
     sources: [RemotePhone, RemoteShared, PocketDesktop/TrackpadSurface.swift]
     dependencies:
       - package: WebRTC

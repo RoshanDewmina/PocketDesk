@@ -155,6 +155,7 @@ final class VideoToolboxInterpolationEngine: FrameInterpolationEngine {
         var created: CVPixelBuffer?
         guard CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &created) == kCVReturnSuccess,
               let buffer = created, geometry.matches(buffer) else { return nil }
+        if InterpolationColorTagsSwitch.isOn { InterpolationColorTags.clear(buffer) }
         return buffer
     }
 
