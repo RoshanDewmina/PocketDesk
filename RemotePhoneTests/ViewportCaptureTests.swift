@@ -202,6 +202,47 @@ final class ViewportCaptureTests: XCTestCase {
         XCTAssertEqual(send(&reporter, coverage: crop, at: 5)?.rect, rotated.rect, "a single layout change crops once")
     }
 
+    /// Continuous pinch/pan with a delayed crop echo: one escape request, then one settle.
+    /// Use the real reporter and heartbeat region rather than counting raw touch callbacks.
+    func testPinchPanReplayEmitsAtMostOneEscapeAndOneSettledRegion() throws {
+        var reporter = ViewportReporter()
+        let initialCrop = CGRect(x: 300, y: 200, width: 800, height: 420)
+        let initial = viewing(CGRect(x: 350, y: 249, width: 700, height: 322), zoom: 2622.0 / 700)
+        reporter.update(initial, at: 1)
+        let first = try XCTUnwrap(send(&reporter, settled: true, coverage: initialCrop, at: 1))
+        var emitted: [ViewportRegion] = []
+        var lastRequest = initial
+        for step in 1...24 {
+            let now = 2 + Double(step) / 60
+            let width = CGFloat(700 + step * 12), height = width * 1206 / 2622
+            let pan = CGFloat(step) / 20
+            lastRequest = viewing(CGRect(x: 700 - width / 2 + pan, y: 410 - height / 2 + pan,
+                                         width: width, height: height),
+                                  zoom: 2622 / Double(width))
+            reporter.update(lastRequest, at: now)
+            // The first 8 callbacks fit the old crop; subsequent requests escape. The host echo
+            // is delayed until callback 20. The last sent widened request must cover that delay.
+            let coverage = step >= 20 ? emitted.last?.rect ?? initialCrop : initialCrop
+            if reporter.nextSend(settled: false, coverage: coverage, at: now) == .now {
+                emitted.append(try XCTUnwrap(send(&reporter, coverage: coverage, at: now)))
+            }
+            let heartbeat = try XCTUnwrap(reporter.region(forDisplay: display))
+            XCTAssertEqual(heartbeat, emitted.last ?? first, "ordinary heartbeats repeat only committed coverage")
+            XCTAssertEqual(heartbeat.pixelWidth, 2622)
+            XCTAssertEqual(heartbeat.pixelHeight, 1206)
+            XCTAssertNoThrow(try heartbeat.validate())
+        }
+        XCTAssertEqual(emitted.count, 1, "the continuing escape widens once, including while the echo is delayed")
+        let widened = try XCTUnwrap(emitted.first)
+        XCTAssertTrue(widened.rect.contains(lastRequest.rect), "the pending crop safely contains subsequent callbacks")
+        let settled = try XCTUnwrap(send(&reporter, settled: true, coverage: widened.rect, at: 2.41))
+        emitted.append(settled)
+        XCTAssertEqual(settled.rect, lastRequest.rect)
+        XCTAssertEqual(settled.epoch, first.epoch + 2)
+        XCTAssertLessThanOrEqual(emitted.count, 2, "escape plus final settle are the entire gesture budget")
+        XCTAssertEqual(reporter.nextSend(settled: true, coverage: settled.rect, at: 2.42), .none)
+    }
+
     func testAnotherDisplaysViewportLeavesAtOnce() {
         var reporter = ViewportReporter()
         let external = CGSize(width: 1920, height: 1080)
