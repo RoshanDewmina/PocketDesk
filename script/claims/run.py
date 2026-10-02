@@ -3,9 +3,9 @@
 import argparse, datetime, hashlib, json, os, pathlib, subprocess, sys, time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 from result_guard import ALL_CLAIMS
-from recovery import GROUPS, FEATURE_METHODS, PHONE_UNIT_METHODS, parse_groups, audit_methods
+from recovery import GROUPS, FEATURE_METHODS, PHONE_UNIT_METHODS, parse_groups, audit_methods, check_methods, test_module
 p = argparse.ArgumentParser()
-p.add_argument('stage', nargs='?', choices=['all','auto','settings','build','phone','ipad','phone-more','ipad-more','phone-audit','ipad-audit','phone-features','ipad-features','phone-units','duo','core','backend','host'], default='all')
+p.add_argument('stage', nargs='?', choices=['all','auto','settings','build','phone','ipad','phone-more','ipad-more','phone-audit','ipad-audit','phone-features','ipad-features','phone-units','phone-check','ipad-check','duo','core','backend','host'], default='all')
 p.add_argument('--output', default='/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims')
 p.add_argument('--dd', default='/Volumes/Studio/Development/Caches/b7-claims/DD')
 p.add_argument('--phone', help='Explicit lane-owned simulator override; default is a dedicated claims iPhone')
@@ -107,14 +107,21 @@ def test(label, device, supplemental=False, recovery_methods=None, unit_only=Fal
     except RuntimeError as e: raise SystemExit(str(e))
     (LOG/'tested-build-manifest.json').write_bytes(build_manifest().read_bytes())
     if recovery_methods is not None:
-        selectors=[('RemotePhoneTests/' if unit_only else 'RemotePhoneUITests/')+method for method in recovery_methods]
+        selectors=[test_module(method)+'/'+method for method in recovery_methods]
         (LOG/(label+'-expected-methods.json')).write_text(json.dumps(recovery_methods,indent=2))
+        combined = label.endswith('-check')
+        has_audits = combined or label.endswith('-audit')
+        groups = (list(GROUPS) if combined or a.stage=='all' else a.audit_groups) if has_audits else []
+        size = ('both' if combined or a.stage=='all' else a.audit_size) if has_audits else None
         (LOG/(label+'-scope.json')).write_text(json.dumps({
-            'scope': ('89 selected phone-unit methods only; no UI inventory/physical acceptance' if unit_only else
-                      'Selected bounded audits only' if label.endswith('-audit') else 'Six feature/UI methods only; no accessibility inventory completion'),
-            'auditGroups': (list(GROUPS) if a.stage=='all' else a.audit_groups) if label.endswith('-audit') else [],
-            'auditSize': ('both' if a.stage=='all' else a.audit_size) if label.endswith('-audit') else None,
-            'surfacesPerSize': sum(GROUPS[g][1] for g in (list(GROUPS) if a.stage=='all' else a.audit_groups)) if label.endswith('-audit') else 0,
+            'scope': ('Combined bounded audit/feature/unit selection only; all findings retained; no original eight-method pass or physical acceptance' if combined else
+                      '89 selected phone-unit methods only; no UI inventory/physical acceptance' if unit_only else
+                      'Selected bounded audits only' if has_audits else 'Six feature/UI methods only; no accessibility inventory completion'),
+            'auditGroups': groups,
+            'auditSize': size,
+            'surfacesPerSize': sum(GROUPS[g][1] for g in groups),
+            'selectedUnitMethods': sum(test_module(method)=='RemotePhoneTests' for method in recovery_methods),
+            'selectedUIMethods': sum(test_module(method)=='RemotePhoneUITests' for method in recovery_methods),
             'expectedMethods': recovery_methods,
             'originalEightMethodPass': False,
         },indent=2))
@@ -197,6 +204,9 @@ elif a.stage in ['phone-audit','ipad-audit','phone-features','ipad-features']:
     methods=audit_methods(a.audit_groups,a.audit_size) if a.stage.endswith('-audit') else FEATURE_METHODS
     test(a.stage,device(family),recovery_methods=methods)
 elif a.stage=='phone-units': test(a.stage,device('phone'),recovery_methods=PHONE_UNIT_METHODS,unit_only=True)
+elif a.stage in ['phone-check','ipad-check']:
+    family=a.stage.split('-')[0]
+    test(a.stage,device(family),recovery_methods=check_methods(family))
 elif a.stage=='duo': duo()
 elif a.stage=='core': core()
 elif a.stage=='backend': backend()
@@ -206,10 +216,10 @@ else:
     if build()==0:
         # A future one-command pass covers bounded audits plus feature/unit selectors.
         # It does not rewrite the failed receipts of the original monolithic methods.
-        test('phone-units',device('phone'),recovery_methods=PHONE_UNIT_METHODS,unit_only=True)
+        # One native invocation per device avoids repeated gate checks after a new
+        # simulator boot has reduced free internal space. The pre-launch floor stays intact.
         for family in ['phone','ipad']:
-            test(family+'-audit',device(family),recovery_methods=audit_methods(list(GROUPS)))
-            test(family+'-features',device(family),recovery_methods=FEATURE_METHODS)
+            test(family+'-check',device(family),recovery_methods=check_methods(family))
     core(); host()
 print('Evidence: '+str(LOG),flush=True)
 sys.exit(1 if any(r['exit'] for r in results if not r['name'].endswith('-shutdown')) else 0)

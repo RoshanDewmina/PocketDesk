@@ -152,3 +152,16 @@ def audit_methods(groups, size='both'):
     return ['ClaimsVerificationUITests/testAccessibilityAudit'
             + ('' if group == 'home' else 'Recovery') + GROUPS[group][0] + suffix
             for group in groups for suffix in suffixes]
+
+def check_methods(family):
+    if family not in {'phone', 'ipad'}:
+        raise ValueError('Combined check requires phone or ipad')
+    return (PHONE_UNIT_METHODS if family == 'phone' else []) + audit_methods(list(GROUPS)) + FEATURE_METHODS
+
+def test_module(method):
+    suite = method.split('/')[0]
+    if suite in PHONE_UNIT_INVENTORY:
+        return 'RemotePhoneTests'
+    if suite in {'ClaimsVerificationUITests', 'FarsideRedesignUITests', 'SessionLayoutTests'}:
+        return 'RemotePhoneUITests'
+    raise ValueError('Unknown recovery test class: ' + suite)
