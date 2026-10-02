@@ -1,6 +1,28 @@
 import XCTest
 
 final class SessionVirtualDisplayPolicyTests: XCTestCase {
+    func testIPadHandshakeRetainsLegacyBoundsAndDoesNotChangePhoneOrRefinement() throws {
+        let phone = MacShareBlocker.Handshake.phoneRequest([])
+        XCTAssertEqual(phone.features, MacShareBlocker.Handshake.phone.features)
+        XCTAssertFalse(phone.requested.contains(SessionFeature.ipadWorkspace))
+        let pad = MacShareBlocker.Handshake.phoneRequest([], requestsIPadWorkspace: true)
+        XCTAssertEqual(pad.features.count, 8)
+        XCTAssertEqual(pad.options, phone.options)
+        XCTAssertEqual(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(pad)), pad.requested)
+        XCTAssertTrue(pad.requested.contains(SessionFeature.ipadWorkspace))
+        let refinement = MacShareBlocker.Handshake.phoneRequest([SessionFeature.videoRefinement], requestsIPadWorkspace: true)
+        XCTAssertEqual(refinement.features.count, 8)
+        XCTAssertTrue(refinement.requested.contains(SessionFeature.videoRefinement))
+        XCTAssertFalse(refinement.requested.contains(SessionFeature.ipadWorkspace))
+    }
+
+    func testWorkspaceViewportProvenanceSurvivesWireAndLegacyViewportDoesNotOptIn() throws {
+        let legacy = VirtualDisplayViewport(width: 1024, height: 768, scale: 2, maximumFPS: 60)
+        XCTAssertNil(try JSONDecoder().decode(VirtualDisplayViewport.self, from: JSONEncoder().encode(legacy)).iPadWorkspace)
+        var pad = legacy; pad.iPadWorkspace = true
+        XCTAssertEqual(try JSONDecoder().decode(VirtualDisplayViewport.self, from: JSONEncoder().encode(pad)).iPadWorkspace, true)
+    }
+
     func testContentBarcodeRoundTripsKnownFramesAndRejectsPlainBackgroundAndMissingPixels() {
         for frame in [UInt32(0), 0x010203, 0xFFFFFF, 0x12345678] {
             XCTAssertEqual(SessionVirtualDisplayBarcode.decode {

@@ -37,12 +37,17 @@ enum MacShareBlocker: String, Codable, Equatable {
         static let phone = Handshake(features: [MacShareBlocker.feature, MacShareBlocker.approvalFeature, SessionFeature.extendedFeatureList, SessionFeature.causalInput, SessionFeature.pencilInput, SessionFeature.videoLTR, SessionFeature.exactVideoTiming])
         /// Refinement rides in `features` so a Mac that predates `options` still honours it; text
         /// clarity only exists on Macs that read `options`.
-        static func phoneRequest(_ optional: [String], mode: String? = nil, defaults: UserDefaults = .standard) -> Handshake {
+        static func phoneRequest(_ optional: [String], mode: String? = nil, defaults: UserDefaults = .standard,
+                                 requestsIPadWorkspace: Bool = false) -> Handshake {
             let options = (optional.contains(SessionFeature.textClarity) ? [SessionFeature.textClarity] : [])
                 + (!defaults.bool(forKey: "clipboardAutoSyncDisabled") ? [SessionFeature.clipboardSync] : [])
                 + (!defaults.bool(forKey: "phoneAudioRequestDisabled") ? [SessionFeature.phoneAudio] : [])
                 + (DeliberateSessionEnd.isEnabled(defaults) ? [SessionFeature.deliberateEnd] : [])
-            return Handshake(features: phone.features + (optional.contains(SessionFeature.videoRefinement) ? [SessionFeature.videoRefinement] : []),
+            // Keep the existing eight-name bound and legacy signed-enrollment canonicalization.
+            // The internal refinement override takes its historical eighth slot; workspace defers.
+            let extra = optional.contains(SessionFeature.videoRefinement) ? [SessionFeature.videoRefinement]
+                : (requestsIPadWorkspace ? [SessionFeature.ipadWorkspace] : [])
+            return Handshake(features: phone.features + extra,
                              mode: mode, options: options.isEmpty ? nil : options)
         }
         var requested: Set<String> { Set(features + (options ?? [])) }

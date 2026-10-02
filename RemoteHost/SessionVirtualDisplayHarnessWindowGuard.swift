@@ -9,16 +9,16 @@ import Foundation
 /// reads window titles, creates displays, changes Spaces, or changes physical display modes.
 @MainActor
 enum SessionVirtualDisplayHarnessWindowGuard {
-    private static let lane = "b8-vdisplay"
-    private static let laneRoot = "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b8-vdisplay"
-    private static let quietGrant = "/Users/roshansilva/Documents/Codex/2026-10-01/testing/QUIET-GRANTED-b8-vdisplay"
+    private static let lane = SessionVirtualDisplayHarnessGrant.lane
+    private static let laneRoot = SessionVirtualDisplayHarnessGrant.root
+    private static let quietGrant = SessionVirtualDisplayHarnessGrant.path
     private static let maximumWindows = 64
     private static let tolerance: CGFloat = 2
 
     static func run(arguments: [String]) -> Int32 {
         setvbuf(stdout, nil, _IOLBF, 0)
         let args = Array(arguments.dropFirst())
-        guard args.count == 3, args[0] == "--session-virtual-display-window-guard",
+        guard SessionVirtualDisplayHarnessGrant.permitted, args.count == 3, args[0] == "--session-virtual-display-window-guard",
               ["snapshot", "restore", "verify"].contains(args[1]), args[2].hasPrefix("/") else {
             print("SESSION-VD-WINDOW-GUARD: error=invalid-arguments")
             return 2

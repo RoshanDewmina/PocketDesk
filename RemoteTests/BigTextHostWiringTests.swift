@@ -27,10 +27,14 @@ final class VirtualDisplayCaptureWiringTests: XCTestCase {
 
     func testVirtualFeatureIsOffByDefaultAndFits32OnlyOnModernPeers() {
         let base = SessionFeature.host + [SessionFeature.couch, SessionFeature.deliberateEnd, SessionFeature.lanWake, SessionFeature.away]
-        let peer: Set<String> = [SessionFeature.extendedFeatureList, SessionFeature.causalInput]
+        let peer: Set<String> = [SessionFeature.extendedFeatureList, SessionFeature.causalInput, SessionFeature.ipadWorkspace]
         let legacy = HostFeatureList.features(base: base, allowBigText: true, accessibility: true, peerFeatures: peer)
         XCTAssertFalse(legacy.contains(SessionFeature.virtualDisplay))
         let enabled = HostFeatureList.features(base: base, allowBigText: true, accessibility: true, peerFeatures: peer, virtualDisplayEnabled: true)
+        let phone = HostFeatureList.features(base: base, allowBigText: true, accessibility: true,
+            peerFeatures: [SessionFeature.extendedFeatureList, SessionFeature.causalInput], virtualDisplayEnabled: true)
+        XCTAssertFalse(phone.contains(SessionFeature.virtualDisplay))
+        XCTAssertTrue(phone.contains(SessionFeature.displayScale))
         XCTAssertTrue(enabled.contains(SessionFeature.virtualDisplay))
         XCTAssertFalse(enabled.contains(SessionFeature.displayScale))
         XCTAssertLessThanOrEqual(enabled.count, 32)

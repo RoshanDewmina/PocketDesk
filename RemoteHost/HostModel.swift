@@ -184,6 +184,9 @@ final class RemoteHostModel: ObservableObject {
         return UserDefaults.standard.bool(forKey: "farsideVirtualDisplayEnabled")
         #endif
     }
+    private var virtualDisplayAvailableToPeer: Bool {
+        virtualDisplayEnabled && connection.peerFeatures.contains(SessionFeature.ipadWorkspace)
+    }
     private var virtualDisplayJournalURL: URL {
         #if DEBUG
         if let harness = HostE2E.active {
@@ -194,6 +197,10 @@ final class RemoteHostModel: ObservableObject {
     }
     private lazy var virtualDisplay = SessionVirtualDisplay()
     private lazy var virtualWindows = VirtualDisplayWindowKeeper(journalURL: virtualDisplayJournalURL)
+    private var virtualDisplayWindowAuthority: VirtualDisplayWindowOperationAuthority?
+    private var virtualDisplayWorkspaceTask: Task<Void, Never>?
+    private var virtualDisplayLastWorkspaceRefresh = -Double.infinity
+    private var virtualDisplayReturnBounds: CGRect?
     private var virtualDisplaySource: SCDisplay?
     private var virtualDisplayRequested: VirtualDisplaySpecification?
     private var virtualDisplayTask: Task<Void, Never>?
@@ -851,6 +858,7 @@ final class RemoteHostModel: ObservableObject {
                 guard let self else { return }
                 self.pollPermissions()
                 let now = ProcessInfo.processInfo.systemUptime
+                self.refreshVirtualWorkspace(at: now)
                 if !self.screenLocked, self.inputAccess.accessibility.isGranted,
                    now - self.virtualDisplayLastRestoreRetry >= 30 {
                     if self.virtualDisplayRecoveryPending {
@@ -2294,6 +2302,7 @@ final class RemoteHostModel: ObservableObject {
             }
         }
         if refreshInputAccess() || screenChanged { evaluateUpgradeRegrant() }
+        if virtualDisplayWasUsed && !inputAccess.accessibility.isGranted { retireVirtualDisplay() }
         if captureApproval.isDue(at: ProcessInfo.processInfo.systemUptime) { checkCaptureApproval() }
         if let pairingExpires, !pairingExpired, !pairingCode.isEmpty, pairingExpires <= Date() {
             pairingExpired = true
@@ -2540,7 +2549,7 @@ final class RemoteHostModel: ObservableObject {
                     return
                 }
                 if !self.captureScopeViewOnly && !self.usesVirtualDisplay {
-                    if self.virtualDisplayEnabled && !self.virtualDisplayBlocked {
+                    if self.virtualDisplayAvailableToPeer && !self.virtualDisplayBlocked {
                         self.waitForVirtualDisplayViewport()
                     } else { self.bigText.sessionResumed() }
                 }
@@ -3427,7 +3436,7 @@ final class RemoteHostModel: ObservableObject {
             allowBigText: !captureScopeViewOnly && preferences.allowBigText,
             accessibility: inputAccess.accessibility.isGranted,
             peerFeatures: connection.peerFeatures, requestedMode: connection.peerRequestedMode,
-            virtualDisplayEnabled: virtualDisplayEnabled && !virtualDisplayBlocked && !captureScopeViewOnly), kind: captureScopeKind)
+            virtualDisplayEnabled: virtualDisplayAvailableToPeer && !virtualDisplayBlocked && !captureScopeViewOnly), kind: captureScopeKind)
     }
 
     private func sendCaptureHealth(_ requestedHealthy: Bool, presence: HostPresence? = nil, viewOnlyRequestID: String? = nil) {
@@ -3505,7 +3514,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func requestVirtualDisplay(_ viewport: VirtualDisplayViewport) {
-        guard virtualDisplayEnabled, !virtualDisplayBlocked, !virtualDisplayRetirementPending, !captureScopeViewOnly, !liveViewOnly,
+        guard virtualDisplayAvailableToPeer, viewport.iPadWorkspace == true, !virtualDisplayBlocked, !virtualDisplayRetirementPending, !captureScopeViewOnly, !liveViewOnly,
               active, connection.connected, sessionState == .picture, !phonePause.isPaused, !terminating, !virtualDisplayQuitPending,
               inputAccess.accessibility.isGranted, advertisedFeatures.contains(SessionFeature.virtualDisplay),
               let spec = VirtualDisplaySpecification(viewport: viewport), let peer = connection.media else { return }
@@ -3531,15 +3540,20 @@ final class RemoteHostModel: ObservableObject {
         if usesVirtualDisplay && virtualDisplayAcceptedRequest == spec { return }
         virtualDisplayGeneration &+= 1
         let generation = virtualDisplayGeneration
+        if virtualDisplayWindowAuthority == nil { virtualDisplayWindowAuthority = VirtualDisplayWindowOperationAuthority() }
+        guard let windowAuthority = virtualDisplayWindowAuthority, windowAuthority.isCurrent else { return }
         virtualDisplayWasUsed = true
         virtualDisplayChanging = true
         // Retain the admitted peer until preparation settles. A reset before this task
         // starts must not leave a completed task installed as a permanent transition.
-        virtualDisplayTask = Task { [weak self, peer] in
+        virtualDisplayTask = Task { [weak self, peer, windowAuthority] in
             guard let self else { return }
+            // A refresh already admitted on the AX lane settles before display geometry changes.
+            await self.virtualDisplayWorkspaceTask?.value
             let current = { [weak self, weak peer] in
                 guard let self, let peer else { return false }
-                return self.virtualDisplayGeneration == generation && self.connection.media === peer &&
+                return windowAuthority.isCurrent && self.virtualDisplayAvailableToPeer &&
+                    self.virtualDisplayGeneration == generation && self.connection.media === peer &&
                     self.active && self.connection.connected && self.sessionState == .picture &&
                     !self.phonePause.isPaused && !self.terminating && !self.screenLocked &&
                     !self.virtualDisplayQuitPending &&
@@ -3569,7 +3583,24 @@ final class RemoteHostModel: ObservableObject {
                     guard current() else { break }
                     // WindowServer may reflow windows while adding a display. Persist the
                     // originals before the topology changes, rather than after creation.
-                    if first { try await self.virtualWindows.prepareFrontmostWindows() }
+                    if first {
+                        guard let physical = self.displays.first(where: { $0.displayID == self.selected }) else {
+                            throw VirtualDisplayWindowError.unsupported
+                        }
+                        self.virtualDisplayReturnBounds = physical.frame
+                        try await self.virtualWindows.prepareWorkspaceWindows(whileCurrent: { windowAuthority.isCurrent })
+                    } else {
+                        guard let owned = self.virtualDisplay.displayID, self.virtualDisplay.isOwnedDisplay(owned),
+                              let proof = self.virtualDisplay.windowOwnershipProof,
+                              let fallback = self.virtualDisplayReturnBounds else {
+                            throw VirtualDisplayWindowError.unsupported
+                        }
+                        // Catch windows opened since the last polling cycle before changing
+                        // the owned display's mode (which can itself reflow windows).
+                        try await self.virtualWindows.bindOwnedDisplay(proof, whileCurrent: { windowAuthority.isCurrent })
+                        try await self.virtualWindows.sealWorkspaceForResize(to: CGDisplayBounds(owned),
+                            physicalFallbackBounds: fallback, whileCurrent: { windowAuthority.isCurrent })
+                    }
                     guard current() else { break }
                     let display: SCDisplay
                     do { display = try await self.virtualDisplay.prepare(wanted, whileCurrent: current) }
@@ -3578,11 +3609,14 @@ final class RemoteHostModel: ObservableObject {
                         display = try await self.virtualDisplay.prepare(wanted.at60Hz, whileCurrent: current)
                     }
                     guard current() else { break }
+                    guard let proof = self.virtualDisplay.windowOwnershipProof else { throw VirtualDisplayWindowError.unsupported }
+                    try await self.virtualWindows.bindOwnedDisplay(proof, whileCurrent: { windowAuthority.isCurrent })
+                    guard current() else { break }
                     if let begin = self.virtualDisplayResizeBegin, begin.display != display.displayID {
                         self.cancelVirtualDisplayResizeHold()
                     }
-                    if first { try await self.virtualWindows.moveFrontmostWindows(to: display.frame) }
-                    else { try await self.virtualWindows.resize(to: display.frame) }
+                    if first { try await self.virtualWindows.moveWorkspaceWindows(to: display.frame, whileCurrent: { windowAuthority.isCurrent }) }
+                    else { try await self.virtualWindows.resize(to: display.frame, whileCurrent: { windowAuthority.isCurrent }) }
                     guard current() else { break }
                     self.virtualDisplaySource = display
                     self.virtualDisplayAcceptedRequest = wanted
@@ -3606,6 +3640,39 @@ final class RemoteHostModel: ObservableObject {
                 // throwing. It must still restore the journal and remove the owned display.
                 self.retireVirtualDisplay(resume: self.connection.connected && self.active &&
                     self.sessionState == .picture && !self.phonePause.isPaused && !self.terminating ? .picture : nil)
+            }
+        }
+    }
+
+    /// Bounded, single-flight enrollment lets ordinary app switching/new windows join the
+    /// workspace. Off-Space windows are neither activated nor guessed at through private APIs.
+    private func refreshVirtualWorkspace(at now: TimeInterval) {
+        if connection.connected && virtualDisplayWasUsed && !virtualDisplayAvailableToPeer {
+            retireVirtualDisplay(resume: .picture)
+            return
+        }
+        guard now - virtualDisplayLastWorkspaceRefresh >= 2, virtualDisplayWorkspaceTask == nil,
+              !virtualDisplayChanging, !virtualDisplayRetirementPending, usesVirtualDisplay,
+              active, connection.connected, sessionHealthy, sessionState == .picture,
+              !screenLocked, !phonePause.isPaused, !liveViewOnly, !captureScopeViewOnly,
+              !away.isLocking, !terminating, !input.held, inputAccess.accessibility.isGranted,
+              let authority = virtualDisplayWindowAuthority, authority.isCurrent,
+              let source = virtualDisplaySource, virtualDisplay.isReady(for: source),
+              virtualDisplay.physicalTopologyUnchanged, let fallback = virtualDisplayReturnBounds,
+              let peer = connection.media else { return }
+        virtualDisplayLastWorkspaceRefresh = now
+        let generation = virtualDisplayGeneration
+        virtualDisplayWorkspaceTask = Task { [weak self, peer, authority] in
+            guard let self else { return }
+            defer { self.virtualDisplayWorkspaceTask = nil }
+            do {
+                try await self.virtualWindows.refreshWorkspace(to: source.frame, physicalFallbackBounds: fallback,
+                    whileCurrent: { authority.isCurrent })
+            } catch {
+                guard authority.isCurrent, self.virtualDisplayGeneration == generation,
+                      self.connection.media === peer, !self.virtualDisplayRetirementPending else { return }
+                self.events.record(.error, "iPad workspace window placement unavailable; restoring the desk")
+                self.virtualDisplayFallback()
             }
         }
     }
@@ -3667,6 +3734,8 @@ final class RemoteHostModel: ObservableObject {
 
     /// Capture/input retire synchronously. Window restoration must finish before display removal.
     private func retireVirtualDisplay(afterGrace: Bool = false, resume: SessionMode? = nil) {
+        // Also stops already-admitted queue work during disconnect grace.
+        virtualDisplayWindowAuthority?.revoke()
         virtualDisplayNegotiationDeadline?.cancel(); virtualDisplayNegotiationDeadline = nil
         virtualDisplayGrace?.cancel(); virtualDisplayGrace = nil
         cancelVirtualDisplayResizeHold()
@@ -3698,8 +3767,10 @@ final class RemoteHostModel: ObservableObject {
         captureHealthy = false
         let stopped = capture.stop()
         let previous = virtualDisplayTask
+        let workspace = virtualDisplayWorkspaceTask
         virtualDisplayTask = Task { [weak self] in
             await previous?.value
+            await workspace?.value
             await stopped?.value
             guard let self else { return }
             guard self.virtualDisplayGeneration == generation else { return }
@@ -3707,13 +3778,51 @@ final class RemoteHostModel: ObservableObject {
             // current ownership/absence and the protected physical topology are known.
             let presence = await self.virtualDisplay.retirementPresence()
             guard self.virtualDisplayGeneration == generation else { return }
-            if await self.virtualWindows.restore(after: presence,
+            var sealed = presence != .present
+            if presence == .present, let owned = self.virtualDisplay.displayID,
+               self.virtualDisplay.isOwnedDisplay(owned), let proof = self.virtualDisplay.windowOwnershipProof,
+               let fallback = self.virtualDisplayReturnBounds {
+                do {
+                    try await self.virtualWindows.bindOwnedDisplay(proof)
+                    try await self.virtualWindows.sealWorkspaceForRetirement(to: CGDisplayBounds(owned),
+                        physicalFallbackBounds: fallback)
+                    sealed = true
+                } catch {
+                    // Incomplete inventory/overflow must retain the display and return journal.
+                    self.events.record(.error, "iPad workspace inventory incomplete; retaining display for restoration")
+                }
+            }
+            guard self.virtualDisplayGeneration == generation else { return }
+            if sealed, await self.virtualWindows.restore(after: presence,
                 physicalTopologyUnchanged: self.virtualDisplay.physicalTopologyUnchanged) {
-                do { try await self.virtualDisplay.stop() }
-                catch { self.events.record(.error, "Phone-sized display removal needs retry") }
+                var removalVerified = presence != .present
+                if presence == .present, let owned = self.virtualDisplay.displayID,
+                   self.virtualDisplay.isOwnedDisplay(owned), let proof = self.virtualDisplay.windowOwnershipProof,
+                   let fallback = self.virtualDisplayReturnBounds {
+                    do {
+                        try await self.virtualWindows.bindOwnedDisplay(proof)
+                        removalVerified = try await self.virtualWindows.verifyWorkspaceRemoval(to: CGDisplayBounds(owned),
+                            physicalFallbackBounds: fallback)
+                    } catch {
+                        self.events.record(.error, "iPad workspace removal inventory needs retry")
+                    }
+                }
+                guard self.virtualDisplayGeneration == generation else { return }
+                if removalVerified {
+                    do {
+                        try await self.virtualDisplay.stop()
+                        // Keep the original journal through verified display removal. A
+                        // failed stop or crash during removal must remain recoverable.
+                        _ = await self.virtualWindows.restore(after: .confirmedRemoved,
+                            physicalTopologyUnchanged: self.virtualDisplay.physicalTopologyUnchanged)
+                    }
+                    catch { self.events.record(.error, "Phone-sized display removal needs retry") }
+                }
             }
             if !self.virtualWindows.hasPendingRestore && !self.virtualDisplay.ownsScreenChanges {
                 self.virtualDisplayWasUsed = false
+                self.virtualDisplayWindowAuthority = nil
+                self.virtualDisplayReturnBounds = nil
                 self.virtualDisplayLastRetiredAt = ProcessInfo.processInfo.systemUptime
                 self.virtualDisplayRetirementPending = false
             } else {
@@ -4062,6 +4171,7 @@ final class RemoteHostModel: ObservableObject {
         couchSessionSnapshot.observeAvailability(event)
         switch HostSleepPolicy.response(to: event) {
         case .tearDown(let presence):
+            virtualDisplayWindowAuthority?.revoke()
             // Revoke before any lock bookkeeping or teardown guard, synchronously in the notification callback.
             input.enabled = false
             couchHealthy = false

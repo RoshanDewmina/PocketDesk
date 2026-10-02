@@ -6,6 +6,8 @@ import Foundation
 enum SessionFeature {
     /// Internal, default-off phone-sized display. Only extended-list peers receive it.
     static let virtualDisplay = "display.virtual.1"
+    /// Request only: iPad workspace geometry; never implies permission to control the Mac.
+    static let ipadWorkspace = "display.ipad.1"
   static let liveViewOnly = "viewOnlyLive.2"
     static let extendedFeatureList = "features.32"
     static let phoneAudio = "audio.listen.1"

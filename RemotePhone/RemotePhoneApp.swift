@@ -495,6 +495,11 @@ final class PhoneRemoteModel: ObservableObject {
     @Published var sourceSize = CGSize(width: 1440, height: 900)
     @Published private(set) var virtualDisplayActive = false
     private var virtualDisplayViewport: VirtualDisplayViewport?
+    private var virtualDisplayViewportSession: UUID?
+    private var virtualDisplayViewportGeneration: UInt64?
+    @Published private(set) var workspaceMeasurementGeneration: UInt64 = 0
+    let workspaceDeviceIsPad: Bool
+    @Published private(set) var workspaceLayoutSourceSize: CGSize?
     @Published private(set) var inputRevision: UInt64 = 0
     @Published private(set) var acceptedClicks: UInt64 = 0
     /// Which click the last accepted one was ("click", "right" or "double"), for the contact ripple.
@@ -879,7 +884,9 @@ final class PhoneRemoteModel: ObservableObject {
 
     init(background: BackgroundExecution? = nil, resumeStore: SessionResumeStore = SessionResumeStore(),
          macAudioPlayback: PhoneSystemAudioPlayback? = nil, livePiP: LivePiPController? = nil,
-         preferences: UserDefaults = .standard, coordinator: RemoteCoordinator? = nil) {
+         preferences: UserDefaults = .standard, coordinator: RemoteCoordinator? = nil,
+         deviceIdiom: UIUserInterfaceIdiom = UIDevice.current.userInterfaceIdiom) {
+        workspaceDeviceIsPad = deviceIdiom == .pad
         #if DEBUG
         // E2E keeps its own trust; launch-seeded and injected test pairings stay isolated.
         connection = coordinator ?? RemoteCoordinator(isHost: false,
@@ -897,6 +904,7 @@ final class PhoneRemoteModel: ObservableObject {
         autoPiPEnabled = !preferences.bool(forKey: Self.autoPiPDisabledKey)
         self.background = background ?? SystemBackgroundExecution()
         self.resumeStore = resumeStore
+        connection.requestsIPadWorkspace = workspaceDeviceIsPad
         resumeCapsule = resumeStore.load()
         if let host = connection.presentationHostTrust { bigTextMemory.migrate(host: host) }
         NativeCodecCapability.warmUp()
@@ -985,6 +993,7 @@ final class PhoneRemoteModel: ObservableObject {
         linkConsentObserver = linkHints.$hint.removeDuplicates().sink { [weak self] hint in self?.observeLinkHint(hint) }
         connection.onAuthenticated = { [weak self] in
             guard let self else { return }
+            self.retireWorkspaceMeasurement()
             self.invalidatePresentation()
             self.cachePresentationHost()
             self.cancelLockMacRequest()
@@ -1674,25 +1683,44 @@ final class PhoneRemoteModel: ObservableObject {
         let viewport = viewportCaptureSupported ? viewportReporter.region(forDisplay: sourceSize) : nil
         let load = hostFeatures.contains(SessionFeature.ladder) &&
             phoneLoadReportedAt.map({ now >= $0 && now - $0 <= 2.5 }) == true ? phoneLoad : nil
+        let workspaceSupported = workspaceDeviceIsPad && connection.connected && sceneIsActive &&
+            hostFeatures.contains(SessionFeature.virtualDisplay)
+        let workspace = virtualDisplayViewportSession == connection.presentationSessionID &&
+            virtualDisplayViewportGeneration == workspaceMeasurementGeneration ? virtualDisplayViewport : nil
         return RemoteAction(action: "heartbeat", macAudioRequested: phoneAudioRequestSupported ? currentMacAudioConsent() && !macAudioSuspended : nil, epoch: geometryEpoch, pointerSync: pointerOverlay.advertisement(),
                             streamQuality: appliedStreamQuality == nil ? nil : streamQuality, clock: clock,
                             screenPixels: screenPixels(),
-                            virtualDisplayViewport: hostFeatures.contains(SessionFeature.virtualDisplay) ? virtualDisplayViewport : nil,
-                            virtualDisplayViewportUnavailable: hostFeatures.contains(SessionFeature.virtualDisplay) && virtualDisplayViewport == nil ? true : nil,
-                            virtualDisplayResizeHoldSupported: hostFeatures.contains(SessionFeature.virtualDisplay) && virtualDisplayViewport != nil ? true : nil,
+                            virtualDisplayViewport: workspaceSupported ? workspace : nil,
+                            virtualDisplayViewportUnavailable: workspaceSupported && workspace == nil ? true : nil,
+                            virtualDisplayResizeHoldSupported: workspaceSupported && workspace != nil ? true : nil,
                             viewport: viewport, phoneLoad: load)
     }
 
-    /// This is the streamed canvas, including current iPad window size; zoom is unrelated.
-    func virtualDisplayViewportChanged(size: CGSize, scale: CGFloat, maximumFPS: Int) {
+    /// The iPad's measured usable picture, aligned before negotiation; zoom is unrelated.
+    func virtualDisplayViewportChanged(size: CGSize, scale: CGFloat, maximumFPS: Int, generation: UInt64) {
+        guard workspaceDeviceIsPad, connection.connected, sceneIsActive,
+              generation == workspaceMeasurementGeneration else { return }
         let value = VirtualDisplayViewport(width: Double(size.width), height: Double(size.height),
-                                          scale: Double(scale), maximumFPS: maximumFPS)
+                                          scale: Double(scale), maximumFPS: maximumFPS, iPadWorkspace: true)
         let admitted = (try? value.validate()) != nil ? value : nil
-        guard admitted != virtualDisplayViewport else { return }
+        if admitted != nil, hostFeatures.contains(SessionFeature.virtualDisplay), workspaceLayoutSourceSize == nil {
+            workspaceLayoutSourceSize = sourceSize
+        }
+        guard admitted != virtualDisplayViewport || virtualDisplayViewportSession != connection.presentationSessionID ||
+              virtualDisplayViewportGeneration != generation else { return }
         virtualDisplayViewport = admitted
+        virtualDisplayViewportSession = connection.presentationSessionID
+        virtualDisplayViewportGeneration = generation
         if hostFeatures.contains(SessionFeature.virtualDisplay), connection.connected {
             _ = connection.sendControl(heartbeatAction())
         }
+    }
+
+    private func retireWorkspaceMeasurement() {
+        virtualDisplayViewport = nil
+        virtualDisplayViewportSession = nil
+        virtualDisplayViewportGeneration = nil
+        workspaceMeasurementGeneration &+= 1
     }
 
     /// Statistics run on every live media connection, including when the overlay is hidden.
@@ -2860,6 +2888,16 @@ let now = ProcessInfo.processInfo.systemUptime
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
             if action.features != nil || !virtualDisplayActive {
                 hostFeatures = Set(SharedCaptureScopePolicy.features(action.features ?? [], kind: sharedCaptureScope?.kind ?? .display))
+                // B8 hosts advertised this to every idiom. Preserve ordinary iPhone display/Big Text behavior.
+                if !workspaceDeviceIsPad { hostFeatures.remove(SessionFeature.virtualDisplay) }
+                if action.features != nil {
+                    if hostFeatures.contains(SessionFeature.virtualDisplay) {
+                        // The geometry packet for the new route can precede its active capture status.
+                        if workspaceLayoutSourceSize == nil { workspaceLayoutSourceSize = sourceSize }
+                    } else {
+                        workspaceLayoutSourceSize = nil
+                    }
+                }
             }
             if action.epoch == geometryEpoch, action.features != nil {
                 virtualDisplayActive = hostFeatures.contains(SessionFeature.virtualDisplay) && action.virtualDisplayActive == true
@@ -3263,6 +3301,7 @@ let now = ProcessInfo.processInfo.systemUptime
     }
 
     private func end() {
+        retireWorkspaceMeasurement()
         PhoneIdleTimer.shared.endSession()
         let awayWasOn = (presentationHost ?? connection.presentationHostTrust).map { awayMemory.wasOn(host: $0) } ?? false
         cancelLockMacRequest()
@@ -3339,6 +3378,7 @@ let now = ProcessInfo.processInfo.systemUptime
         textStatus = ""
         hostFeatures = []
         virtualDisplayActive = false
+        workspaceLayoutSourceSize = nil
         hostPresence = nil
         sessionBlocker = nil
         curtainState = nil

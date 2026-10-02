@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import ColorSync
 import Darwin
 import ObjectiveC
 import ScreenCaptureKit
@@ -24,6 +25,7 @@ final class SessionVirtualDisplay {
     private var preparing = false
     private var stopping = false
     private var serial: UInt32 = 0
+    private var windowOwnershipGeneration: UUID?
     private struct OwnedIdentity: Equatable { let id: CGDirectDisplayID; let serial: UInt32 }
     // Survives verified stop's public-ID clearing; never reconstructed from a foreign inventory.
     private var ownedIdentity: OwnedIdentity?
@@ -73,6 +75,20 @@ final class SessionVirtualDisplay {
     func isOwnedDisplay(_ id: CGDirectDisplayID) -> Bool {
         displayID == id && id != 0 && display != nil && matchesIdentity(id)
     }
+    /// Immutable proof from the retained adapter, never reconstructed by the AX lane.
+    /// Its generation survives mode changes and changes only with a new owned lease.
+    var windowOwnershipProof: VirtualDisplayWindowOwnedDisplayIdentity? {
+        guard ownsScreenChanges, !stopping, let retained = ownedIdentity,
+              retainedIdentityConsistent(retained), isOwnedDisplay(retained.id),
+              let ids = try? Self.onlineIDs(), ids.contains(retained.id),
+              CGDisplayIsMain(retained.id) == 0, CGDisplayIsInMirrorSet(retained.id) == 0,
+              let generation = windowOwnershipGeneration,
+              let value = CGDisplayCreateUUIDFromDisplayID(retained.id)?.takeRetainedValue(),
+              let uuid = UUID(uuidString: CFUUIDCreateString(nil, value) as String) else { return nil }
+        return VirtualDisplayWindowOwnedDisplayIdentity(displayID: retained.id, uuid: uuid,
+            vendor: SessionPrivateDisplay.vendor, product: SessionPrivateDisplay.product,
+            serial: retained.serial, leaseGeneration: generation)
+    }
     func isReady(for source: SCDisplay) -> Bool {
         guard isActive, ownedDisplayPresent, physicalTopologyUnchanged,
               let id = displayID, source.displayID == id, let spec = specification,
@@ -91,6 +107,7 @@ final class SessionVirtualDisplay {
         defer { preparing = false }
         if lease == nil {
             ownedIdentity = nil; constructedInCycle = false
+            windowOwnershipGeneration = UUID()
             retiredPhysicalSnapshot = nil
             guard CGPreflightScreenCaptureAccess() else { throw failure("screen recording permission unavailable") }
             try SessionPrivateDisplay.audit()

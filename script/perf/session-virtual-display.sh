@@ -4,8 +4,11 @@
 set -euo pipefail
 
 ROOT=${0:A:h:h:h}
-LANE=/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b8-vdisplay
-QUIET=/Users/roshansilva/Documents/Codex/2026-10-01/testing/QUIET-GRANTED-b8-vdisplay
+LANE_NAME=${FARSIDE_VDISPLAY_LANE:-b8-vdisplay}
+[[ $LANE_NAME == b8-vdisplay || $LANE_NAME == b9-ipad-workspace ]] || { print -u2 -- "session-virtual-display: unsupported lane"; exit 2; }
+export FARSIDE_VDISPLAY_LANE=$LANE_NAME
+LANE=/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/$LANE_NAME
+QUIET=/Users/roshansilva/Documents/Codex/2026-10-01/testing/QUIET-GRANTED-$LANE_NAME
 BUNDLE_ID=com.roshan.PocketDesk.RemoteHost
 
 fail() { print -u2 -- "session-virtual-display: $*"; exit 2 }

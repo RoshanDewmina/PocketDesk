@@ -55,6 +55,8 @@ final class RemoteCoordinator: ObservableObject {
     /// Phone: the mode this connection asks for. Couch lists no `remote.1` and sends no entitlement,
     /// so the service publishes a local route and both peers run the one-hop proof.
     var sessionModeRequest: SessionMode = .picture
+    /// Set by the native client idiom; non-iPad and legacy clients keep their old handshake.
+    var requestsIPadWorkspace = false
     /// Host: the mode the phone asked for in this session's `acceptedAck`.
     private(set) var peerRequestedMode: SessionMode = .picture
     @Published private(set) var localOnly = false
@@ -1258,7 +1260,8 @@ final class RemoteCoordinator: ObservableObject {
                     if !isHost {
                         resetSession(); request = try SecureRandom.token()
                         let handshake = MacShareBlocker.Handshake.phoneRequest(StillTextPreferences.requestedFeatures(),
-                                                                               mode: sessionModeRequest == .couch ? SessionMode.couch.rawValue : nil)
+                                                                               mode: sessionModeRequest == .couch ? SessionMode.couch.rawValue : nil,
+                                                                               requestsIPadWorkspace: requestsIPadWorkspace)
                         requestedFeatures = handshake.requested
                         if let scannedEnrollment {
                             let ephemeral = try PairEnrollment.Ephemeral()

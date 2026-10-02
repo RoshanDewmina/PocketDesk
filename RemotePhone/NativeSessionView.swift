@@ -17,6 +17,8 @@ struct NativeSessionView: View {
     @State private var dataWarningTop: CGFloat = 0
     @State private var safeFrame: CGRect = .zero
     @State private var dockFrame: CGRect = .zero
+    @State private var topChromeFrame: CGRect = .zero
+    @State private var workspaceDraftGeometry = IPadWorkspaceGeometry.DraftGeometry()
     @State private var geometryPending = false
     @State private var duoLayout = DuoSessionLayout()
     @State private var controlsCollapsed = true
@@ -119,7 +121,14 @@ struct NativeSessionView: View {
                     .transition(.opacity)
             }
         }
-        .overlay(alignment: .top) { topPills }
+        .overlay(alignment: .top) {
+            topPills.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                if model.workspaceDeviceIsPad {
+                    topChromeFrame = frame
+                    scheduleGeometry()
+                }
+            }
+        }
         #if DEBUG
         .overlay(alignment: .topLeading) {
             if let probe = model.inputProbe {
@@ -213,6 +222,7 @@ struct NativeSessionView: View {
         }
         .onChange(of: connection.connected) { _, connected in
             if !connected { cancelGesture(); cancelVoiceInput() }
+            if connected { scheduleGeometry() }
             if !offlineLayoutCheck && !model.fresh { lockVisible = true }
         }
         .onChange(of: model.contentConcealed) { _, concealed in
@@ -231,6 +241,8 @@ struct NativeSessionView: View {
         }
         .onChange(of: model.autoKeyboardRevision) { _, value in
             guard value > dismissedAutoKeyboardRevision, !keyboardOpen, !panMode,
+                  IPadWorkspaceGeometry.mayOpenAutomaticDraft(isPad: model.workspaceDeviceIsPad,
+                                                             hardwareKeyboard: sessionHardwareKeyboard),
                   !showControls, !showVoiceInput, scenePhase == .active,
                   (model.canControl || autoKeyboardPreview), model.textEditable, !model.isComposingText,
                   !model.dragging, !model.privacyShield, !model.contentConcealed else { return }
@@ -269,6 +281,7 @@ struct NativeSessionView: View {
         .sensoryFeedback(.selection, trigger: model.currentDisplayID) { old, new in old != nil && new != nil }
         .onChange(of: peripherals.keyboardConnected) { _, connected in
             if connected && model.canControl { model.announce("Keyboard connected · keys go to your Mac") }
+            scheduleGeometry()
         }
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: controlsCollapsed)
         .sensoryFeedback(trigger: model.dragging) { _, holding in
@@ -289,23 +302,16 @@ struct NativeSessionView: View {
         .onChange(of: viewport.captureRequest(displayScale: displayScale), initial: true) { _, request in
             model.viewportChanged(request)
         }
-        .onChange(of: viewport.canvasSize, initial: true) { _, size in
-            let fps = UIApplication.shared.connectedScenes.compactMap { scene -> Int? in
-                guard scene.activationState == .foregroundActive, let windowScene = scene as? UIWindowScene,
-                      windowScene.screen.scale == displayScale else { return nil }
-                return windowScene.screen.maximumFramesPerSecond
-            }.min() ?? 60
-            model.virtualDisplayViewportChanged(size: size, scale: displayScale, maximumFPS: fps)
-        }
         .onChange(of: model.virtualDisplayActive, initial: true) { _, enabled in
             if enabled {
                 virtualDisplayPreviousMode = viewport.mode
-                viewport.setMode(.fill)
+                viewport.setMode(.fit)
                 viewport.setZoom(1, anchoredAt: CGPoint(x: viewport.canvasSize.width / 2, y: viewport.canvasSize.height / 2))
             } else if let previous = virtualDisplayPreviousMode {
                 virtualDisplayPreviousMode = nil
                 viewport.setMode(previous)
             }
+            scheduleGeometry()
         }
         .onChange(of: viewport.offset) { _, _ in pokeMiniMap(); VideoPresentationProbe.noteUserActivity() }
         .onChange(of: viewport.zoom) { _, _ in pokeMiniMap(); VideoPresentationProbe.noteUserActivity() }
@@ -339,10 +345,19 @@ struct NativeSessionView: View {
                                               manualViewportRevision: manualViewportRevision,
                                               preview: offlineLayoutCheck))
         .onChange(of: model.sourceSize) { _, _ in scheduleGeometry() }
+        .onChange(of: model.workspaceLayoutSourceSize) { _, _ in scheduleGeometry() }
+        .onChange(of: model.workspaceMeasurementGeneration) { _, _ in
+            workspaceDraftGeometry = .init()
+            scheduleGeometry()
+        }
+        .onChange(of: model.hostFeatures.contains(SessionFeature.virtualDisplay)) { _, supported in
+            if supported { scheduleGeometry() }
+        }
+        .onChange(of: displayScale) { _, _ in scheduleGeometry() }
         .onChange(of: horizontalSizeClass, initial: true) { _, sizeClass in
             guard sizeClass != nil else { return }
             let mode = ViewportPreference.initialize(regularWidth: regularSessionLayout)
-            if LaunchOptions.viewportOverride == nil && mode != viewport.mode { viewport.setMode(mode) }
+            if !model.virtualDisplayActive, LaunchOptions.viewportOverride == nil && mode != viewport.mode { viewport.setMode(mode) }
             noteSessionPillActivity()
             scheduleGeometry()
         }
@@ -564,7 +579,12 @@ struct NativeSessionView: View {
     private var directTouch: Bool { touchMode == .direct && model.absolutePointerSupported }
 
     private var pictureSize: CGSize {
-        SessionWindowLayout.pictureSize(window: canvasFrame.size, source: model.sourceSize, stacked: stackedPicture)
+        SessionWindowLayout.pictureSize(window: canvasFrame.size, source: workspaceLayoutSource, stacked: stackedPicture)
+    }
+
+    private var workspaceLayoutSource: CGSize {
+        IPadWorkspaceGeometry.layoutSource(current: model.sourceSize, reference: model.workspaceLayoutSourceSize,
+                                           active: model.workspaceLayoutSourceSize != nil)
     }
 
     private var stackedRestCard: some View {
@@ -1511,6 +1531,10 @@ struct NativeSessionView: View {
 
     private var regularHardwareKeyboard: Bool {
         guard regularSessionLayout else { return false }
+        return sessionHardwareKeyboard
+    }
+
+    private var sessionHardwareKeyboard: Bool {
         #if DEBUG
         if offlineLayoutCheck && LaunchOptions.has("--ui-hardware-keyboard") { return true }
         if offlineLayoutCheck && LaunchOptions.has("--ui-software-keyboard") { return false }
@@ -3315,8 +3339,10 @@ struct NativeSessionView: View {
     private func scheduleGeometry() {
         guard !geometryPending else { return }
         geometryPending = true
+        let generation = model.workspaceMeasurementGeneration
         DispatchQueue.main.async {
             geometryPending = false
+            guard generation == model.workspaceMeasurementGeneration else { scheduleGeometry(); return }
             applyGeometry()
         }
     }
@@ -3326,26 +3352,50 @@ struct NativeSessionView: View {
     private func applyGeometry() {
         guard canvasFrame.width > 0, canvasFrame.height > 0, safeFrame.width > 0, safeFrame.height > 0 else { return }
         let nextStacked = !couch && SessionWindowLayout.stacked(regular: regularSessionLayout,
-            window: canvasFrame.size, source: model.sourceSize, wasStacked: stackedPicture)
+            window: canvasFrame.size, source: workspaceLayoutSource, wasStacked: stackedPicture)
         if nextStacked != stackedPicture {
             withAnimation(reduceMotion ? nil : Farside.Motion.windowLayout) {
                 stackedPicture = nextStacked
                 padTouched = false
             }
         }
-        let size = SessionWindowLayout.pictureSize(window: canvasFrame.size, source: model.sourceSize, stacked: nextStacked)
+        let size = SessionWindowLayout.pictureSize(window: canvasFrame.size, source: workspaceLayoutSource, stacked: nextStacked)
+        let picture = CGRect(origin: canvasFrame.origin, size: size)
+        let measuredUsable = IPadWorkspaceGeometry.usableRect(picture: picture,
+            safe: safeFrame, topChrome: topChromeFrame,
+            bottomChrome: !regularSessionLayout && !keyboardOpen ? dockFrame : .zero,
+            keyboardDock: keyboardBarFrame, keyboardOpen: keyboardOpen && !sessionHardwareKeyboard, scale: displayScale)
+        var draftGeometry = workspaceDraftGeometry
+        let usable = draftGeometry.update(picture: picture, safe: safeFrame, scale: displayScale,
+            measured: measuredUsable, hardwareKeyboard: model.workspaceDeviceIsPad && sessionHardwareKeyboard,
+            keyboardOpen: keyboardOpen)
+        if model.workspaceDeviceIsPad, draftGeometry != workspaceDraftGeometry { workspaceDraftGeometry = draftGeometry }
         let keyboardBottom = SessionChromePolicy.keyboardBottom(regular: regularSessionLayout, stacked: nextStacked,
             couch: couch, keyboardOpen: keyboardOpen, barFrame: keyboardBarFrame, canvas: canvasFrame)
         // The keyboard takes space from the pad; the top Fit picture stays fixed.
-        let insets = nextStacked ? ViewportInsets.zero : ViewportInsets(top: max(0, safeFrame.minY - canvasFrame.minY),
+        var insets = nextStacked ? ViewportInsets.zero : ViewportInsets(top: max(0, safeFrame.minY - canvasFrame.minY),
                                     left: max(0, safeFrame.minX - canvasFrame.minX),
                                     bottom: max(keyboardBottom, max(0, canvasFrame.maxY - safeFrame.maxY)),
                                     right: max(0, canvasFrame.maxX - safeFrame.maxX))
+        if model.virtualDisplayActive, let usable {
+            insets = ViewportInsets(top: usable.minY - canvasFrame.minY, left: usable.minX - canvasFrame.minX,
+                bottom: canvasFrame.minY + size.height - usable.maxY, right: canvasFrame.minX + size.width - usable.maxX)
+        }
         if viewport.canvasSize != size || viewport.sourceSize != model.sourceSize {
             cancelGesture()
             viewport.resize(sourceSize: model.sourceSize, canvasSize: size, safeInsets: insets)
         } else if viewport.safeInsets != insets {
+            if model.virtualDisplayActive { cancelGesture() }
             withAnimation(reduceMotion ? nil : .snappy) { viewport.updateSafeInsets(insets) }
+        }
+        if model.workspaceDeviceIsPad {
+            let fps = UIApplication.shared.connectedScenes.compactMap { scene -> Int? in
+                guard scene.activationState == .foregroundActive, let windowScene = scene as? UIWindowScene,
+                      windowScene.screen.scale == displayScale else { return nil }
+                return windowScene.screen.maximumFramesPerSecond
+            }.min() ?? 60
+            model.virtualDisplayViewportChanged(size: usable?.size ?? .zero, scale: displayScale, maximumFPS: fps,
+                                                generation: model.workspaceMeasurementGeneration)
         }
     }
 
@@ -3440,6 +3490,71 @@ struct NativeSessionView: View {
         dismissedAutoKeyboardRevision = model.autoKeyboardRevision
         cancelGesture()
         keyboardOpen = false
+    }
+}
+
+/// Geometry is measured in the scene's coordinates. Align the usable rectangle inward before
+/// proposing a raster, so neither the host nor encoder rounds a negotiated workspace afterward.
+enum IPadWorkspaceGeometry {
+    /// Deliberate hardware-keyboard composition is local chrome, not a Mac workspace resize.
+    /// A different window/picture/safe rectangle or display scale always replaces the hold.
+    struct DraftGeometry: Equatable {
+        private var picture: CGRect = .zero
+        private var safe: CGRect = .zero
+        private var scale: CGFloat = 0
+        private var usable: CGRect?
+        private var hardwareKeyboard = false
+
+        mutating func update(picture: CGRect, safe: CGRect, scale: CGFloat, measured: CGRect?,
+                             hardwareKeyboard: Bool, keyboardOpen: Bool) -> CGRect? {
+            let attachingKeyboard = hardwareKeyboard && !self.hardwareKeyboard
+            self.hardwareKeyboard = hardwareKeyboard
+            if hardwareKeyboard && keyboardOpen && !attachingKeyboard,
+               self.picture == picture, self.safe == safe, self.scale == scale, let usable {
+                return usable
+            }
+            self.picture = picture; self.safe = safe; self.scale = scale; usable = measured
+            return measured
+        }
+    }
+
+    static func mayOpenAutomaticDraft(isPad: Bool, hardwareKeyboard: Bool) -> Bool {
+        !(isPad && hardwareKeyboard)
+    }
+
+    /// A virtual source aspect must not feed back into the shipping picture/pad split.
+    static func layoutSource(current: CGSize, reference: CGSize?, active: Bool) -> CGSize {
+        active ? reference ?? current : current
+    }
+
+    static func usableRect(picture: CGRect, safe: CGRect, topChrome: CGRect, bottomChrome: CGRect,
+                           keyboardDock: CGRect, keyboardOpen: Bool, scale: CGFloat) -> CGRect? {
+        guard scale.isFinite, (1...3).contains(scale), valid(picture), valid(safe) else { return nil }
+        var usable = picture.intersection(safe)
+        guard valid(usable) else { return nil }
+        if valid(topChrome), usable.intersects(topChrome) {
+            let bottom = usable.maxY
+            usable.origin.y = max(usable.minY, topChrome.maxY)
+            usable.size.height = bottom - usable.minY
+        }
+        for obstruction in [bottomChrome, keyboardOpen ? keyboardDock : .zero] {
+            if valid(obstruction), usable.intersects(obstruction) {
+                usable.size.height = min(usable.maxY, obstruction.minY) - usable.minY
+            }
+        }
+        guard valid(usable) else { return nil }
+        let left = ceil((usable.minX - picture.minX) * scale / 2) * 2
+        let top = ceil((usable.minY - picture.minY) * scale / 2) * 2
+        let right = floor((usable.maxX - picture.minX) * scale / 2) * 2
+        let bottom = floor((usable.maxY - picture.minY) * scale / 2) * 2
+        guard right > left, bottom > top else { return nil }
+        return CGRect(x: picture.minX + left / scale, y: picture.minY + top / scale,
+                      width: (right - left) / scale, height: (bottom - top) / scale)
+    }
+
+    private static func valid(_ rect: CGRect) -> Bool {
+        rect.origin.x.isFinite && rect.origin.y.isFinite && rect.width.isFinite && rect.height.isFinite &&
+        rect.width > 0 && rect.height > 0
     }
 }
 

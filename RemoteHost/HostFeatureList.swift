@@ -4,7 +4,8 @@ enum HostFeatureList {
     static func features(base: [String], allowBigText: Bool, accessibility: Bool,
                          peerFeatures: Set<String>? = nil, requestedMode: SessionMode = .picture,
                          virtualDisplayEnabled: Bool = false) -> [String] {
-        if virtualDisplayEnabled, accessibility, peerFeatures?.contains(SessionFeature.extendedFeatureList) == true {
+        if virtualDisplayEnabled, accessibility, peerFeatures?.contains(SessionFeature.extendedFeatureList) == true,
+           peerFeatures?.contains(SessionFeature.ipadWorkspace) == true {
             // Put the experimental route first within PV06's 32-item limit; Big Text is irrelevant.
             return features(base: [SessionFeature.virtualDisplay] + base, allowBigText: false,
                             accessibility: accessibility, peerFeatures: peerFeatures, requestedMode: requestedMode)

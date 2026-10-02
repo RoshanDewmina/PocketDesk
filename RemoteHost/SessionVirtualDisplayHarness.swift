@@ -11,6 +11,14 @@ import ScreenCaptureKit
 import UniformTypeIdentifiers
 import WebRTC
 
+/// Both measurement lanes use the same harness; never accept another lane's grant.
+enum SessionVirtualDisplayHarnessGrant {
+    static let lane = ProcessInfo.processInfo.environment["FARSIDE_VDISPLAY_LANE"] ?? "b8-vdisplay"
+    static let permitted = ["b8-vdisplay", "b9-ipad-workspace"].contains(lane)
+    static let root = "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/" + lane
+    static let path = "/Users/roshansilva/Documents/Codex/2026-10-01/testing/QUIET-GRANTED-" + lane
+}
+
 /// Isolated synthetic-content measurement entry point. Parent owns bootstrap/argument dispatch.
 /// This type does not initialize HostModel or access any user's app window.
 @MainActor
@@ -25,8 +33,8 @@ enum SessionVirtualDisplayHarness {
             print("SESSION-VD-HARNESS: error=invalid-or-mixed-harness-arguments")
             return 2
         }
-        let quietGrant = "/Users/roshansilva/Documents/Codex/2026-10-01/testing/QUIET-GRANTED-b8-vdisplay"
-        guard FileManager.default.fileExists(atPath: quietGrant) else {
+        let quietGrant = SessionVirtualDisplayHarnessGrant.path
+        guard SessionVirtualDisplayHarnessGrant.permitted, FileManager.default.fileExists(atPath: quietGrant) else {
             print("SESSION-VD-HARNESS: error=missing-exact-quiet-grant")
             return 2
         }
@@ -47,7 +55,7 @@ enum SessionVirtualDisplayHarness {
 @MainActor
 private final class SessionVirtualDisplayHarnessController: NSObject {
     private let outputDirectory: URL
-    private let quietGrantURL = URL(fileURLWithPath: "/Users/roshansilva/Documents/Codex/2026-10-01/testing/QUIET-GRANTED-b8-vdisplay")
+    private let quietGrantURL = URL(fileURLWithPath: SessionVirtualDisplayHarnessGrant.path)
     private let adapter = SessionVirtualDisplay()
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
     private var window: NSWindow?

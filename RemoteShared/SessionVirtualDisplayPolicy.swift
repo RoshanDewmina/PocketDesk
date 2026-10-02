@@ -6,6 +6,7 @@ struct VirtualDisplayViewport: Codable, Equatable, Sendable {
     let height: Double
     let scale: Double
     let maximumFPS: Int
+    var iPadWorkspace: Bool? = nil
 
     /// Invalid/nonintegral/odd requests have no representable backing dimension. Never round
     /// down a phone's raster to make a mode or encoder accept it.
