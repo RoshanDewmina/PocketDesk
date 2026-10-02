@@ -1,3 +1,9 @@
+# Couch input performance lane — 1 October 2026
+
+Authorized scope: codex-couch worktree, branch `claude/codex-couch` from batch-4 (`3273f63`), no device/host installation or main integration. Implemented candidate: active 60 Hz input-clock hint with 150 ms retention, shared <100 ms session snapshot with synchronous notification revocation, Couch relative catch-up coalescing preserving display clamps and input safety, optional calibrated send-to-arrival stats. All changes have internal defaults kill switches; sensitivity stays 1.4 pending Roshan's feel decision.
+
+Native GPT packages: Luna/high phone pump; Sol/high session snapshot and input timing; parent owns host coalescing, shared integration and serial Xcode checks. Fresh non-Astra Sol review approved after correcting out-and-back multi-click state preservation. Core compilation and all 146 selected tests across 14 suites passed: a 24-segment fixture emits one post at the identical endpoint; 60 health samples use 10 shared queries versus a modeled 120-call baseline. These are work counts, not physical latency. Early test-only compile errors (tuple inference and a missing initializer argument) were corrected; phone pump tests and phone/host builds remain pending the shared queue. Final acceptance evidence and two-minute device steps: `/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/codex/couch-NOTES.md`. This lane does not authorize or restart the broader backlog.
+
 # Active full-feature swarm — 30 September 2026
 
 Direct user authorization: execute the reviewed proposal in parallel, notify when done and ready for testing. This supersedes discussion-only holds for the scoped implementation. Hands-on/provider/publication gates remain deferred. Current main and existing dirty ledger were left intact; root integration branch began at7c81913.

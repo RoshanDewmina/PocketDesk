@@ -1,8 +1,127 @@
 import XCTest
+import QuartzCore
 @testable import PocketDeskRemote
 
 @MainActor
 final class PhoneDisplayTickInputPumpTests: XCTestCase {
+    func testBuiltPhoneEnablesDisplayLinkFrameRateHints() {
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CADisableMinimumFrameDurationOnPhone") as? Bool, true)
+    }
+    func testActivePumpRequests60HzWithDisplayMaximumAndRetainsLinkForIdleWindow() {
+        var now: TimeInterval = 10
+        let defaults = isolatedDefaults()
+        defaults.set(true, forKey: PhoneDisplayTickInputPump.optimizationDefaultsKey)
+        var createdLinks: [FakePhoneDisplayTickLink] = []
+        var requestedRanges: [CAFrameRateRange?] = []
+        var configuration = PhoneDisplayTickInputPump.Configuration(userDefaults: defaults)
+        configuration.now = { now }
+        configuration.maximumFramesPerSecond = { 120 }
+        configuration.displayLinkFactory = { range, tick in
+            requestedRanges.append(range)
+            let link = FakePhoneDisplayTickLink(onTick: tick)
+            createdLinks.append(link)
+            return link
+        }
+        let pump = PhoneDisplayTickInputPump(configuration: configuration)
+        pump.send = { _ in true }
+
+        XCTAssertTrue(pump.offer(RemoteAction(action: "move", x: 1)))
+        let link = createdLinks[0]
+        let range = try! XCTUnwrap(requestedRanges[0])
+        XCTAssertEqual(range.minimum, 60)
+        XCTAssertEqual(range.preferred, 60)
+        XCTAssertEqual(range.maximum, 120)
+
+        now += 0.149
+        link.fire()
+        XCTAssertEqual(createdLinks.count, 1)
+        XCTAssertEqual(link.invalidationCount, 0)
+
+        XCTAssertTrue(pump.offer(RemoteAction(action: "move", x: 2)))
+        link.fire()
+        now += 0.149
+        link.fire()
+        XCTAssertEqual(createdLinks.count, 1)
+        XCTAssertEqual(link.invalidationCount, 0)
+
+        now += 0.0011
+        link.fire()
+        XCTAssertEqual(link.invalidationCount, 1)
+    }
+
+    func testCancelInvalidatesRetainedLinkSynchronouslyAndDropsPendingMotion() {
+        var now: TimeInterval = 0
+        let defaults = isolatedDefaults()
+        defaults.set(true, forKey: PhoneDisplayTickInputPump.optimizationDefaultsKey)
+        var links: [FakePhoneDisplayTickLink] = []
+        var configuration = PhoneDisplayTickInputPump.Configuration(userDefaults: defaults)
+        configuration.now = { now }
+        configuration.maximumFramesPerSecond = { 120 }
+        configuration.displayLinkFactory = { _, tick in
+            let link = FakePhoneDisplayTickLink(onTick: tick)
+            links.append(link)
+            return link
+        }
+        let pump = PhoneDisplayTickInputPump(configuration: configuration)
+        var sends = 0
+        pump.send = { _ in sends += 1; return true }
+        XCTAssertTrue(pump.offer(RemoteAction(action: "move", x: 1)))
+
+        pump.cancel()
+
+        XCTAssertEqual(links[0].invalidationCount, 1)
+        now = 1
+        links[0].fire()
+        XCTAssertEqual(sends, 0)
+    }
+
+    func testFailedTickInvalidatesLinkAndReportsFailureSynchronously() {
+        let defaults = isolatedDefaults()
+        defaults.set(true, forKey: PhoneDisplayTickInputPump.optimizationDefaultsKey)
+        var link: FakePhoneDisplayTickLink?
+        var configuration = PhoneDisplayTickInputPump.Configuration(userDefaults: defaults)
+        configuration.maximumFramesPerSecond = { 120 }
+        configuration.displayLinkFactory = { _, tick in
+            let created = FakePhoneDisplayTickLink(onTick: tick)
+            link = created
+            return created
+        }
+        let pump = PhoneDisplayTickInputPump(configuration: configuration)
+        pump.send = { _ in false }
+        var failures = 0
+        pump.onFailure = { failures += 1 }
+        XCTAssertTrue(pump.offer(RemoteAction(action: "move", x: 1)))
+
+        link?.fire()
+
+        XCTAssertEqual(link?.invalidationCount, 1)
+        XCTAssertEqual(failures, 1)
+    }
+
+    func testDefaultsKillSwitchRestoresLegacyUnrangedImmediateInvalidation() {
+        let defaults = isolatedDefaults()
+        defaults.set(false, forKey: PhoneDisplayTickInputPump.optimizationDefaultsKey)
+        var requestedRanges: [CAFrameRateRange?] = []
+        var link: FakePhoneDisplayTickLink?
+        var configuration = PhoneDisplayTickInputPump.Configuration(userDefaults: defaults)
+        configuration.maximumFramesPerSecond = { 120 }
+        configuration.displayLinkFactory = { range, tick in
+            requestedRanges.append(range)
+            let created = FakePhoneDisplayTickLink(onTick: tick)
+            link = created
+            return created
+        }
+        let pump = PhoneDisplayTickInputPump(configuration: configuration)
+        pump.send = { _ in true }
+        XCTAssertTrue(pump.offer(RemoteAction(action: "move", x: 1)))
+
+        link?.fire()
+
+        XCTAssertEqual(requestedRanges.count, 1)
+        XCTAssertNil(requestedRanges[0])
+        XCTAssertEqual(link?.invalidationCount, 1)
+    }
+
     func testDisplayTickPreservesRelativePathAndSemanticFlushIsImmediate() {
         let pump = PhoneDisplayTickInputPump(automaticTicks: false)
         var batches: [[Double]] = []
@@ -62,4 +181,21 @@ final class PhoneDisplayTickInputPumpTests: XCTestCase {
         pump.tick(); XCTAssertEqual(failures, 1)
         XCTAssertFalse(pump.offer(RemoteAction(action: "key", key: "a")))
     }
+
+    private func isolatedDefaults() -> UserDefaults {
+        let suite = "PhoneDisplayTickInputPumpTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        return defaults
+    }
+}
+
+@MainActor
+private final class FakePhoneDisplayTickLink: PhoneDisplayTickLink {
+    private let onTick: () -> Void
+    private(set) var invalidationCount = 0
+
+    init(onTick: @escaping () -> Void) { self.onTick = onTick }
+    func fire() { onTick() }
+    func invalidate() { invalidationCount += 1 }
 }

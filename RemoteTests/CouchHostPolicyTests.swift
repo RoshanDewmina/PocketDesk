@@ -2,6 +2,115 @@ import XCTest
 import CoreGraphics
 
 final class CouchHostPolicyTests: XCTestCase {
+    func test60HzCouchAdmissionNeedsAtMostTenSessionQueriesPerSecond() {
+        var cache = CouchSessionSnapshotCache()
+        var queries = 0
+        for index in 0..<60 {
+            let result = cache.snapshot(at: Double(index) / 60) {
+                queries += 1
+                return [kCGSessionOnConsoleKey as String: true, "CGSSessionScreenIsLocked": false]
+            }
+            XCTAssertTrue(result.consoleUserActive); XCTAssertFalse(result.screenLocked)
+        }
+        XCTAssertLessThanOrEqual(queries, 10)
+        print("COUCH SESSION: baseline 120 dictionary calls for 60 packets; cached \(queries) shared queries")
+    }
+    private var activeSession: [String: Any] {
+        [kCGSessionOnConsoleKey as String: true, "CGSSessionScreenIsLocked": false]
+    }
+
+    func testSessionSnapshotSharesOneQueryUntilItsFreshnessLimit() {
+        var cache = CouchSessionSnapshotCache()
+        var queries = 0
+        let query: () -> [String: Any]? = { queries += 1; return self.activeSession }
+        let first = cache.snapshot(at: 10, query: query)
+        XCTAssertFalse(first.screenLocked)
+        XCTAssertTrue(first.consoleUserActive)
+        for offset in [0.0, 0.01, 0.05, 0.099] {
+            XCTAssertEqual(cache.snapshot(at: 10 + offset, query: query), first)
+        }
+        XCTAssertEqual(queries, 1)
+        _ = cache.snapshot(at: 10.101, query: query)
+        XCTAssertEqual(queries, 2, "lock and console state share a query; stale state is never reused")
+        var boundary = CouchSessionSnapshotCache()
+        _ = boundary.snapshot(at: 0, query: query)
+        _ = boundary.snapshot(at: CouchSessionSnapshotCache.maximumAge, query: query)
+        XCTAssertEqual(queries, 4, "the 100 ms boundary is expired")
+    }
+
+    func testSessionSnapshotDoesNotReuseAcrossBackwardsOrInvalidTime() {
+        var cache = CouchSessionSnapshotCache()
+        var queries = 0
+        let query: () -> [String: Any]? = { queries += 1; return self.activeSession }
+        _ = cache.snapshot(at: 10, query: query)
+        _ = cache.snapshot(at: 9, query: query)
+        XCTAssertEqual(queries, 2)
+        XCTAssertEqual(cache.snapshot(at: .nan, query: query), .unavailable)
+        XCTAssertEqual(cache.snapshot(at: .infinity, query: query), .unavailable)
+        XCTAssertEqual(queries, 2, "invalid clocks cannot admit input")
+        _ = cache.snapshot(at: 9.01, query: query)
+        XCTAssertEqual(queries, 3, "an invalid clock also retires the old snapshot")
+    }
+
+    func testSessionSnapshotUnavailableAndMissingConsoleStateFailClosed() {
+        var cache = CouchSessionSnapshotCache()
+        XCTAssertEqual(cache.snapshot(at: 10, query: { nil }), .unavailable)
+        let missing = cache.snapshot(at: 11, query: { [:] })
+        XCTAssertFalse(missing.consoleUserActive)
+        let malformed = cache.snapshot(at: 12, query: { [kCGSessionOnConsoleKey as String: "true"] })
+        XCTAssertFalse(malformed.consoleUserActive)
+        let malformedLock = cache.snapshot(at: 13, query: {
+            [kCGSessionOnConsoleKey as String: true, "CGSSessionScreenIsLocked": "false"]
+        })
+        XCTAssertTrue(malformedLock.screenLocked)
+        let locked = cache.snapshot(at: 14, query: {
+            [kCGSessionOnConsoleKey as String: true, "CGSSessionScreenIsLocked": true]
+        })
+        XCTAssertTrue(locked.screenLocked)
+    }
+
+    func testSessionSnapshotKillSwitchQueriesEveryTimeAndRetiresCachedState() {
+        var cache = CouchSessionSnapshotCache()
+        var queries = 0
+        let query: () -> [String: Any]? = { queries += 1; return self.activeSession }
+        _ = cache.snapshot(at: 10, query: query)
+        _ = cache.snapshot(at: 10.01, cacheEnabled: false, query: query)
+        _ = cache.snapshot(at: 10.02, cacheEnabled: false, query: query)
+        _ = cache.snapshot(at: 10.03, query: query)
+        XCTAssertEqual(queries, 4)
+    }
+
+    func testSessionNotificationsInvalidateAndLatchDenialUntilMatchingRecovery() {
+        let transitions: [(HostSleepPolicy.Event, HostSleepPolicy.Event)] = [(.screenLocked, .screenUnlocked),
+            (.sessionResigned, .sessionActivated), (.systemWillSleep, .systemDidWake)]
+        for (revoke, recover) in transitions {
+            var cache = CouchSessionSnapshotCache()
+            var queries = 0
+            let query: () -> [String: Any]? = { queries += 1; return self.activeSession }
+            _ = cache.snapshot(at: 10, query: query)
+            cache.observeAvailability(revoke)
+            XCTAssertEqual(cache.snapshot(at: 10.01, query: query), .unavailable)
+            XCTAssertEqual(cache.snapshot(at: 11, cacheEnabled: false, query: query), .unavailable)
+            XCTAssertEqual(queries, 1, "even a stale healthy OS result cannot undo revocation")
+            cache.observeAvailability(recover)
+            XCTAssertTrue(cache.snapshot(at: 11.01, query: query).consoleUserActive)
+            XCTAssertEqual(queries, 2, "recovery always performs a new query")
+        }
+    }
+
+    func testSessionRecoveryCannotClearAnotherUnavailableCondition() {
+        var cache = CouchSessionSnapshotCache()
+        cache.observeAvailability(.screenLocked)
+        cache.observeAvailability(.sessionResigned)
+        cache.observeAvailability(.screenUnlocked)
+        XCTAssertEqual(cache.snapshot(at: 10, query: { self.activeSession }), .unavailable)
+        cache.observeAvailability(.sessionActivated)
+        XCTAssertTrue(cache.snapshot(at: 10.01, query: { self.activeSession }).consoleUserActive)
+        cache.observeAvailability(.displaySlept)
+        XCTAssertEqual(cache.snapshot(at: 10.02, query: { nil }), .unavailable,
+                       "display notifications also invalidate, without latching a session denial")
+    }
+
     private func enabled(_ session: HostSessionState, capture: Bool, couch: Bool,
                          consent: Bool = true, access: HostPermissionStatus = .granted) -> Bool {
         HostControlPolicy.isEnabled(userConsent: consent, accessibilityPermission: access, session: session,

@@ -135,6 +135,13 @@ struct StreamCounterSnapshot {
     var inputMainDelayMaxMs: Double?
     var inputPostP95Ms: Double?
     var inputEvents: Int?
+    /// Calibrated phone send → this packet's data-channel arrival; absent without usable timing.
+    var phoneSendToArrivalP50Ms: Double?
+    var phoneSendToArrivalP95Ms: Double?
+    var phoneSendToArrivalMaxMs: Double?
+    /// Largest clock uncertainty among samples in this window (path asymmetry bound, not measured error).
+    var phoneSendToArrivalUncertaintyMs: Double?
+    var phoneSendToArrivalSamples: Int?
 }
 
 /// Compact sender-side stages the Mac forwards to the phone overlay once per statistics sample.
@@ -185,6 +192,13 @@ struct HostStreamSummary: Codable, Equatable {
     var inputMainDelayMaxMs: Double?
     var inputPostP95Ms: Double?
     var inputEvents: Int?
+    /// Calibrated phone send → this packet's data-channel arrival; absent without usable timing.
+    var phoneSendToArrivalP50Ms: Double?
+    var phoneSendToArrivalP95Ms: Double?
+    var phoneSendToArrivalMaxMs: Double?
+    /// Largest clock uncertainty among samples in this window (path asymmetry bound, not measured error).
+    var phoneSendToArrivalUncertaintyMs: Double?
+    var phoneSendToArrivalSamples: Int?
     // Rate, load and region (G5/G4/G12; older phones ignore these).
     var targetFPS: Int?
     var displayRefreshHz: Double?
@@ -232,6 +246,7 @@ struct HostStreamSummary: Codable, Equatable {
                        sentFPS, sentKbps, targetKbps, maxKbps, qpAverage,
                        encodeLatencyMs, encodeLatencyP90Ms, encoderSessionAgeS, captureGapMedianMs,
                        inputMainDelayP50Ms, inputMainDelayP95Ms, inputMainDelayMaxMs, inputPostP95Ms,
+                       phoneSendToArrivalP50Ms, phoneSendToArrivalP95Ms, phoneSendToArrivalMaxMs, phoneSendToArrivalUncertaintyMs,
                        uniqueSourceFPS, resendFPS,
                        bweCeilingKbps, senderQueueMs, networkQueueMs, backlogDrainMs].compactMap { $0 }
         let integers = [pushSkipped, droppedBeforeEncode, sentWidth, sentHeight, encodeInFlightMax, rateUpdates,
@@ -250,6 +265,12 @@ struct HostStreamSummary: Codable, Equatable {
               (senderQueueGovernor?.utf8.count ?? 0) <= Self.governorStatusBytes,
               framesEncodedTotal.map({ (0...Self.maximumFrameTotal).contains($0) }) ?? true,
               macLink.map({ $0.utf8.count <= MacNetworkLink.maximumBytes && MacNetworkLink(rawValue: $0) != nil }) ?? true else {
+            throw RemoteError.invalidMessage
+        }
+        guard [phoneSendToArrivalP50Ms, phoneSendToArrivalP95Ms, phoneSendToArrivalMaxMs].compactMap({ $0 })
+                  .allSatisfy({ $0 <= InputSendTiming.maximumLatencyMs }),
+              phoneSendToArrivalUncertaintyMs.map({ $0 <= InputSendTiming.maximumUncertaintyMs }) ?? true,
+              phoneSendToArrivalSamples.map({ (1...LatencyWindow.capacity).contains($0) }) ?? true else {
             throw RemoteError.invalidMessage
         }
         try ladder?.validate()
@@ -393,6 +414,13 @@ struct StreamStatsReport: Codable, Equatable {
     var inputMainDelayMaxMs: Double?
     var inputPostP95Ms: Double?
     var inputEvents: Int?
+    /// Calibrated phone send → this packet's data-channel arrival; absent without usable timing.
+    var phoneSendToArrivalP50Ms: Double?
+    var phoneSendToArrivalP95Ms: Double?
+    var phoneSendToArrivalMaxMs: Double?
+    /// Largest clock uncertainty among samples in this window (path asymmetry bound, not measured error).
+    var phoneSendToArrivalUncertaintyMs: Double?
+    var phoneSendToArrivalSamples: Int?
     // Rate, load and region. This device's thermal state and Low Power Mode on both roles; the
     // rest is the host's (the phone sees the Mac's through `host`).
     var targetFPS: Int?
@@ -538,6 +566,12 @@ struct StreamStatsReport: Codable, Equatable {
                 inputMainDelayMaxMs = Self.round(counters.inputMainDelayMaxMs)
                 inputPostP95Ms = Self.round(counters.inputPostP95Ms)
                 inputEvents = counters.inputEvents
+                phoneSendToArrivalP50Ms = Self.round(Self.inputTimingValue(counters.phoneSendToArrivalP50Ms))
+                phoneSendToArrivalP95Ms = Self.round(Self.inputTimingValue(counters.phoneSendToArrivalP95Ms))
+                phoneSendToArrivalMaxMs = Self.round(Self.inputTimingValue(counters.phoneSendToArrivalMaxMs))
+                phoneSendToArrivalUncertaintyMs = Self.round(Self.inputTimingValue(counters.phoneSendToArrivalUncertaintyMs,
+                    maximum: InputSendTiming.maximumUncertaintyMs))
+                phoneSendToArrivalSamples = counters.phoneSendToArrivalSamples
                 senderQueueMs = pacerDelayMs
                 backlogDrainMs = Self.round(SenderQueueEstimate.backlogDrainMs(encodedBytes: Double(counters.encodedBytes),
                     sentBytes: sentBytes, availableKbps: availableOutgoingKbps))
@@ -618,6 +652,12 @@ struct StreamStatsReport: Codable, Equatable {
                           inputMainDelayMaxMs: inputMainDelayMaxMs.map { min($0, 10_000_000) },
                           inputPostP95Ms: inputPostP95Ms.map { min($0, 10_000_000) },
                           inputEvents: inputEvents.map { min($0, 100_000) },
+                          phoneSendToArrivalP50Ms: Self.inputTimingValue(phoneSendToArrivalP50Ms),
+                          phoneSendToArrivalP95Ms: Self.inputTimingValue(phoneSendToArrivalP95Ms),
+                          phoneSendToArrivalMaxMs: Self.inputTimingValue(phoneSendToArrivalMaxMs),
+                          phoneSendToArrivalUncertaintyMs: Self.inputTimingValue(phoneSendToArrivalUncertaintyMs,
+                              maximum: InputSendTiming.maximumUncertaintyMs),
+                          phoneSendToArrivalSamples: phoneSendToArrivalSamples.flatMap { (1...LatencyWindow.capacity).contains($0) ? $0 : nil },
                           targetFPS: targetFPS.map { Self.clamp($0, HostStreamSummary.fpsRange) },
                           displayRefreshHz: displayRefreshHz.flatMap {
                               $0.isFinite ? Self.clamp($0, HostStreamSummary.refreshRange) : nil
@@ -644,6 +684,11 @@ struct StreamStatsReport: Codable, Equatable {
                           senderQueueGovernor: senderQueueGovernor.map {
                               Self.truncated($0, bytes: HostStreamSummary.governorStatusBytes)
                           })
+    }
+
+    private static func inputTimingValue(_ value: Double?, maximum: Double = InputSendTiming.maximumLatencyMs) -> Double? {
+        guard let value, value.isFinite, (0...maximum).contains(value) else { return nil }
+        return value
     }
 
     static func thermalName(_ state: Int?) -> String? {
@@ -769,6 +814,9 @@ struct StreamStatsReport: Codable, Equatable {
                                      inputPostP95Ms) {
                 lines.append(input)
             }
+            if let count = phoneSendToArrivalSamples {
+                lines.append("phone send → arrival p50 \(value(phoneSendToArrivalP50Ms, "ms")) p95 \(value(phoneSendToArrivalP95Ms, "ms")) max \(value(phoneSendToArrivalMaxMs, "ms")) ±\(value(phoneSendToArrivalUncertaintyMs, "ms")) · n \(count)")
+            }
         } else {
             if let host {
                 if let rate = rateLine("Mac ", target: host.targetFPS, refresh: host.displayRefreshHz,
@@ -799,6 +847,9 @@ struct StreamStatsReport: Codable, Equatable {
                 if let input = inputLine("Mac ", host.inputEvents, host.inputMainDelayP50Ms, host.inputMainDelayP95Ms,
                                          host.inputMainDelayMaxMs, host.inputPostP95Ms) {
                     lines.append(input)
+                }
+                if let count = host.phoneSendToArrivalSamples {
+                    lines.append("phone send → Mac arrival p50 \(value(host.phoneSendToArrivalP50Ms, "ms")) p95 \(value(host.phoneSendToArrivalP95Ms, "ms")) max \(value(host.phoneSendToArrivalMaxMs, "ms")) ±\(value(host.phoneSendToArrivalUncertaintyMs, "ms")) · n \(count)")
                 }
             }
             if let own = rateLine("phone ", target: nil, refresh: nil, display: nil, gapMedian: nil,
@@ -1014,6 +1065,8 @@ final class StreamCounters: @unchecked Sendable {
     private var gateOutputs = 0
     private var inputMainDelay = LatencyWindow()
     private var inputPost = LatencyWindow()
+    private var phoneSendToArrival = LatencyWindow()
+    private var phoneSendToArrivalUncertainty = LatencyWindow()
     private var encoderEvidence: VideoEncoderEvidence?
     private var encoderSessionStartedMs: Double?
     private var encodedFramesTotal = 0
@@ -1180,6 +1233,14 @@ final class StreamCounters: @unchecked Sendable {
         inputPost.record(postMs)
     }
 
+    /// Counts delivered input packets, including reliable recovery prefixes, never individual replayed segments.
+    func phoneInputArrived(timing: InputSendTiming, arrivedHostMs: Double) {
+        guard let duration = timing.latency(arrivedHostMs: arrivedHostMs) else { return }
+        lock.lock(); defer { lock.unlock() }
+        phoneSendToArrival.record(duration)
+        phoneSendToArrivalUncertainty.record(timing.uncertaintyMs)
+    }
+
     /// VideoToolbox dropped frames without a callback; a later completion retired them.
     func encoderSilentlyDropped(_ count: Int) {
         lock.lock(); encoderSilentDrops += max(0, count); lock.unlock()
@@ -1265,6 +1326,12 @@ final class StreamCounters: @unchecked Sendable {
         result.encoderSuperseded = gateActive ? gateSuperseded : nil
         result.encoderRetired = gateActive ? gateRetired : nil
         result.encoderOutputs = gateActive ? gateOutputs : nil
+        let phoneArrival = phoneSendToArrival.drainPercentiles()
+        result.phoneSendToArrivalP50Ms = phoneArrival.p50
+        result.phoneSendToArrivalP95Ms = phoneArrival.p95
+        result.phoneSendToArrivalMaxMs = phoneArrival.max
+        result.phoneSendToArrivalUncertaintyMs = phoneSendToArrivalUncertainty.drainPercentiles().max
+        result.phoneSendToArrivalSamples = phoneArrival.count > 0 ? phoneArrival.count : nil
         let mainDelay = inputMainDelay.drainPercentiles()
         let post = inputPost.drainPercentiles()
         result.inputMainDelayP50Ms = mainDelay.p50

@@ -1,6 +1,62 @@
 import XCTest
 
 final class StreamStatisticsTests: XCTestCase {
+    func testPhoneSendToArrivalDistributionAndUncertaintyReachTheHostSummary() throws {
+        let counters = StreamCounters()
+        for (duration, uncertainty) in [(5.0, 2.0), (15.0, 4.0), (25.0, 3.0)] {
+            counters.phoneInputArrived(timing: InputSendTiming(sendHostMs: 1_000, uncertaintyMs: uncertainty),
+                                      arrivedHostMs: 1_000 + duration)
+        }
+        counters.phoneInputArrived(timing: InputSendTiming(sendHostMs: 1_000, uncertaintyMs: 3), arrivedHostMs: 990)
+        counters.phoneInputArrived(timing: InputSendTiming(sendHostMs: 1_000, uncertaintyMs: .nan), arrivedHostMs: 1_010)
+        let snapshot = counters.drain(inputBufferedBytes: nil, at: ProcessInfo.processInfo.systemUptime + 1)
+        let sample = StreamStatsSample(entries: [])
+        let report = StreamStatsReport(role: "host", previous: sample, current: sample, counters: snapshot)
+        XCTAssertEqual(report.phoneSendToArrivalP50Ms, 15)
+        XCTAssertEqual(report.phoneSendToArrivalP95Ms, 25)
+        XCTAssertEqual(report.phoneSendToArrivalMaxMs, 25)
+        XCTAssertEqual(report.phoneSendToArrivalUncertaintyMs, 4)
+        XCTAssertEqual(report.phoneSendToArrivalSamples, 3)
+        let summary = report.hostSummary
+        XCTAssertEqual(summary.phoneSendToArrivalP50Ms, 15)
+        XCTAssertEqual(summary.phoneSendToArrivalP95Ms, 25)
+        XCTAssertEqual(summary.phoneSendToArrivalMaxMs, 25)
+        XCTAssertEqual(summary.phoneSendToArrivalUncertaintyMs, 4)
+        XCTAssertEqual(summary.phoneSendToArrivalSamples, 3)
+        try summary.validate()
+        XCTAssertEqual(try JSONDecoder().decode(HostStreamSummary.self, from: JSONEncoder().encode(summary)), summary)
+        XCTAssertTrue(report.summaryLines.contains { $0.contains("phone send → arrival") })
+        let empty = counters.drain(inputBufferedBytes: nil, at: ProcessInfo.processInfo.systemUptime + 2)
+        XCTAssertNil(empty.phoneSendToArrivalP50Ms)
+        XCTAssertNil(empty.phoneSendToArrivalUncertaintyMs)
+        XCTAssertNil(empty.phoneSendToArrivalSamples)
+        let older = try JSONDecoder().decode(HostStreamSummary.self, from: Data("{}".utf8))
+        XCTAssertNil(older.phoneSendToArrivalSamples)
+    }
+
+    func testPhoneSendToArrivalSummaryOmitsInvalidEvidenceAndValidatesBounds() throws {
+        let sample = StreamStatsSample(entries: [])
+        var report = StreamStatsReport(role: "host", previous: sample, current: sample, counters: nil)
+        report.phoneSendToArrivalP50Ms = .nan
+        report.phoneSendToArrivalP95Ms = -1
+        report.phoneSendToArrivalMaxMs = InputSendTiming.maximumLatencyMs + 1
+        report.phoneSendToArrivalUncertaintyMs = InputSendTiming.maximumUncertaintyMs + 1
+        report.phoneSendToArrivalSamples = 100_000
+        let summary = report.hostSummary
+        XCTAssertNil(summary.phoneSendToArrivalP50Ms)
+        XCTAssertNil(summary.phoneSendToArrivalP95Ms)
+        XCTAssertNil(summary.phoneSendToArrivalMaxMs)
+        XCTAssertNil(summary.phoneSendToArrivalUncertaintyMs)
+        XCTAssertNil(summary.phoneSendToArrivalSamples)
+        try summary.validate()
+        var invalid = summary; invalid.phoneSendToArrivalP50Ms = .infinity
+        XCTAssertThrowsError(try invalid.validate())
+        invalid = summary; invalid.phoneSendToArrivalMaxMs = InputSendTiming.maximumLatencyMs + 1
+        XCTAssertThrowsError(try invalid.validate())
+        invalid = summary; invalid.phoneSendToArrivalUncertaintyMs = -1
+        XCTAssertThrowsError(try invalid.validate())
+    }
+
     func testHostSummaryCarriesObservedMaximumGapAndOlderMissingFieldRemainsUnknown() throws {
         let previous = StreamStatsSample(entries: senderEntries(at: 1, encoded: 0, sent: 0, bytes: 0, encodeTime: 0, qp: 0))
         let current = StreamStatsSample(entries: senderEntries(at: 2, encoded: 66, sent: 66, bytes: 100_000, encodeTime: 0.1, qp: 100))

@@ -65,6 +65,67 @@ enum CouchHealth {
     }
 }
 
+/// Lock and console status must come from the same window-server query.
+struct CouchSessionSnapshot: Equatable {
+    var screenLocked: Bool
+    var consoleUserActive: Bool
+
+    static let unavailable = Self(screenLocked: true, consoleUserActive: false)
+
+    init(screenLocked: Bool, consoleUserActive: Bool) {
+        self.screenLocked = screenLocked
+        self.consoleUserActive = consoleUserActive
+    }
+
+    init(session: [String: Any]?) {
+        guard let session, let onConsole = session[kCGSessionOnConsoleKey as String] as? Bool else {
+            self = .unavailable; return
+        }
+        // Preserve the existing absent lock-flag interpretation; malformed present values deny control.
+        screenLocked = session["CGSSessionScreenIsLocked"].map { ($0 as? Bool) ?? true } ?? false
+        consoleUserActive = onConsole
+    }
+}
+
+/// Owned by the main-actor host. Notifications revoke admission independently of cached OS state.
+struct CouchSessionSnapshotCache {
+    static let maximumAge: TimeInterval = 0.1
+    static let disabledDefaultsKey = "couchSessionSnapshotCacheDisabled"
+    private var cached: CouchSessionSnapshot?
+    private var queriedAt: TimeInterval?
+    private var locked = false
+    private var resigned = false
+    private var sleeping = false
+
+    mutating func observeAvailability(_ event: HostSleepPolicy.Event) {
+        invalidate()
+        switch event {
+        case .screenLocked: locked = true
+        case .screenUnlocked: locked = false
+        case .sessionResigned: resigned = true
+        case .sessionActivated: resigned = false
+        case .systemWillSleep: sleeping = true
+        case .systemDidWake: sleeping = false
+        case .displaySlept, .displayWoke: break
+        }
+    }
+
+    private mutating func invalidate() { cached = nil; queriedAt = nil }
+
+    mutating func snapshot(at now: TimeInterval, cacheEnabled: Bool = true,
+                           query: () -> [String: Any]?) -> CouchSessionSnapshot {
+        guard now.isFinite else { invalidate(); return .unavailable }
+        guard !locked, !resigned, !sleeping else { return .unavailable }
+        if cacheEnabled, let cached, let queriedAt, (0..<Self.maximumAge).contains(now - queriedAt) {
+            return cached
+        }
+        invalidate()
+        let current = CouchSessionSnapshot(session: query())
+        if cacheEnabled { cached = current; queriedAt = now }
+        return current
+    }
+}
+
 extension HostControlPolicy {
     static func isEnabled(userConsent: Bool, accessibilityPermission: HostPermissionStatus,
                           session: HostSessionState, captureHealthy: Bool, couchHealthy: Bool) -> Bool {

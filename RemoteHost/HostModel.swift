@@ -194,6 +194,7 @@ final class RemoteHostModel: ObservableObject {
     private let powerAssertions = HostPowerAssertions()
     private let displayWake = HostDisplayWake()
     private var screenLocked = false
+    private var couchSessionSnapshot = CouchSessionSnapshotCache()
     private var unavailabilityTeardown: Task<Void, Never>?
     private var timedPauseTask: Task<Void, Never>?
     private let clipboard = HostClipboardService()
@@ -641,7 +642,7 @@ final class RemoteHostModel: ObservableObject {
         ]
         for (name, event) in workspaceEvents {
             observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.handleAvailability(event) }
+                MainActor.assumeIsolated { self?.handleAvailability(event) }
             })
         }
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(
@@ -656,7 +657,7 @@ final class RemoteHostModel: ObservableObject {
         for (name, event) in [(HostScreenLock.locked, HostSleepPolicy.Event.screenLocked),
                               (HostScreenLock.unlocked, HostSleepPolicy.Event.screenUnlocked)] {
             observers.append(DistributedNotificationCenter.default().addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.handleAvailability(event) }
+                MainActor.assumeIsolated { self?.handleAvailability(event) }
             })
         }
         if HostScreenLock.isLocked() { handleAvailability(.screenLocked) }
@@ -2305,10 +2306,19 @@ final class RemoteHostModel: ObservableObject {
 
     private var couchHealthInputs: CouchHealthInputs {
         let now = ProcessInfo.processInfo.systemUptime
+        #if DEBUG
+        let defaults = HostE2E.active?.defaults ?? .standard
+        #else
+        let defaults = UserDefaults.standard
+        #endif
+        let session = couchSessionSnapshot.snapshot(
+            at: now,
+            cacheEnabled: !defaults.bool(forKey: CouchSessionSnapshotCache.disabledDefaultsKey),
+            query: { CGSessionCopyCurrentDictionary() as? [String: Any] })
         return CouchHealthInputs(
             routeLocal: connection.routeIsLocal, provenLinkActive: connection.provenLocalLinkActive,
             heartbeatAge: lastPhoneHeartbeatAt.map { now - $0 },
-            screenLocked: screenLocked || HostScreenLock.isLocked(), consoleUserActive: Self.consoleUserActive(),
+            screenLocked: screenLocked || session.screenLocked, consoleUserActive: session.consoleUserActive,
             allowControl: sessionControlAllowed, accessibility: controlPermission, phonePaused: phonePause.isPaused)
     }
 
@@ -2429,6 +2439,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func receiveCausalInput(_ context: InputCausalEnvelope, semantic: RemoteAction?) {
+        let arrivedMs = connection.currentControlArrivalMs
         guard connection.connected, active, context.epoch == inputEpoch.value, !sessionRefused, !phonePause.isPaused && !liveViewOnly,
               let peer = connection.media else {
             _ = connection.recoverCausalInput(context)
@@ -2479,7 +2490,7 @@ final class RemoteHostModel: ObservableObject {
                 model.pointerTelemetry.moveProcessed(action)
                 model.finishInput(action, outcome: result.outcome, upgraded: true, now: ProcessInfo.processInfo.systemUptime,
                                   point: result.point, activeHold: result.externalHold, startedMs: result.startedMs,
-                                  endedMs: result.endedMs, arrivedMs: nil)
+                                  endedMs: result.endedMs, arrivedMs: arrivedMs)
             }
             if receipt.failed || receipt.intervention {
                 if let semantic, semantic.action == "text" { model.sendTextResult(for: semantic.key, accepted: false) }
@@ -3247,8 +3258,14 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Sleep, lock and display availability
 
     private func handleAvailability(_ event: HostSleepPolicy.Event) {
+        couchSessionSnapshot.observeAvailability(event)
         switch HostSleepPolicy.response(to: event) {
         case .tearDown(let presence):
+            // Revoke before any lock bookkeeping or teardown guard, synchronously in the notification callback.
+            input.enabled = false
+            couchHealthy = false
+            input.invalidateQueued(); inputFreshness.expireTokens()
+            releaseRemoteInput(notifyPhone: true)
             if presence == .locked {
                 guard !screenLocked else { return }
                 guests.endAll()
@@ -3305,11 +3322,7 @@ final class RemoteHostModel: ObservableObject {
         }
         invalidateTextFocus()
         pointerTelemetry.end()
-        releaseRemoteInput(notifyPhone: true)
-        input.invalidateQueued(); inputFreshness.expireTokens()
-        input.enabled = false
         captureHealthy = false
-        couchHealthy = false
         captureAttempt &+= 1
         captureTask?.cancel(); captureTask = nil
         endLoadMonitor()

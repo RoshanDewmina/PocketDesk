@@ -14,8 +14,9 @@ private final class ExecutorSink {
             self.events += events; self.pointer = events.last?.point ?? self.pointer; return true
         }, scroll: { _, _, _ in true }, text: { _ in true }, key: { key, _ in self.keys.append(key); return true })
     }
-    func executor(queue: DispatchQueue = DispatchQueue(label: "input-test"), clock: @escaping () -> TimeInterval = { 10 }) -> HostInputExecutor {
-        let result = HostInputExecutor(driver: RemoteInputDriver(eventSink: sink, isTrusted: { true }), queue: queue, clock: clock)
+    func executor(queue: DispatchQueue = DispatchQueue(label: "input-test"), clock: @escaping () -> TimeInterval = { 10 },
+                  coalesce: @escaping () -> Bool = { true }) -> HostInputExecutor {
+        let result = HostInputExecutor(driver: RemoteInputDriver(eventSink: sink, isTrusted: { true }), queue: queue, clock: clock, coalesceCouchMotion: coalesce)
         result.configure(bounds: CGRect(x: 0, y: 0, width: 200, height: 200)); result.enabled = true
         return result
     }
@@ -27,6 +28,140 @@ final class HostInputExecutorTests: XCTestCase {
                             segments: moves.enumerated().map { InputMotionSegment(ordinal: UInt64($0.offset + 1), action: RemoteAction(action: "move", x: $0.element, epoch: 7)) })
     }
     private func admitted(_ action: RemoteAction) -> HostInputExecutor.Admitted { .init(action: action, upgraded: true, expires: 11) }
+    func testCouchMotionBurstPostsOneEndpointWithSequentialEdgeClamping() {
+        let sink = ExecutorSink(), executor = sink.executor()
+        executor.configure(displays: [CGRect(x: 0, y: 0, width: 200, height: 200)])
+        executor.beginCausalContext(context())
+        var prefix = context([500, -80]); prefix.kind = "motion"
+        let done = expectation(description: "coalesced endpoint")
+        executor.submitCausal(prefix, steps: prefix.segments.map { admitted($0.action) }, semantic: nil, routeAuthority: authority) { receipt in
+            XCTAssertFalse(receipt.failed); XCTAssertEqual(receipt.applied, 2); done.fulfill()
+        }
+        wait(for: [done], timeout: 2)
+        XCTAssertEqual(sink.events.count, 1)
+        XCTAssertEqual(sink.pointer.x, 120, accuracy: 0.000001, "clamp each segment, never sum deltas before clamping")
+        let duplicate = expectation(description: "no duplicate displacement")
+        executor.submitCausal(prefix, steps: prefix.segments.map { admitted($0.action) }, semantic: nil, routeAuthority: authority) { receipt in
+            XCTAssertTrue(receipt.results.isEmpty); duplicate.fulfill()
+        }
+        wait(for: [duplicate], timeout: 2)
+        XCTAssertEqual(sink.events.count, 1)
+    }
+    func testCouchDragBurstKeepsHoldAndDropAtCoalescedEndpoint() {
+        let sink = ExecutorSink(), executor = sink.executor()
+        executor.configure(displays: [CGRect(x: 0, y: 0, width: 200, height: 200)])
+        executor.beginCausalContext(context())
+        let hold = NativeInteraction(hold: "couch-drag", clickCount: 1)
+        let down = expectation(description: "hold")
+        executor.submit(RemoteAction(action: "dragDown", epoch: 7, interaction: hold), upgraded: true, expires: 11, routeAuthority: authority) { result in
+            XCTAssertTrue(result.outcome.accepted); down.fulfill()
+        }
+        wait(for: [down], timeout: 2)
+        var prefix = context([5, 10, -3]); prefix.kind = "motion"
+        for index in prefix.segments.indices { prefix.segments[index].action.interaction = hold }
+        let moved = expectation(description: "drag endpoint")
+        executor.submitCausal(prefix, steps: prefix.segments.map { admitted($0.action) }, semantic: nil, routeAuthority: authority) { receipt in
+            XCTAssertFalse(receipt.failed); XCTAssertEqual(receipt.applied, 3); moved.fulfill()
+        }
+        wait(for: [moved], timeout: 2)
+        XCTAssertTrue(executor.held)
+        XCTAssertEqual(sink.events.map(\.type), [.leftMouseDown, .leftMouseDragged])
+        XCTAssertTrue(executor.release())
+        XCTAssertEqual(sink.events.last?.type, .leftMouseUp)
+        XCTAssertEqual(sink.pointer.x, 112, accuracy: 0.000001)
+    }
+    func testCouchBurstKillSwitchRestoresOrderedPosting() {
+        let sink = ExecutorSink(), executor = sink.executor(coalesce: { false })
+        executor.configure(displays: [CGRect(x: 0, y: 0, width: 200, height: 200)])
+        executor.beginCausalContext(context())
+        var prefix = context([5, 10, -3]); prefix.kind = "motion"
+        let done = expectation(description: "legacy burst")
+        executor.submitCausal(prefix, steps: prefix.segments.map { admitted($0.action) }, semantic: nil, routeAuthority: authority) { receipt in
+            XCTAssertFalse(receipt.failed); XCTAssertEqual(receipt.applied, 3); done.fulfill()
+        }
+        wait(for: [done], timeout: 2)
+        XCTAssertEqual(sink.events.count, 3)
+        XCTAssertEqual(sink.pointer.x, 112, accuracy: 0.000001)
+    }
+    func testCouchOutAndBackBurstStillResetsSemanticDoubleClickSequence() {
+        let sink = ExecutorSink(), executor = sink.executor()
+        executor.configure(displays: [CGRect(x: 0, y: 0, width: 200, height: 200)])
+        executor.beginCausalContext(context())
+        let first = expectation(description: "first click")
+        executor.submit(RemoteAction(action: "click", epoch: 7, interaction: NativeInteraction(clickCount: 1)),
+                        upgraded: true, expires: 11, routeAuthority: authority) { receipt in
+            XCTAssertTrue(receipt.outcome.accepted); first.fulfill()
+        }
+        wait(for: [first], timeout: 2)
+        var prefix = context([10, -10]); prefix.kind = "motion"
+        let moved = expectation(description: "out and back")
+        executor.submitCausal(prefix, steps: prefix.segments.map { admitted($0.action) }, semantic: nil, routeAuthority: authority) { receipt in
+            XCTAssertFalse(receipt.failed); moved.fulfill()
+        }
+        wait(for: [moved], timeout: 2)
+        let second = expectation(description: "discontinuous double click refused")
+        executor.submit(RemoteAction(action: "click", epoch: 7, interaction: NativeInteraction(clickCount: 2)),
+                        upgraded: true, expires: 11, routeAuthority: authority) { receipt in
+            XCTAssertFalse(receipt.outcome.accepted); second.fulfill()
+        }
+        wait(for: [second], timeout: 2)
+    }
+    func testExpiredSegmentInCouchBurstCannotBeHiddenByFreshEndpoint() {
+        let sink = ExecutorSink(), executor = sink.executor()
+        executor.configure(displays: [CGRect(x: 0, y: 0, width: 200, height: 200)])
+        executor.beginCausalContext(context())
+        var prefix = context([5, 10]); prefix.kind = "motion"
+        let steps = [HostInputExecutor.Admitted(action: prefix.segments[0].action, upgraded: true, expires: 10), admitted(prefix.segments[1].action)]
+        let done = expectation(description: "expired burst")
+        executor.submitCausal(prefix, steps: steps, semantic: nil, routeAuthority: authority) { receipt in
+            XCTAssertTrue(receipt.failed); XCTAssertEqual(receipt.applied, 0); done.fulfill()
+        }
+        wait(for: [done], timeout: 2)
+        XCTAssertTrue(sink.events.isEmpty)
+    }
+    func testCouchTokenRotationCoalescesButUnknownOrExpiredEarlierTokenCannotPost() {
+        for rejection in ["none", "unknown", "expired"] {
+            var freshness = NativeInputFreshness()
+            let old = freshness.capability(epoch: 7, now: 9, doubleClickInterval: 0.5)
+            let new = freshness.capability(epoch: 7, now: 9.5, doubleClickInterval: 0.5)
+            let now: TimeInterval = rejection == "expired" ? 10 : 9.75
+            let sink = ExecutorSink(), executor = sink.executor(clock: { now })
+            executor.configure(displays: [CGRect(x: 0, y: 0, width: 200, height: 200)])
+            executor.beginCausalContext(context())
+            var prefix = context([5, 10]); prefix.kind = "motion"
+            prefix.segments[0].action.interaction = NativeInteraction(token: rejection == "unknown" ? "unissued" : old.token)
+            prefix.segments[1].action.interaction = NativeInteraction(token: new.token)
+            let steps = prefix.segments.map { HostInputExecutor.Admitted(action: $0.action, upgraded: true,
+                expires: freshness.postingDeadline(for: $0.action, epoch: 7)) }
+            let done = expectation(description: "rotating token \(rejection)")
+            executor.submitCausal(prefix, steps: steps, semantic: nil, routeAuthority: authority) { receipt in
+                XCTAssertEqual(receipt.failed, rejection != "none")
+                XCTAssertEqual(receipt.applied, rejection == "none" ? 2 : 0); done.fulfill()
+            }
+            wait(for: [done], timeout: 2)
+            XCTAssertEqual(sink.events.count, rejection == "none" ? 1 : 0)
+        }
+    }
+    func testMaximumCouchBurstReduces24PostsToOneWithIdenticalMultiDisplayEndpoint() {
+        var endpoints: [CGPoint] = []
+        var counts: [Int] = []
+        for enabled in [false, true] {
+            let sink = ExecutorSink(), executor = sink.executor(coalesce: { enabled })
+            executor.configure(displays: [CGRect(x: -200, y: -100, width: 150, height: 200),
+                                           CGRect(x: 0, y: 0, width: 200, height: 200)])
+            executor.beginCausalContext(context())
+            var prefix = context((0..<24).map { $0.isMultiple(of: 3) ? -500 : 80 }); prefix.kind = "motion"
+            let done = expectation(description: "burst comparison \(enabled)")
+            executor.submitCausal(prefix, steps: prefix.segments.map { admitted($0.action) }, semantic: nil, routeAuthority: authority) { receipt in
+                XCTAssertFalse(receipt.failed); XCTAssertEqual(receipt.applied, 24); done.fulfill()
+            }
+            wait(for: [done], timeout: 2)
+            endpoints.append(sink.pointer); counts.append(sink.events.count)
+        }
+        XCTAssertEqual(endpoints[0], endpoints[1])
+        XCTAssertEqual(counts, [24, 1], "same path clamp; 95.8% fewer catch-up CGEvents, no added wait")
+        print("COUCH BURST: ordered 24 posts; coalesced 1 post; endpoint \(endpoints[1])")
+    }
     func testReliableClickPostsMissingClampedPathAndLateDuplicateDoesNotMoveAgain() {
         let sink = ExecutorSink(), executor = sink.executor(), prefix = context([500, -80])
         executor.beginCausalContext(context())
