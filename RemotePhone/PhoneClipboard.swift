@@ -190,6 +190,14 @@ final class PhoneClipboard: ObservableObject {
         cancelExplicit()
     }
 
+    /// A new connection has no clipboard sync history, even when the phone's item is unchanged.
+    /// Held-session pause/resume uses ordinary cancellation and keeps its echo baseline.
+    func resetSession() {
+        cancel()
+        stopPasteboardMonitoring()
+        lastSyncedChangeCount = nil
+    }
+
     private func cancelExplicit() {
         sendingChangeCount = nil
         pending = nil

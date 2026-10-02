@@ -80,6 +80,27 @@ final class CouchPhoneModelTests: XCTestCase {
         XCTAssertFalse(model.canControl)
     }
 
+    func testFullDisconnectOffersUnchangedPhoneClipboardToTheNextMac() throws {
+        let model = try liveCouch()
+        model.sceneChanged(.active)
+        var count = 10
+        model.clipboard.pasteboardMetadata = { (count, true) }
+        model.clipboard.writeToPasteboard = { _ in count += 1 }
+        var frame = try ClipboardChunker.frames(for: ClipboardPayload(text: "Mac A copy"), operation: "data", transfer: "macasyncedcopy001")[0]
+        frame.automatic = true
+        model.clipboard.receive(frame)
+        model.clipboard.refreshPasteChip(available: true)
+        XCTAssertFalse(model.clipboard.showsPasteChip)
+        model.clipboard.cancel()
+        model.clipboard.stopPasteboardMonitoring()
+        model.clipboard.refreshPasteChip(available: true)
+        XCTAssertFalse(model.clipboard.showsPasteChip, "Held-session resume must still suppress the Mac's own copy")
+        model.disconnect()
+        model.clipboard.refreshPasteChip(available: true)
+        XCTAssertTrue(model.clipboard.showsPasteChip, "The next Mac has not received this unchanged phone clipboard")
+        model.clipboard.stopPasteboardMonitoring()
+    }
+
     func testCouchClipboardNeedsCurrentOwnerControl() throws {
         let model = try liveCouch()
         model.sceneChanged(.active)

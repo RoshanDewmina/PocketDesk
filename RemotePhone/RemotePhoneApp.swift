@@ -3018,7 +3018,7 @@ let now = ProcessInfo.processInfo.systemUptime
             if sessionEndReason == nil { sessionEndReason = .macStopped }
         }
         departureReason = nil
-        clipboard.cancel()
+        clipboard.resetSession()
         files.reset()
         refreshSendToMac(force: true)
         resumeWatchdog?.cancel(); resumeWatchdog = nil
