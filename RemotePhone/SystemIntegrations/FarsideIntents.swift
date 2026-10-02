@@ -71,12 +71,12 @@ func resolvePairedMac(_ chosen: MacEntity?, disambiguate: ([MacEntity]) async th
 struct ConnectToMacIntent: AppIntent {
     static var title: LocalizedStringResource { "Connect to Mac" }
     static var description: IntentDescription? {
-        IntentDescription("Opens Farside and connects to your paired Mac.")
+        IntentDescription("Opens Farside and connects to your paired computer.")
     }
     static var supportedModes: IntentModes { .foreground(.immediate) }
     static var authenticationPolicy: IntentAuthenticationPolicy { .requiresAuthentication }
 
-    @Parameter(title: "Mac", description: "Which Mac to connect to. Farside asks only if you have more than one.",
+    @Parameter(title: "Computer", description: "Which computer to connect to. Farside asks only if you have more than one.",
                requestDisambiguationDialog: "Which Mac?")
     var mac: MacEntity?
 
@@ -104,12 +104,12 @@ struct ConnectToMacIntent: AppIntent {
 struct MacStatusIntent: AppIntent {
     static var title: LocalizedStringResource { "Is my Mac awake?" }
     static var description: IntentDescription? {
-        IntentDescription("Checks whether your Mac's Farside is answering, without connecting.")
+        IntentDescription("Checks whether your computer is ready for Farside, without connecting.")
     }
     static var supportedModes: IntentModes { .background }
     static var authenticationPolicy: IntentAuthenticationPolicy { .requiresAuthentication }
 
-    @Parameter(title: "Mac", description: "Which Mac to check. Farside asks only if you have more than one.",
+    @Parameter(title: "Computer", description: "Which computer to check. Farside asks only if you have more than one.",
                requestDisambiguationDialog: "Which Mac?")
     var mac: MacEntity?
 
