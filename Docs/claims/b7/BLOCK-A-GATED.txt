@@ -1,0 +1,9 @@
+Farside puts the Mac you already own in your hand. Designed for touch first, Farside reaches from your iPhone to your Mac.
+
+The whole iPhone screen becomes your Mac's trackpad: slide to move the pointer, tap to click, and pinch to zoom into any part of your Mac.
+
+There is no Farside account. The free Mac companion shows a code, you scan it, and the Mac pairs only with a phone you approve on it. In the iPhone app switcher, the Mac's picture stays hidden.
+
+Farside is free on the same Wi-Fi. Farside Anywhere, an optional subscription for use away from home, is coming soon. It needs a Mac with Apple silicon on macOS 26 or later.
+
+Farside 1.0 is planned for iPhone and iPad.

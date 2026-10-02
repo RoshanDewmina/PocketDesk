@@ -1,0 +1,22 @@
+# Accessibility Nutrition Label decision — evidence scoped
+
+**Declare no new “Supports” label from this lane until the exact build/device common-task criteria pass.** Automated audits and source hooks are useful evidence; actual criteria include completion of common tasks using the feature on each supported device. See [Apple's current overview](https://developer.apple.com/help/app-store-connect/manage-app-accessibility/overview-of-accessibility-nutrition-labels), checked2October2026. Apple says per-device support can differ, so iPhone evidence does not stand in for iPad evidence.
+
+| Label | Current decision | Evidence needed |
+|---|---|---|
+| VoiceOver | Withhold | Complete pairing, connection, practice/control, text/input and End with usable announcements and focus. Remote Mac imagery is essential content; accessible dock controls alone cannot establish accessible remote-desktop tasks. See [VoiceOver criteria](https://developer.apple.com/help/app-store-connect/manage-app-accessibility/voiceover-evaluation-criteria). |
+| Voice Control | Withhold | Actual named controls/task completion with Voice Control on each device; dictated text feature is not Voice Control support. |
+| Larger Text | Withhold pending simulator + device task acceptance | All common tasks at required enlargement; XXXL screen audit is supplementary. Pinch/OS Zoom is not proof of label support. See [Larger Text criteria](https://developer.apple.com/help/app-store-connect/manage-app-accessibility/larger-text-evaluation-criteria). |
+| Dark Interface | Candidate source support, no declaration yet | Dark local app screens are implemented; validate all common tasks/system sheets and required third-party remote content against Apple criteria. |
+| Differentiate Without Color Alone | Withhold | Status, pointer/gesture feedback and error/success information understandable without color-only distinctions. |
+| Sufficient Contrast | Withhold pending audit findings | Resolve/recheck every relevant text/icon contrast failure across normal/increased contrast, sizes and supported devices. |
+| Reduced Motion | Withhold | All common tasks with Reduce Motion enabled, including pointer/zoom transitions, coach, docks, reconnection and feedback; an availability guard is not a complete pass. |
+| Captions / Audio Descriptions | Not assessed; no Supports claim | Determine which live/third-party media workflows are common tasks and meet the corresponding criteria; don't infer either from audio transport support. |
+
+XCUITest performAccessibilityAudit(.all) matches Inspector's audit for the current screen, but Apple explicitly says a clean automated audit cannot guarantee complete accessibility; [audit documentation](https://developer.apple.com/documentation/accessibility/performing-accessibility-audits-for-your-app). This lane's 55 named fixture inventory covers common local screens, pages and errors at default and AX-XXXL on iPhone/iPad, initially and one scroll position. Native permission alerts/camera feeds, provider purchase UI, live guest/file/wake paths, actual remote desktop semantics and actual VoiceOver traversal remain separate, listed in test attachments. Exact execution results belong below; the presence of the tests is not a passed audit.
+
+C8 decision: keep “Accessibility work continues through launch.” “I audited the app before launch” is withheld as a complete-app claim until the recorded broader audit exists. A narrower factual claim about completed simulator screen audits can be considered after those runs finish, with failures disclosed in internal records.
+
+## Simulator audit receipts
+
+Pending runtime execution; no automated audit pass is currently claimed.
