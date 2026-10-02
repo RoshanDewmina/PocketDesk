@@ -48,7 +48,7 @@ export const PAGES: PageDef[] = [
     file: "terms.html",
     render: termsPage,
     sitemap: true,
-    llms: { section: "Legal", title: "Terms of use (draft)", note: "draft, not yet in effect" },
+    llms: { section: "Legal", title: "Terms of use", note: "using Farside with your own Mac, the Anywhere subscription, acceptable use, liability" },
   },
   { slug: "about", path: "/about", file: "about.html", render: aboutPage, sitemap: true },
   { slug: "404", path: "/404", file: "404.html", render: notFoundPage, sitemap: false },

@@ -134,7 +134,7 @@ export const config = {
   requirements: {
     /** D35: Apple silicon only for 1.0. */
     mac: "macOS 26 or later on a Mac with Apple silicon (M1 or later)",
-    /** 1.0 is iPhone-only (owner, 1 Oct 2026): no published page prints `ipad`; only the held-back guides read it. */
+    /** 1.0 is universal, iPhone and iPad from day one (owner, 2 Oct 2026). */
     iphone: "iOS 26 or later",
     ipad: "iPadOS 26 or later",
   },
@@ -149,10 +149,10 @@ export const config = {
   },
 
   /** Last content review of the legal pages. */
-  legalUpdated: "1 October 2026",
+  legalUpdated: "2 October 2026",
   /**
-   * The privacy policy's effective date, e.g. "27 October 2026": set it to the production deploy date in the
-   * commit that goes live. `bun run build:prod` (the production build, DEPLOY.md) refuses to build while it is
+   * The effective date of the privacy policy and the terms, e.g. "27 October 2026": set it to the production deploy
+   * date in the commit that goes live. `bun run build:prod` (the production build, DEPLOY.md) refuses to build while it is
    * null; preview builds show the build date in its place.
    */
   privacyEffective: null as string | null,

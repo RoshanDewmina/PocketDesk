@@ -1,18 +1,19 @@
-// Draft terms of use. There is no terms document in Docs/launch yet (STORE-LISTING.md allows Apple's standard
-// EULA or custom terms), so this is a plain-language starting point for counsel, clearly marked as a draft.
+// Terms of use, final for launch (owner's go-live of 2 Oct 2026). Apple's standard Licensed Application EULA covers
+// the App Store app; these terms add to it. They take effect on config.privacyEffective, the production deploy date.
 
 import { config } from "../../site.config";
 import { html } from "../lib/html";
+import { longDate } from "./dates";
 import { docBody, ownerComment, pageHero, type Section } from "./doc";
 import { detail, email, ogUrl, page, type Assets } from "./layout";
 import { breadcrumbs, graph, webPage } from "./schema";
 
 const OPEN_ITEMS = [
-  "DRAFT: counsel must review everything on this page before launch. Remove the draft banner only after sign-off.",
+  "Final as of the go-live (owner, 2 Oct 2026). No counsel review has happened; get one when there is budget, and post any revision with a new effective date.",
   "Contracting party: the legal name, with email contact only (owner decision 30 Sep 2026: no postal address published).",
-  "[TO FILL] Governing law and courts (config.contact.governingLaw).",
-  "[DECIDE] Minimum age. None is set here; a minimum above the App Store age rating forces an age-rating override (PRIVACY-POLICY.md section 5).",
-  "[DECIDE] Use Apple's standard Licensed Application EULA for the iOS app (assumed here) or a custom EULA with Apple's required clauses.",
+  "Governing law: config.contact.governingLaw (Ontario).",
+  "Minimum age: 13, matching the privacy policy (owner, 1 Oct 2026).",
+  "Apple's standard Licensed Application EULA for the App Store app; these terms add to it.",
   "[CONFIRM] Counsel review of the liability cap: the greater of what you paid us in the 12 months before the claim, or CA$50. Payments go through Apple, so check that 'paid us' reads correctly.",
 ];
 
@@ -20,26 +21,26 @@ const S: Section[] = [
   {
     id: "agreement",
     title: "Who these terms are between",
-    body: html`<p>These terms are between you and ${detail(config.contact.legalName, "legal name")} (“we”, “us”). They cover the Farside iPhone app, Farside for Mac, our connection and relay service, and this website. Once they take effect, using any of them means you agree to these terms.</p>`,
+    body: html`<p>These terms are between you and ${detail(config.contact.legalName, "legal name")} (“we”, “us”). They cover the Farside app for iPhone and iPad, Farside for Mac, our connection and relay service, and this website. Using any of them means you agree to these terms. If you don’t agree, please don’t use Farside.</p>`,
   },
   {
     id: "what",
     title: "What Farside is",
-    body: html`<p>Farside lets you see and control your own Mac from your iPhone. It is free when your devices are on the same local network. The optional Farside Anywhere plan, when it is available, adds access over the internet.</p>`,
+    body: html`<p>Farside lets you see and control your own Mac from your iPhone or iPad. Farside for Mac needs a Mac with Apple silicon. Farside is free when your devices are on the same local network. The optional Farside Anywhere plan, when it is on sale, adds access over the internet.</p>`,
   },
   {
     id: "your-mac",
     title: "Your Mac, your responsibility",
     body: html`<ul>
   <li>Use Farside only with Macs you own or are allowed to control.</li>
-  <li>You are responsible for what happens on your Mac while it is shared, including anything done by someone holding your paired, unlocked phone.</li>
-  <li>Keep your phone locked, and keep your Mac and both apps up to date. Stop Sharing in the Mac menu bar ends a session immediately.</li>
+  <li>You are responsible for what happens on your Mac while it is shared, including anything done by someone holding your paired, unlocked iPhone or iPad, and for whom you invite to watch through a guest link. Guests can record what they see.</li>
+  <li>Keep your iPhone and iPad locked, and keep your Mac and both apps up to date. Stop Sharing in the Mac menu bar ends a session immediately.</li>
 </ul>`,
   },
   {
     id: "apple",
     title: "The app, Apple and these terms",
-    body: html`<p>The iPhone app is licensed to you under Apple’s standard Licensed Application End User License Agreement, and these terms add to it. Apple is not responsible for the app or these terms. Farside for Mac is a free download from this website; you may install and use it with Farside, but please don’t sell it, modify and redistribute it, or use it to build a competing service.</p>`,
+    body: html`<p>The app for iPhone and iPad is licensed to you under Apple’s standard Licensed Application End User License Agreement, and these terms add to it. Apple is not responsible for the app or these terms. Farside for Mac is a free download from this website; you may install and use it with Farside, but please don’t sell it, modify and redistribute it, or use it to build a competing service.</p>`,
   },
   {
     id: "anywhere",
@@ -55,12 +56,17 @@ const S: Section[] = [
   {
     id: "beta",
     title: "Beta features",
-    body: html`<p>Some features are labelled beta, including agent alerts. Beta features may change, break or be withdrawn, and are provided without any promise that they will keep working.</p>`,
+    body: html`<p>Some features are labelled beta, such as agent alerts. Beta features may change, break or be withdrawn, and are provided without any promise that they will keep working.</p>`,
   },
   {
     id: "acceptable-use",
     title: "Acceptable use",
     body: html`<p>Don’t use Farside to access a computer without permission, to break the law, or to harm other people. Don’t try to get around the subscription, overload or probe our service, or interfere with other people’s use of it.</p>`,
+  },
+  {
+    id: "age",
+    title: "Age",
+    body: html`<p>Farside is not intended for children under 13. If you are under the age of majority where you live, use Farside only with a parent’s or guardian’s permission.</p>`,
   },
   {
     id: "privacy",
@@ -75,7 +81,7 @@ const S: Section[] = [
   {
     id: "availability",
     title: "Availability and changes",
-    body: html`<p>We work hard to keep Farside running, but we can’t promise it will always be available or free of errors. Even on your own network, our connection service introduces your devices to each other, so an outage can affect free use too. We may change or discontinue features; we’ll give notice of significant changes in the app or on this website.</p>`,
+    body: html`<p>We work hard to keep Farside running, but we can’t promise it will always be available or free of errors. Even on your own network, our connection service usually introduces your devices to each other, so an outage can affect free use too. We may change or discontinue features; we’ll give notice of significant changes in the app or on this website.</p>`,
   },
   {
     id: "disclaimers",
@@ -104,31 +110,36 @@ const S: Section[] = [
   },
 ];
 
-const DESC = "Draft terms of use for Farside: using it with your own Mac, the Anywhere subscription, beta features and the plain-language rules. Not yet in effect.";
+const DESC = "Terms of use for Farside: using it with your own Mac, the Anywhere subscription, beta features and the plain-language rules.";
+
+/** The production deploy date (site.config.ts); a preview build shows its build date instead (build:prod requires the real one). */
+function effective() {
+  return config.privacyEffective ?? longDate(new Date().toISOString().slice(0, 10));
+}
 
 export function termsPage(assets: Assets) {
   const crumbs: [string, string][] = [
     ["Home", "/"],
-    ["Terms of use (draft)", "/terms"],
+    ["Terms of use", "/terms"],
   ];
   const body = html`${ownerComment("Owner checklist for /terms. Resolve each item, then delete this comment:", OPEN_ITEMS)}
 ${pageHero({
   crumbs,
-  cap: "Terms of use · draft",
+  cap: "Terms of use",
   title: html`The fine <em>print</em>`,
-  lead: html`The rules for using Farside, in plain language. This page is a <b>draft</b> that hasn’t been through legal review yet.`,
-  extra: html`<div class="draft" role="note"><p class="cap">Draft · not in effect</p><p>These terms are a working draft for review. They will take effect when Farside launches, and the final version may differ. Until then, nothing on this page is an agreement.</p></div>`,
+  lead: html`The rules for using Farside, in plain language.`,
+  extra: html`<p class="meta-row"><span class="cap">Last updated · <b>${config.legalUpdated}</b></span><span class="cap">Effective · <b>${effective()}</b></span></p>`,
 })}
 ${docBody(S)}`;
   return page(
     {
       path: "/terms",
-      title: "Terms of use (draft) · Farside",
+      title: "Terms of use · Farside",
       description: DESC,
       script: "site",
       current: "terms",
       jsonLd: graph(
-        webPage({ path: "/terms", name: "Farside terms of use (draft)", description: DESC, image: ogUrl(assets), breadcrumb: true }),
+        webPage({ path: "/terms", name: "Farside terms of use", description: DESC, image: ogUrl(assets), breadcrumb: true }),
         breadcrumbs("/terms", crumbs),
       ),
     },

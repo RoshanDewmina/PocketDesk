@@ -93,7 +93,7 @@ export function cta(): { href: string; label: string; short: string; note: strin
     case "testflight":
       return { href, label: "Join the beta", short: "Join the beta", note: "The public beta is open on TestFlight.", text: "Join the beta" };
     case "preorder":
-      return { href, label: "Pre-order on the App Store", short: "Pre-order", note: "Pre-order Farside for iPhone on the App Store.", text: "Pre-order on the App Store" };
+      return { href, label: "Pre-order on the App Store", short: "Pre-order", note: "Pre-order Farside for iPhone and iPad on the App Store.", text: "Pre-order on the App Store" };
   }
 }
 
@@ -110,7 +110,7 @@ export function ctaSentence(opts: { brief?: boolean } = {}): Html | "" {
     case "testflight":
       return html`${opts.brief ? "" : "The public beta is open on TestFlight, with the App Store to follow. "}${a} on TestFlight.`;
     case "preorder":
-      return opts.brief ? "" : html`Farside for iPhone is up for pre-order: ${a}.`;
+      return opts.brief ? "" : html`Farside for iPhone and iPad is up for pre-order: ${a}.`;
   }
 }
 
@@ -137,7 +137,7 @@ export function storeButtons(opts: { mac?: boolean } = {}): Html {
     : html`<span class="store">${icon.mac}<span><small>Coming soon</small>Farside for Mac</span><span class="sr-only"> (not available yet)</span></span>`;
   const ios = live && appStoreUrl
     ? html`<a class="store-badge" href="${appStoreUrl}"><img src="/app-store-badge.svg" width="120" height="40" alt="Download on the App Store"></a>`
-    : html`<span class="store">${icon.phone}<span><small>Soon on the</small>App Store</span><span class="sr-only"> (iPhone app, not available yet)</span></span>`;
+    : html`<span class="store">${icon.phone}<span><small>Soon on the</small>App Store</span><span class="sr-only"> (iPhone and iPad app, not available yet)</span></span>`;
   return html`<div class="stores">${opts.mac === false ? "" : mac}${ios}</div>`;
 }
 

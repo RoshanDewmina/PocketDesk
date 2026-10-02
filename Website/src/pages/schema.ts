@@ -56,19 +56,19 @@ export function softwareApplication(image: string): Node {
     name: "Farside",
     alternateName: "Farside: Remote Desktop",
     description:
-      "See and control your own Mac from your iPhone, with Farside for Mac running on the Mac. The whole screen is a trackpad, a pinch zooms in on any part of the Mac, and the phone keyboard types into the Mac. QR pairing with no account; the Mac approves each phone.",
+      "See and control your own Mac from your iPhone or iPad, with Farside for Mac running on a Mac with Apple silicon. The whole screen is a trackpad, a pinch zooms in on any part of the Mac, and the on-screen keyboard types into the Mac. QR pairing with no account; the Mac approves each device.",
     url: url("/"),
     image: url(image),
     applicationCategory: "UtilitiesApplication",
     applicationSubCategory: "Remote desktop",
-    operatingSystem: "iOS 26, macOS 26",
+    operatingSystem: "iOS 26, iPadOS 26, macOS 26",
     isAccessibleForFree: true,
     publisher: { "@id": ids.org() },
     featureList: [
       "The whole screen is a trackpad",
       "Pinch to zoom in on any part of the Mac",
-      "Type into the Mac from the phone keyboard",
-      "QR pairing with no account; the Mac approves each phone",
+      "Type into the Mac from the on-screen keyboard",
+      "QR pairing with no account; the Mac approves each device",
     ],
     // The Anywhere offers return here with their prices once config.pricing.final is true.
     offers: [

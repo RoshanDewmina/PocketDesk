@@ -29,7 +29,7 @@ const MESSAGES: Msg[] = [
   },
   {
     says: "Your Mac is napping.",
-    means: "It dozed off, so it can’t hear your phone.",
+    means: "It dozed off, so it can’t hear your iPhone or iPad.",
     fix: html`Tap any key on the Mac or open its lid, then try again. To nap less, turn on <b>Wake for network access</b> in the Mac’s Battery or Energy settings.`,
   },
   {
@@ -40,7 +40,7 @@ const MESSAGES: Msg[] = [
   {
     says: "Couldn’t verify this Mac.",
     means: "The secure handshake between your devices didn’t complete.",
-    fix: html`Try again. If it keeps happening, pair the phone again from the Farside menu on your Mac.`,
+    fix: html`Try again. If it keeps happening, pair again from the Farside menu on your Mac.`,
   },
   {
     says: "The connection glitched, so Farside ended the session to keep your Mac safe.",
@@ -79,7 +79,7 @@ const MESSAGES: Msg[] = [
   },
   {
     says: "Update Farside on your Mac to change picture quality.",
-    means: "Your phone is newer than Farside for Mac.",
+    means: "The app on your iPhone or iPad is newer than Farside for Mac.",
     fix: html`Choose <b>Check for Updates…</b> in the Farside menu on your Mac.`,
   },
   {
@@ -98,13 +98,13 @@ const MESSAGES: Msg[] = [
     fix: html`Scan the code shown in Farside’s pairing window on your Mac.`,
   },
   {
-    says: "Nobody approved this iPhone on the Mac in time.",
+    says: "Nobody approved this device on the Mac in time.",
     means: "Pairing needs a yes on the Mac, and it waited about a minute.",
     fix: html`Try again and choose <b>Allow</b> on the Mac when it asks.`,
   },
   {
     says: "Your Mac isn’t on this network.",
-    means: "Free use works when your phone and Mac share a network. Using your Mac over the internet (Farside Anywhere) is coming after launch.",
+    means: "Free use works when your iPhone or iPad and your Mac share a network. Using your Mac over the internet is the paid Farside Anywhere plan, which isn’t on sale yet.",
     fix: html`Join the same Wi-Fi as your Mac.`,
   },
 ];
@@ -117,13 +117,13 @@ const SETUP: { name: string; text: string; body: Html }[] = [
   },
   {
     name: "Allow two permissions",
-    text: "Allow Screen Recording, so your iPhone can see the screen, and Accessibility, so taps become clicks. The setup window notices each switch by itself.",
-    body: html`Screen Recording, so your iPhone can see the screen, and Accessibility, so taps become clicks and typing becomes typing. Farside opens the right settings page; flip the switch and the setup window notices by itself. macOS may ask you to quit and reopen Farside once.`,
+    text: "Allow Screen Recording, so your iPhone or iPad can see the screen, and Accessibility, so taps become clicks. The setup window notices each switch by itself.",
+    body: html`Screen Recording, so your iPhone or iPad can see the screen, and Accessibility, so taps become clicks and typing becomes typing. Farside opens the right settings page; flip the switch and the setup window notices by itself. macOS may ask you to quit and reopen Farside once.`,
   },
   {
-    name: "Get the app on your iPhone",
-    text: `Get Farside from the App Store. You need ${R.iphone}.`,
-    body: html`${config.launch.appStoreUrl ? html`<a href="${config.launch.appStoreUrl}">Get Farside from the App Store</a>` : html`Get Farside from the App Store <span class="placeholder">(coming soon)</span>`}. You need ${R.iphone}.`,
+    name: "Get the app on your iPhone or iPad",
+    text: `Get Farside from the App Store. You need ${R.iphone} on iPhone, or ${R.ipad} on iPad.`,
+    body: html`${config.launch.appStoreUrl ? html`<a href="${config.launch.appStoreUrl}">Get Farside from the App Store</a>` : html`Get Farside from the App Store <span class="placeholder">(coming soon)</span>`}. You need ${R.iphone} on iPhone, or ${R.ipad} on iPad.`,
   },
   {
     name: "Pair",
@@ -131,9 +131,9 @@ const SETUP: { name: string; text: string; body: Html }[] = [
     body: html`On the Mac, choose <b>Pair a Phone…</b> in the Farside menu. In the app, tap <b>Scan</b> and point the camera at the code. Then choose <b>Allow</b> on the Mac. No account, no password.`,
   },
   {
-    name: "Allow Local Network on the phone",
-    text: "When iOS asks to find devices on your local network, choose Allow. That's how your phone finds your Mac at home.",
-    body: html`When iOS asks to find devices on your local network, choose Allow. That’s how your phone finds your Mac at home.`,
+    name: "Allow Local Network on your iPhone or iPad",
+    text: "When it asks to find devices on your local network, choose Allow. That's how it finds your Mac at home.",
+    body: html`When it asks to find devices on your local network, choose Allow. That’s how it finds your Mac at home.`,
   },
   {
     name: "Tap Connect",
@@ -152,8 +152,8 @@ const OPEN_ITEMS = [
 const cantConnect = html`<ol>
   <li>Is the Mac awake and logged in? Farside can’t wake a sleeping Mac or get past the login screen.</li>
   <li>Is the Farside icon in the Mac’s menu bar, with sharing on?</li>
-  <li>Are your phone and Mac on the same network?</li>
-  <li>Is Local Network allowed for Farside on the phone? Check <b>Settings › Privacy &amp; Security › Local Network</b>.</li>
+  <li>Are your iPhone or iPad and your Mac on the same network?</li>
+  <li>Is Local Network allowed for Farside on the iPhone or iPad? Check <b>Settings › Privacy &amp; Security › Local Network</b>.</li>
   <li>Still stuck? Quit Farside on the Mac, open it again, and reconnect. Then write to us.</li>
 </ol>`;
 
@@ -167,9 +167,9 @@ const permissions = html`<p>If you flipped the switch but Farside still says it 
 <p>macOS sometimes asks again, every so often, whether Farside may keep recording the screen. Say yes on the Mac and sharing picks up where it left off.</p>`;
 
 const billing = html`<ul>
-  <li><b>Free at home:</b> Farside is free when your iPhone and Mac are on the same network. No account, no ads.</li>
-  <li><b>Farside Anywhere:</b> the plan for using your Mac away from home is coming after launch. It will be sold in the app through Apple, and the price will be shown before you subscribe.</li>
-  <li><b>Cancel or change a subscription:</b> Settings › your name › Subscriptions on your iPhone. Cancel at least 24 hours before the renewal date to avoid the next charge.</li>
+  <li><b>Free at home:</b> Farside is free when your Mac and your iPhone or iPad are on the same network. No account, no ads.</li>
+  <li><b>Farside Anywhere:</b> the paid plan for using your Mac away from home. It isn’t on sale yet. It will be sold in the app through Apple, and the price will be shown before you subscribe.</li>
+  <li><b>Cancel or change a subscription:</b> Settings › your name › Subscriptions on your iPhone or iPad. Cancel at least 24 hours before the renewal date to avoid the next charge.</li>
   <li><b>Refunds:</b> Apple handles them. Request one at <a href="https://reportaproblem.apple.com" rel="noopener">reportaproblem.apple.com</a>.</li>
   <li>This website never asks for payment details.</li>
 </ul>`;
@@ -184,7 +184,7 @@ function contact(): Html {
     <div><dt>Security reports</dt><dd>${email("security")}</dd></div>
   </dl>
 </div>
-<p>To help us help you, include what you tried, what the message said, your Mac and iPhone models, their macOS and iOS versions, and whether both were on the same network. Please don’t send passwords or screenshots of private content.</p>
+<p>To help us help you, include what you tried, what the message said, your Mac and iPhone or iPad models, their system versions, and whether both were on the same network. Please don’t send passwords or screenshots of private content.</p>
 ${config.cta.stage === "preorder" ? "" : html`<p>Want to test new builds early? ${ctaSentence({ brief: true })}</p>`}`;
 }
 
@@ -225,7 +225,7 @@ ${pageHero({
     <h2 id="steer">How to steer</h2>
     <p>Your finger doesn’t go to the button: the pointer is already on it, and a tap anywhere clicks right there.</p>
     ${gestureTable()}
-    <p>Force Touch and pressure gestures can’t be done from a phone screen; use right-click or the app’s own buttons instead.</p>
+    <p>Force Touch and pressure gestures can’t be done on a touch screen; use right-click or the app’s own buttons instead.</p>
     <h2 id="cant-connect">Can’t connect?</h2>
     ${cantConnect}
     <h3 id="permissions">The Mac says permissions are missing</h3>
@@ -243,7 +243,7 @@ ${pageHero({
     ${billing}
     <h2 id="contact">Talk to a human</h2>
     ${contact()}
-    <p><a href="/privacy">Privacy policy</a> · <a href="/terms">Terms of use (draft)</a></p>
+    <p><a href="/privacy">Privacy policy</a> · <a href="/terms">Terms of use</a></p>
   </div>
 </div>`;
   return page(
@@ -259,8 +259,8 @@ ${pageHero({
         breadcrumbs(PATH, crumbs),
         howTo(PATH, {
           name: "How to set up Farside",
-          description: "Set up Farside to see and control your Mac from your iPhone.",
-          tools: ["Mac with macOS 26 or later", "iPhone with iOS 26 or later"],
+          description: "Set up Farside to see and control your Mac from your iPhone or iPad.",
+          tools: ["Mac with Apple silicon and macOS 26 or later", "iPhone with iOS 26 or later, or iPad with iPadOS 26 or later"],
           steps: SETUP.map((s) => ({ name: s.name, text: s.text })),
         }),
         faqPage(PATH, MSG_QAS),

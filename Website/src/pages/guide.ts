@@ -49,7 +49,7 @@ export function ctaBand(): Html {
   <div class="w">
     <div class="band-mark" aria-hidden="true">${raw(markSvg(40))}</div>
     <h2 class="h2" id="cta-title">Try Farside first</h2>
-    <p class="lead">Farside is in beta. It’s free when your iPhone and Mac are on the same Wi‑Fi, and there’s no account.</p>
+    <p class="lead">Farside is in beta. It’s free when your Mac and your iPhone or iPad are on the same Wi‑Fi, and there’s no account.</p>
     <div class="row">${ctaButton()}</div>
   </div>
 </section>`;
@@ -69,7 +69,7 @@ export const GESTURES: [string, string][] = [
 export function gestureTable(): Html {
   return html`<table class="table gest-t">
   <caption class="sr-only">Farside gestures and what they do on the Mac</caption>
-  <thead><tr><th scope="col">On your iPhone</th><th scope="col">On your Mac</th></tr></thead>
+  <thead><tr><th scope="col">On your iPhone or iPad</th><th scope="col">On your Mac</th></tr></thead>
   <tbody>${GESTURES.map(([g, a]) => html`<tr><th scope="row">${g}</th><td>${a}</td></tr>`)}</tbody>
 </table>`;
 }

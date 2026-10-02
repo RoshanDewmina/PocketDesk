@@ -153,7 +153,7 @@ Sitemap: ${config.SITE_URL}/sitemap.xml
 function llmsAvailability() {
   if (config.cta.stage === "follow") return `Farside is heading into a TestFlight beta, with the App Store to follow; the beta link will be posted at ${ctaUrl()}.`;
   if (config.cta.stage === "testflight") return `The public TestFlight beta is open at ${ctaUrl()}, with the App Store to follow.`;
-  return `Farside for iPhone is available for pre-order on the App Store: ${ctaUrl()}.`;
+  return `Farside for iPhone and iPad is available for pre-order on the App Store: ${ctaUrl()}.`;
 }
 
 /** llms.txt (llmstxt.org): a plain summary and link list for language models reading the site. */
@@ -166,15 +166,15 @@ function llmsFile() {
       .join("\n");
   return `# Farside
 
-> Farside lets you see and control your own Mac from your iPhone. The whole screen is a trackpad, a pinch zooms in on any part of the Mac, and the phone keyboard types into the Mac. Pairing is a QR code approved on the Mac, with no account. ${llmsAvailability()}
+> Farside lets you see and control your own Mac from your iPhone or iPad. The whole screen is a trackpad, a pinch zooms in on any part of the Mac, and the on-screen keyboard types into the Mac. Pairing is a QR code approved on the Mac, with no account. ${llmsAvailability()}
 
 Key facts:
 
 - Free on the same local network as the Mac, with no account and no ads.
-- Farside Anywhere, a paid plan for using the Mac away from home, is coming after launch${P.final ? `: ${P.monthly} a month or ${P.yearly} a year` : ""}. It will be sold only inside the iPhone app through Apple.
-- Farside for Mac (the companion that runs on the Mac) will be a free download from this website, signed with an Apple Developer ID and notarized by Apple. Farside for iPhone will be on the App Store.
-- Planned requirements: ${R.mac}; ${R.iphone}. iPhone only at launch.
-- Limits: Macs only (no Windows, Linux or Android); one Mac display at a time; no audio; the Mac must be awake and logged in; no pressure gestures.
+- Farside Anywhere is the paid plan for using the Mac away from home${P.final ? `: ${P.monthly} a month or ${P.yearly} a year` : ""}. It is not on sale yet, and will be sold only inside the iPhone and iPad app through Apple.
+- Farside for Mac (the companion that runs on the Mac) will be a free download from this website, signed with an Apple Developer ID and notarized by Apple. Farside for iPhone and iPad (one universal app) will be on the App Store.
+- Planned requirements: ${R.mac} (Macs with an Intel processor are not supported); iPhone with ${R.iphone}, or iPad with ${R.ipad}.
+- Limits: Macs only (no Windows, Linux or Android); one Mac display at a time; the Mac must be awake and logged in; no pressure gestures.
 - The website sets no cookies and runs no analytics.
 - Farside (getfarside.com) is not related to farside.app or to other products with a similar name.
 
@@ -198,7 +198,7 @@ function manifestFile() {
     {
       name: "Farside",
       short_name: "Farside",
-      description: "See and control your own Mac from your iPhone.",
+      description: "See and control your own Mac from your iPhone or iPad.",
       start_url: "/",
       display: "browser",
       background_color: "#050505",
