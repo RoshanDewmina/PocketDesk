@@ -39,6 +39,9 @@ final class HostUISnapshotTests: XCTestCase {
                 $0.session = HostSessionReadout(route: .relayed, roundTripMs: 48, framesPerSecond: 30)
             }),
             ("popover-ready", ready(.ready)),
+            ("popover-starting", ready(.starting)),
+            ("popover-reconnecting", ready(.reconnecting)),
+            ("popover-needs-phone", ready(.needsPhone) { $0.hasPairedPhone = false }),
             ("popover-approval", ready(.approvalRequested) { $0.hasPairedPhone = false }),
             ("popover-paused", ready(.paused) { $0.pausedUntil = now.addingTimeInterval(540) }),
             ("popover-off", ready(.paused)),
@@ -59,6 +62,28 @@ final class HostUISnapshotTests: XCTestCase {
             }),
             ("popover-live-measuring", ready(.controlling) { $0.sessionStartedAt = now.addingTimeInterval(-3) }),
             ("popover-pairing-code", ready(.pairing) { $0.pairing = .showingCode(Self.code, expires: Self.expires) }),
+            ("popover-pairing-expired", ready(.pairing) { $0.pairing = .expired }),
+            ("popover-couch", ready(.controlling) { $0.couchMode = true }),
+            ("popover-big-text", ready(.controlling) {
+                $0.session = Self.measured
+                $0.bigTextStatus = "Big Text on · looks like 1280 × 832"
+            }),
+            ("popover-big-text-restoring", ready(.unavailable) {
+                $0.availability = .locked
+                $0.bigTextStatus = "Restoring normal size…"
+            }),
+            ("popover-away-armed", ready(.controlling) {
+                $0.awayMode = true
+                $0.away = HostAwayReadout(available: true, enabled: true, phase: .armed,
+                                        coversAt: now.addingTimeInterval(90))
+            }),
+            ("popover-away-lock-unconfirmed", ready(.unavailable) {
+                $0.awayMode = true
+                $0.away = HostAwayReadout(available: true, enabled: true, phase: .lockFailed)
+            }),
+            ("popover-screensaver-lock-warning", ready(.ready) {
+                $0.lockWarning = .screenSaverLocked(at: now.addingTimeInterval(-600), awayArmed: false)
+            }),
             ("popover-curtain-up", ready(.controlling) {
                 $0.session = Self.measured
                 $0.privacyCurtain = true
@@ -84,6 +109,26 @@ final class HostUISnapshotTests: XCTestCase {
         let feed = HostActivityFeed()
         for value in [13, 14, 14, 16, 13, 12, 15, 31, 18, 14, 13, 14, 15, 14] { feed.record(roundTripMs: value) }
         return feed
+    }
+
+    func testStandaloneLiveStrip() throws {
+        let now = Date()
+        for (name, status, session, control) in [
+            ("live-strip-direct", HostStatus.controlling, Self.measured as HostSessionReadout?, true),
+            ("live-strip-measuring", .controlling, nil, true),
+            ("live-strip-view-only", .viewing,
+             HostSessionReadout(route: .relayed, roundTripMs: 48, framesPerSecond: 30), false)
+        ] {
+            let state = ready(status) { $0.session = session; $0.allowControl = control }
+            let feed = Self.liveFeed(now: now)
+            try render(name, VStack(spacing: 16) {
+                HostPopoverStrip(presentation: HostPopoverPresentation.make(for: state, now: now), activity: feed)
+                HostLiveReadout(session: session, allowControl: control, activity: feed).padding(.horizontal, 16)
+            }
+            .padding(.bottom, 16)
+            .frame(width: 360)
+            .background(HostTheme.popoverBackground))
+        }
     }
 
     func testLiveMarkFramesAnimateOnlyTheLiveMark() {
@@ -292,6 +337,106 @@ final class HostUISnapshotTests: XCTestCase {
         }, actions: .preview))
     }
 
+    /// Capture the actual scrollable Settings content, including the sections below the fold.
+    func testSettingsScrolledSections() throws {
+        let fixtures: [(String, HostViewState)] = [
+            ("settings", ready(.ready)),
+            ("settings-agent-alerts", ready(.controlling) {
+                $0.session = Self.measured
+                $0.agentAlerts = true
+                $0.agentAlertsStatus = "Claude Code asked 2 min ago · told your iPhone"
+            }),
+            ("settings-wake-and-server-retry", ready(.ready) {
+                $0.wakeHelperHostID = String(repeating: "a", count: 64)
+                $0.wakeOwnerPairID = String(repeating: "b", count: 64)
+                $0.serverRemovalPending = true
+                $0.serverRemovalMessage = "Couldn’t confirm server removal. Sharing is off. Retry when this Mac is online."
+            }),
+            ("settings-scoped-view-only", ready(.viewing) {
+                $0.captureScopes = [.init(id: "display", name: "Entire display"),
+                                    .init(id: "window:fixture", name: "Fixture editor window")]
+                $0.selectedCaptureScopeID = "window:fixture"
+                $0.captureScopeViewOnly = true
+                $0.allowControl = false
+            }),
+            ("settings-away-preview", ready(.controlling) {
+                $0.awayMode = true
+                $0.away = HostAwayReadout(available: true, enabled: true, phase: .covered,
+                                        batteryEndsAt: Date().addingTimeInterval(240))
+                $0.lockWarning = .lockedWhileSharing(at: Date().addingTimeInterval(-600))
+            })
+        ]
+        for (name, state) in fixtures {
+            for (suffix, fraction) in [("top", 0.0), ("middle", 0.5), ("bottom", 1.0)] {
+                try render("\(name)-\(suffix)", HostSettingsView(state: state, actions: .preview),
+                           scrollFraction: fraction)
+            }
+        }
+    }
+
+    func testGuestViewing() throws {
+        let fingerprint = stride(from: 0, to: 64, by: 8).map { _ in "0123abcd" }.joined(separator: " ")
+        let fixtures: [(String, HostViewState)] = [
+            ("guest-unavailable", ready(.ready)),
+            ("guest-available", ready(.controlling) { $0.guestViewingAvailable = true }),
+            ("guest-link-ready", ready(.controlling) {
+                $0.guestViewingAvailable = true
+                $0.guestRows = [.init(id: "fixture-link", fingerprint: fingerprint,
+                                      status: "Link ready · waiting for a recipient", pending: false, linkReady: true)]
+            }),
+            ("guest-approval-pending", ready(.controlling) {
+                $0.guestViewingAvailable = true
+                $0.guestRows = [.init(id: "fixture-pending", fingerprint: fingerprint,
+                                      status: "Recipient is waiting for approval", pending: true, linkReady: false)]
+            }),
+            ("guest-two-active", ready(.controlling) {
+                $0.guestViewingAvailable = true
+                $0.guestRows = [
+                    .init(id: "fixture-1", fingerprint: fingerprint, status: "Viewing · 8 minutes left", pending: false, linkReady: false),
+                    .init(id: "fixture-2", fingerprint: fingerprint, status: "Viewing · 6 minutes left", pending: false, linkReady: false)
+                ]
+            }),
+            ("guest-error", ready(.controlling) {
+                $0.guestMessage = "Couldn’t create a guest link. Try again while your remote session is live."
+            })
+        ]
+        for (name, state) in fixtures {
+            try render(name, HostGuestSettingsView(state: state, actions: .preview)
+                .padding(24).frame(width: 620).background(HostTheme.windowBackground))
+        }
+    }
+
+    func testWakeRegistration() throws {
+        let suite = "FarsideHostSnapshotWake-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = HostWakeTargetStore(defaults: defaults)
+        let helper = String(repeating: "a", count: 64)
+        let owner = String(repeating: "b", count: 64)
+        try render("wake-registration-empty", WakeTargetRegistrationView(helperHostID: helper,
+                                                                          ownerPairID: owner, store: store))
+        try store.register(HostWakeTarget(id: try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000001")),
+                                         targetHostID: String(repeating: "c", count: 64), helperHostID: helper,
+                                         ownerPairID: owner, hardwareAddress: WakeHardwareAddress("02:00:00:00:00:01"),
+                                         interfaceName: "en0"), helperHostID: helper, ownerPairID: owner)
+        try render("wake-registration-existing", WakeTargetRegistrationView(helperHostID: helper,
+                                                                             ownerPairID: owner, store: store))
+        defaults.set("fixture unreadable data", forKey: "ownerRegisteredWakeTargetsV1")
+        try render("wake-registration-unreadable", WakeTargetRegistrationView(helperHostID: helper,
+                                                                               ownerPairID: owner, store: store))
+    }
+
+    func testLegalNotices() throws {
+        // A hostless XCTest runner's Bundle.main is xctest, not the shipping host. Read the same
+        // bundled resource from this test bundle; the copied View body remains unchanged.
+        try render("legal-notices-component", HostLegalSnapshotView())
+    }
+
+    func testCouchHUD() throws {
+        // Snapshot-only exact View fixture; the production controller never orders a panel front.
+        try render("couch-hud", CouchHUDView())
+    }
+
     func testCrashLoopAndCurtainAreExplained() {
         let stopped = HostPopoverPresentation.make(for: ready(.unavailable) { $0.crashLoopStopped = true })
         XCTAssertEqual(stopped.headline, "Stopped after repeated crashes")
@@ -308,7 +453,7 @@ final class HostUISnapshotTests: XCTestCase {
 
     @discardableResult
     private func render<V: View>(_ name: String, _ view: V, fixedSize: CGSize? = nil,
-                                 write: Bool = true) throws -> NSBitmapImageRep {
+                                 write: Bool = true, scrollFraction: Double? = nil) throws -> NSBitmapImageRep {
         guard let appearance = NSAppearance(named: .darkAqua) else { throw XCTSkip("No dark appearance") }
         let host = NSHostingView(rootView: view.environment(\.colorScheme, .dark))
         host.appearance = appearance
@@ -320,6 +465,19 @@ final class HostUISnapshotTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.2))
 
+        if let scrollFraction {
+            let scroll = try XCTUnwrap(scrollViews(in: host).first, "No native scroll view for \(name)")
+            let document = try XCTUnwrap(scroll.documentView, "No scroll document for \(name)")
+            let distance = max(0, document.bounds.height - scroll.contentView.bounds.height)
+            XCTAssertGreaterThan(distance, 0, "\(name) should include content below the fold")
+            let offset = distance * CGFloat(scrollFraction)
+            scroll.contentView.scroll(to: NSPoint(x: scroll.contentView.bounds.minX,
+                                                  y: document.isFlipped ? offset : distance - offset))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        }
+
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds), "No bitmap for \(name)")
         host.cacheDisplay(in: host.bounds, to: bitmap)
         XCTAssertGreaterThan(bitmap.pixelsWide, 100, name)
@@ -330,6 +488,10 @@ final class HostUISnapshotTests: XCTestCase {
         }
         window.contentView = nil
         return bitmap
+    }
+
+    private func scrollViews(in view: NSView) -> [NSScrollView] {
+        (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap { scrollViews(in: $0) }
     }
 
     private func pixel(_ bitmap: NSBitmapImageRep, _ point: CGPoint, scale: CGFloat) -> NSColor? {
@@ -443,5 +605,38 @@ private struct HostMenuBarReviewStrip: NSViewRepresentable {
 
     private final class FlippedView: NSView {
         override var isFlipped: Bool { true }
+    }
+}
+
+// Test-only resource-container adaptation of RemoteShared/LegalNoticesView.swift.
+// Production SHA256: 6ad6c8fceeaa4fd56a91716bf8c2b45aaf2d662f30f48ef52ceeb9fa4894fccd
+
+private struct HostLegalSnapshotView: View {
+    @Environment(\.dismiss) private var dismiss
+    private var notices: String {
+        guard let url = Bundle(for: HostUISnapshotTests.self).url(forResource: "ThirdPartyNotices", withExtension: "txt"),
+              let text = try? String(contentsOf: url, encoding: .utf8) else {
+            return "Third-party notices are unavailable in this build."
+        }
+        return text
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Text(notices)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(24)
+            }
+            .navigationTitle("Third-Party Notices")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
+        }
+        #if os(macOS)
+        .frame(width: 640, height: 520)
+        #endif
     }
 }

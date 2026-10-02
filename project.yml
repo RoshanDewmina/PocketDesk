@@ -330,6 +330,27 @@ targets:
         CODE_SIGN_IDENTITY: '-'
     scheme:
       testTargets: [HostUISnapshotTests]
+  ExtensionUISnapshotTests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: '26.0'
+    sources:
+      - ExtensionUITests
+      - FarsideWidgets/ConnectWidget.swift
+      - FarsideWidgets/SessionLiveActivity.swift
+      - RemotePhone/ActivityShared
+      - RemotePhone/ShareShared/SendToMac.swift
+      - RemotePhone/FarsideUI.swift
+      - RemoteShared/FarsideTheme.swift
+    dependencies:
+      - target: PocketDeskRemote
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: YES
+        CODE_SIGN_IDENTITY: '-'
+    scheme:
+      testTargets: [ExtensionUISnapshotTests]
   PocketDeskBrowserFixture:
     type: application
     platform: macOS
