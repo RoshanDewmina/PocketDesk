@@ -15,6 +15,7 @@ struct NativeSessionView: View {
     @State private var safeFrame: CGRect = .zero
     @State private var dockFrame: CGRect = .zero
     @State private var geometryPending = false
+    @State private var duoLayout = DuoSessionLayout()
     @State private var controlsCollapsed = true
     @State private var keyboardOpen = false
     @State private var dismissedAutoKeyboardRevision: UInt64 = 0
@@ -158,6 +159,18 @@ struct NativeSessionView: View {
         .overlay {
             if model.privacyShield { privacyShield }
         }
+        .overlay { DuoReservedRegionShield(layout: duoLayout).ignoresSafeArea() }
+        #if DEBUG
+        .overlay(alignment: .topLeading) {
+            if offlineLayoutCheck {
+                Color.clear.frame(width: 1, height: 1).allowsHitTesting(false)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityIdentifier("remote.layout.state")
+                    .accessibilityLabel("Session layout state")
+                    .accessibilityValue("{\"orientation\":\"\(duoLayout.orientation)\",\"ready\":\(layoutProbeReady)}")
+            }
+        }
+        #endif
         .background(Farside.Palette.void.ignoresSafeArea())
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
@@ -381,6 +394,15 @@ struct NativeSessionView: View {
 
     // MARK: - Stage
 
+    #if DEBUG
+    private var layoutProbeReady: Bool {
+        !geometryPending && canvasFrame.width > 0 && canvasFrame.height > 0 &&
+        safeFrame.width > 0 && safeFrame.height > 0 &&
+        duoLayout.bounds.size == canvasFrame.size && viewport.canvasSize == canvasFrame.size &&
+        viewport.sourceSize == model.sourceSize
+    }
+    #endif
+
     /// Layers, bottom to top: the Mac picture, the pre-first-frame lock, then the input surface.
     /// Alternative input modes replace `inputSurface`; chrome lives in the overlays above `stage`.
     private var stage: some View {
@@ -402,6 +424,15 @@ struct NativeSessionView: View {
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
             canvasFrame = frame
             scheduleGeometry()
+        }
+        .background {
+            DuoSessionProbe { state in
+                if duoLayout.posture != state.posture || duoLayout.reservedFrames != state.reservedFrames {
+                    cancelGesture()
+                }
+                duoLayout = state
+                scheduleGeometry()
+            }
         }
         .onReceive(model.pointerLocator.followUpdates, perform: follow)
         .onReceive(model.pointerOverlay.followUpdates, perform: follow)

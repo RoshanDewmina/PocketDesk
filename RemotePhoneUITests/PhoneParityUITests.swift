@@ -463,12 +463,7 @@ final class PhoneParityUITests: XCTestCase {
                                "--ui-viewport-fit", "--ui-auto-keyboard-preview-check"]
         app.launch()
 
-        let window = app.windows.firstMatch
-        let landscape = XCTNSPredicateExpectation(
-            predicate: NSPredicate { _, _ in window.exists && window.frame.width > window.frame.height },
-            object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [landscape], timeout: 5), .completed,
-                       "The app must launch in landscape before the first keyboard open")
+        waitForLayout(app, orientation: .landscapeLeft)
         assertKeyboardChromeAndCanvasAreUsable(app, context: "first landscape automatic open")
         attachScreenshot("Keyboard first open - initial landscape")
 
@@ -480,8 +475,7 @@ final class PhoneParityUITests: XCTestCase {
         XCTAssertTrue(handle.waitForExistence(timeout: 5))
         handle.doubleTap()
         assertKeyboardChromeAndCanvasAreUsable(app, context: "landscape reopen without rotation")
-        XCTAssertGreaterThan(window.frame.width, window.frame.height,
-                             "The recovery must not depend on rotating away and back")
+        waitForLayout(app, orientation: .landscapeLeft)
         attachScreenshot("Keyboard reopened without rotation - landscape")
     }
 
@@ -776,13 +770,31 @@ final class PhoneParityUITests: XCTestCase {
     @MainActor
     private func rotate(_ app: XCUIApplication, to orientation: UIDeviceOrientation) {
         XCUIDevice.shared.orientation = orientation
-        let window = app.windows.firstMatch
-        let landscape = orientation.isLandscape
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            (window.frame.width > window.frame.height) == landscape
-        }, object: nil)
-        XCTAssertEqual(XCTWaiter().wait(for: [ready], timeout: 5), .completed, "The app must finish rotating")
+        waitForLayout(app, orientation: orientation)
         Thread.sleep(forTimeInterval: 0.6)
+    }
+
+    @MainActor
+    private func waitForLayout(_ app: XCUIApplication, orientation: UIDeviceOrientation) {
+        // Device and interface landscape names are inverse in UIKit. Duo can remain
+        // nearly square in landscape, so observe the session's settled layout instead.
+        let expected: String
+        switch orientation {
+        case .portrait: expected = "portrait"
+        case .portraitUpsideDown: expected = "portraitUpsideDown"
+        case .landscapeLeft: expected = "landscapeRight"
+        case .landscapeRight: expected = "landscapeLeft"
+        default: return XCTFail("A layout check requires an interface orientation")
+        }
+        let probe = app.descendants(matching: .any)["remote.layout.state"].firstMatch
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard probe.exists, let raw = probe.value as? String,
+                  let data = raw.data(using: .utf8),
+                  let state = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
+            return state["orientation"] as? String == expected && state["ready"] as? Bool == true
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter().wait(for: [ready], timeout: 5), .completed,
+                       "The app must settle its layout in \(expected); probe: \(String(describing: probe.value))")
     }
 
     @MainActor

@@ -88,6 +88,9 @@ targets:
       - target: FarsideShare
     settings:
       base:
+        # SDK guards, separate from runtime availability: the stable 27.0 SDK lacks Duo symbols.
+        'SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphone*27.1*]': '$(inherited) FARSIDE_DUO_SDK'
+        'SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphone*27.2*]': '$(inherited) FARSIDE_DUO_SDK'
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.Remote
         CURRENT_PROJECT_VERSION: '20261002.2'
         MARKETING_VERSION: '1.0'

@@ -460,6 +460,7 @@
 		5CB8F1DA9C4D9D4701CAB9E5 /* BenchState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0670680AECAD20CDD24D3869 /* BenchState.swift */; };
 		5CCB6F149BB1D88AD64B493E /* DisplaySelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76C7583A2B1DEF1B3211F4A1 /* DisplaySelectionTests.swift */; };
 		5CDF29C2CD0E498015911E88 /* LivePiPController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 293C3A4A37C46FD6B3F2B9FC /* LivePiPController.swift */; };
+		5D180B3F52895FF5BE4B57A8 /* DuoSessionLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADADA97160703A9C175E0907 /* DuoSessionLayoutTests.swift */; };
 		5D59A36750744AF889897DB0 /* FarsideMarkGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35605A4DA7A153E677E5F86F /* FarsideMarkGlyph.swift */; };
 		5D731BD51AE1399E6E62F817 /* DataUseNotice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52762421862B22943193B22E /* DataUseNotice.swift */; };
 		5D9686BCDF82790BEDE8F13E /* LocalLinkProof.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64CCF7A8CB59DF99A9139093 /* LocalLinkProof.swift */; };
@@ -1151,6 +1152,7 @@
 		F3DF6481CE3B526ADF7EE80D /* MacReachabilityProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D30BE4E93A054834970E4E8 /* MacReachabilityProbe.swift */; };
 		F4039893167AF7AB71B00D5C /* WatchdogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDE103764B22966479AEA9A4 /* WatchdogTests.swift */; };
 		F4078934B8E614DDF68B262B /* GuestCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94B401704D4C3CA579FE4149 /* GuestCrypto.swift */; };
+		F407F76AB60D8F770724BACC /* DuoSessionLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95BFF1F381F9A82F145BD345 /* DuoSessionLayout.swift */; };
 		F40DFDC3A8BF082B4808C647 /* SystemIntegrationsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 764203FAFAD2090B12C4B10D /* SystemIntegrationsUITests.swift */; };
 		F467F2AC18E666A0748C5E92 /* StreamTuning.swift in Sources */ = {isa = PBXBuildFile; fileRef = E36FFD3DA225862D411FE682 /* StreamTuning.swift */; };
 		F4C477395032885A12289F52 /* AnywhereAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 918B1C0137E63AC8DC396FEC /* AnywhereAccess.swift */; };
@@ -1694,6 +1696,7 @@
 		94F17325920FEC75C0968D50 /* SystemAudioPCMTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemAudioPCMTests.swift; sourceTree = "<group>"; };
 		94F4275D070B662A2E1ACB52 /* OwnedVideoLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OwnedVideoLifecycleTests.swift; sourceTree = "<group>"; };
 		95A02899566850288A2A97EC /* FrameTimingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameTimingTests.swift; sourceTree = "<group>"; };
+		95BFF1F381F9A82F145BD345 /* DuoSessionLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuoSessionLayout.swift; sourceTree = "<group>"; };
 		95D5EA8096324446E4BAF549 /* LivePiPPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LivePiPPreview.swift; sourceTree = "<group>"; };
 		962EDBF53CBBC8769AA77997 /* BrowserMediaSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserMediaSession.swift; sourceTree = "<group>"; };
 		96B051B43FEDF1900180FA99 /* UsefulSessionEvidence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsefulSessionEvidence.swift; sourceTree = "<group>"; };
@@ -1753,6 +1756,7 @@
 		AC6C45E6EC13388F7C6A568C /* AwayPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AwayPresentationTests.swift; sourceTree = "<group>"; };
 		AD6427912FB3EC1BD90E5019 /* SecureTextFocus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureTextFocus.swift; sourceTree = "<group>"; };
 		AD77C9B7CE7FBFE6BCEDA2C2 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		ADADA97160703A9C175E0907 /* DuoSessionLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuoSessionLayoutTests.swift; sourceTree = "<group>"; };
 		ADEE330B07936D716DAFBD46 /* SystemAudioDeviceTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SystemAudioDeviceTests.m; sourceTree = "<group>"; };
 		AE3457B7CDE489CB1529AE43 /* FarsideAppGroup.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FarsideAppGroup.entitlements; sourceTree = "<group>"; };
 		AE7793DE9E37376440C4953A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -2667,6 +2671,7 @@
 				ABFDDEC0B1EEEAA9F943DBA3 /* ConnectionQualityPhoneTests.swift */,
 				5C82D18D57919EB208D5BE69 /* CouchPhoneModelTests.swift */,
 				B18FC3295A3C693C0E7BF4FF /* DataUseNoticeTests.swift */,
+				ADADA97160703A9C175E0907 /* DuoSessionLayoutTests.swift */,
 				5DD8A198867F1E3881AF6815 /* FarsideDesignTests.swift */,
 				2AB621AC85022A9148C82D69 /* FarsideIntentsTests.swift */,
 				527102E86ADAE50641246D40 /* FarsideRouteTests.swift */,
@@ -2797,6 +2802,7 @@
 				52762421862B22943193B22E /* DataUseNotice.swift */,
 				2B47A3584507A2F653CE0816 /* DesktopPreview.swift */,
 				FDC0851676A8BEEE0215FFB3 /* DiagnosticReportRows.swift */,
+				95BFF1F381F9A82F145BD345 /* DuoSessionLayout.swift */,
 				26B019D93CB3EB2FE8E65903 /* ExactTextTraits.swift */,
 				FE311B68522A225B1438CB85 /* Farside.entitlements */,
 				AE3457B7CDE489CB1529AE43 /* FarsideAppGroup.entitlements */,
@@ -3992,6 +3998,7 @@
 				B1B33F9295EB497F8E8425C7 /* ConnectionQualityPhoneTests.swift in Sources */,
 				4CE5A14E4074C69F0F8FCCEC /* CouchPhoneModelTests.swift in Sources */,
 				F36AD607E208D3E46DD74193 /* DataUseNoticeTests.swift in Sources */,
+				5D180B3F52895FF5BE4B57A8 /* DuoSessionLayoutTests.swift in Sources */,
 				42C9EA8EB7BE0521A71B904E /* FarsideDesignTests.swift in Sources */,
 				75104918EA1FEED5868BC7F8 /* FarsideIntentsTests.swift in Sources */,
 				4CEF0AEA99C6574839652A11 /* FarsideRouteTests.swift in Sources */,
@@ -4432,6 +4439,7 @@
 				060FB7553401E4BF933EB75D /* DirectTouchMapping.swift in Sources */,
 				58B956EA03D3AD8F1A9A40EE /* DisplaySelection.swift in Sources */,
 				5A546A38FF983BD4F4E663B7 /* DragAutoPan.swift in Sources */,
+				F407F76AB60D8F770724BACC /* DuoSessionLayout.swift in Sources */,
 				86DC84A8063BAED8239C76B6 /* E2EMedia.swift in Sources */,
 				35B47562FFFFAC100C85F98F /* E2ESupport.swift in Sources */,
 				46D6FC40E09380A6A189442E /* E2EWindowCover.swift in Sources */,
@@ -4897,6 +4905,8 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.PocketDesk.Remote;
 				SDKROOT = iphoneos;
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphone*27.1*]" = "$(inherited) FARSIDE_DUO_SDK";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphone*27.2*]" = "$(inherited) FARSIDE_DUO_SDK";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -5274,6 +5284,8 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.PocketDesk.Remote;
 				SDKROOT = iphoneos;
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphone*27.1*]" = "$(inherited) FARSIDE_DUO_SDK";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphone*27.2*]" = "$(inherited) FARSIDE_DUO_SDK";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;

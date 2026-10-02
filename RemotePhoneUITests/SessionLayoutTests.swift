@@ -389,14 +389,40 @@ final class SessionLayoutTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-layout-check"]
         launchOfflineFixture(app)
-        XCUIDevice.shared.press(.home)
+        // Home did not background the Duo fixture in F9's recording. Foreground another
+        // app to exercise a real background transition instead of assuming Home delivered it.
+        XCUIApplication(bundleIdentifier: "com.apple.Preferences").activate()
+        let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            app.state == .runningBackground || app.state == .runningBackgroundSuspended
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter().wait(for: [backgrounded], timeout: 5), .completed,
+                       "Opening Settings must background the app before testing foreground recovery")
         app.activate()
-        XCTAssertTrue(app.staticTexts["Session ended"].waitForExistence(timeout: 5))
+        let concealed = app.descendants(matching: .any)["remote.concealed"].firstMatch
+        XCTAssertTrue(concealed.waitForExistence(timeout: 5), "Backgrounded content must stay concealed on return")
+        XCTAssertFalse(app.descendants(matching: .any)["remote.canvas"].firstMatch.exists)
+        XCTAssertFalse(app.buttons["Show controls"].exists)
         XCTAssertFalse(app.buttons["Controls"].exists)
         XCTAssertFalse(app.buttons["Keyboard"].exists)
         XCTAssertFalse(app.buttons["Release"].exists)
-        app.buttons["Return to Farside"].tap()
+        let returnButton = app.buttons["Return to Farside"]
+        XCTAssertTrue(returnButton.waitForExistence(timeout: 5))
+        returnButton.tap()
         XCTAssertTrue(app.buttons["Show controls"].waitForExistence(timeout: 3))
+        XCTAssertFalse(concealed.exists)
+    }
+
+    @MainActor
+    func testOfflineLayoutSettlesAcrossBothLandscapeSidesAndPortrait() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check"]
+        launchOfflineFixture(app)
+        for orientation in [UIDeviceOrientation.landscapeLeft, .landscapeRight, .portrait] {
+            rotate(app, to: orientation)
+            XCTAssertTrue(app.descendants(matching: .any)["remote.canvas"].firstMatch.exists)
+            XCTAssertTrue(app.buttons["Show controls"].isHittable,
+                          "The resting controls handle must remain reachable in \(orientation)")
+        }
     }
 
     /// Controls › Settings › one page, by the summary row's identifier (picture, view, …).
@@ -421,12 +447,30 @@ final class SessionLayoutTests: XCTestCase {
     @MainActor
     private func rotate(_ app: XCUIApplication, to orientation: UIDeviceOrientation) {
         XCUIDevice.shared.orientation = orientation
-        let window = app.windows.firstMatch
-        let landscape = orientation.isLandscape
+        waitForLayout(app, orientation: orientation)
+    }
+
+    @MainActor
+    private func waitForLayout(_ app: XCUIApplication, orientation: UIDeviceOrientation) {
+        // Device and interface landscape names are inverse in UIKit. Window aspect ratio
+        // does not establish orientation on Duo's nearly square inner display.
+        let expected: String
+        switch orientation {
+        case .portrait: expected = "portrait"
+        case .portraitUpsideDown: expected = "portraitUpsideDown"
+        case .landscapeLeft: expected = "landscapeRight"
+        case .landscapeRight: expected = "landscapeLeft"
+        default: return XCTFail("A layout check requires an interface orientation")
+        }
+        let probe = app.descendants(matching: .any)["remote.layout.state"].firstMatch
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            (window.frame.width > window.frame.height) == landscape
+            guard probe.exists, let raw = probe.value as? String,
+                  let data = raw.data(using: .utf8),
+                  let state = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
+            return state["orientation"] as? String == expected && state["ready"] as? Bool == true
         }, object: nil)
-        XCTAssertEqual(XCTWaiter().wait(for: [ready], timeout: 5), .completed, "The app must finish rotating")
+        XCTAssertEqual(XCTWaiter().wait(for: [ready], timeout: 5), .completed,
+                       "The app must settle its layout in \(expected); probe: \(String(describing: probe.value))")
     }
 
     @MainActor
