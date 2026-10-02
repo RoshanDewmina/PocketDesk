@@ -84,6 +84,15 @@ final class RemoteCoordinator: ObservableObject {
     var media: PeerMedia?
     /// Receives the `file` channel's chunks and buffer changes for every session's peer.
     weak var fileTransfer: FileTransferEngine?
+    static let multiDeviceDisabledKey = "FarsideHostMultiDeviceDisabled"
+    private let multiDeviceEnabled: Bool
+    private var registeredHostTokens: [String] = []
+    private var serviceSupportsDevices = false
+    var pairedDevices: [HostPairedDevice] { hostPair?.approvedDevices ?? [] }
+    var pendingPairInvitation: PairInvitation? {
+        guard let pair = hostPair else { return nil }
+        return pair.pendingInvitation ?? (!pair.paired && pair.invitation.expires > Date() ? pair.invitation : nil)
+    }
     private(set) var hostPair: HostPair?
     private(set) var invitation: PairInvitation?
     /// Sanitized mutation phase and Security status only; never pairing data.
@@ -294,13 +303,15 @@ final class RemoteCoordinator: ObservableObject {
         localProofTimeoutNanoseconds: UInt64 = 8_000_000_000,
         hostIdentityStore: HostIdentityStore? = nil,
         localSignaling: (any OwnerLocalSignalingTransport)? = nil,
-        localProofBuilder: (@Sendable (String, String, String, Data) -> LocalLinkProof?)? = nil
+        localProofBuilder: (@Sendable (String, String, String, Data) -> LocalLinkProof?)? = nil,
+        multiDeviceEnabled: Bool? = nil
     ) {
         self.localProofTimeoutNanoseconds = localProofTimeoutNanoseconds
         self.localProofBuilder = localProofBuilder ?? { LocalLinkProof.make(room: $0, epoch: $1, session: $2, pairingKey: $3) }
         // Injected pair stores (including isolated tests) must not touch the owner's identity.
         self.hostIdentityStore = hostIdentityStore ?? (isHost && store == nil ? HostIdentityStore() : nil)
         self.isHost = isHost
+        self.multiDeviceEnabled = multiDeviceEnabled ?? !UserDefaults.standard.bool(forKey: Self.multiDeviceDisabledKey)
         self.store = store ?? (isHost ? PairStore(account: "host") as any PairPersistence : PhonePairPersistence())
         self.cloudRelay = signaling ?? SignalingClient()
         self.localRelay = localSignaling ?? LocalSignalingTransport()
@@ -740,19 +751,129 @@ final class RemoteCoordinator: ObservableObject {
     }
     func restore() {
         do {
-            if isHost { hostPair = try store.read(HostPair.self); invitation = hostPair?.invitation; peerName = hostPair?.phoneName }
+            if isHost {
+                if let saved = try store.read(HostPair.self) {
+                    var migrated = try saved.validatedCatalog()
+                    if !migrated.paired, let first = migrated.approvedDevices.first { migrated = migrated.selecting(first) }
+                    if let pending = migrated.pendingInvitation, pending.expires <= Date() { migrated.pendingInvitation = nil }
+                    if saved.devices == nil || saved.pendingInvitation != migrated.pendingInvitation || saved.paired != migrated.paired {
+                        try store.save(migrated)
+                    }
+                    hostPair = migrated
+                    invitation = migrated.paired || migrated.invitation.expires > Date() ? migrated.invitation : nil
+                    peerName = migrated.phoneName
+                } else { hostPair = nil; invitation = nil; peerName = nil }
+            }
             else { invitation = try store.read(PairInvitation.self) }
             status = invitation == nil ? "Pair with your Mac to get started" : "Ready to connect"
-        } catch { status = error.localizedDescription }
+        } catch {
+            if isHost { stop(); hostPair = nil; invitation = nil; peerName = nil }
+            status = error.localizedDescription
+        }
     }
     func createPair(server: String, name: String) throws -> PairInvitation {
-        stop()
-        let pair = try HostPair.create(server: server, name: name, identity: hostIdentityStore?.loadOrCreate())
-        try pair.invitation.validate()
+        guard isHost else { throw RemoteError.invalidPairing }
+        guard !connected, media == nil, request.isEmpty, !awaitingApproval else { throw HostDeviceLimitError.busy }
+        // Read before stopping/publishing: a locked or invalid record must never be overwritten.
+        let saved = try store.read(HostPair.self)?.validatedCatalog()
+        guard (saved?.approvedDevices.count ?? 0) < 5 else { throw HostDeviceLimitError.full }
+        if !multiDeviceEnabled, saved?.approvedDevices.isEmpty == false { throw HostDeviceLimitError.disabled }
+        if let saved, saved.invitation.server != server { throw HostDeviceLimitError.serviceChanged }
+        var pair = try HostPair.create(server: server, name: name, identity: hostIdentityStore?.loadOrCreate())
+        if let saved {
+            pair.hostToken = saved.hostToken
+            pair.invitation.room = saved.invitation.room
+            pair.invitation.durableHostID = saved.invitation.durableHostID
+            if let hostID = saved.invitation.durableHostID, let ownerID = pair.invitation.ownerPairID {
+                pair.invitation.localServiceName = "Farside-" + String(SecureRandom.digest(hostID + "|" + ownerID).prefix(40))
+            } else { pair.invitation.localServiceName = saved.invitation.localServiceName }
+            pair.devices = saved.approvedDevices
+        } else { pair.devices = [] }
+        let enrollment = pair.invitation
+        pair.pendingInvitation = enrollment
+        if let first = pair.approvedDevices.first { pair = pair.selecting(first) }
+        try enrollment.validate()
         try store.save(pair)
-        hostPair = pair; invitation = pair.invitation; peerName = nil
-        return pair.invitation
+        stop()
+        hostPair = pair; invitation = pair.invitation; peerName = pair.phoneName
+        return enrollment
     }
+    private var hostAdmissionInvitations: [PairInvitation] {
+        guard isHost, let pair = hostPair else { return [] }
+        if !multiDeviceEnabled { return [pair.approvedDevices.first?.invitation ?? pair.invitation] }
+        var invitations = pair.approvedDevices.map(\.invitation)
+        if let pending = pendingPairInvitation, pending.expires > Date() { invitations.append(pending) }
+        return invitations
+    }
+
+    private func selectHostInvitation(_ selected: PairInvitation) {
+        guard let pair = hostPair else { return }
+        if let device = pair.approvedDevices.first(where: { $0.invitation == selected }) {
+            hostPair = pair.selecting(device)
+            invitation = selected; peerName = device.phoneName
+        } else if selected == pendingPairInvitation {
+            var pending = pair
+            pending.invitation = selected; pending.paired = false; pending.phoneName = nil
+            hostPair = pending; invitation = selected; peerName = nil
+        } else { return }
+        cipher = try? SignalCipher(key: selected.key, room: selected.room)
+    }
+
+    @discardableResult
+    func removePairedDevice(_ id: String) -> Bool {
+        guard isHost else { return false }
+        pairingRemovalFailure = nil
+        do {
+            guard var saved = try store.read(HostPair.self)?.validatedCatalog(),
+                  saved.approvedDevices.contains(where: { $0.id == id }) else { throw RemoteError.invalidPairing }
+            var remaining = saved.approvedDevices
+            remaining.removeAll { $0.id == id }
+            saved.devices = remaining
+            saved.pendingInvitation = nil
+            if let first = remaining.first { saved = saved.selecting(first) }
+            else { saved.paired = false; saved.phoneName = nil; saved.invitation.expires = .distantPast }
+            try store.save(saved)
+            guard let verified = try store.read(HostPair.self)?.validatedCatalog(),
+                  !verified.approvedDevices.contains(where: { $0.id == id }),
+                  verified.approvedDevices == remaining else { throw RemoteError.invalidPairing }
+            // Retire the room registration before publishing reduced admission; reconnect carries
+            // the complete reduced list. No old input/cipher survives this authority change.
+            stop()
+            hostPair = saved; invitation = remaining.first?.invitation; peerName = saved.phoneName
+            status = "Device removed from this Mac."
+            return true
+        } catch {
+            stop(); pairingRemovalFailure = "device-removal:failed"
+            status = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Retires only the unapproved QR grant. Approved credentials and the Mac room survive.
+    @discardableResult
+    func cancelPendingPairing() -> Bool {
+        guard isHost else { return false }
+        pairingRemovalFailure = nil
+        do {
+            guard var saved = try store.read(HostPair.self)?.validatedCatalog() else { return true }
+            let devices = saved.approvedDevices
+            saved.pendingInvitation = nil
+            if let first = devices.first { saved = saved.selecting(first) }
+            else { saved.paired = false; saved.invitation.expires = .distantPast; saved.phoneName = nil }
+            try store.save(saved)
+            guard let verified = try store.read(HostPair.self)?.validatedCatalog(),
+                  verified.pendingInvitation == nil, verified.approvedDevices == devices else { throw RemoteError.invalidPairing }
+            stop()
+            hostPair = saved; invitation = devices.first?.invitation; peerName = saved.phoneName
+            status = devices.isEmpty ? "Pairing cancelled" : "Ready for your paired phone"
+            return true
+        } catch {
+            stop(); pairingRemovalFailure = "enrollment-cancel:failed"
+            status = error.localizedDescription
+            return false
+        }
+    }
+
     func enroll(_ code: String, replacementApproval: PhoneTrustReplacementApproval? = nil) throws {
         guard !isHost else { throw RemoteError.invalidPairing }
         let parsed = try PairInvitation.parse(code)
@@ -781,6 +902,12 @@ final class RemoteCoordinator: ObservableObject {
             status = "Server removal is pending. Retry or cancel removal first."
             return
         }
+        // Every registration re-reads the durable approved catalog. A pending request may have
+        // selected an expiring QR in RAM; losing that attempt must not lose approved admission.
+        if isHost {
+            restore()
+            if !multiDeviceEnabled, let primary = pairedDevices.first { selectHostInvitation(primary.invitation) }
+        }
         guard let invitation else { status = "Pair with your Mac first"; return }
         do {
             if let scannedEnrollment { try scannedEnrollment.validate(enrollment: true) }
@@ -794,6 +921,9 @@ final class RemoteCoordinator: ObservableObject {
             cipher = try SignalCipher(key: invitation.key, room: invitation.room)
             status = "Connecting securely…"
             registeredInvitation = invitation
+            serviceSupportsDevices = false
+            let hostInvitations = hostAdmissionInvitations
+            registeredHostTokens = hostInvitations.map { SecureRandom.digest($0.token) }
             routeExpiry?.cancel(); routeExpiry = nil
             onGuestAuthorityEnded?(); routePolicy = nil; routeArmed = false; ownerLocalEpoch = nil
             routeEpochsSeen.removeAll()
@@ -803,6 +933,17 @@ final class RemoteCoordinator: ObservableObject {
             var features = advertisesRenewal ? [SignalingFeature.renewal] : []
             features.append(SignalingFeature.route)
             if isHost && !localOnly { features.append("guest-v1") }
+            if isHost && multiDeviceEnabled && !localOnly { features.append(SignalingFeature.devices) }
+            if let cloud = cloudRelay as? any MultiDeviceSignalingTransport {
+                cloud.clientTokenHashes = isHost && multiDeviceEnabled ? registeredHostTokens : nil
+            }
+            if let local = localRelay as? any MultiDeviceLocalSignalingTransport {
+                local.hostInvitations = isHost ? hostInvitations : []
+                local.onSelectedHostInvitation = { [weak self] selected in
+                    guard let self, self.isHost, self.localOnly, self.request.isEmpty else { return }
+                    self.selectHostInvitation(selected)
+                }
+            }
             if !isHost && advertisesRemoteAccess && sessionModeRequest != .couch {
                 features.append(SignalingFeature.remoteAccess)
             }
@@ -810,17 +951,30 @@ final class RemoteCoordinator: ObservableObject {
             if localOnly && !invitation.hasOwnerLocalIdentity {
                 throw RemoteError.localPairingRefreshRequired
             }
-            try relay.connect(invitation: invitation, hostToken: hostPair?.hostToken, features: features,
+            try relay.connect(invitation: isHost ? (hostInvitations.first ?? invitation) : invitation, hostToken: hostPair?.hostToken, features: features,
                               entitlement: isHost || localOnly || sessionModeRequest == .couch ? nil : entitlementToken?())
             setTimeout()
         } catch { fail(error.localizedDescription) }
     }
     func approve() {
-        guard isHost, awaitingApproval, proofReceived, (hostPair?.invitation.expires ?? .distantPast) > Date() else { fail("Pairing expired. Create a fresh code."); return }
+        guard isHost, awaitingApproval, proofReceived else { fail("Pairing expired. Create a fresh code."); return }
+        guard (hostPair?.invitation.expires ?? .distantPast) > Date() else {
+            let resume = isRunning
+            if cancelPendingPairing(), resume, !pairedDevices.isEmpty { start() }
+            else { status = "Pairing expired. Create a fresh code." }
+            return
+        }
         awaitingApproval = false
         acceptSession()
     }
-    func reject() { fail("Pairing was declined on the Mac") }
+    func reject() {
+        if isHost, awaitingApproval {
+            let resume = isRunning
+            if cancelPendingPairing(), resume, !pairedDevices.isEmpty { start() }
+            return
+        }
+        fail("Pairing was declined on the Mac")
+    }
     @discardableResult
     func revoke(expectedInvitation: PairInvitation? = nil) -> Bool {
         pairingRemovalFailure = nil
@@ -994,6 +1148,7 @@ final class RemoteCoordinator: ObservableObject {
             case "registered":
                 if isHost {
                     guestServiceAvailable = message.features?.contains("guest-v1") == true
+                    serviceSupportsDevices = message.features?.contains(SignalingFeature.devices) == true
                     hostRegistered = true; reconnecting = false; timeout?.cancel(); status = "Ready for your paired phone"
                     resetRetryBudgetAfterStableRegistration()
                 }
@@ -1028,7 +1183,23 @@ final class RemoteCoordinator: ObservableObject {
             case "signal":
                 guard let cipher, let payload = message.payload else { throw RemoteError.invalidMessage }
                 let opened: ProtectedMessage
-                do { opened = try cipher.open(payload, sender: isHost ? "client" : "host") }
+                do {
+                    if isHost, multiDeviceEnabled, request.isEmpty {
+                        var selected: (PairInvitation, ProtectedMessage)?
+                        for candidate in hostAdmissionInvitations {
+                            let candidateCipher = try SignalCipher(key: candidate.key, room: candidate.room)
+                            if let message = try? candidateCipher.open(payload, sender: "client"),
+                               message.kind == "request", message.session.isEmpty, message.sequence == 0 {
+                                // A legacy service has admitted only its scalar primary.
+                                guard localOnly || serviceSupportsDevices || candidate == hostAdmissionInvitations.first else { throw RemoteError.stale }
+                                selected = (candidate, message); break
+                            }
+                        }
+                        guard let selected else { throw RemoteError.stale }
+                        selectHostInvitation(selected.0)
+                        opened = selected.1
+                    } else { opened = try cipher.open(payload, sender: isHost ? "client" : "host") }
+                }
                 catch { throw RemoteError.stale }
                 do { try receiveProtected(opened) }
                 catch RemoteError.stale { throw RemoteError.stale }
@@ -1051,7 +1222,9 @@ final class RemoteCoordinator: ObservableObject {
                 // still occupy the server's client slot. Retry within the existing bound; the service
                 // replaces a holder that has gone silent.
                 if !isHost, code == "host_unavailable_or_unauthorized" || code == "already_connected" {
-                    connectionLost(finalStatus: serviceError)
+                    connectionLost(finalStatus: code == "already_connected"
+                        ? "This Mac is connected to another device. Disconnect it there, then try again."
+                        : serviceError)
                 } else if isHost, code == "already_connected" {
                     // A relaunched host can race the service noticing that its crashed
                     // predecessor's socket closed. Wait it out within the retry bound.
@@ -1143,6 +1316,7 @@ final class RemoteCoordinator: ObservableObject {
         case "acceptedAck" where isHost:
             guard proofReceived, media == nil, !awaitingApproval else { throw RemoteError.stale }
             recordPeerName(PhoneIdentity.decode(message.body))
+            guard !stopped else { return }
             peerRequestedMode = SessionModeRequest.mode(fromAcceptedAckBody: message.body)
             prepareMedia()
         case "media":
@@ -1169,10 +1343,12 @@ final class RemoteCoordinator: ObservableObject {
     }
     /// Keeps the name a paired phone reports; a phone that sends none keeps the stored one.
     private func recordPeerName(_ name: String?) {
-        guard let name, var pair = hostPair, pair.paired, pair.phoneName != name else { return }
-        pair.phoneName = name
-        do { try store.save(pair); hostPair = pair; peerName = name }
-        catch { peerName = name }
+        guard var pair = hostPair, pair.paired else { return }
+        if let name { pair.phoneName = name }
+        do {
+            try pair.rememberCurrentDevice()
+            try store.save(pair); hostPair = pair; peerName = pair.phoneName
+        } catch { fail(error.localizedDescription) }
     }
     private func acceptSession() {
         do {
@@ -1180,7 +1356,9 @@ final class RemoteCoordinator: ObservableObject {
             if !hostPair.paired {
                 // Persist before publishing new trust. An interrupted enrollment may require
                 // a fresh QR, but can never reconnect using the exposed enrollment key.
-                let next = try hostPair.rotated()
+                var next = try hostPair.rotated()
+                next.pendingInvitation = nil
+                try next.rememberCurrentDevice()
                 try store.save(next)
                 self.hostPair = next; invitation = next.invitation
                 send(kind: "accepted", body: try JSONEncoder().encode(next.invitation))
@@ -1401,7 +1579,7 @@ final class RemoteCoordinator: ObservableObject {
         // First approval rotates the saved phone credential. The currently
         // registered relay room and cipher still use the enrollment invitation,
         // so that one session must re-register before accepting the saved phone.
-        guard isHost, hostRegistered, !stopped, registeredInvitation == invitation else {
+        guard isHost, hostRegistered, !stopped, (multiDeviceEnabled ? registeredHostTokens == hostAdmissionInvitations.map { SecureRandom.digest($0.token) } : registeredInvitation == invitation) else {
             connectionLost(); return
         }
         resetSession()

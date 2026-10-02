@@ -295,11 +295,19 @@ final class SessionIntegrationTests: XCTestCase {
         XCTAssertFalse(host.hostRegistered, "A terminal failure must immediately hide the pairing code")
         XCTAssertFalse(host.connected); XCTAssertFalse(phone.connected); XCTAssertNil(phoneStore.data)
         phone.stop()
+        // Declining retires only the unapproved QR grant. First pairing has no approved
+        // device to resume, so a new attempt requires a fresh code in the same Mac room.
+        host.start()
+        XCTAssertFalse(host.hostRegistered)
+        XCTAssertNil(host.pendingPairInvitation)
+        let freshInvitation = try host.createPair(server: url, name: "Test")
+        XCTAssertEqual(freshInvitation.room, invitation.room)
+        XCTAssertNotEqual(freshInvitation.key, invitation.key)
         host.start(); try await waitFor("host re-registered") { host.status == "Ready for your paired phone" }
-        try phone.enroll(invitation.code()); try await waitFor("approval pending again") { host.awaitingApproval }
+        try phone.enroll(freshInvitation.code()); try await waitFor("approval pending again") { host.awaitingApproval }
         hostStore.refuseSave = true; host.approve()
         XCTAssertFalse(host.connected); XCTAssertNil(phoneStore.data)
-        XCTAssertEqual(host.invitation, invitation)
+        XCTAssertEqual(host.invitation, freshInvitation)
     }
 
     @MainActor

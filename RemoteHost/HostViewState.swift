@@ -1,5 +1,12 @@
 import Foundation
 
+struct HostPairedDeviceRow: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let lastUsed: Date?
+    let connected: Bool
+}
+
 struct HostGuestRow: Identifiable, Equatable {
     let id: String
     let fingerprint: String
@@ -57,6 +64,7 @@ struct HostViewState: Equatable {
     var status: HostStatus = .starting
     var setupStep: HostSetupStep = .screenRecording
     var hasPairedPhone = false
+    var pairedDevices: [HostPairedDeviceRow] = []
     var pairingRequested = false
     var pairing: HostPairingState = .idle
     var canBeginPairing = false
@@ -147,6 +155,7 @@ struct HostActions {
     var finishSetup: () -> Void = {}
     var pairNewPhone: () -> Void = {}
     var removePhone: () -> Void = {}
+    var removePairedDevice: (String) -> Void = { _ in }
     var removeServerRoom: () -> Void = {}
     var stopSharing: () -> Void = {}
     var pauseSharing: () -> Void = {}

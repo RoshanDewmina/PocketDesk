@@ -181,19 +181,19 @@ enum AnywhereCopy {
         let noun = offer.period == .year ? "year" : "month"
         if let trial = offer.trialPhrase {
             return CommerceLocalization.text("DISCLOSURE_TRIAL_" + period,
-                "After the %@ free trial, Farside Anywhere costs %@ a " + noun + " and renews automatically until you cancel. Your Apple Account is charged when the trial ends, and again at the start of each renewal. Cancel at least 24 hours before the end of the trial in Settings › Apple Account › Subscriptions. One subscription covers up to three of your iPhones and iPads. Farside on a verified local network stays free, with or without a plan.", trial, offer.displayPrice)
+                "After the %@ free trial, Farside Anywhere costs %@ a " + noun + " and renews automatically until you cancel. Your Apple Account is charged when the trial ends, and again at the start of each renewal. Cancel at least 24 hours before the end of the trial in Settings › Apple Account › Subscriptions. One subscription covers up to five of your iPhones and iPads. Farside on a verified local network stays free, with or without a plan.", trial, offer.displayPrice)
         }
         return CommerceLocalization.text("DISCLOSURE_" + period,
-            "Farside Anywhere costs %@ a " + noun + " and renews automatically until you cancel. Your Apple Account is charged when you confirm the purchase, and again at the start of each renewal. Cancel at least 24 hours before the end of each period in Settings › Apple Account › Subscriptions. One subscription covers up to three of your iPhones and iPads. Farside on a verified local network stays free, with or without a plan.", offer.displayPrice)
+            "Farside Anywhere costs %@ a " + noun + " and renews automatically until you cancel. Your Apple Account is charged when you confirm the purchase, and again at the start of each renewal. Cancel at least 24 hours before the end of each period in Settings › Apple Account › Subscriptions. One subscription covers up to five of your iPhones and iPads. Farside on a verified local network stays free, with or without a plan.", offer.displayPrice)
     }
 
     /// The service's per-subscription device cap (Backend/ENTITLEMENT-CONTRACT.md §2, check 8).
-    static let deviceLimitWord = "three"
+    static let deviceLimitWord = "five"
 
     /// Restoration recovers billing only; pairing and current route authority remain separate.
     static func refusal(_ reason: String?) -> String {
         switch reason {
-        case "device_limit": return CommerceLocalization.text("REFUSAL_DEVICES", "This subscription is already in use on three devices, the most one plan covers. Verified local access still works here.")
+        case "device_limit": return CommerceLocalization.text("REFUSAL_DEVICES", "This subscription is already in use on five devices, the most one plan covers. Verified local access still works here.")
         case "expired", "revoked": return CommerceLocalization.text("REFUSAL_ENDED", "Farside’s service says this plan is no longer active. If you just renewed, try Restore Purchases.")
         case "not_purchased": return CommerceLocalization.text("REFUSAL_OWNER", "Farside Anywhere needs a plan bought with your own Apple Account. Plans assigned by an organization or group aren’t supported. Verified local access still works.")
         case "consent_revoked": return CommerceLocalization.text("REFUSAL_CONSENT", "Permission to use Farside was withdrawn for this Apple Account, so Farside Anywhere is off.")
