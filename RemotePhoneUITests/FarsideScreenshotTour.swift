@@ -187,6 +187,7 @@ final class FarsideScreenshotTour: XCTestCase {
                         && !system.alerts.firstMatch.exists && viewfinder.exists
                     if !reached { _ = missing("Camera viewfinder changed to fallback or permission prompt before capture") }
                 }
+                if !captureOrientationMatches(orientation, in: app) { reached = false }
                 attach(reached ? name : "missing-" + name)
                 // Long settings forms need both their top and lower rows in the catalogue.
                 if reached && ["picture", "controls-settings-keyboard", "controls-settings-diagnostics"].contains(shot.name) {
@@ -473,6 +474,20 @@ final class FarsideScreenshotTour: XCTestCase {
         guard target.isHittable else { return missing("Navigation control is covered: \(target.identifier)") }
         target.tap()
         return true
+    }
+
+    @MainActor
+    private func captureOrientationMatches(_ requested: UIDeviceOrientation, in app: XCUIApplication) -> Bool {
+        let landscape = requested == .landscapeLeft || requested == .landscapeRight
+        let deadline = ProcessInfo.processInfo.systemUptime + 4
+        var frame = app.frame
+        while true {
+            if landscape ? frame.width > frame.height : frame.height > frame.width { return true }
+            guard ProcessInfo.processInfo.systemUptime < deadline else { break }
+            Thread.sleep(forTimeInterval: 0.1)
+            frame = app.frame
+        }
+        return missing("Requested \(landscape ? "landscape" : "portrait") capture does not match observed Farside app frame \(frame.width) × \(frame.height)")
     }
 
     @MainActor
