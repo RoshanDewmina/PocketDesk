@@ -3,7 +3,7 @@
 import argparse, datetime, hashlib, json, os, pathlib, subprocess, sys, time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 p = argparse.ArgumentParser()
-p.add_argument('stage', nargs='?', choices=['all','auto','build','phone','ipad','duo','core','backend'], default='all')
+p.add_argument('stage', nargs='?', choices=['all','auto','build','phone','ipad','duo','core','backend','host'], default='all')
 p.add_argument('--output', default='/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims')
 p.add_argument('--dd', default='/Volumes/Studio/Development/Caches/b7-claims/DD')
 p.add_argument('--phone', default='C643B2C2-3248-4AE4-B234-8F54414F3A41')
@@ -47,6 +47,7 @@ def auto():
     run('source-audit',[sys.executable,str(ROOT/'script/claims/source_audit.py'),str(LOG)])
     run('xcode-version',['xcodebuild','-version'],True)
     run('simulators',['xcrun','simctl','list','devices','available'])
+    run('public-site',['curl','--fail','--head','--location','--max-time','20','--silent','--show-error','https://getfarside.com'])
     for config in ['Debug','Release']:
         run('build-settings-'+config,common+['-configuration',config,'-alltargets','-showBuildSettings','-json'],True)
 def build():
@@ -62,7 +63,7 @@ def test(label, device):
     except RuntimeError as e: raise SystemExit(str(e))
     (LOG/'tested-build-manifest.json').write_bytes(build_manifest().read_bytes())
     selectors=['RemotePhoneUITests/ClaimsVerificationUITests','RemotePhoneUITests/FarsideRedesignUITests/testKeyboardBarPutsCommandFirstAndInReachInPortrait','RemotePhoneUITests/SessionLayoutTests/testLongVoicePreviewKeepsDoneReachableInLandscapeWithoutRecording']
-    if label=='phone': selectors += ['RemotePhoneTests/FarsideDesignTests','RemotePhoneTests/SessionLifecycleTests','RemotePhoneTests/VoiceInputTests','RemotePhoneTests/CommittedTextTests','RemotePhoneTests/ExactTextTraitsTests','RemotePhoneTests/TabletInputPhoneTests']
+    if label=='phone': selectors += ['RemotePhoneTests/'+c for c in ['FarsideDesignTests','SessionLifecycleTests','VoiceInputTests','CommittedTextTests','ExactTextTraitsTests','TabletInputPhoneTests','IndirectInputTests','ViewportPreferenceTests','ViewportCaptureTests','ScreenRecordingApprovalPhoneTests']]
     run(label+'-tests',common+['-configuration','Debug','-scheme','PocketDeskRemote','-destination','platform=iOS Simulator,id='+device,'ARCHS=arm64','test-without-building','-parallel-testing-enabled','NO','-test-timeouts-enabled','YES','-maximum-test-execution-time-allowance','3600','-resultBundlePath',str(LOG/(label+'.xcresult'))]+['-only-testing:'+s for s in selectors],True,manifest=True,shutdown=device)
 def core():
     before=source_identity()
@@ -72,15 +73,32 @@ def core():
         if source_identity()!=before: raise SystemExit('Source changed during core build; receipt invalid.')
         (pathlib.Path(ddcore)/'claims-build-manifest.json').write_text(json.dumps({'source':before,'artifacts':artifact_identity(ddcore)},indent=2))
         (LOG/'tested-core-build-manifest.json').write_bytes((pathlib.Path(ddcore)/'claims-build-manifest.json').read_bytes())
-        classes='SessionRenewalPlanTests,CoordinatorRenewalTests,SessionRenewalIntegrationTests,HostReadinessTests,HostPresentationTests,HostLivePopoverTests,HostLifecycleTests'
+        classes='SessionRenewalPlanTests,CoordinatorRenewalTests,SessionRenewalIntegrationTests,HostReadinessTests,HostPresentationTests,HostLivePopoverTests,HostLifecycleTests,NativeGestureEngineTests,ViewportTransformTests,ViewportCaptureGeometryTests,LocalOwnerAdmissionTests,LocalSignalingLifecycleTests,OwnerLocalCoordinatorTests,HostPairingPreflightTests,InputAppliedReceiptTests'
         run('core-tests',['xcrun','xctest','-XCTest',classes,ddcore+'/Build/Products/Debug/RemoteCoreTests.xctest'],True,manifest=ddcore)
+def host():
+    before=source_identity()
+    ddhost=a.dd+'-host'
+    cmd=[ddhost if x==a.dd else x for x in common]
+    if run('host-build',cmd+['-configuration','Debug','-scheme','PocketDeskRemoteHost','-destination','platform=macOS','build'],True)==0:
+        if source_identity()!=before: raise SystemExit('Source changed during host build; receipt invalid.')
+        (LOG/'host-build-manifest.json').write_text(json.dumps({'source':before,'artifacts':artifact_identity(ddhost)},indent=2))
+        import plistlib
+        for app in (pathlib.Path(ddhost)/'Build/Products/Debug').glob('*.app'):
+            info=plistlib.loads((app/'Contents/Info.plist').read_bytes())
+            if info.get('CFBundleIdentifier')=='com.roshan.PocketDesk.RemoteHost':
+                binary=app/'Contents/MacOS'/info['CFBundleExecutable']
+                run('host-architectures',['lipo','-archs',str(binary)])
+                run('host-minimum-os',['xcrun','vtool','-show-build',str(binary)])
+                (LOG/'host-artifact.json').write_text(json.dumps({'app':str(app),'binary':str(binary),'sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'minimum_plist':info.get('LSMinimumSystemVersion')},indent=2))
+                break
+        else: raise SystemExit('Built host bundle not found; no platform artifact proof.')
 def backend():
     gate()
     primary=pathlib.Path('/Users/roshansilva/Developer/PocketDesk/Backend')
     dep=ROOT/'Backend/node_modules'
+    if (ROOT/'Backend/bun.lock').read_bytes() != (primary/'bun.lock').read_bytes():
+        raise SystemExit('Backend lockfile differs from shared installed dependencies; resolve isolated pinned dependencies first.')
     if not dep.exists():
-        if (ROOT/'Backend/bun.lock').read_bytes() != (primary/'bun.lock').read_bytes():
-            raise SystemExit('Backend lockfile differs from shared installed dependencies; resolve isolated pinned dependencies first.')
         dep.symlink_to(primary/'node_modules',target_is_directory=True)
     # Only local Cloudflare test fixtures; no wrangler dev/deploy, credentials or provider access.
     before=source_identity()
@@ -106,10 +124,11 @@ elif a.stage in ['phone','ipad']: test(a.stage,getattr(a,a.stage))
 elif a.stage=='duo': duo()
 elif a.stage=='core': core()
 elif a.stage=='backend': backend()
+elif a.stage=='host': host()
 else:
     auto(); duo(); backend()
     if build()==0:
         test('phone',a.phone); test('ipad',a.ipad)
-    core()
+    core(); host()
 print('Evidence: '+str(LOG),flush=True)
 sys.exit(1 if any(r['exit'] for r in results if not r['name'].endswith('-shutdown')) else 0)

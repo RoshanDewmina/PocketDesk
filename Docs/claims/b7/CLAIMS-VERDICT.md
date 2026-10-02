@@ -60,3 +60,9 @@ Pending controlled execution; final evidence addendum follows. Build source is 2
 
 - Shipped Backend renewal/route local fixtures: **28/28 passed**, 2 files, vitest4.1.11, 2.15s; logs/20261002T104739Z/backend-renewal-route.log. Supports route/lease logic; no deployed-config, paid/provider, media-duration or physical acceptance.
 - C8 exact supplied replacement makes B **429/500** with its leading space (428 if that redundant space is trimmed), not always428. Recount final pasted text.
+
+- **C9c FAILS now:** public https://getfarside.com still does not resolve from this Mac; fresh curl HEAD exit6, and web reader unavailable (`PUBLIC-SITE-CHECK.log`). Do not re-add the URL until it is live; notarization/upload/backend gates remain separate.
+
+- Fresh phone build-for-testing PASSED, 173.332s, Xcode27/SDK27; `logs/20261002T104841Z/phone-build.log`. Source and full compiled app/test bundles match archived manifest. Verification-only UI tests compile; no simulator feature pass implied. iPhone and iPad test stages queued under shared lock.
+
+- Fresh isolated Mac companion Debug build PASSED, 134.923s; `logs/20261002T110026Z/host-build.log`. Built executable lipo=`arm64`; LC_BUILD_VERSION minos=`26.0`, sdk=`27.0`; Info.plist minimum=`26.0`. A20/A21/C12 Debug binary platform claim is PROVEN; Release effective settings and macOS26 physical acceptance remain separate. No launch/install. Production diff against20aded1 is empty; full post-build source/artifact receipt archived. This queued command predates future runner pre/post host guard, which is not claimed retroactively.

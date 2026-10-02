@@ -11,3 +11,18 @@
 - 2026-10-02: CORRECTION after reviewer inspected full log: Duo iOS 27.1 simulator boot/bootstatus commands returned exit 0, but bootstatus ended Status=3,isTerminal=YES, “Data Migration Failed” after 36 s. Boot acceptance FAILED; shutdown returned 0. No retry. Raw logs/results preserved at logs/20261002T104318Z; no app/fold layout accepted.
 - 2026-10-02: Synthetic runner manifest checks pass4 cases: missing manifest, matching fixture, changed debugdylib rejection, changed source rejection (RUNNER-GUARD-CHECKS.log). Not a Swift compile or product acceptance receipt.
 - 2026-10-02: Shipped Backend renewal/route fixture suite passed 28/28 tests in 2 files, vitest 4.1.11, 2.15s (logs/20261002T104739Z/backend-renewal-route.log); Bun lockfile matches primary installed dependency tree. These local Workers fixtures do not prove live deployment or 35-minute media continuity.
+- 2026-10-02: Source/review checkpoint dd6b4fa committed and pushed to origin/claude/b7-claims. Production source and project files are byte-identical to20aded1 by git diff exit0 (PRODUCTION-BASE-CHECK.log). Compiler/SIM acceptance remains pending; checkpoint is not ready-to-claim release proof.
+
+## ACTIVE HANDOFF — execution still in progress
+
+- Parent owns UI tests/scripts and final report. Worker host_audit owns only HOST-AUDIT.md/core local receipts; matrix/sim_tests/review workers completed source work.
+- Current production baseline remains20aded1; verification checkpointdd6b4fa pushed. Do not cherry-pick as a product fix.
+- Queued parent auto stage exec session15871, logs/20261002T103420Z; xcode-version and effective settings wait persistent lock.
+- Queued final frozen phone build exec session3040; own earlier queued attempts were canceled before build while fixing runner provenance and source selection. No Swift compile result yet. Build must write claims-build-manifest.json before phone/ipad stages.
+- Backend local28/28 passed; Duo single attempt FAILED Data Migration, no retry. No physical or provider actions performed.
+- Once build succeeds, run python3 script/claims/run.py phone then ipad. The appended ClaimsVerificationUITests inventories55 named fixtures per type size; audit failures are retained. Read raw logs and xcresult, never trust process exit alone. Finish source/settings addendum, record failed vs untested scopes, reviewer receipt check, copy final records into Docs/claims/b7, commit/push results.
+- 2026-10-02: Public getfarside.com HTTPS HEAD fails DNS, curl exit6 Could not resolve host; web reader also unavailable (PUBLIC-SITE-CHECK.log). C9c current availability FAILS; keep supplemental URL withheld. No website/provider mutation.
+
+- Fresh phone build-for-testing PASSED, 173.332s, Xcode27/SDK27; `logs/20261002T104841Z/phone-build.log`. Source and full compiled app/test bundles match archived manifest. Verification-only UI tests compile; no simulator feature pass implied. iPhone and iPad test stages queued under shared lock.
+
+- Fresh isolated Mac companion Debug build PASSED, 134.923s; `logs/20261002T110026Z/host-build.log`. Built executable lipo=`arm64`; LC_BUILD_VERSION minos=`26.0`, sdk=`27.0`; Info.plist minimum=`26.0`. A20/A21/C12 Debug binary platform claim is PROVEN; Release effective settings and macOS26 physical acceptance remain separate. No launch/install. Production diff against20aded1 is empty; full post-build source/artifact receipt archived. This queued command predates future runner pre/post host guard, which is not claimed retroactively.
