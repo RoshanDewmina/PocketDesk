@@ -302,10 +302,14 @@ final class NativeContainerSurfaceUITests: XCTestCase {
             let done = springboard.buttons["Done"]
             if done.waitForExistence(timeout: 5) { done.tap() }
 
-            if hasFarsideWidgetRoot() {
+            let galleryDismissed = !search.exists && !addWidget.exists && !springboard.buttons["Done"].exists
+            let appIconRestored = springboard.icons["Farside"].waitForExistence(timeout: 3)
+                && springboard.icons["Farside"].isHittable
+            if galleryDismissed && appIconRestored && hasFarsideWidgetRoot() {
                 attach("widget-home-placement-\(suffix)")
             } else {
-                missing("widget-home-placement-\(suffix)", "No Farside widget root was exposed after the native Add Widget flow")
+                missing("widget-home-placement-\(suffix)",
+                        "Placement was not verified: galleryDismissed=\(galleryDismissed), appIconRestored=\(appIconRestored), widgetRoot=\(hasFarsideWidgetRoot())")
             }
             if !galleryCaptured {
                 missing("widget-gallery-\(suffix)", "SpringBoard did not expose the native Add Widget provider preview")
@@ -330,6 +334,7 @@ final class NativeContainerSurfaceUITests: XCTestCase {
     func testFarsideShareExtensionFromSafari() throws {
         let names = ["share-extension-safari-portrait", "share-extension-safari-landscape"]
         attachPlan(names)
+        XCUIDevice.shared.orientation = .portrait
         let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
         safari.activate()
         guard safari.wait(for: .runningForeground, timeout: 8) else {
@@ -359,13 +364,18 @@ final class NativeContainerSurfaceUITests: XCTestCase {
             missing("share-extension-safari-landscape", "Extension selection did not expose a valid Farside share-sheet root")
             return
         }
-        attach("share-extension-safari-portrait")
+        if waitForOrientation(of: safari, landscape: false, timeout: 5) {
+            attach("share-extension-safari-portrait")
+        } else {
+            missing("share-extension-safari-portrait", "Safari did not reach portrait frame dimensions before capture")
+        }
         XCUIDevice.shared.orientation = .landscapeLeft
-        Thread.sleep(forTimeInterval: 1)
-        if waitForShareRoot(safari, extensionApp, timeout: 3) {
+        if waitForOrientation(of: safari, landscape: true, timeout: 5)
+            && waitForShareRoot(safari, extensionApp, timeout: 3) {
             attach("share-extension-safari-landscape")
         } else {
-            missing("share-extension-safari-landscape", "Farside extension root disappeared after device rotation")
+            missing("share-extension-safari-landscape",
+                    "Landscape capture was not verified: Safari did not retain a valid extension root in landscape frame dimensions")
         }
         XCUIDevice.shared.orientation = .portrait
     }
@@ -394,6 +404,18 @@ final class NativeContainerSurfaceUITests: XCTestCase {
         return false
     }
 
+    @MainActor
+    private func waitForOrientation(of app: XCUIApplication, landscape: Bool,
+                                    timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            let frame = app.frame
+            if landscape ? frame.width > frame.height : frame.height > frame.width { return true }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while Date() < deadline
+        return false
+    }
+
     private func attachPlan(_ names: [String]) {
         let attachment = XCTAttachment(string: names.joined(separator: "\n"))
         attachment.name = "capture-plan"
@@ -410,13 +432,13 @@ final class NativeContainerSurfaceUITests: XCTestCase {
     }
 
     private func missing(_ name: String, _ reason: String) {
-        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        screenshot.name = "missing-\(name)"
-        screenshot.lifetime = .keepAlways
-        add(screenshot)
         let diagnostic = XCTAttachment(string: reason)
         diagnostic.name = "missing-state-reason-\(name)"
         diagnostic.lifetime = .keepAlways
         add(diagnostic)
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "missing-\(name)"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 }
