@@ -90,6 +90,17 @@ struct NativeSessionView: View {
     private var sessionChrome: AnyView {
         AnyView(ZStack {
             stage.ignoresSafeArea()
+                .overlay {
+                    if model.firstPictureSettling {
+                        ZStack {
+                            Farside.Palette.void.ignoresSafeArea()
+                            ProgressView("Settling your Mac’s picture…")
+                                .font(.footnote).tint(Farside.Palette.bone)
+                                .foregroundStyle(Farside.Palette.bone)
+                        }
+                        .accessibilityIdentifier("remote.first60.settling")
+                    }
+                }
             LockedMousePresenter(requested: $lockedMouseRequested,
                 eligible: model.canControl && scenePhase == .active && !showControls && !showVoiceInput && !keyboardOpen && !panMode,
                 revision: model.inputRevision &+ revision, gain: Double(sensitivity), remapShortcuts: remapShortcuts,
@@ -869,6 +880,16 @@ struct NativeSessionView: View {
             FileTransferCapsule(files: model.files, inbox: model.sendToMac, hidesNotice: showControls)
             clipboardStatus
             if !regularSessionLayout { bigTextStatus }
+            if !offlineLayoutCheck, !panMode, !keyboardOpen, !showControls,
+               let hint = model.first60InlineHint {
+                Text(hint)
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Farside.Palette.bone)
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.96), stroke: Farside.Palette.line2)
+                    .accessibilityIdentifier("remote.first60.hint")
+                    .allowsHitTesting(false)
+            }
             if let notice = model.sessionNotice, !regularSessionLayout {
                 FarsideNotice(message: notice, tone: .info)
                     .frame(maxWidth: 420)
@@ -920,7 +941,7 @@ struct NativeSessionView: View {
         #if DEBUG
         if offlineLayoutCheck && LaunchOptions.has("--ui-big-text-changing") { return "Making text bigger…" }
         #endif
-        return model.bigText.pendingTarget.map { $0 == 0 ? "Restoring text size…" : "Making text bigger…" }
+        return model.bigTextPillTarget.map { $0 == 0 ? "Restoring text size…" : "Making text bigger…" }
     }
 
     private var sessionPillPersistent: Bool {

@@ -1,3 +1,7 @@
+# B8 first-minute lane — 2 October 2026
+
+Worktree farside-b8-first60, branch claude/b8-first60 from4127cd4. Host, phone pairing and first-picture/hints packages are in progress with explicit disjoint write-sets. Parent owns Home/GestureCoach/seams and integrated verification. No pure restyling: design-polish owns visuals. Evidence/ledger/handoff: /Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b8-first60/NOTES.md. No implementation completion or physical acceptance claimed yet.
+
 # Batch 7b integration in verification — 2 October 2026
 
 Branch `claude/batch-7b`, base `9ee6b24` (.3), merges `596ec47`, `439447e`, `f24d906`, `916fc03`, `2a6e547`, `f8db1c9` in that order. Build **20261002.4** uses four YAML/eight PBX version entries. Privacy default on with explicit choices preserved; optional scroll package default off. Product Interaction manifest matches linked/no tracking/App Functionality answers. Release product change is only nonexempt encryption metadata; iPad orientation override remains.

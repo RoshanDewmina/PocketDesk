@@ -140,11 +140,11 @@ struct PermissionPrimingView: View {
                           ("hand.tap", "iOS asks next. Choose Allow.")],
                  footnote: "No camera? You can paste the code instead")
         case .localNetwork:
-            Copy(heading: "Connect faster at home.", accent: "faster",
-                 body: "When your \(DeviceWord.current) and Mac share Wi-Fi, Farside connects to it directly.",
+            Copy(heading: "Reach your Mac on Wi-Fi.", accent: "Wi-Fi",
+                 body: "Farside reaches your Mac over your Wi-Fi. Free connections need Local Network access.",
                  points: [("wifi", "iOS will ask to find devices on your local network."),
                           ("hand.tap", "Choose Allow so Farside can reach your Mac at home."),
-                          ("lock", "Only your paired Mac is contacted. Nothing is scanned or shared.")],
+                          ("lock", "Finding a Mac never approves it. Your Mac must still choose Allow.")],
                  footnote: "You can change this later in Settings")
         case .microphone:
             Copy(heading: "Two quick permissions.", accent: "quick",

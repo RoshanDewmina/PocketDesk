@@ -783,3 +783,42 @@ final class LocalNetworkAccessTests: XCTestCase {
         XCTAssertTrue(stage.summary.contains("localNetwork=denied"))
     }
 }
+
+final class First60PairingSafetyTests: XCTestCase {
+    func testCameraLinkAndLegacyCodeRetainExactInvitation() throws {
+        let invitation = try HostPair.create(server: "wss://example.test/signal", name: "Studio Mac").invitation
+        XCTAssertEqual(try PairInvitation.parse(invitation.code()), invitation)
+        XCTAssertEqual(try PairInvitation.parse(invitation.cameraCode()), invitation)
+        XCTAssertEqual(try PairInvitation.normalizedCode(invitation.cameraCode()), try invitation.code())
+    }
+
+    func testCameraLinkRejectsAmbiguousAndWebRoutes() throws {
+        let invitation = try HostPair.create(server: "wss://example.test/signal", name: "Studio Mac").invitation
+        let link = try invitation.cameraCode()
+        for invalid in [link.replacingOccurrences(of: "farside://", with: "https://"),
+                        link.replacingOccurrences(of: "pair#", with: "pair/extra#"),
+                        link.replacingOccurrences(of: "pair#", with: "pair?next=example#"),
+                        link.replacingOccurrences(of: "pair#", with: "user@pair#"),
+                        link.replacingOccurrences(of: "pair#", with: "pair:443#"),
+                        "farside://pair#invalid!", "farside://open#abc"] {
+            XCTAssertThrowsError(try PairInvitation.parse(invalid))
+        }
+        XCTAssertThrowsError(try PairInvitation.parse(link, now: invitation.expires))
+        var damaged = invitation; damaged.key = Data()
+        XCTAssertThrowsError(try PairInvitation.parse(damaged.cameraCode()))
+    }
+
+    func testNetworkGateDoesNotTreatTimerForegroundOrEarlyDenialAsAllow() {
+        var decision = First60LocalNetworkDecision()
+        XCTAssertNil(decision.result(active: true, elapsed: 1))
+        XCTAssertEqual(decision.result(active: true, elapsed: 15), .unavailable)
+        decision.policyDenied = true
+        XCTAssertNil(decision.result(active: true, elapsed: 0.1))
+        XCTAssertNil(decision.result(active: false, elapsed: 30))
+        XCTAssertEqual(decision.result(active: true, elapsed: 2), .denied)
+        decision.registered = true // delayed successful operation after Allow
+        XCTAssertNil(decision.result(active: false, elapsed: 30))
+        XCTAssertEqual(decision.result(active: true, elapsed: 30), .allowed)
+        XCTAssertEqual(decision.result(active: true, elapsed: 30, cancelled: true), .cancelled)
+    }
+}

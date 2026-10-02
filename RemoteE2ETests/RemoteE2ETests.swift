@@ -27,6 +27,10 @@ final class RemoteE2ETests: E2ETestCase {
         recorder.check("token consumed after use", !FileManager.default.fileExists(atPath: E2EPaths.token))
         try waitFor("controllable session after pairing", timeout: 60) { phone.ready }
         recorder.metrics["pairToControlSeconds"] = Date().timeIntervalSince(pairingStarted)
+        if let frameTime = phone.state.double("firstFrameUnixTime"),
+           let submit = recorder.metrics["pairSubmitUnixTime"] as? Double {
+            recorder.metrics["codeSubmitToFirstFrameSeconds"] = frameTime - submit
+        }
         recorder.check("phone connected with control", true, String(format: "%.1f s after entering the code",
                                                                     Date().timeIntervalSince(pairingStarted)))
         recorder.check("manual approval never requested",

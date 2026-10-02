@@ -21,7 +21,8 @@ struct HostSetupView: View {
             VStack(alignment: .leading, spacing: 0) {
                 HostDotProgress(page: page,
                                 filled: HostSetupFlow.progressDots(page: page, state: state),
-                                caption: HostSetupFlow.progressCaption(page: page, state: state))
+                                caption: HostSetupFlow.progressCaption(page: page, state: state),
+                                first60: state.first60SetupPending)
                     .padding(.bottom, 22)
                 pageContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -39,7 +40,14 @@ struct HostSetupView: View {
         .preferredColorScheme(.dark)
         .animation(reduceMotion ? nil : Farside.Motion.easeOut(), value: page)
         .onChange(of: state.setupStep) { old, new in
-            page = HostSetupFlow.page(afterStepChangeFrom: old, to: new, current: page)
+            page = state.first60SetupPending ? HostSetupFlow.first60Page(for: state)
+                : HostSetupFlow.page(afterStepChangeFrom: old, to: new, current: page)
+        }
+        .onChange(of: state.hasPairedPhone) { _, _ in
+            if state.first60SetupPending { page = HostSetupFlow.first60Page(for: state) }
+        }
+        .onChange(of: state.accessibilitySkipped) { _, _ in
+            if state.first60SetupPending { page = HostSetupFlow.first60Page(for: state) }
         }
         .onChange(of: state.pairingDeferred) { _, deferred in
             // Skip moves on to the ready check; Pair there (or in the menu bar) comes back.
@@ -67,7 +75,7 @@ struct HostSetupView: View {
                 .foregroundStyle(Farside.Palette.ash)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 12)
-            if let previous = HostSetupPage(rawValue: page.rawValue - 1) {
+            if !state.first60SetupPending, let previous = HostSetupPage(rawValue: page.rawValue - 1) {
                 Button("Back") { page = previous }
                     .buttonStyle(HostButtonStyle(kind: .plate, height: 34))
                     .accessibilityIdentifier("farside.setup.back")
@@ -77,7 +85,7 @@ struct HostSetupView: View {
                     .buttonStyle(HostButtonStyle(kind: .primary, height: 34))
                     .keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier("farside.setup.done")
-            } else {
+            } else if !state.first60SetupPending {
                 let enabled = HostSetupFlow.canContinue(from: page, state: state)
                 Button("Continue") {
                     guard let next = HostSetupPage(rawValue: page.rawValue + 1) else { return }
@@ -101,16 +109,19 @@ struct HostSetupRail: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let scene = HostArtScene.setupRail(reach: page.rawValue,
+        let pages = HostSetupFlow.visiblePages(first60: state.first60SetupPending)
+        let scene = HostArtScene.setupRail(reach: state.first60SetupPending ? (pages.firstIndex(of: page) ?? 0) : page.rawValue,
                                            contact: page == .ready && state.status.isSessionLive)
         ZStack(alignment: .bottomLeading) {
             HostArt(scene)
                 .id(scene)
                 .transition(.opacity)
             VStack(spacing: 6) {
-                ForEach(HostSetupPage.allCases) { step in
+                ForEach(HostSetupFlow.visiblePages(first60: state.first60SetupPending)) { step in
                     HostRailStep(step: step, isCurrent: step == page,
-                                 isComplete: HostSetupFlow.isComplete(step, state: state, current: page))
+                                 isComplete: HostSetupFlow.isComplete(step, state: state, current: page),
+                                 number: state.first60SetupPending ? (pages.firstIndex(of: step) ?? 0) + 1 : nil,
+                                 titleOverride: state.first60SetupPending && step == .ready ? "Try it" : nil)
                 }
             }
             .padding(18)
@@ -128,6 +139,8 @@ struct HostRailStep: View {
     let step: HostSetupPage
     let isCurrent: Bool
     let isComplete: Bool
+    var number: Int? = nil
+    var titleOverride: String? = nil
 
     var body: some View {
         HStack(spacing: 10) {
@@ -142,16 +155,16 @@ struct HostRailStep: View {
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(HostTheme.ink)
                 } else {
-                    Text(verbatim: "\(step.rawValue + 1)")
+                    Text(verbatim: "\(number ?? (step.rawValue + 1))")
                         .font(HostType.caption(10))
                         .foregroundStyle(isCurrent ? HostTheme.ink : Farside.Palette.ash)
                 }
             }
             .frame(width: 22, height: 22)
             if isComplete && !isCurrent {
-                Text(step.title).hostCaption(12)
+                Text(titleOverride ?? step.title).hostCaption(12)
             } else {
-                Text(step.title)
+                Text(titleOverride ?? step.title)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(isCurrent ? Farside.Palette.bone : Farside.Palette.ash)
             }
@@ -175,12 +188,15 @@ struct HostDotProgress: View {
     let page: HostSetupPage
     let filled: Int
     let caption: String
+    var first60 = false
+    private var pages: [HostSetupPage] { HostSetupFlow.visiblePages(first60: first60) }
+    private var stepNumber: Int { (pages.firstIndex(of: page) ?? 0) + 1 }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
 
     var body: some View {
         HStack(spacing: 12) {
-            Text(verbatim: "Step \(page.rawValue + 1) of \(HostSetupPage.allCases.count)")
+            Text(verbatim: "Step \(stepNumber) of \(pages.count)")
                 .hostCaption()
                 .fixedSize()
             HStack(spacing: 4) {
@@ -196,7 +212,7 @@ struct HostDotProgress: View {
                 .minimumScaleFactor(0.8)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Step \(page.rawValue + 1) of \(HostSetupPage.allCases.count). \(caption)")
+        .accessibilityLabel("Step \(stepNumber) of \(pages.count). \(caption)")
         .onAppear {
             guard !reduceMotion else { return }
             withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) { pulse = true }
@@ -278,7 +294,10 @@ struct HostPermissionsPage: View {
         VStack(alignment: .leading, spacing: 0) {
             HostHeading(parts: [.display("Two permissions"), .plain(". "), .accent("Then"),
                                 .display(" we stop asking"), .plain(".")], size: 30)
-            HostSetupText.body("Your Mac checks before anything can see or steer it. Good Mac. Switch both on and this window notices by itself.")
+            HostSetupText.body(state.first60SetupPending
+                ? (state.screenRecording.isGranted ? "Now let your iPhone click and type. Accessibility allows control; you can skip it and watch instead."
+                    : "Let your iPhone see this screen. Screen Recording shares your Mac only while an approved phone is connected.")
+                : "Your Mac checks before anything can see or steer it. Good Mac. Switch both on and this window notices by itself.")
                 .padding(.top, 10)
                 .padding(.bottom, updateNotice == nil ? 18 : 10)
             if let updateNotice {
@@ -303,6 +322,7 @@ struct HostPermissionsPage: View {
                     relaunch: actions.relaunch
                 )
                 .accessibilityIdentifier("farside.setup.screenRecording")
+                if !state.first60SetupPending || state.screenRecording.isGranted {
                 HostPermissionRow(
                     title: "Accessibility", reason: "So taps become clicks and typing becomes typing.",
                     symbol: "hand.point.up.left", status: state.accessibility,
@@ -315,8 +335,9 @@ struct HostPermissionsPage: View {
                     open: { actions.openSystemSettings(.accessibility) }
                 )
                 .accessibilityIdentifier("farside.setup.accessibility")
+                }
             }
-            if !state.accessibility.isGranted && !state.accessibilitySkipped {
+            if !state.accessibility.isGranted && !state.accessibilitySkipped && (!state.first60SetupPending || state.screenRecording.isGranted) {
                 HStack(spacing: 6) {
                     Text("Not now?")
                         .font(.system(size: 12.5))
@@ -450,13 +471,13 @@ struct HostPairingPage: View {
     private var code: some View {
         VStack(alignment: .leading, spacing: 0) {
             HostHeading(parts: [.display("One code"), .plain(". "), .accent("No"), .display(" accounts"), .plain(".")])
-            HostSetupText.body("Open Farside on your iPhone, scan this, then approve the phone here. That’s the whole pairing.")
+            HostSetupText.body("Open Farside on your iPhone or iPad, scan this, then approve it here. Keep both devices on the same Wi-Fi.")
                 .padding(.top, 10)
                 .padding(.bottom, 20)
             HStack(alignment: .top, spacing: 22) {
                 qr
                 VStack(alignment: .leading, spacing: 12) {
-                    step("1", "Open Farside on your iPhone")
+                    step("1", "Open Farside on your iPhone or iPad")
                     step("2", "Scan this code")
                     step("3", "Allow the phone here")
                     expiry
@@ -465,7 +486,7 @@ struct HostPairingPage: View {
             }
             if !state.hasPairedPhone {
                 HStack(spacing: 6) {
-                    Text("No iPhone to hand?")
+                    Text("No iPhone or iPad to hand?")
                         .font(.system(size: 12.5))
                         .foregroundStyle(Farside.Palette.ash)
                     Button("Skip for now, and pair later from the menu bar", action: actions.skipPairing)
@@ -503,7 +524,9 @@ struct HostPairingPage: View {
                 .fill(Farside.Palette.bone)
             switch state.pairing {
             case .showingCode(let value, _):
-                if let image = HostQRCode.image(for: value) {
+                let qrValue = state.first60SetupPending
+                    ? (try? PairInvitation.parse(value).cameraCode()) ?? value : value
+                if let image = HostQRCode.image(for: qrValue) {
                     Image(nsImage: image)
                         .interpolation(.none)
                         .resizable()
@@ -657,6 +680,21 @@ struct HostReadyPage: View {
     var body: some View {
         let checks = HostReadyCheck.checks(for: state)
         VStack(alignment: .leading, spacing: 0) {
+            if state.first60SetupPending {
+                HostHeading(parts: [.display("Your Mac"), .accent(" is ready"), .plain(".")])
+                HostSetupText.body(state.first60RemoteDoneAvailable
+                    ? "Move the pointer from your phone or iPad, then click Done below to finish setup."
+                    : "Connect from your phone or iPad to see this Mac. You can finish setup here.")
+                    .padding(.top, 12)
+                if !state.allowControl || !state.accessibility.isGranted || state.captureScopeViewOnly {
+                    HostSetupText.body("Your phone can watch. You can enable control later in Settings.")
+                        .padding(.top, 16)
+                }
+                if state.displays.count > 1 {
+                    HostSetupText.body("This Mac has more than one display. Finish setup here, then choose the display on your phone.")
+                        .padding(.top, 16)
+                }
+            } else {
             HostHeading(parts: HostReadyCheck.isReady(checks)
                 ? [.display("Ready when"), .accent(" you "), .display("are"), .plain(".")]
                 : [.display("Almost"), .accent(" there"), .plain(".")])
@@ -672,6 +710,7 @@ struct HostReadyPage: View {
                 }
             }
             .modifier(HostPlate())
+            }
         }
         .sheet(isPresented: $choosing) {
             HostConsentView(state: state, confirm: { choices in
@@ -681,7 +720,7 @@ struct HostReadyPage: View {
             .interactiveDismissDisabled(state.consentPending)
         }
         .onChange(of: state.consentPending, initial: true) { _, pending in
-            if pending { choosing = true }
+            if pending && !First60.isEnabled() { choosing = true }
         }
     }
 }

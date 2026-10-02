@@ -1,6 +1,49 @@
 import XCTest
 
 final class FarsideRedesignUITests: XCTestCase {
+    @MainActor
+    func testFirstMinuteHomeSharesMacLinkAndKeepsOptionsInMore() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-first60", "-PocketDeskFirstPictureShown", "NO", "-PocketDeskFirst60Disabled", "NO"]
+        app.launch()
+        XCTAssertTrue(app.buttons["home.getMac"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["getfarside.com/mac"].exists)
+        app.buttons["home.getMac"].tap()
+        XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 5)
+                      || app.buttons["Copy"].waitForExistence(timeout: 3), "Get Mac opens the system share sheet")
+        attach("First minute - get Mac share link")
+        app.terminate()
+        app.launchArguments = ["--ui-seed-pairing=First Mac", "--ui-first60", "-PocketDeskFirstPictureShown", "NO", "-PocketDeskFirst60Disabled", "NO"]
+        app.launch()
+        XCTAssertTrue(app.buttons["home.connect"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["home.couch"].exists)
+        XCTAssertFalse(app.switches["home.localOnly"].exists)
+        XCTAssertFalse(app.buttons["home.agentAlerts"].exists)
+        XCTAssertFalse(app.buttons["home.pairedMacs"].exists)
+        app.buttons["Help and more"].tap()
+        XCTAssertTrue(app.buttons["Farside Anywhere"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Settings"].exists)
+        XCTAssertTrue(app.buttons["How to steer"].exists)
+        attach("First minute - later options remain in menu")
+    }
+
+    @MainActor
+    func testFirstMinuteOptionsReturnAfterPictureAndKillSwitchRestoresHome() {
+        let app = XCUIApplication()
+        for arguments in [
+            ["--ui-seed-pairing=First Mac", "--ui-first60", "-PocketDeskFirstPictureShown", "YES", "-PocketDeskFirst60Disabled", "NO"],
+            ["--ui-seed-pairing=First Mac", "--ui-first60", "-PocketDeskFirstPictureShown", "NO", "-PocketDeskFirst60Disabled", "YES"]
+        ] {
+            app.launchArguments = arguments
+            app.launch()
+            XCTAssertTrue(app.buttons["home.couch"].waitForExistence(timeout: 5))
+            let scroll = app.scrollViews.firstMatch
+            for _ in 0..<4 where !app.switches["home.localOnly"].isHittable { scroll.swipeUp() }
+            XCTAssertTrue(app.switches["home.localOnly"].exists)
+            app.terminate()
+        }
+    }
+
     override func setUp() {
         super.setUp()
         continueAfterFailure = false

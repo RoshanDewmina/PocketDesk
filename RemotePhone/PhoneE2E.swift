@@ -79,6 +79,7 @@ final class PhoneE2E: ObservableObject {
     private var timer: Timer?
     private var frames: UInt64 = 0
     private var lastFrameAt: TimeInterval?
+    private var firstFrameUnixTime: TimeInterval?
     private var lastStats: [String: Any]?
     private var maxRenderGapMs: Double = 0
     private var stallsOver1s = 0
@@ -156,6 +157,7 @@ final class PhoneE2E: ObservableObject {
     }
 
     func frameReceived() {
+        if firstFrameUnixTime == nil { firstFrameUnixTime = Date().timeIntervalSince1970 }
         frames &+= 1
         lastFrameAt = ProcessInfo.processInfo.systemUptime
     }
@@ -230,6 +232,7 @@ final class PhoneE2E: ObservableObject {
             "appliedQuality": model.appliedStreamQuality?.rawValue as Any,
             "qualityStatus": model.streamQualityStatus as Any,
             "frames": frames,
+            "firstFrameUnixTime": firstFrameUnixTime as Any,
             "lastFrameAgeMs": lastFrameAt.map { (now - $0) * 1000 } as Any,
             "stats": lastStats ?? [:],
             "codecProbe": NativeCodecCapability.outcomeDescription,

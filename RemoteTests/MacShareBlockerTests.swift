@@ -3,6 +3,27 @@ import Foundation
 
 @MainActor
 final class MacShareBlockerTests: XCTestCase {
+    func testFirst60OptInPreservesEightFeatureBoundAndKillSwitch() throws {
+        let suite = "farside.first60.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let request = MacShareBlocker.Handshake.phoneRequest([SessionFeature.videoRefinement], defaults: defaults)
+        XCTAssertEqual(request.features.count, 8)
+        XCTAssertTrue(MacShareBlocker.Handshake.supportsFirst60(in: try JSONEncoder().encode(request)))
+        defaults.set(true, forKey: First60.disabledDefaultsKey)
+        let disabled = MacShareBlocker.Handshake.phoneRequest([], defaults: defaults)
+        XCTAssertNil(disabled.first60)
+        XCTAssertFalse(MacShareBlocker.Handshake.supportsFirst60(in: try JSONEncoder().encode(disabled)))
+        XCTAssertFalse(MacShareBlocker.Handshake.supportsFirst60(in: try JSONEncoder().encode(
+            MacShareBlocker.Handshake(features: Array(repeating: "f", count: 9), first60: true))))
+    }
+
+    func testFirst60StatusCannotClaimPermissionsWhileClosedOrReadyWithoutCaptureGrant() {
+        XCTAssertThrowsError(try First60SetupStatus(open: false, permission: .init(stage: .accessibility), mediaReady: true).validate())
+        XCTAssertThrowsError(try First60SetupStatus(open: true, permission: .init(stage: .accessibility), mediaReady: false).validate())
+        XCTAssertNoThrow(try First60SetupStatus(open: true, permission: .init(stage: .screenRecording), mediaReady: false).validate())
+    }
+
     private let server = "ws://127.0.0.1:9/signal"
 
     private struct Sealer {

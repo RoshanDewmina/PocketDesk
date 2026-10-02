@@ -27,6 +27,7 @@ enum MacShareBlocker: String, Codable, Equatable {
     struct Handshake: Codable, Equatable {
         var features: [String]
         var mode: String? = nil
+        var first60: Bool? = nil
         /// Opt-in requests outside the eight-name feature bound. Older Macs ignore the key, and too
         /// many options are dropped on their own without touching `features`.
         var options: [String]? = nil
@@ -43,7 +44,7 @@ enum MacShareBlocker: String, Codable, Equatable {
                 + (!defaults.bool(forKey: "phoneAudioRequestDisabled") ? [SessionFeature.phoneAudio] : [])
                 + (DeliberateSessionEnd.isEnabled(defaults) ? [SessionFeature.deliberateEnd] : [])
             return Handshake(features: phone.features + (optional.contains(SessionFeature.videoRefinement) ? [SessionFeature.videoRefinement] : []),
-                             mode: mode, options: options.isEmpty ? nil : options)
+                             mode: mode, first60: First60.isEnabled(defaults) ? true : nil, options: options.isEmpty ? nil : options)
         }
         var requested: Set<String> { Set(features + (options ?? [])) }
 
@@ -52,6 +53,13 @@ enum MacShareBlocker: String, Codable, Equatable {
                   let decoded = try? JSONDecoder().decode(Handshake.self, from: body),
                   decoded.features.count <= 8 else { return .picture }
             return decoded.mode.flatMap(SessionMode.init(rawValue:)) ?? .picture
+        }
+
+        static func supportsFirst60(in body: Data?) -> Bool {
+            guard let body, body.count <= 1024,
+                  let decoded = try? JSONDecoder().decode(Handshake.self, from: body),
+                  decoded.features.count <= 8 else { return false }
+            return decoded.first60 == true
         }
 
         /// At most eight short names, plus at most four options of which only known opt-ins count;

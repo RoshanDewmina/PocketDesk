@@ -50,6 +50,49 @@ final class OwnerLocalCoordinatorTests: XCTestCase {
         phone.stop(); XCTAssertFalse(phone.routeIsLocal)
     }
 
+    func testFirst60WaitPreservesOwnerLocalAuthorityAndDefersPhysicalProofUntilGrant() async throws {
+        final class Counter: @unchecked Sendable {
+            let lock = NSLock()
+            var count = 0
+            func begin() { lock.lock(); count += 1; lock.unlock() }
+            func read() -> Int { lock.lock(); defer { lock.unlock() }; return count }
+        }
+        let counter = Counter(), started = expectation(description: "Proof begins only after Mac grant")
+        let (phone, _, local, invitation) = try fixture { _, _, _, _ in
+            counter.begin(); started.fulfill()
+            return nil // Never touch real interfaces; proof failure must still fail closed.
+        }
+        defer { phone.stop() }
+        phone.setLocalOnly(true); phone.start()
+        local.onAuthenticatedLocalSignaling?(try LocalOwnerChallenge.make(invitation: invitation))
+        local.onMessage?(RelayMessage(type: "peer", online: true))
+        let cipher = try SignalCipher(key: invitation.key, room: invitation.room)
+        let request = try cipher.open(try XCTUnwrap(local.sent.last?.payload), sender: "client")
+        let session = String(repeating: "d", count: 64)
+        func incoming(_ kind: String, body: Data? = nil, sequence: UInt64) throws -> RelayMessage {
+            RelayMessage(type: "signal", payload: try cipher.seal(ProtectedMessage(kind: kind,
+                request: request.request, session: session, sequence: sequence, body: body), sender: "host"))
+        }
+        local.onMessage?(try incoming("challenge", sequence: 0))
+        var accepted = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(invitation)) as? [String: Any])
+        accepted["first60"] = true
+        local.onMessage?(try incoming("accepted", body: JSONSerialization.data(withJSONObject: accepted), sequence: 1))
+        local.onMessage?(try incoming("setupStatus", body: JSONEncoder().encode(First60SetupStatus(
+            open: true, permission: .init(stage: .screenRecording), mediaReady: false)), sequence: 2))
+        for _ in 0..<5 { await Task.yield() }
+        XCTAssertTrue(phone.routeIsLocal); XCTAssertTrue(phone.isRunning)
+        XCTAssertEqual(phone.permissionWait?.stage, .screenRecording)
+        XCTAssertEqual(counter.read(), 0)
+        XCTAssertNil(phone.media); XCTAssertFalse(phone.provenLocalLinkActive)
+        local.onMessage?(try incoming("setupStatus", body: JSONEncoder().encode(First60SetupStatus(
+            open: true, permission: nil, mediaReady: true)), sequence: 3))
+        await fulfillment(of: [started], timeout: 2)
+        XCTAssertEqual(counter.read(), 1)
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertNil(phone.media, "Setup permission readiness cannot replace failed physical local proof")
+        XCTAssertFalse(phone.connected)
+    }
+
     func testModeSwitchRejectsTrailingOldTransportCallbacks() throws {
         let (phone, cloud, local, invitation) = try fixture()
         defer { phone.stop() }

@@ -18,7 +18,8 @@ enum DebugLaunchSeeds {
 
     /// A store that starts with the seeded invitation and forgets it when the app quits.
     static func store() -> (any PairPersistence)? {
-        invitation.map { InMemoryPairStore(invitation: $0) }
+        if LaunchOptions.has("--ui-first60"), invitation == nil { return InMemoryPairStore(invitation: nil) }
+        return invitation.map { InMemoryPairStore(invitation: $0) }
     }
 
     /// Presents what a notification tap or the Home row would, for captures and UI tests:
@@ -73,8 +74,8 @@ enum DebugLaunchSeeds {
 final class InMemoryPairStore: PairPersistence {
     private var data: Data?
 
-    init(invitation: PairInvitation) {
-        data = try? JSONEncoder().encode(invitation)
+    init(invitation: PairInvitation?) {
+        data = invitation.flatMap { try? JSONEncoder().encode($0) }
     }
 
     func save<T: Encodable>(_ value: T) throws { data = try JSONEncoder().encode(value) }

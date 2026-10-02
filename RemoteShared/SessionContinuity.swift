@@ -61,6 +61,39 @@ enum SessionFeature {
     static let host = [phoneAudio, clipboardSync, causalInput, liveViewOnly, captureScope, inputReceipt, pencilInput, videoLTR, videoRefinement, exactVideoTiming, hostMomentum] + legacyHost
 }
 
+/// The first-minute flow is negotiated outside the capped feature list.
+enum First60 {
+    static let disabledDefaultsKey = "PocketDeskFirst60Disabled"
+    static let finishedDefaultsKey = "PocketDeskFirst60SetupFinished"
+    static let permissionTimeoutNanoseconds: UInt64 = 300_000_000_000
+    static func isEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        !defaults.bool(forKey: disabledDefaultsKey)
+    }
+}
+
+struct First60PermissionWait: Codable, Equatable {
+    enum Stage: String, Codable { case screenRecording, accessibility }
+    var stage: Stage
+    var message: String {
+        switch stage {
+        case .screenRecording: "On your Mac, allow Screen Recording to see its screen."
+        case .accessibility: "On your Mac, allow Accessibility to steer it."
+        }
+    }
+}
+
+/// Sealed, replay-checked Mac status. It conveys no input or route authority.
+struct First60SetupStatus: Codable, Equatable {
+    var version: Int = 1
+    var open: Bool
+    var permission: First60PermissionWait?
+    var mediaReady: Bool
+    func validate() throws {
+        guard version == 1, open || permission == nil,
+              mediaReady || permission?.stage == .screenRecording else { throw RemoteError.invalidMessage }
+    }
+}
+
 /// Availability the Mac itself reports on `capture` status. The phone states only these as
 /// fact; without one, it must not guess whether the Mac is asleep or locked.
 enum HostPresence: String {

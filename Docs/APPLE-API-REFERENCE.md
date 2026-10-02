@@ -1,3 +1,7 @@
+# B8 first-minute freshness — 2 October 2026
+
+Re-fetched live iOS/iPadOS27 release notes and ShareLink Markdown over verified HTTPS; receipts /Volumes/Studio/Development/Caches/b8-first60/logs/apple/. ShareLink is iOS16+, below deployment26. Xcode27.0/27A266a, macOS27.0.1/26A434, WebRTC153.0.0 and Sparkle2.10.0 verified. Local Network and permission-wait implementation has its own focused freshness records pending. Live getfarside.com/mac responds302 to /#beta and200. No website publication or physical permission acceptance implied.
+
 # Batch 7b integration freshness — 2 October 2026
 
 Verified Xcode27.0/27A266a and macOS27.0.1/26A434. Live TLS Markdown re-fetched macOS/iOS27 release notes, CGDisplayRegisterReconfigurationCallback and privacy collected-data type; receipts `/Volumes/Studio/Development/Caches/batch7b-logs/apple-refresh`. Product Interaction key checked against Apple's current [collected data type documentation](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacycollecteddatatypes/nsprivacycollecteddatatype). No new OS27-only symbol introduced; existing SDK27.1 Duo guards remain. Optional scroll same-size crop/frame ordering remains a physical acceptance risk because configuration completion alone does not prove sample cutover.

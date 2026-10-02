@@ -4,6 +4,25 @@ import XCTest
 final class UsefulSessionEvidenceTests: XCTestCase {
     private let context = UsefulSessionContext(hostRecordID: "host-record", sessionID: UUID(), contentEpoch: 2, geometryEpoch: 4)
     private func id(_ value: Int) -> String { String(format: "%032x", value) }
+    func testFirstPictureHoldReleasesAtOneSecondOrConfirmedSettlement() {
+        var gate = FirstPictureSettlement()
+        gate.begin(at: 10, hold: true)
+        XCTAssertFalse(gate.refresh(at: 10.999, settled: false))
+        XCTAssertTrue(gate.refresh(at: 11, settled: false))
+        XCTAssertNil(gate.deadline)
+        gate.begin(at: 20, hold: true)
+        XCTAssertTrue(gate.refresh(at: 20.3, settled: true))
+        XCTAssertNil(gate.deadline)
+    }
+    func testFirstPictureCancellationAndCompletedSessionNeverRehold() {
+        var gate = FirstPictureSettlement()
+        gate.begin(at: 10, hold: true)
+        gate.cancel()
+        XCTAssertFalse(gate.refresh(at: 12, settled: false), "Retired work cannot reopen a session")
+        gate.begin(at: 20, hold: false)
+        XCTAssertTrue(gate.ready, "A held reconnect, completed first session, Couch or rollback opens normally")
+        XCTAssertNil(gate.deadline)
+    }
     func testOnlyExactAcceptedAppliedReceiptIsUseful() throws {
         var tracker = AppliedInputReceiptTracker()
         let request = try XCTUnwrap(tracker.reserve(kind: "click", context: context, at: 10, requestID: id(1)))

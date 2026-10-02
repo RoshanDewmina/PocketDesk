@@ -1,6 +1,28 @@
 import XCTest
 
 final class HostOnboardingTests: XCTestCase {
+    func testFirst60ShowsActionableQRBeforeMissingPermissions() {
+        var state = HostViewState()
+        state.first60SetupPending = true
+        state.screenRecording = .denied; state.accessibility = .denied
+        state.setupStep = .pairPhone
+        XCTAssertEqual(HostSetupFlow.initialPage(for: state), .pair)
+        XCTAssertEqual(HostSetupFlow.visiblePages(first60: true), [.pair, .permissions, .ready])
+        state.hasPairedPhone = true; state.setupStep = .screenRecording
+        XCTAssertEqual(HostSetupFlow.first60Page(for: state), .permissions)
+        state.screenRecording = .granted
+        XCTAssertEqual(HostSetupFlow.first60Page(for: state), .permissions)
+        state.accessibilitySkipped = true
+        XCTAssertEqual(HostSetupFlow.first60Page(for: state), .ready)
+    }
+
+    func testFirst60DoesNotPresentAutomaticBackgroundConsent() {
+        XCTAssertFalse(HostLaunchPolicy.presentsConsent(step: .done, consentPending: true, first60: true,
+                                                        launchedAsLoginItem: false, loginItemRegistered: false))
+        XCTAssertTrue(HostLaunchPolicy.presentsConsent(step: .done, consentPending: true, first60: false,
+                                                       launchedAsLoginItem: false, loginItemRegistered: false))
+    }
+
     // MARK: Permissions name what System Settings shows
 
     func testPaneTitlesFollowTheMacOSThatShowsThem() {

@@ -319,6 +319,20 @@ enum HostSetupPage: Int, CaseIterable, Comparable, Identifiable {
 }
 
 enum HostSetupFlow {
+    static func first60Page(for state: HostViewState) -> HostSetupPage {
+        if !state.hasPairedPhone || state.pairingRequested {
+            return state.pairingDeferred ? .ready : .pair
+        }
+        if !state.screenRecording.isGranted || (!state.accessibility.isGranted && !state.accessibilitySkipped && state.allowControl) {
+            return .permissions
+        }
+        return .ready
+    }
+
+    static func visiblePages(first60: Bool) -> [HostSetupPage] {
+        first60 ? [.pair, .permissions, .ready] : HostSetupPage.allCases
+    }
+
     static func furthestPage(for step: HostSetupStep, pairingDeferred: Bool = false) -> HostSetupPage {
         switch step {
         case .screenRecording, .accessibility: .permissions
@@ -329,6 +343,7 @@ enum HostSetupFlow {
 
     /// A first run starts with Hello; anything else opens where setup needs attention.
     static func initialPage(for state: HostViewState) -> HostSetupPage {
+        if state.first60SetupPending { return first60Page(for: state) }
         let furthest = furthestPage(for: state.setupStep, pairingDeferred: state.pairingDeferred)
         if furthest == .permissions, !state.screenRecording.isGranted, !state.accessibility.isGranted,
            !state.hasPairedPhone {
@@ -360,6 +375,14 @@ enum HostSetupFlow {
     }
 
     static func isComplete(_ page: HostSetupPage, state: HostViewState, current: HostSetupPage) -> Bool {
+        if state.first60SetupPending {
+            switch page {
+            case .hello: return true
+            case .pair: return state.hasPairedPhone
+            case .permissions: return state.screenRecording.isGranted && (state.accessibility.isGranted || state.accessibilitySkipped || !state.allowControl)
+            case .ready: return false
+            }
+        }
         switch page {
         case .hello: current > .hello || state.setupStep > .screenRecording
         case .permissions: state.setupStep > .accessibility
@@ -385,6 +408,9 @@ enum HostSetupFlow {
     }
 
     static func progressCaption(page: HostSetupPage, state: HostViewState) -> String {
+        if state.first60SetupPending && page == .ready {
+            return state.first60RemoteDoneAvailable ? "Click Done from your device" : "Finish here when you’re ready"
+        }
         switch page {
         case .hello:
             return "About a minute"
