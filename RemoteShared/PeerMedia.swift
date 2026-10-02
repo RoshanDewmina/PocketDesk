@@ -961,7 +961,7 @@ final class PeerMedia: NSObject {
         appliedRate = rate
         if tuning.qualityBitrates {
             let maximum = bandwidthCeilingBps
-            _ = connection?.setBweMinBitrateBps(lanFloorBps.map { NSNumber(value: $0) }, currentBitrateBps: nil,
+            _ = connection?.setBweMinBitrateBps(lanFloorBps.map { NSNumber(value: min($0, maximum)) }, currentBitrateBps: nil,
                                                  maxBitrateBps: NSNumber(value: maximum))
             appliedBweMaxBps = maximum
         }
@@ -988,7 +988,7 @@ final class PeerMedia: NSObject {
               !closed, remoteDescriptionReady else { return }
         let maximum = bandwidthCeilingBps
         guard maximum != appliedBweMaxBps else { return }
-        _ = connection?.setBweMinBitrateBps(lanFloorBps.map { NSNumber(value: $0) }, currentBitrateBps: nil,
+        _ = connection?.setBweMinBitrateBps(lanFloorBps.map { NSNumber(value: min($0, maximum)) }, currentBitrateBps: nil,
                                              maxBitrateBps: NSNumber(value: maximum))
         appliedBweMaxBps = maximum
     }
@@ -997,14 +997,19 @@ final class PeerMedia: NSObject {
     /// carries the floor and the ceiling together: libwebrtc keeps the last settings as a whole.
     private var lanFloorBps: Int?
     private var lanTrust = LANTrustTracker()
+    private var lastRoundTripMeasurements: Double?
 
     /// Judges the link once a second (RTCP round trip when there is one, the STUN one otherwise) and
     /// publishes the verdict; the floor is on while trusted and back to libwebrtc's own minimum the
     /// sample it is not, never above the ceiling, and follows a changed start rate.
     private func followLANFloor(_ stats: inout StreamStatsReport) {
         guard isHost, nativeDesktopCodecs, !closed else { return }
+        // An RTCP round trip repeats until the next receiver report; a repeat is not a second strike.
+        let fresh = stats.rtcpRttMeasurements.map { $0 != lastRoundTripMeasurements } ?? true
+        lastRoundTripMeasurements = stats.rtcpRttMeasurements
         let trusted = lanTrust.observe(provenLocalLink: provenLocalLinkActive, lossPercent: stats.remoteLossPercent,
-                                       rttMs: stats.rtcpRttMs ?? stats.rttMs, pacerDelayMs: stats.pacerDelayMs)
+                                       rttMs: stats.rtcpRttMs ?? stats.rttMs, roundTripFresh: fresh,
+                                       pacerDelayMs: stats.pacerDelayMs)
         stats.lanTrusted = trusted
         guard tuning.qualityBitrates, remoteDescriptionReady,
               var floor = LANBitrateFloor.bps(startBitrateBps: streamQuality.startBitrateBps(for: .lan)) else { return }

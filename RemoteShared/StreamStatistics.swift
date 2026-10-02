@@ -297,6 +297,7 @@ struct StreamStatsReport: Codable, Equatable {
     var remoteLossPercent: Double?
     /// The RTCP receiver report's round trip (about once a second); `rttMs` is the candidate pair's STUN one.
     var rtcpRttMs: Double?
+    var rtcpRttMeasurements: Double?
 
     var receivedFPS: Double?
     var decodedFPS: Double?
@@ -470,6 +471,7 @@ struct StreamStatsReport: Codable, Equatable {
         }
         remoteLossPercent = Self.round(current.remoteInbound?.number("fractionLost").map { $0 * 100 })
         rtcpRttMs = Self.round(current.remoteInbound?.number("roundTripTime").map { $0 * 1000 })
+        rtcpRttMeasurements = current.remoteInbound?.number("roundTripTimeMeasurements")
 
         var sentBytes: Double?
         if let previous, current.timestamp > previous.timestamp {
