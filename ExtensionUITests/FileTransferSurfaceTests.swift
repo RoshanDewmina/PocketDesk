@@ -136,13 +136,23 @@ final class FileTransferSurfaceTests: XCTestCase {
         plan.lifetime = .keepAlways
         add(plan)
 
+        func skipFontCapture(_ reason: String) throws -> Never {
+            let reasons = Dictionary(uniqueKeysWithValues: names.map { ($0, reason) })
+            let data = try JSONSerialization.data(withJSONObject: reasons, options: [.sortedKeys])
+            let diagnostic = XCTAttachment(string: String(decoding: data, as: UTF8.self))
+            diagnostic.name = "missing-capture-reasons"
+            diagnostic.lifetime = .keepAlways
+            add(diagnostic)
+            throw XCTSkip(reason)
+        }
+
         let bundle = Bundle(for: FileTransferSurfaceTests.self)
         let fonts = [("Doto-Variable", Farside.Typeface.dotMatrix),
                      ("InstrumentSerif-Italic", Farside.Typeface.serifItalic)]
         for (resource, face) in fonts {
             guard let url = bundle.url(forResource: resource, withExtension: "ttf")
                 ?? bundle.url(forResource: resource, withExtension: "ttf", subdirectory: "Fonts") else {
-                throw XCTSkip("Connect prompt component needs production font resource \(resource).ttf")
+                try skipFontCapture("Connect prompt component needs production font resource \(resource).ttf")
             }
             // CoreText can synthesize Doto's named variable instances during registration.
             // Verify the exact resolved face below instead of requiring descriptor enumeration.
@@ -151,10 +161,10 @@ final class FileTransferSurfaceTests: XCTestCase {
             let error = registrationError?.takeRetainedValue()
             let alreadyRegistered = error.map { CFErrorGetCode($0) == Int(CTFontManagerError.alreadyRegistered.rawValue) } ?? false
             guard registered || alreadyRegistered else {
-                throw XCTSkip("Connect prompt production font \(resource).ttf could not be registered in this process")
+                try skipFontCapture("Connect prompt production font \(resource).ttf could not be registered in this process")
             }
             guard let resolved = UIFont(name: face, size: 30), resolved.fontName == face else {
-                throw XCTSkip("Connect prompt production font \(face) did not resolve exactly; refusing fallback typography")
+                try skipFontCapture("Connect prompt production font \(face) did not resolve exactly; refusing fallback typography")
             }
         }
 
