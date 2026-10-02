@@ -1,5 +1,6 @@
 import AVKit
 import WebRTC
+import os
 
 /// Class identity is the platform operation identity; injected fixtures never manufacture AVKit objects.
 protocol LivePiPPlatformController: AnyObject {
@@ -73,7 +74,20 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     /// Auto-start (leaving the app with a live session). The root sets this only while its session is live in
     /// picture mode; the OS then starts PiP from the inline layer, `mayStartAutomatically` must still agree, and
     /// `didStartAutomatically` then asks the Mac for live view only (which must confirm, as for a button start).
-    var automaticStartAllowed = false { didSet { applyAutomaticStart() } }
+    var automaticStartAllowed = false {
+        didSet {
+            guard automaticStartAllowed != oldValue else { return }
+            if automaticStartAllowed { MainActor.assumeIsolated { mediaSession.preparePlaybackCategory() } }
+            Self.log.notice("pip auto-start armed=\(self.automaticStartAllowed, privacy: .public) state=\(String(describing: self.policy.state), privacy: .public) possible=\(self.controller?.isPossible ?? false, privacy: .public) category=\(AVAudioSession.sharedInstance().category.rawValue, privacy: .public)")
+            applyAutomaticStart()
+        }
+    }
+    static let log = Logger(subsystem: "com.roshan.PocketDesk.Remote", category: "pip")
+    /// Leaving the app while armed: dictation since arming may have left the category at .record.
+    func prepareForLeaving() {
+        guard automaticStartAllowed else { return }
+        MainActor.assumeIsolated { mediaSession.preparePlaybackCategory() }
+    }
     var mayStartAutomatically: (() -> Bool)?
     var didStartAutomatically: (() -> Void)?
     /// An OS start shows only the last inline frame until the Mac confirms live view only.
@@ -84,6 +98,16 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     private static let automaticStartLimit: TimeInterval = 3
     private func applyAutomaticStart() {
         controller?.setAutomaticStart(automaticStartAllowed && (policy.state == .ready || automaticStartInFlight))
+        controller?.invalidatePlaybackState() // AVKit re-reads "paused": an armed inline source must read as playing.
+    }
+    /// AVKit only auto-starts content that is playing. A prepared (`.ready`) live source used to report paused, so
+    /// leaving the app never started PiP (device 1 Oct 18:16, build .4). It plays while armed or starting.
+    var playbackPaused: Bool {
+        switch policy.state {
+        case .active, .starting: false
+        case .ready: !automaticStartAllowed
+        case .paused, .stopping, .ineligible: true
+        }
     }
     var restoreForeground: ((@escaping (Bool) -> Void) -> Void)?
     var renderSizeChanged: ((CMVideoDimensions) -> Void)?
@@ -250,6 +274,7 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         self.controller?.nativeController === controller
     }
     func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
+        Self.log.notice("pip willStart state=\(String(describing: self.policy.state), privacy: .public) armed=\(self.automaticStartAllowed, privacy: .public)")
         guard matchesNative(controller), policy.state == .ready else { return } // A button start is already .starting.
         beginAutomaticStart(self.controller)
     }
@@ -278,7 +303,10 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     }
     #endif
     func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) { if matchesNative(controller) { stop() } }
-    func pictureInPictureController(_ controller: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) { if matchesNative(controller) { stop() } }
+    func pictureInPictureController(_ controller: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
+        Self.log.error("pip failedToStart \((error as NSError).domain, privacy: .public) \((error as NSError).code, privacy: .public)")
+        if matchesNative(controller) { stop() }
+    }
     func pictureInPictureController(_ controller: AVPictureInPictureController, restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
         guard matchesNative(controller) else { completionHandler(false); return }
         restoreUserInterface(platform: self.controller, native: controller, completionHandler)
@@ -325,7 +353,7 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         guard matchesNative(controller), policy.admission?.permits(at: ProcessInfo.processInfo.systemUptime) == true else { return .invalid }
         return CMTimeRange(start: .zero, duration: .positiveInfinity)
     }
-    func pictureInPictureControllerIsPlaybackPaused(_ controller: AVPictureInPictureController) -> Bool { !matchesNative(controller) || policy.state != .active }
+    func pictureInPictureControllerIsPlaybackPaused(_ controller: AVPictureInPictureController) -> Bool { !matchesNative(controller) || playbackPaused }
     func pictureInPictureController(_ controller: AVPictureInPictureController, didTransitionToRenderSize newRenderSize: CMVideoDimensions) {
         if matchesNative(controller) { renderSizeChanged?(newRenderSize) }
     }

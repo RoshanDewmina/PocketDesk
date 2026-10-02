@@ -132,8 +132,8 @@ final class PhonePresentationLifecycleTests: XCTestCase {
             CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
             CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
             sink.offer(VideoFrameEnvelope(receiptID: UUID(), identity: id,
-                frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixels)), rotation: ._0, timeStampNs: 1),
-                arrivalMs: 1, marker: nil, originalSource: true))
+                frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._90, timeStampNs: 1),
+                arrivalMs: 1, marker: nil, originalSource: true)) // Rotated: exercises the conversion pool, not the direct path.
         }
         func waitFor(_ count: Int) {
             let deadline = Date().addingTimeInterval(3)
@@ -146,6 +146,32 @@ final class PhonePresentationLifecycleTests: XCTestCase {
         sink.setBackground(true)
         try offer(width: 64, height: 40); waitFor(3)
         XCTAssertEqual(sink.enqueued, 3, "the CPU path also converts and enqueues")
+    }
+    /// Jittery PiP 1 Oct 18:1x: every frame went through Core Image (on the CPU in the background). Decoded frames
+    /// the layer can show as they are now skip the conversion.
+    func testPiPSinkHandsDecodedFramesStraightToTheLayer() throws {
+        let id = identity()
+        let admission = VideoPresentationAdmission(identity: id, validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        let sink = LivePiPSampleBufferSink(admission: admission, fence: VideoPresentationFence(admission), center: NotificationCenter())
+        defer { sink.invalidate() }
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 64, 48, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                                           [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+        let buffer = try XCTUnwrap(pixels)
+        CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2, .shouldPropagate)
+        let envelope = VideoFrameEnvelope(receiptID: UUID(), identity: id,
+            frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: 1),
+            arrivalMs: 1, marker: nil, originalSource: true)
+        let decoded = try XCTUnwrap(envelope.pixels)
+        XCTAssertTrue(LivePiPSampleBufferSink.displaysDirectly(decoded, rotation: 0))
+        XCTAssertFalse(LivePiPSampleBufferSink.displaysDirectly(decoded, rotation: 90), "rotation still converts")
+        sink.offer(envelope)
+        let deadline = Date().addingTimeInterval(3)
+        while sink.enqueued < 1, Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
+        XCTAssertEqual(sink.enqueued, 1)
+        XCTAssertEqual(sink.directCount, 1, "no per-frame conversion")
     }
     func testBackgroundRequiresActualActivePiPAndHostAppliedConfirmation() {
         let proof = VideoPresentationAdmission(identity: identity(), validUntil: 12)

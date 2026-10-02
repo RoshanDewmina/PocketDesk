@@ -2,6 +2,7 @@ import AVFoundation
 import CoreImage
 import ImageIO
 import UIKit
+import os
 
 /// One conversion plus one newest pending source. Pool threshold bounds retained output buffers to three.
 final class LivePiPSampleBufferSink: @unchecked Sendable {
@@ -16,6 +17,15 @@ final class LivePiPSampleBufferSink: @unchecked Sendable {
     private lazy var softwareContext = CIContext(options: [.cacheIntermediates: false, .useSoftwareRenderer: true])
     private var background = false
     private var observers: [NSObjectProtocol] = []
+    /// Decoded 4:2:0 or BGRA frames with no crop or rotation go to the layer as they are: no per-frame conversion
+    /// (CPU in the background cost a core and made PiP jittery, device 1 Oct 18:1x). Kill switch, no UI:
+    /// `farsidePiPConvertFrames` YES restores the Core Image conversion for every frame.
+    static let convertFramesKey = "farsidePiPConvertFrames"
+    private let directFrames = !UserDefaults.standard.bool(forKey: LivePiPSampleBufferSink.convertFramesKey)
+    private static let log = Logger(subsystem: "com.roshan.PocketDesk.Remote", category: "pip")
+    private var cadence = (since: 0.0, last: 0.0, frames: 0, maxGap: 0.0, direct: 0)
+    private var directFramesEnqueued = 0
+    var directCount: Int { lock.lock(); defer { lock.unlock() }; return directFramesEnqueued }
     var rendersInSoftware: Bool { lock.lock(); defer { lock.unlock() }; return background }
     func setBackground(_ value: Bool) { lock.lock(); background = value; lock.unlock() }
     private var pending: VideoFrameEnvelope?
@@ -66,17 +76,44 @@ final class LivePiPSampleBufferSink: @unchecked Sendable {
             pending = nil; lock.unlock()
             guard fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, {}) != nil,
                   layer.sampleBufferRenderer.isReadyForMoreMediaData,
-                  let sample = makeSample(frame) else { continue }
+                  let made = makeSample(frame) else { continue }
+            let (sample, direct) = made
             _ = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) {
                 lock.lock(); defer { lock.unlock() }
                 guard conversionEpoch.accepts(generation), !closed else { return }
                 layer.sampleBufferRenderer.enqueue(sample)
                 enqueueCount += 1
+                if direct { cadence.direct += 1; directFramesEnqueued += 1 }
+                noteCadence()
             }
         }
     }
-    private func makeSample(_ frame: VideoFrameEnvelope) -> CMSampleBuffer? {
+    /// Lock held. One line every 5 s while frames flow: enqueue rate, worst gap and path, for device reports.
+    private func noteCadence() {
+        let now = ProcessInfo.processInfo.systemUptime
+        if cadence.frames == 0 { cadence.since = now } else { cadence.maxGap = max(cadence.maxGap, now - cadence.last) }
+        cadence.last = now; cadence.frames += 1
+        guard now - cadence.since >= 5 else { return }
+        let fps = Double(cadence.frames - 1) / (now - cadence.since)
+        Self.log.notice("pip enqueue fps=\(fps, format: .fixed(precision: 1), privacy: .public) maxGapMs=\(Int(self.cadence.maxGap * 1000), privacy: .public) direct=\(self.cadence.direct, privacy: .public)/\(self.cadence.frames, privacy: .public) background=\(self.background, privacy: .public)")
+        cadence = (0, 0, 0, 0, 0)
+    }
+
+    static func displaysDirectly(_ pixels: VideoFrameEnvelope.Pixels, rotation: Int) -> Bool {
+        let buffer = pixels.buffer
+        let format = CVPixelBufferGetPixelFormatType(buffer)
+        return rotation == 0 && CVPixelBufferGetIOSurface(buffer) != nil
+            && [kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                kCVPixelFormatType_32BGRA].contains(format)
+            && pixels.crop == CGRect(x: 0, y: 0, width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer))
+    }
+
+    private func makeSample(_ frame: VideoFrameEnvelope) -> (CMSampleBuffer, Bool)? {
         guard let pixels = frame.pixels, let colorSpace = CGColorSpace(name: CGColorSpace.itur_709) else { return nil }
+        if directFrames, Self.displaysDirectly(pixels, rotation: Int(frame.frame.rotation.rawValue)),
+           let sample = sampleBuffer(for: pixels.buffer) {
+            return (sample, true)
+        }
         let h = CGFloat(CVPixelBufferGetHeight(pixels.buffer))
         let crop = CGRect(x: pixels.crop.minX, y: h - pixels.crop.maxY, width: pixels.crop.width, height: pixels.crop.height)
         let inputSpace = CGColorSpace(name: pixels.transfer == .srgb ? CGColorSpace.sRGB : CGColorSpace.itur_709)!
@@ -108,6 +145,10 @@ final class LivePiPSampleBufferSink: @unchecked Sendable {
         (software ? softwareContext : context).render(image, to: output, bounds: CGRect(origin: .zero, size: size), colorSpace: colorSpace)
         CVBufferSetAttachment(output, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
         CVBufferSetAttachment(output, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+        return sampleBuffer(for: output).map { ($0, false) }
+    }
+
+    private func sampleBuffer(for output: CVPixelBuffer) -> CMSampleBuffer? {
         var format: CMVideoFormatDescription?
         guard CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: output,
               formatDescriptionOut: &format) == noErr, let format else { return nil }
