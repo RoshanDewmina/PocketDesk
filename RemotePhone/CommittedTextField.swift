@@ -92,7 +92,8 @@ struct KeyboardLayoutDock<Content: View>: UIViewControllerRepresentable {
                 let global = host.view.convert(local, to: window)
                 let target = window.hitTest(global, with: nil)
                 let targetClass = target.map { String(describing: type(of: $0)) } ?? "nil"
-                NSLog("%@", "[B7 keyboardHit] point=\(global) hostInside=\(host.view.point(inside: local, with: nil)) parentInside=\(view.point(inside: parent, with: nil)) target=\(targetClass.prefix(100))")
+                let keyboardTarget = target === host.view || target?.isDescendant(of: host.view) == true
+                NSLog("%@", "[B7 keyboardHit] point=\(global) hostInside=\(host.view.point(inside: local, with: nil)) parentInside=\(view.point(inside: parent, with: nil)) keyboardTarget=\(keyboardTarget) parentTarget=\(target === view) target=\(targetClass.prefix(100))")
             }
         }
         #endif
