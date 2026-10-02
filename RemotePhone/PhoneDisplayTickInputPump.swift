@@ -12,6 +12,7 @@ protocol PhoneDisplayTickLink: AnyObject {
 final class PhoneDisplayTickInputPump: NSObject {
     static let optimizationDefaultsKey = "phoneDisplayTickInputPump.optimizedCadenceEnabled"
     static let leadingMotionDefaultsKey = "phoneDisplayTickInputPump.leadingMotionEnabled"
+    static let couchMaximumCadenceDisabledKey = "couchInputMaximumCadenceDisabled"
     static let retainedLinkIdleDuration: TimeInterval = 0.15
 
     struct Configuration {
@@ -35,6 +36,7 @@ final class PhoneDisplayTickInputPump: NSObject {
     }
 
     private var pending: [RemoteAction] = []
+    private var oldestPendingOfferMs: Double?
     private var displayLink: CADisplayLink?
     private var displayLinkTarget: InputTickTarget?
     private var injectedLink: PhoneDisplayTickLink?
@@ -42,9 +44,11 @@ final class PhoneDisplayTickInputPump: NSObject {
     private let configuration: Configuration
     private let optimizedCadenceEnabled: Bool
     private let leadingMotionEnabled: Bool
+    private let couchMaximumCadenceEnabled: Bool
     private var lastActivityTime: TimeInterval?
     private var lastDisplayTickTime: TimeInterval?
     private var burstActive = false
+    private var prefersDisplayMaximum = false
     private var linkGeneration = 0
     var send: (([RemoteAction]) -> Bool)?
     var onFailure: (() -> Void)?
@@ -58,16 +62,23 @@ final class PhoneDisplayTickInputPump: NSObject {
         self.configuration = configuration
         self.optimizedCadenceEnabled = configuration.optimizationEnabled
         self.leadingMotionEnabled = configuration.leadingMotionEnabled
+        self.couchMaximumCadenceEnabled = !configuration.userDefaults.bool(forKey: Self.couchMaximumCadenceDisabledKey)
         super.init()
     }
 
     @discardableResult
-    func offer(_ action: RemoteAction) -> Bool {
+    func offer(_ action: RemoteAction, preferDisplayMaximum: Bool = false) -> Bool {
         guard ["move", "moveTo"].contains(action.action) else { return false }
+        if prefersDisplayMaximum != preferDisplayMaximum {
+            // A mode transition must update the hint without discarding its ordered path.
+            invalidateLink()
+            prefersDisplayMaximum = preferDisplayMaximum
+        }
         let offeredAt = configuration.now()
         if pending.count == InputCausalEnvelope.maximumSegments, !drain() { return false }
         let startsBurst = !burstActive || offeredAt - (lastActivityTime ?? offeredAt) >= configuration.idleRetentionDuration
         burstActive = true
+        if pending.isEmpty, InputCadenceTrace.enabled { oldestPendingOfferMs = offeredAt * 1_000 }
         pending.append(action)
         lastActivityTime = offeredAt
         startLinkIfNeeded()
@@ -83,7 +94,8 @@ final class PhoneDisplayTickInputPump: NSObject {
         guard automaticTicks, displayLink == nil, injectedLink == nil else { return }
         let maximum = Float(max(60, configuration.maximumFramesPerSecond()))
         let range: CAFrameRateRange? = optimizedCadenceEnabled
-            ? CAFrameRateRange(minimum: 60, maximum: maximum, preferred: 60) : nil
+            ? CAFrameRateRange(minimum: 60, maximum: maximum,
+                               preferred: prefersDisplayMaximum && couchMaximumCadenceEnabled ? maximum : 60) : nil
         linkGeneration += 1
         let generation = linkGeneration
         let tick: () -> Void = { [weak self] in
@@ -113,6 +125,10 @@ final class PhoneDisplayTickInputPump: NSObject {
     private func drain() -> Bool {
         guard !pending.isEmpty else { return true }
         let actions = pending; pending.removeAll(keepingCapacity: true)
+        if let oldestPendingOfferMs {
+            InputCadenceTrace.pump(offeredMs: oldestPendingOfferMs, sendMs: configuration.now() * 1_000, count: actions.count)
+        }
+        oldestPendingOfferMs = nil
         let accepted = send?(actions) == true
         if !accepted { cancel(); onFailure?() }
         return accepted
@@ -138,6 +154,7 @@ final class PhoneDisplayTickInputPump: NSObject {
 
     func cancel() {
         pending.removeAll(keepingCapacity: false)
+        oldestPendingOfferMs = nil
         invalidateLink()
         lastActivityTime = nil
         burstActive = false

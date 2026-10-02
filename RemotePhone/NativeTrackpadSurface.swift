@@ -7,6 +7,8 @@ struct NativeTrackpadSurface: UIViewRepresentable {
     var enabled: Bool
     var panMode: Bool
     var direct: Bool = false
+    /// Couch relative pointer samples; Picture retains its existing gesture delivery.
+    var coalescedFingerMotion: Bool = false
     var precision: PrecisionTapTrigger = .off
     var revision: UInt64
     var sensitivity: CGFloat
@@ -45,6 +47,7 @@ struct NativeTrackpadSurface: UIViewRepresentable {
                               doubleClickInterval: doubleClickInterval, direct: direct,
                               precision: direct ? precision : .off)
         view.pencilInputEnabled = pencilEnabled && enabled
+        view.coalescedFingerMotion = coalescedFingerMotion
         view.pencil.configure(enabled: view.pencilInputEnabled, revision: revision)
         view.pencil.send = onPencil
         view.engine.onCommand = onCommand
@@ -74,6 +77,8 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
     let pencil = PencilContactRouter()
     private var pencilTouch: ObjectIdentifier?
     var pencilInputEnabled = false
+    var coalescedFingerMotion = false
+    static let coalescedFingerMotionDisabledKey = "couchCoalescedFingerMotionDisabled"
     var hardwareKeys = false {
         didSet {
             if !hardwareKeys { keyboard.releaseAll() }
@@ -458,6 +463,20 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
         guard pencil.active == nil, !HardwarePeripherals.shared.pointerIsLocked else { return }
         for touch in touches where touch.type == .indirectPointer {
             pointer.moved(to: touch.location(in: self), time: touch.timestamp)
+        }
+        if coalescedFingerMotion,
+           !UserDefaults.standard.bool(forKey: Self.coalescedFingerMotionDisabledKey),
+           contacts.count == 1, touches.count == 1, let touch = touches.first, touch.type == .direct,
+           let contact = contacts[ObjectIdentifier(touch)] {
+            let final = NativeGestureEngine.MotionSample(point: touch.location(in: self), time: touch.timestamp)
+            let samples = (event?.coalescedTouches(for: touch) ?? [touch]).map {
+                NativeGestureEngine.MotionSample(point: $0.location(in: self), time: $0.timestamp)
+            }
+            InputCadenceTrace.touch(ms: touch.timestamp * 1_000, sampleCount: samples.count)
+            if engine.updateCoalescedMotion(id: contact.id, samples: samples, final: final) {
+                refresh(touches)
+                return
+            }
         }
         refresh(touches)
         publish(at: timestamp(touches))

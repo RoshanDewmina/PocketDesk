@@ -491,7 +491,12 @@ final class RemoteCoordinator: ObservableObject {
                                    action: RemoteAction(action: "heartbeat", epoch: envelope.epoch), input: envelope,
                                    inputTiming: phoneInputSendTiming())
         guard let data = try? encodeControlPacket(packet), data.count <= 16384 else { return false }
-        if media?.sendPointer(data) == true { return true }
+        if media?.sendPointer(data) == true {
+            if InputCadenceTrace.enabled {
+                InputCadenceTrace.sent(packet, lane: "pointer", bytes: data.count, buffered: media?.controlBufferedAmount ?? 0)
+            }
+            return true
+        }
         // Opening/congestion/channel loss falls back to the same checkpoint on reliable control.
         return sendMotionPrefix(reliable: true)
     }
@@ -685,8 +690,9 @@ final class RemoteCoordinator: ObservableObject {
     }
 
     private func recordPhoneInputArrival(_ packet: ControlPacket) {
-        guard isHost, Self.isTimingInput(packet), let timing = packet.inputTiming,
-              let arrivedMs = currentControlArrivalMs else { return }
+        guard isHost, Self.isTimingInput(packet), let arrivedMs = currentControlArrivalMs else { return }
+        InputCadenceTrace.arrival(packet, atMs: arrivedMs, lane: packet.input?.kind == "motion" ? "pointer" : "reliable")
+        guard let timing = packet.inputTiming else { return }
         media?.counters.phoneInputArrived(timing: timing, arrivedHostMs: arrivedMs)
     }
 
@@ -712,6 +718,9 @@ final class RemoteCoordinator: ObservableObject {
             guard media?.sendControl(data) == true else {
                 InputLog.log.error("\(self.isHost ? "host" : "phone", privacy: .public) control send failed (\(action.action, privacy: .public)); ending session")
                 peerDisconnected(); return false
+            }
+            if InputCadenceTrace.enabled {
+                InputCadenceTrace.sent(packet, lane: "reliable", bytes: data.count, buffered: media?.controlBufferedAmount ?? 0)
             }
             return true
         } catch { connectionLost(); return false }

@@ -55,6 +55,7 @@ final class HostInputExecutor: @unchecked Sendable {
     }
     @discardableResult
     func submitCausal(_ context: InputCausalEnvelope, steps: [Admitted], semantic: Admitted?, preparation: DispatchGroup? = nil,
+                      traceArrivalMs: Double? = nil,
                       routeAuthority: @escaping (@escaping () -> RemoteInputOutcome) -> RemoteInputOutcome,
                       completion: @escaping (BatchReceipt) -> Void) -> Bool {
         let contextBytes = (try? JSONEncoder().encode(context).count) ?? Self.maximumQueuedBytes + 1
@@ -94,6 +95,8 @@ final class HostInputExecutor: @unchecked Sendable {
                            let expires = missingSteps.map(\.expires).min() {
                             let result = post(Admitted(action: merged.action, upgraded: true, expires: expires), ticket: ticket,
                                               routeAuthority: routeAuthority, pointerSnapshot: merged.base)
+                            InputCadenceTrace.posted(context, ordinal: missing.last!.ordinal, coalesced: missing.count,
+                                startedMs: result.startedMs, endedMs: result.endedMs, accepted: result.outcome.accepted, arrivalMs: traceArrivalMs)
                             results.append((merged.action, result))
                             guard result.outcome.accepted else { throw RemoteError.stale }
                             for segment in missing { try ledger.recordPosted(segment.ordinal) }
@@ -101,6 +104,8 @@ final class HostInputExecutor: @unchecked Sendable {
                         } else {
                             for (segment, admitted) in zip(missing, missingSteps) {
                                 let result = post(admitted, ticket: ticket, routeAuthority: routeAuthority)
+                                InputCadenceTrace.posted(context, ordinal: segment.ordinal, coalesced: 1,
+                                    startedMs: result.startedMs, endedMs: result.endedMs, accepted: result.outcome.accepted, arrivalMs: traceArrivalMs)
                                 results.append((segment.action, result))
                                 guard result.outcome.accepted else { throw RemoteError.stale }
                                 try ledger.recordPosted(segment.ordinal)

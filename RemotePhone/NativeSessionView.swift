@@ -410,7 +410,8 @@ struct NativeSessionView: View {
     private var inputSurface: some View {
             NativeTrackpadSurface(enabled: model.canControl && !panMode && !controlsBlockInput && !showVoiceInput,
                                   panMode: panMode && !couch,
-                                  direct: directTouch && !couch, precision: couch ? .off : precisionTrigger,
+                                  direct: directTouch && !couch, coalescedFingerMotion: couch,
+                                  precision: couch ? .off : precisionTrigger,
                                   revision: model.inputRevision &+ revision,
                                   sensitivity: CGFloat(couch ? sensitivity * CouchTuning.speed : sensitivity),
                                   pointerScale: couch ? 1 : viewport.scale, doubleClickInterval: model.doubleClickInterval,

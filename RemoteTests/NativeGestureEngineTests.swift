@@ -837,6 +837,65 @@ final class NativeGestureEngineTests: XCTestCase {
         XCTAssertEqual(travel(steps: 20, scale: 2) * 2, travel(steps: 20), accuracy: 0.04)
     }
 
+    func testCoalescedSingleFingerPreservesVariableSpeedAndReversalPath() {
+        let samples: [NativeGestureEngine.MotionSample] = [
+            .init(point: CGPoint(x: 12, y: 0), time: 1.01),
+            .init(point: CGPoint(x: 28, y: 0), time: 1.02),
+            .init(point: CGPoint(x: 20, y: 0), time: 1.03),
+            .init(point: CGPoint(x: 19, y: 0), time: 1.04)
+        ]
+        let individual = CommandLog(), batched = CommandLog()
+        let first = engine(individual), second = engine(batched)
+        first.update([touch(1, 0)], at: 1)
+        second.update([touch(1, 0)], at: 1)
+        for sample in samples { first.update([.init(id: 1, point: sample.point)], at: sample.time) }
+        second.updateCoalescedMotion(id: 1, samples: samples, final: samples.last!)
+        XCTAssertEqual(individual.moves, batched.moves)
+        XCTAssertEqual(batched.moves.count, 4)
+        XCTAssertTrue(batched.moves.contains { $0.width < 0 })
+        XCTAssertEqual(batched.clicks, [])
+    }
+
+    func testCoalescedMotionRejectsOldSamplesAndContactReplacementOrMultiTouch() {
+        let log = CommandLog(), input = engine(log)
+        input.update([touch(1, 0)], at: 1)
+        input.update([touch(1, 20)], at: 1.02)
+        let count = log.moves.count
+        let old = NativeGestureEngine.MotionSample(point: CGPoint(x: 200, y: 0), time: 1.01)
+        let final = NativeGestureEngine.MotionSample(point: CGPoint(x: 30, y: 0), time: 1.03)
+        input.updateCoalescedMotion(id: 2, samples: [old], final: final)
+        XCTAssertEqual(log.moves.count, count)
+        input.updateCoalescedMotion(id: 1, samples: [old, final, final], final: final)
+        XCTAssertEqual(log.moves.count, count + 1)
+        input.update([touch(1, 30), touch(2, 60)], at: 1.04)
+        input.updateCoalescedMotion(id: 1, samples: [], final: .init(point: CGPoint(x: 80, y: 0), time: 1.05))
+        XCTAssertEqual(log.moves.count, count + 1)
+        input.update([], at: 1.06, cancelled: true)
+        input.updateCoalescedMotion(id: 1, samples: [], final: .init(point: CGPoint(x: 80, y: 0), time: 1.07))
+        XCTAssertEqual(log.moves.count, count + 1)
+    }
+
+    func testCoalescedMotionKeepsTapSlopAndExactlyOneOwnedDragRelease() {
+        let log = CommandLog(), input = engine(log)
+        input.update([touch(1, 0)], at: 1)
+        input.updateCoalescedMotion(id: 1, samples: [.init(point: CGPoint(x: 3, y: 0), time: 1.01)],
+                                   final: .init(point: CGPoint(x: 7, y: 0), time: 1.02))
+        input.update([], at: 1.03)
+        XCTAssertEqual(log.moves.count, 0)
+        XCTAssertEqual(log.clicks, [1])
+        input.update([touch(2, 0)], at: 1.1)
+        input.tick(at: 1.35)
+        input.updateCoalescedMotion(id: 2, samples: [.init(point: CGPoint(x: 12, y: 0), time: 1.36)],
+                                   final: .init(point: CGPoint(x: 20, y: 0), time: 1.37))
+        input.update([], at: 1.38, cancelled: true)
+        XCTAssertEqual(log.dragBegins, 1)
+        XCTAssertEqual(log.dragEnds, 1)
+        XCTAssertEqual(log.clicks, [1])
+        let count = log.moves.count
+        input.updateCoalescedMotion(id: 2, samples: [], final: .init(point: CGPoint(x: 50, y: 0), time: 1.39))
+        XCTAssertEqual(log.moves.count, count)
+    }
+
     func testPanModeAndViewOnlySuppressRemoteInput() {
         let log = CommandLog()
         let input = engine(log, enabled: false, panMode: true)

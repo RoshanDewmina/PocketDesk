@@ -128,18 +128,61 @@ struct HostInputAccess: Equatable {
 struct HostInputAccessCache {
     private(set) var current: HostInputAccess
     private let probe: () -> HostInputAccess
+    private let postingGrant: HostPostingGrantSnapshot?
+    private let clock: () -> TimeInterval
 
-    init(probe: @escaping () -> HostInputAccess) {
+    init(probe: @escaping () -> HostInputAccess, postingGrant: HostPostingGrantSnapshot? = nil,
+         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.probe = probe
+        self.postingGrant = postingGrant
+        self.clock = clock
+        let observedAt = clock()
         current = probe()
+        postingGrant?.update(current.postEvents, at: observedAt)
     }
 
     /// Asks macOS again. True when either right changed.
     @discardableResult
     mutating func refresh() -> Bool {
+        let observedAt = clock()
         let next = probe()
+        // Equal grants still renew freshness. Use the probe's start time: a blocked check
+        // must not publish an old answer as newly observed permission.
+        postingGrant?.update(next.postEvents, at: observedAt)
         defer { current = next }
         return next != current
+    }
+}
+
+/// A bounded observation for the posting queue, separate from UI permission state. The active
+/// host probes every 250 ms; starvation expires a granted observation instead of retaining it.
+/// This is admission only: macOS still decides whether a CGEvent may enter the event stream.
+final class HostPostingGrantSnapshot: @unchecked Sendable {
+    static let maximumAge: TimeInterval = 0.5
+    static let disabledDefaultsKey = "hostPostingGrantSnapshotDisabled"
+    private let lock = NSLock()
+    private let enabled: Bool
+    private var status: HostPermissionStatus = .unchecked
+    private var observedAt: TimeInterval?
+
+    init(enabled: Bool = !UserDefaults.standard.bool(forKey: HostPostingGrantSnapshot.disabledDefaultsKey)) {
+        self.enabled = enabled
+    }
+
+    func update(_ status: HostPermissionStatus, at now: TimeInterval) {
+        lock.lock(); defer { lock.unlock() }
+        self.status = now.isFinite ? status : .unchecked
+        observedAt = now.isFinite ? now : nil
+    }
+
+    func isGranted(at now: TimeInterval) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard now.isFinite, status.isGranted, let observedAt else { return false }
+        return (0..<Self.maximumAge).contains(now - observedAt)
+    }
+
+    func allowsPosting(at now: TimeInterval, legacyProbe: () -> Bool) -> Bool {
+        enabled ? isGranted(at: now) : legacyProbe()
     }
 }
 

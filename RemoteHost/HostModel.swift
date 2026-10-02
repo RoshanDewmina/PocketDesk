@@ -72,7 +72,9 @@ final class RemoteHostModel: ObservableObject {
     /// Control's truth is the right to post events; Accessibility (AX) is read only for the focus
     /// features and the curtain. Both are cached and refreshed on timers, never per input event.
     @Published private(set) var inputAccess = HostInputAccess.unchecked
-    private var inputAccessCache = HostInputAccessCache(probe: RemoteHostModel.probeInputAccess)
+    private let postingGrantSnapshot = HostPostingGrantSnapshot()
+    private lazy var inputAccessCache = HostInputAccessCache(probe: RemoteHostModel.probeInputAccess,
+                                                            postingGrant: postingGrantSnapshot)
     /// macOS stopped or declined the capture although Screen Recording is granted.
     @Published private(set) var captureApproval = HostCaptureApproval()
     private var captureApprovalCheck: Task<Void, Never>?
@@ -143,7 +145,11 @@ final class RemoteHostModel: ObservableObject {
     #endif
     private var pendingServerRemoval: PendingHostRoomRemoval?
     private var serverRemovalReadFailed = false
-    private let input = HostInputExecutor()
+    private lazy var input = HostInputExecutor(driver: RemoteInputDriver(isTrusted: { [snapshot = postingGrantSnapshot] in
+        snapshot.allowsPosting(at: ProcessInfo.processInfo.systemUptime, legacyProbe: {
+            InputCadenceTrace.permission("post-legacy", probe: CGPreflightPostEventAccess)
+        })
+    }))
     private let capture = RemoteCapture()
     private let guests = HostGuestController()
     private var guestContext: HostGuestContext? {
@@ -350,8 +356,8 @@ final class RemoteHostModel: ObservableObject {
     var controlPermission: HostPermissionStatus { inputAccess.postEvents }
 
     nonisolated static func probeInputAccess() -> HostInputAccess {
-        HostInputAccess(postEvents: CGPreflightPostEventAccess() ? .granted : .denied,
-                        accessibility: AXIsProcessTrusted() ? .granted : .denied)
+        HostInputAccess(postEvents: InputCadenceTrace.permission("post", probe: CGPreflightPostEventAccess) ? .granted : .denied,
+                        accessibility: InputCadenceTrace.permission("AX", probe: AXIsProcessTrusted) ? .granted : .denied)
     }
     var hasPairedPhone: Bool { connection.hostPair?.paired == true }
     var serviceAddress: String? {
@@ -1956,7 +1962,7 @@ final class RemoteHostModel: ObservableObject {
 
     private func pollPermissions() {
         if serverRemovalReadFailed { loadPendingServerRemoval() }
-        let screen: HostPermissionStatus = CGPreflightScreenCaptureAccess() ? .granted : .denied
+        let screen: HostPermissionStatus = InputCadenceTrace.permission("screen", probe: CGPreflightScreenCaptureAccess) ? .granted : .denied
         let screenChanged = screen != screenRecordingPermission
         if screenChanged {
             screenRecordingPermission = screen
@@ -2229,6 +2235,9 @@ final class RemoteHostModel: ObservableObject {
 
     private func startLifecycleTimer() {
         lifecycleTimer?.invalidate()
+        // Idle checks are one second apart; refresh before enabling an active session so the
+        // posting queue never starts with an expired observation from the idle interval.
+        refreshInputAccess()
         let lifecycleTimer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
@@ -2508,7 +2517,7 @@ final class RemoteHostModel: ObservableObject {
         let preparation = semantic.map { $0.action == "key" && $0.key == "c" && $0.modifiers == ["command"] } == true && input.enabled
             ? clipboard.prepareForCopyShortcut(automatic: automaticClipboardAllowed) : nil
         let accepted = input.post(owner: self, peer: peer, isLive: { $0.connection.media === $1 }, submit: { [input] authority, completion in
-            input.submitCausal(context, steps: steps, semantic: admittedSemantic, preparation: preparation,
+            input.submitCausal(context, steps: steps, semantic: admittedSemantic, preparation: preparation, traceArrivalMs: arrivedMs,
                                routeAuthority: authority, completion: completion)
         }, deliver: { (model: RemoteHostModel, receipt: HostInputExecutor.BatchReceipt) in
             guard model.input.currentGeneration == receipt.generation else { return }
