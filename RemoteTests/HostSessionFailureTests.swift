@@ -7,6 +7,7 @@ import Foundation
 final class HostSessionFailureTests: XCTestCase {
     func testResetRejectsRetirementControlAndNestedReset() {
         let phone = RemoteCoordinator(isHost: false, store: MemoryPairStore(), retryLimit: 0)
+        defer { phone.onPresentationInvalidated = nil; phone.stop() }
         phone.startInputFixtureForTesting(session: "retirement-fixture")
         var sent = 0
         var retirements = 0
