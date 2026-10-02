@@ -14,6 +14,13 @@ final class SessionDiagnosticsTests: XCTestCase {
         XCTAssertNoThrow(try decoded.validate())
         let roundTrip = try JSONDecoder().decode(SessionDiagnosticReport.self, from: JSONEncoder().encode(report))
         XCTAssertEqual(roundTrip, report)
+
+        // A fact that is not even an object cannot be skipped; the report is corrupt, never a hang.
+        for junk in [NSNull(), 7, "text"] as [Any] {
+            json["facts"] = facts + [junk]
+            XCTAssertThrowsError(try JSONDecoder().decode(SessionDiagnosticReport.self,
+                                                          from: JSONSerialization.data(withJSONObject: json)))
+        }
     }
 
     func testProbeBoundedSpacingBindingDuplicatesCancelAndTimeout() {

@@ -1334,7 +1334,8 @@ final class PhoneRemoteModel: ObservableObject {
     }
     private var bigTextPendingRequest: BigTextRequest?
     private var bigTextTimedOut: (request: BigTextRequest, noticeGeneration: UInt64)?
-    private var sessionNoticeGeneration: UInt64 = 0
+    /// Advances on every notice shown; tests use it to prove a message produced no new notice.
+    private(set) var sessionNoticeGeneration: UInt64 = 0
     static let bigTextDebounce: Duration = .milliseconds(600)
     static let bigTextTimeout: TimeInterval = 8
 

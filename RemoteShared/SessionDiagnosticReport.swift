@@ -127,12 +127,28 @@ struct SessionDiagnosticReport: Codable, Equatable, Identifiable {
         var list = try container.nestedUnkeyedContainer(forKey: .facts)
         var known: [DiagnosticFact] = []
         while !list.isAtEnd {
-            if let fact = try? list.decode(DiagnosticFact.self) { known.append(fact) } else { _ = try? list.decode(UnknownFact.self) }
+            if let fact = try? list.decode(DiagnosticFact.self) {
+                known.append(fact)
+            } else if (try? list.decode(UnknownFact.self)) == nil {
+                // Only an object can be skipped; anything else never advances the container, so
+                // the report is corrupt and the store deletes it as before.
+                throw DecodingError.dataCorruptedError(in: list, debugDescription: "Unreadable fact")
+            }
         }
         facts = known
     }
 
-    private struct UnknownFact: Decodable {}
+    /// Decodes any JSON object (a fact shape this build does not know) and nothing else; an empty
+    /// struct would accept null, numbers and strings too.
+    private struct UnknownFact: Decodable {
+        private struct Key: CodingKey {
+            var stringValue: String
+            var intValue: Int? { nil }
+            init?(stringValue: String) { self.stringValue = stringValue }
+            init?(intValue: Int) { nil }
+        }
+        init(from decoder: Decoder) throws { _ = try decoder.container(keyedBy: Key.self) }
+    }
 
     init(kind: Kind, outcome: Outcome, seconds: Double, samples: Int, facts: [DiagnosticFact], at: Date = Date()) {
         version = 1; id = UUID(); artifact = .current; createdAt = at; self.kind = kind; self.outcome = outcome

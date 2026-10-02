@@ -1918,13 +1918,13 @@ final class RemoteHostModel: ObservableObject {
     /// Esc ×3 during a live session lifts for that session. During the post-session hold it only
     /// ends the hold; it must not pre-dismiss the next session's curtain.
     private func curtainLiftedLocally() {
-        if active && connection.connected && !curtainRestoreHold {
+        if active && connection.connected {
             curtainLocallyDismissed = true
             events.record(.curtain, "Lifted at the Mac with Esc ×3")
         } else {
-            endCurtainRestoreHold()
             events.record(.curtain, "Uncovered at the Mac with Esc ×3 after the session")
         }
+        endCurtainRestoreHold()
     }
 
     private static func curtainStatus(_ state: PrivacyCurtainState, displays: Int) -> String? {
