@@ -1,8 +1,35 @@
 import XCTest
 import UIKit
+import SwiftUI
 @testable import PocketDeskRemote
 
 final class FarsideDesignTests: XCTestCase {
+    @MainActor
+    func testDeviceWordPreservesPhoneCopyAndNamesIPadInEveryWindowWidth() {
+        XCTAssertEqual(DeviceWord.name(for: .phone), "iPhone")
+        XCTAssertEqual(DeviceWord.name(for: .pad), "iPad")
+        let copy = "Point this iPhone at the code within two minutes."
+        XCTAssertEqual(DeviceWord.copy(copy, idiom: .phone), copy)
+        XCTAssertEqual(DeviceWord.copy(copy, idiom: .pad), "Point this iPad at the code within two minutes.")
+    }
+
+    func testHomeShellUsesRegularWidthAndStacksAtAccessibilitySizes() {
+        XCTAssertTrue(FarsideShellLayout.twoColumns(horizontal: .regular, typeSize: .large, enabled: true))
+        XCTAssertFalse(FarsideShellLayout.twoColumns(horizontal: .compact, typeSize: .large, enabled: true))
+        XCTAssertFalse(FarsideShellLayout.twoColumns(horizontal: .regular, typeSize: .accessibility1, enabled: true))
+        XCTAssertFalse(FarsideShellLayout.twoColumns(horizontal: .regular, typeSize: .large, enabled: false))
+    }
+
+    func testHomeShellColumnsFitIPadMiniAndRespectTheMaximumBand() {
+        let mini = FarsideShellLayout.columns(windowWidth: 744)
+        XCTAssertEqual(mini.leading + mini.trailing + 20 + 40, 744, accuracy: 0.1)
+        XCTAssertGreaterThan(mini.leading, mini.trailing)
+        let wide = FarsideShellLayout.columns(windowWidth: 1376)
+        XCTAssertEqual(wide.leading, 560)
+        XCTAssertEqual(wide.trailing, 400)
+        XCTAssertLessThanOrEqual(wide.leading + wide.trailing + 20 + 40, 1040)
+    }
+
     func testBundledFacesLoadUnderTheNamesTheThemeUses() {
         print("Doto faces:", UIFont.fontNames(forFamilyName: "Doto"), "Instrument Serif faces:",
               UIFont.fontNames(forFamilyName: "Instrument Serif"))

@@ -190,7 +190,7 @@ final class PushRegistrar: ObservableObject {
             try removalStore.save(saved)
         } catch {
             if !volatileRemovals.contains(pending) { volatileRemovals.append(pending) }
-            status = .failed("Alert opt-out could not be saved. Unlock this iPhone and retry.")
+            status = .failed("Alert opt-out could not be saved. Unlock this \(DeviceWord.current) and retry.")
         }
     }
 
@@ -228,7 +228,7 @@ final class PushRegistrar: ObservableObject {
         var saved: [PendingPushDisable]
         do { saved = try removalStore.read([PendingPushDisable].self) ?? [] }
         catch {
-            status = .failed("Alert opt-out is waiting for Keychain. Unlock this iPhone and retry.")
+            status = .failed("Alert opt-out is waiting for Keychain. Unlock this \(DeviceWord.current) and retry.")
             return
         }
         if !normalizedPending, !saved.isEmpty {
@@ -236,7 +236,7 @@ final class PushRegistrar: ObservableObject {
             // earlier beta adapter; the pairing proof alone is sufficient now.
             do { try removalStore.save(saved); normalizedPending = true }
             catch {
-                status = .failed("Alert opt-out is waiting for Keychain. Unlock this iPhone and retry.")
+                status = .failed("Alert opt-out is waiting for Keychain. Unlock this \(DeviceWord.current) and retry.")
                 return
             }
         }
@@ -249,7 +249,7 @@ final class PushRegistrar: ObservableObject {
                     if keep.isEmpty { try removalStore.delete() } else { try removalStore.save(keep) }
                     saved = keep
                 } catch {
-                    status = .failed("Alert preferences are waiting for Keychain. Unlock this iPhone and retry.")
+                    status = .failed("Alert preferences are waiting for Keychain. Unlock this \(DeviceWord.current) and retry.")
                     return
                 }
             }

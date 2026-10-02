@@ -153,7 +153,7 @@ final class AnywhereStore: ObservableObject {
         // Verification links the Apple transaction to this install. A locked Keychain must not
         // initiate a charge that this phone could not subsequently prove to the service.
         guard let token = accountToken() else {
-            purchaseState = .failed("This iPhone couldn’t prepare a secure purchase. Unlock it and try again, or restore an existing plan.")
+            purchaseState = .failed("This \(DeviceWord.current) couldn’t prepare a secure purchase. Unlock it and try again, or restore an existing plan.")
             return
         }
         purchaseState = .purchasing

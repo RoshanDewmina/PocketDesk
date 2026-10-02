@@ -53,7 +53,7 @@ final class MacStatusService {
             return Report(state: .busy, spoken: "\(mac.name) still has a session open. Try again in a moment.")
         case .serviceUnreachable:
             return Report(state: .unreachable,
-                          spoken: "I could not reach the connection service. Check that this iPhone is online.")
+                          spoken: "I could not reach the connection service. Check that this \(DeviceWord.current) is online.")
         }
     }
 

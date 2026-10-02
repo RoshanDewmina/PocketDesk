@@ -13,6 +13,64 @@ final class FarsideRedesignUITests: XCTestCase {
     }
 
     @MainActor
+    func testIPadHomeKeepsConnectLeadingAndUtilitiesBesideTheCard() throws {
+        try requireIPad()
+        let app = XCUIApplication()
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+            XCUIDevice.shared.orientation = orientation
+            app.launchArguments = ["--ui-demo-mac"]
+            app.launch()
+            let connect = app.buttons["home.connect"]
+            let card = app.descendants(matching: .any)["home.mac"].firstMatch
+            let utilities = app.buttons["home.pairedMacs"]
+            XCTAssertTrue(connect.waitForExistence(timeout: 5))
+            XCTAssertTrue(utilities.waitForExistence(timeout: 5))
+            XCTAssertLessThan(connect.frame.maxX, utilities.frame.minX)
+            XCTAssertEqual(card.frame.minY, utilities.frame.minY, accuracy: 4)
+            XCTAssertTrue(connect.isHittable)
+            XCTAssertTrue(app.staticTexts["Paired with this iPad"].exists)
+            attach("iPad Home \(orientation)")
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testIPadHomeAccessibilityStacksUtilitiesBelowConnect() throws {
+        try requireIPad()
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-demo-mac", "-UIPreferredContentSizeCategoryName",
+                               "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        let connect = app.buttons["home.connect"]
+        XCTAssertTrue(connect.waitForExistence(timeout: 5))
+        let utilities = app.buttons["home.pairedMacs"]
+        let scroll = app.scrollViews.firstMatch
+        for _ in 0..<6 where !utilities.isHittable { scroll.swipeUp() }
+        XCTAssertTrue(utilities.isHittable, "Stacked utilities remain reachable")
+        XCTAssertLessThanOrEqual(abs(connect.frame.midX - utilities.frame.midX), 10)
+    }
+
+    @MainActor
+    func testIPadPairingFormCanScrollToTheDeviceSpecificSteps() throws {
+        try requireIPad()
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-pairing-scan", "--ui-camera-priming"]
+        app.launch()
+        XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 5))
+        let step = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Point this iPad")).firstMatch
+        let scroll = app.scrollViews.firstMatch
+        for _ in 0..<5 where !step.isHittable { scroll.swipeUp() }
+        XCTAssertTrue(step.isHittable, "A short form must scroll through both pairing steps")
+        XCTAssertTrue(app.buttons["Cancel"].isHittable)
+        attach("iPad pairing form scrolled")
+    }
+
+    @MainActor
+    private func requireIPad() throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { throw XCTSkip("iPad shell assertion") }
+    }
+
+    @MainActor
     func testKeyboardBarPutsCommandFirstAndInReachInPortrait() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill"]

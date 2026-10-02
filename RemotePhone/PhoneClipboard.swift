@@ -82,7 +82,7 @@ final class PhoneClipboard: ObservableObject {
         } catch ClipboardRefusal.tooLarge {
             post("Clipboard text is too large to send. The limit is 256 KB.", .caution); return
         } catch {
-            post("Your iPhone clipboard has no text to send.", .caution); return
+            post("Your \(DeviceWord.current) clipboard has no text to send.", .caution); return
         }
         sendingChangeCount = usesPhonePasteboard ? (sourceChangeCount ?? pasteboardMetadata().changeCount) : nil
         pending = Pending(transfer: transfer, direction: .toMac, pasteAfter: pasteAfter ?? pasteAfterSending,

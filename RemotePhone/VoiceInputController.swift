@@ -221,7 +221,7 @@ private enum VoiceInputError: LocalizedError {
         switch self {
         case .microphoneDenied: "Allow microphone access in Settings to use voice input."
         case .speechDenied: "Allow speech recognition in Settings to use voice input."
-        case .onDeviceUnavailable: "On-device voice input is unavailable for this iPhone language. You can still type."
+        case .onDeviceUnavailable: "On-device voice input is unavailable for this \(DeviceWord.current) language. You can still type."
         case .microphoneUnavailable: "The microphone is unavailable. Try again when it is free."
         case .cancelled: "Voice input was cancelled."
         }

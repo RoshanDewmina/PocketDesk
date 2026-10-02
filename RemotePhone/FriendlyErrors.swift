@@ -64,7 +64,7 @@ struct FriendlyError: Identifiable, Equatable {
         case .declined: "Declined on the Mac"
         case .approvalTimedOut: "Not approved in time"
         case .verifyFailed, .sessionGlitch: "Stopped to stay safe"
-        case .keychain: "Pairing locked · unlock this iPhone"
+        case .keychain: "Pairing locked · unlock this \(DeviceWord.current)"
         case .codeRejected: "Pairing code not accepted"
         case .relayUnavailable, .serviceNotReady: "Relay unavailable"
         case .unreachable, .connectionLost: "Couldn’t reach it"
@@ -108,7 +108,7 @@ struct FriendlyError: Identifiable, Equatable {
                       message: "\(mac) may be asleep, offline, or Farside isn’t running in its menu bar.",
                       fix: "Check that it’s awake and Farside is open, then try again.",
                       tipTitle: "Same Wi-Fi",
-                      tip: "Free Farside works when your iPhone and Mac share a network.")
+                      tip: "Free Farside works when your \(DeviceWord.current) and Mac share a network.")
     }
 
     /// The service had the Mac's room open but the Mac never answered the handshake: its end of the
@@ -156,7 +156,7 @@ struct FriendlyError: Identifiable, Equatable {
     /// A same-network-only attempt failed, or the service said the connection needs Farside Anywhere,
     /// and this phone has no plan. The Mac may also simply be asleep nearby, so both fixes are named.
     static let needsPlan = FriendlyError(kind: .needsPlan, headline: "Your Mac isn’t on this network", accent: "isn’t",
-                                         message: "Free Farside connects when your iPhone and Mac share a Wi-Fi network, and your Mac didn’t answer on this one.",
+                                         message: "Free Farside connects when your \(DeviceWord.current) and Mac share a Wi-Fi network, and your Mac didn’t answer on this one.",
                                          fix: "If it’s nearby, check it’s awake and on this Wi-Fi. If it’s elsewhere, Farside Anywhere reaches it from any network.",
                                          tipTitle: "Farside Anywhere",
                                          tip: "Cellular or any Wi-Fi, with no VPN or port forwarding. Cancel anytime in Settings.",
@@ -164,7 +164,7 @@ struct FriendlyError: Identifiable, Equatable {
 
     /// The phone has a plan, but the service could not confirm it just now.
     static let anywhereUnverified = FriendlyError(kind: .anywhereUnverified, headline: "Couldn’t confirm Anywhere", accent: "Anywhere",
-                                                  message: "Your plan is active on this iPhone, but Farside’s service couldn’t confirm it just now.",
+                                                  message: "Your plan is active on this \(DeviceWord.current), but Farside’s service couldn’t confirm it just now.",
                                                   fix: "Check your connection and try again. On your Mac’s Wi-Fi, Farside works without it.",
                                                   secondary: .seePlans)
 
@@ -188,7 +188,7 @@ struct FriendlyError: Identifiable, Equatable {
 
     static let keychain = FriendlyError(kind: .keychain, headline: "Could not save this pairing",
                                         message: "iOS didn’t let Farside store the pairing key.",
-                                        fix: "Unlock this iPhone and try again.")
+                                        fix: "Unlock this \(DeviceWord.current) and try again.")
 
     static let relayUnavailable = FriendlyError(kind: .relayUnavailable, headline: "The relay is resting",
                                                 message: "The connection service couldn’t provide a relay route.",
@@ -396,7 +396,7 @@ struct TroubleshootSheet: View {
                     VStack(spacing: 0) {
                         check(1, "\(macName) is awake and unlocked.")
                         check(2, "Farside is running in the Mac’s menu bar.")
-                        check(3, "Your iPhone and Mac are on the same Wi-Fi.")
+                        check(3, "Your \(DeviceWord.current) and Mac are on the same Wi-Fi.")
                         check(4, "Local Network is on for Farside in Settings.")
                         check(5, "Still stuck? Pair again from the Mac’s Farside menu.", last: true)
                     }

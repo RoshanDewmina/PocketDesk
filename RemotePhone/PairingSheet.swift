@@ -16,6 +16,7 @@ struct PairingSheet: View {
     @FocusState private var codeFocused: Bool
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private enum CameraState { case priming, scanning, denied, unavailable }
 
@@ -60,7 +61,7 @@ struct PairingSheet: View {
                     steps
 
                     if let replacing {
-                        Text("Add another Mac. \(replacing) stays paired with this iPhone.")
+                        Text("Add another Mac. \(replacing) stays paired with this \(DeviceWord.current).")
                             .font(.footnote)
                             .foregroundStyle(Farside.Palette.ash)
                             .fixedSize(horizontal: false, vertical: true)
@@ -102,7 +103,7 @@ struct PairingSheet: View {
             Button("Replace pairing") { if model.confirmPairReplacement(pending) { celebrate() } }
             Button("Cancel", role: .cancel) { model.cancelPairReplacement(); entry = .paste }
         } message: { pending in
-            Text("Replace the saved pairing for \(pending.oldName) with this QR for \(pending.approval.enrollment.name)? The current session ends first. Your Mac must still approve this iPhone.")
+            Text("Replace the saved pairing for \(pending.oldName) with this QR for \(pending.approval.enrollment.name)? The current session ends first. Your Mac must still approve this \(DeviceWord.current).")
         }
         .onChange(of: model.pendingPairReplacement?.id) { _, id in showsReplacementConfirmation = id != nil }
         .onChange(of: showsReplacementConfirmation) { _, shown in
@@ -207,7 +208,7 @@ struct PairingSheet: View {
             }
             .frame(maxWidth: .infinity)
             .aspectRatio(1, contentMode: .fit)
-            .frame(maxHeight: 340)
+            .frame(maxHeight: horizontalSizeClass == .regular && FarsideShellLayout.enabled ? nil : 340)
             .background(Color.black, in: .rect(cornerRadius: Farside.Radius.sheet, style: .continuous))
             .clipShape(.rect(cornerRadius: Farside.Radius.sheet, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: Farside.Radius.sheet, style: .continuous).strokeBorder(Farside.Palette.line, lineWidth: 1))
@@ -250,7 +251,7 @@ struct PairingSheet: View {
     private var steps: some View {
         VStack(alignment: .leading, spacing: 0) {
             step(1, "On your Mac, open Farside and choose Pair a phone.")
-            step(2, entry == .scan ? "Point this iPhone at the code within two minutes."
+            step(2, entry == .scan ? "Point this \(DeviceWord.current) at the code within two minutes."
                                    : "Paste the copied code within two minutes.")
             step(3, "Choose Allow on your Mac to finish.", last: true)
         }

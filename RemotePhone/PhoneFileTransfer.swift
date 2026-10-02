@@ -189,7 +189,7 @@ final class PhoneFileTransfer: ObservableObject {
         case (.outgoing, let status):
             post(Self.message(refusal: finish.reason, status: status) ?? Self.message(sending: status), .caution)
         case (.incoming, .stored):
-            post("Saved to Files › On My iPhone › Farside", .success)
+            post("Saved to Files › On My \(DeviceWord.current) › Farside", .success)
             if let url = finish.savedURL { received = ReceivedFile(url: url) }
         case (.incoming, let status):
             post(Self.message(refusal: finish.reason, status: status) ?? Self.message(receiving: status, fileOffered: finish.name != nil), .caution)
@@ -268,8 +268,8 @@ final class PhoneFileTransfer: ObservableObject {
         case .disabled: "File transfer is off on your Mac right now."
         case .notAllowed: "Your Mac isn’t sharing files right now."
         case .busy: "Your Mac is already choosing a file. Finish or cancel it on the Mac."
-        case .diskFull: "Not enough space on this iPhone for that file."
-        case .denied: "Farside couldn’t save the file on this iPhone."
+        case .diskFull: "Not enough space on this \(DeviceWord.current) for that file."
+        case .denied: "Farside couldn’t save the file on this \(DeviceWord.current)."
         case .invalid: "The file didn’t arrive intact, so it was discarded. Try again."
         case .timedOut: fileOffered ? "Your Mac stopped sending the file. Try again." : "Nothing was chosen on your Mac in time."
         case .backgrounded: "Transfer stopped when Farside left the screen. Try again."

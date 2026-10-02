@@ -19,7 +19,7 @@ struct MacEntity: AppEntity {
     var name: String
 
     var displayRepresentation: DisplayRepresentation {
-        DisplayRepresentation(title: "\(name)", subtitle: "Paired with this iPhone",
+        DisplayRepresentation(title: "\(name)", subtitle: "Paired with this \(DeviceWord.current)",
                               image: .init(systemName: "laptopcomputer"))
     }
 

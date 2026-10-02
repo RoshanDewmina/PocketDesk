@@ -141,7 +141,7 @@ struct PermissionPrimingView: View {
                  footnote: "No camera? You can paste the code instead")
         case .localNetwork:
             Copy(heading: "Connect faster at home.", accent: "faster",
-                 body: "When your iPhone and Mac share Wi-Fi, Farside connects to it directly.",
+                 body: "When your \(DeviceWord.current) and Mac share Wi-Fi, Farside connects to it directly.",
                  points: [("wifi", "iOS will ask to find devices on your local network."),
                           ("hand.tap", "Choose Allow so Farside can reach your Mac at home."),
                           ("lock", "Only your paired Mac is contacted. Nothing is scanned or shared.")],
@@ -150,7 +150,7 @@ struct PermissionPrimingView: View {
             Copy(heading: "Two quick permissions.", accent: "quick",
                  body: "Speak and Farside types it on your Mac.",
                  points: [("mic", "The microphone hears you only while the Mic key is lit."),
-                          ("text.bubble", "Speech is turned into text on this iPhone. Audio never leaves it."),
+                          ("text.bubble", "Speech is turned into text on this \(DeviceWord.current). Audio never leaves it."),
                           ("hand.tap", "iOS asks twice: microphone, then speech recognition.")],
                  footnote: "Typing always works without these")
         case .notifications:
