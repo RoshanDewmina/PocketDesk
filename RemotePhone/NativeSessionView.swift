@@ -314,10 +314,10 @@ struct NativeSessionView: View {
         .onChange(of: controlsCollapsed) { _, _ in noteSessionPillActivity() }
         .onChange(of: showControls) { _, _ in noteSessionPillActivity() }
         .task(id: sessionPillIdleKey) {
-            guard regularSessionLayout, controlsCollapsed, !showControls, !keyboardOpen,
-                  !sessionPillPersistent else { return }
+            guard SessionChromePolicy.mayCollapse(regular: regularSessionLayout, controlsCollapsed: controlsCollapsed,
+                                                 showControls: showControls, keyboardOpen: keyboardOpen, persistent: sessionPillPersistent) else { return }
             sessionPillCollapsed = false
-            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            do { try await Task.sleep(for: .seconds(SessionChromePolicy.idleInterval)) } catch { return }
             guard !Task.isCancelled else { return }
             withAnimation(reduceMotion ? nil : Farside.Motion.easeOut()) { sessionPillCollapsed = true }
         }
@@ -881,9 +881,10 @@ struct NativeSessionView: View {
     }
 
     private var sessionPillPersistent: Bool {
-        sessionPillReconnecting || reconnectBack || LaunchOptions.has("--ui-reconnect-back")
-            || sessionPillBusy != nil || sessionPillBigText != nil || model.sessionNotice != nil
-            || panMode || model.captureScopeViewOnly || (connection.connected && model.awayState == .covered)
+        SessionChromePolicy.persistent(reconnecting: sessionPillReconnecting,
+            reconnectBack: reconnectBack || LaunchOptions.has("--ui-reconnect-back"), busy: sessionPillBusy != nil,
+            bigText: sessionPillBigText != nil, notice: model.sessionNotice != nil, pan: panMode,
+            viewOnly: model.captureScopeViewOnly, connected: connection.connected, covered: model.awayState == .covered)
     }
 
     private var sessionPillIdleKey: String {
@@ -1444,7 +1445,7 @@ struct NativeSessionView: View {
 
     private var keyboardBar: some View {
         VStack(spacing: 8) {
-            if !regularHardwareKeyboard {
+            if SessionChromePolicy.keyboardBar(regular: regularSessionLayout, hardware: regularHardwareKeyboard) {
                 HStack(spacing: 8) {
                     Group {
                         if regularSessionLayout {
@@ -3232,8 +3233,8 @@ struct NativeSessionView: View {
             }
         }
         let size = SessionWindowLayout.pictureSize(window: canvasFrame.size, source: model.sourceSize, stacked: nextStacked)
-        let keyboardBottom = regularSessionLayout && !nextStacked && !couch && keyboardOpen && keyboardBarFrame.height > 0
-            ? max(0, canvasFrame.maxY - keyboardBarFrame.minY) : 0
+        let keyboardBottom = SessionChromePolicy.keyboardBottom(regular: regularSessionLayout, stacked: nextStacked,
+            couch: couch, keyboardOpen: keyboardOpen, barFrame: keyboardBarFrame, canvas: canvasFrame)
         // The keyboard takes space from the pad; the top Fit picture stays fixed.
         let insets = nextStacked ? ViewportInsets.zero : ViewportInsets(top: max(0, safeFrame.minY - canvasFrame.minY),
                                     left: max(0, safeFrame.minX - canvasFrame.minX),

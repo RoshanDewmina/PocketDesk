@@ -285,3 +285,74 @@ final class DirectTouchModelTests: XCTestCase {
         XCTAssertEqual(overlay.render?.point, CGPoint(x: 700, y: 420))
     }
 }
+
+
+/// The actual chrome branches use this policy so narrow windows retain their phone behavior.
+final class SessionChromePolicyTests: XCTestCase {
+    func testFormsAndCameraCapRespectWidthAndRollback() {
+        for regular in [false, true] {
+            for enabled in [false, true] {
+                let form = regular && enabled
+                XCTAssertEqual(SessionChromePolicy.form(regular: regular, enabled: enabled), form)
+                XCTAssertEqual(SessionChromePolicy.cameraMaxHeight(regular: regular, enabled: enabled), form ? nil : 340)
+            }
+        }
+    }
+
+    func testOnlyRegularHardwareKeyboardsHideTheKeyBar() {
+        XCTAssertTrue(SessionChromePolicy.keyboardBar(regular: false, hardware: false))
+        XCTAssertTrue(SessionChromePolicy.keyboardBar(regular: false, hardware: true), "Compact windows keep the phone key bar")
+        XCTAssertTrue(SessionChromePolicy.keyboardBar(regular: true, hardware: false))
+        XCTAssertFalse(SessionChromePolicy.keyboardBar(regular: true, hardware: true), "The text field remains; only the keys hide")
+    }
+
+    func testKeyboardRefitsOnlyTheRegularFullBleedPicture() {
+        let canvas = CGRect(x: 0, y: 20, width: 1210, height: 834)
+        let bar = CGRect(x: 0, y: 554, width: 1210, height: 80)
+        for regular in [false, true] {
+            for stacked in [false, true] {
+                for couch in [false, true] {
+                    for open in [false, true] {
+                        let expected: CGFloat = regular && !stacked && !couch && open ? 300 : 0
+                        XCTAssertEqual(SessionChromePolicy.keyboardBottom(regular: regular, stacked: stacked, couch: couch,
+                                                                          keyboardOpen: open, barFrame: bar, canvas: canvas), expected)
+                    }
+                }
+            }
+        }
+        XCTAssertEqual(SessionChromePolicy.keyboardBottom(regular: true, stacked: false, couch: false,
+                                                          keyboardOpen: true, barFrame: .zero, canvas: canvas), 0)
+        XCTAssertEqual(SessionChromePolicy.keyboardBottom(regular: true, stacked: false, couch: false, keyboardOpen: true,
+                                                          barFrame: CGRect(x: 0, y: 900, width: 1210, height: 80), canvas: canvas), 0)
+    }
+
+    func testStatePillsRemainVisibleAndCoveredRequiresConnection() {
+        func persistent(_ state: Int?, connected: Bool = true) -> Bool {
+            SessionChromePolicy.persistent(reconnecting: state == 0, reconnectBack: state == 1, busy: state == 2,
+                                           bigText: state == 3, notice: state == 4, pan: state == 5,
+                                           viewOnly: state == 6, connected: connected, covered: state == 7)
+        }
+        XCTAssertFalse(persistent(nil))
+        for state in 0...7 { XCTAssertTrue(persistent(state), "State \(state) must never collapse") }
+        XCTAssertFalse(persistent(7, connected: false), "A stale curtain state alone is not a live session state")
+        XCTAssertTrue(persistent(0, connected: false), "Reconnect status stays visible without a connection")
+    }
+
+    func testIdleCollapseNeedsAnUnobstructedConnectedPillAndUsesTwoSeconds() {
+        XCTAssertEqual(SessionChromePolicy.idleInterval, 2)
+        for regular in [false, true] {
+            for controlsCollapsed in [false, true] {
+                for showControls in [false, true] {
+                    for keyboardOpen in [false, true] {
+                        for persistent in [false, true] {
+                            XCTAssertEqual(SessionChromePolicy.mayCollapse(regular: regular, controlsCollapsed: controlsCollapsed,
+                                                                          showControls: showControls, keyboardOpen: keyboardOpen,
+                                                                          persistent: persistent),
+                                           regular && controlsCollapsed && !showControls && !keyboardOpen && !persistent)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

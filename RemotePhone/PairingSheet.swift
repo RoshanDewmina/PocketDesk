@@ -208,7 +208,7 @@ struct PairingSheet: View {
             }
             .frame(maxWidth: .infinity)
             .aspectRatio(1, contentMode: .fit)
-            .frame(maxHeight: horizontalSizeClass == .regular && FarsideShellLayout.enabled ? nil : 340)
+            .frame(maxHeight: SessionChromePolicy.cameraMaxHeight(regular: horizontalSizeClass == .regular, enabled: FarsideShellLayout.enabled))
             .background(Color.black, in: .rect(cornerRadius: Farside.Radius.sheet, style: .continuous))
             .clipShape(.rect(cornerRadius: Farside.Radius.sheet, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: Farside.Radius.sheet, style: .continuous).strokeBorder(Farside.Palette.line, lineWidth: 1))

@@ -291,3 +291,36 @@ extension FarsideArt {
         }
     }
 }
+
+
+/// Pure decisions shared by the session chrome and regular-width sheet presentations.
+/// Callers supply the effective width/rollback state; no device idiom or UIKit state is read here.
+enum SessionChromePolicy {
+    static let idleInterval: TimeInterval = 2
+
+    static func form(regular: Bool, enabled: Bool) -> Bool { regular && enabled }
+
+    static func cameraMaxHeight(regular: Bool, enabled: Bool) -> CGFloat? {
+        form(regular: regular, enabled: enabled) ? nil : 340
+    }
+
+    /// Whether the special-key row appears; the text field remains in both cases.
+    static func keyboardBar(regular: Bool, hardware: Bool) -> Bool { !(regular && hardware) }
+
+    static func keyboardBottom(regular: Bool, stacked: Bool, couch: Bool, keyboardOpen: Bool,
+                               barFrame: CGRect, canvas: CGRect) -> CGFloat {
+        guard regular, !stacked, !couch, keyboardOpen, barFrame.height > 0 else { return 0 }
+        return max(0, canvas.maxY - barFrame.minY)
+    }
+
+    static func persistent(reconnecting: Bool, reconnectBack: Bool, busy: Bool, bigText: Bool,
+                           notice: Bool, pan: Bool, viewOnly: Bool, connected: Bool, covered: Bool) -> Bool {
+        reconnecting || reconnectBack || busy || bigText || notice || pan || viewOnly || (connected && covered)
+    }
+
+    /// The idle task restarts on activity; state and open controls never enter its delay.
+    static func mayCollapse(regular: Bool, controlsCollapsed: Bool, showControls: Bool,
+                            keyboardOpen: Bool, persistent: Bool) -> Bool {
+        regular && controlsCollapsed && !showControls && !keyboardOpen && !persistent
+    }
+}

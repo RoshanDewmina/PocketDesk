@@ -196,7 +196,7 @@ private struct FarsideCompactDetentsModifier: ViewModifier {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @ViewBuilder func body(content: Content) -> some View {
-        if horizontalSizeClass == .regular && FarsideShellLayout.enabled {
+        if SessionChromePolicy.form(regular: horizontalSizeClass == .regular, enabled: FarsideShellLayout.enabled) {
             content
         } else {
             content.presentationDetents(detents)
@@ -211,7 +211,7 @@ private struct FarsideSheetModifier: ViewModifier {
     @ViewBuilder func body(content: Content) -> some View {
         let plate = content.presentationBackground(Farside.Palette.void2)
             .presentationCornerRadius(Farside.Radius.sheet)
-        if horizontalSizeClass == .regular && FarsideShellLayout.enabled {
+        if SessionChromePolicy.form(regular: horizontalSizeClass == .regular, enabled: FarsideShellLayout.enabled) {
             plate.presentationSizing(.form)
         } else if regularOnly {
             content
