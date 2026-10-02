@@ -687,6 +687,9 @@ final class SendToMacTests: XCTestCase {
         try SendToMacOutbox.stage(shared, root: root) // Missing payload, as after a failed extension handoff.
         let queue = DispatchQueue(label: "SendToMacTests.failedOpen", qos: .utility)
         let inbox = SendToMacInbox(root: root, useBackgroundIO: true, ioQueue: queue)
+        // Both I/O completions capture the inbox weakly. Retain this fixture across the async
+        // wait instead of allowing ARC to release it after its last use at check().
+        defer { withExtendedLifetime(inbox) {} }
         inbox.updateDestination(target, name: "Studio", liveSessionID: liveID)
         inbox.canSend = { true }
         inbox.prepareFile = { url in
