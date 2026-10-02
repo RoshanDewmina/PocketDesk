@@ -1,6 +1,7 @@
 import XCTest
 import SwiftUI
 import UIKit
+import CoreText
 
 /// Render-only catalogue of production transfer/status and Connect prompt bodies plus inert actions/model shims.
 @MainActor
@@ -134,6 +135,31 @@ final class FileTransferSurfaceTests: XCTestCase {
         plan.name = "capture-plan"
         plan.lifetime = .keepAlways
         add(plan)
+
+        let bundle = Bundle(for: FileTransferSurfaceTests.self)
+        let fonts = [("Doto-Variable", Farside.Typeface.dotMatrix),
+                     ("InstrumentSerif-Italic", Farside.Typeface.serifItalic)]
+        for (resource, face) in fonts {
+            guard let url = bundle.url(forResource: resource, withExtension: "ttf")
+                ?? bundle.url(forResource: resource, withExtension: "ttf", subdirectory: "Fonts") else {
+                throw XCTSkip("Connect prompt component needs production font resource \(resource).ttf")
+            }
+            let descriptors = CTFontManagerCreateFontDescriptorsFromURL(url as CFURL) as? [CTFontDescriptor] ?? []
+            let sourceFaces = descriptors.compactMap { CTFontDescriptorCopyAttribute($0, kCTFontNameAttribute) as? String }
+            guard sourceFaces.contains(face) else {
+                throw XCTSkip("Connect prompt source font \(resource).ttf does not contain PostScript face \(face)")
+            }
+            var registrationError: Unmanaged<CFError>?
+            let registered = CTFontManagerRegisterFontsForURL(url as CFURL, .process, &registrationError)
+            let error = registrationError?.takeRetainedValue()
+            let alreadyRegistered = error.map { CFErrorGetCode($0) == Int(CTFontManagerError.alreadyRegistered.rawValue) } ?? false
+            guard registered || alreadyRegistered else {
+                throw XCTSkip("Connect prompt production font \(resource).ttf could not be registered in this process")
+            }
+            guard let resolved = UIFont(name: face, size: 30), resolved.fontName == face else {
+                throw XCTSkip("Connect prompt production font \(face) did not resolve exactly; refusing fallback typography")
+            }
+        }
 
         // Render the production question body, with inert actions. Native presentation and its
         // public-route failure remain separate evidence; no OS chrome or detents are simulated.
