@@ -3158,7 +3158,8 @@ final class RemoteHostModel: ObservableObject {
                 return sendDisplayList(scaleError: .disabled, scaleRequestID: action.scaleRequestID)
             }
             guard let requested = action.display, let width = action.looksLikeWidth else { return }
-            guard requested == selected, displays.contains(where: { $0.displayID == requested }) else {
+            guard requested == selected, requested == capturedDisplayID,
+                  displays.contains(where: { $0.displayID == requested }) else {
                 return sendDisplayList(scaleError: .unsupported, scaleRequestID: action.scaleRequestID)
             }
             bigText.request(display: requested, looksLikeWidth: width, allowed: preferences.allowBigText,

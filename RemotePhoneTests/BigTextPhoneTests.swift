@@ -11,9 +11,14 @@ final class BigTextPhoneTests: XCTestCase {
     override func setUp() {
         super.setUp()
         defaults = makeTestDefaults("BigTextPhoneTests")
-        model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        model = PhoneRemoteModel(background: FakeBackgroundExecution(),
+                                 coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()))
         model.bigTextMemory = BigTextMemory(defaults: defaults)
         model.bigTextRoomOverride = "room-a"
+        // Existing request/correlation tests exercise the legacy saved-level path.
+        defaults.set(true, forKey: "disableBigTextAutoLevel")
+        model.connection.startInputFixtureForTesting(session: "bigtext")
+        model.connection.inputPacketSenderForTesting = { _ in true }
     }
 
     override func tearDown() {
@@ -33,6 +38,7 @@ final class BigTextPhoneTests: XCTestCase {
     }
 
     private func sendSessionStart(features: [String]) throws {
+        model.connection.startInputFixtureForTesting(session: "bigtext")
         try send(RemoteAction(action: "geometry", x: builtIn.width, y: builtIn.height, epoch: 1))
         try send(RemoteAction(action: "capture", x: 1, epoch: 1, features: features, display: 1))
     }
@@ -48,6 +54,164 @@ final class BigTextPhoneTests: XCTestCase {
     private func connect(features: [String] = [SessionFeature.displayScale], current: Double = 1470) throws {
         try sendSessionStart(features: features)
         try reply(RemoteAction(action: "displays", epoch: 1, displays: [described(current: current)], display: 1))
+    }
+
+    private func recordPackets() -> () -> [ControlPacket] {
+        model.connection.startInputFixtureForTesting(session: "bigtext")
+        var packets: [ControlPacket] = []
+        model.connection.inputPacketSenderForTesting = { packets.append($0); return true }
+        return { packets }
+    }
+
+    func testFirstConnectAutomaticallyAppliesAndSavesAnOfferedLevel() throws {
+        defaults.set(false, forKey: "disableBigTextAutoLevel")
+        try connect()
+        XCTAssertEqual(model.lastBigTextRequest?.display, 1)
+        XCTAssertEqual(model.lastBigTextRequest?.width, 1280)
+        XCTAssertEqual(model.bigText.savedWidth, 1280)
+        XCTAssertEqual(model.bigTextMemory.width(forRoom: "room-a", display: builtIn, among: [builtIn]), 1280)
+        let id = model.lastBigTextRequest?.requestID
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1280)], display: 1, scaleRequestID: id))
+        XCTAssertNil(model.bigText.pendingTarget)
+        XCTAssertEqual(model.bigTextRequestsSent, 1)
+    }
+
+    func testAutoLevelUsesOnlyTheStreamedDisplayAndRemembersManualOverride() async throws {
+        defaults.set(false, forKey: "disableBigTextAutoLevel")
+        try sendSessionStart(features: [SessionFeature.displayScale])
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described(), described(studio)], display: 1))
+        XCTAssertEqual(model.lastBigTextRequest?.display, 1)
+        XCTAssertFalse(model.bigTextMemory.hasSavedChoice(forRoom: "room-a", display: studio, among: [builtIn, studio]))
+        try reply(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1280)], display: 1))
+        model.chooseBigText(1024)
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertEqual(model.lastBigTextRequest?.width, 1024)
+        model.disconnect()
+        try connect()
+        XCTAssertEqual(model.lastBigTextRequest?.width, 1024, "manual override wins on reconnect")
+        XCTAssertEqual(model.bigTextMemory.width(forRoom: "room-a", display: builtIn, among: [builtIn]), 1024)
+    }
+
+    func testExplicitOffIsNotReplacedByAnAutomaticLevelOnReconnect() async throws {
+        defaults.set(false, forKey: "disableBigTextAutoLevel")
+        try connect()
+        try reply(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1280)], display: 1))
+        model.chooseBigText(nil)
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertEqual(model.lastBigTextRequest?.width, 0)
+        model.disconnect()
+        try connect()
+        XCTAssertNil(model.lastBigTextRequest)
+        XCTAssertNil(model.bigText.savedWidth)
+        XCTAssertTrue(model.bigTextMemory.hasSavedChoice(forRoom: "room-a", display: builtIn, among: [builtIn]))
+    }
+
+    func testMacOptOutAndMissingOffersDoNotChooseOrSaveAnAutomaticLevel() throws {
+        defaults.set(false, forKey: "disableBigTextAutoLevel")
+        try connect(features: [])
+        XCTAssertNil(model.lastBigTextRequest)
+        XCTAssertFalse(model.bigTextMemory.hasSavedChoice(forRoom: "room-a", display: builtIn, among: [builtIn]))
+        try sendSessionStart(features: [SessionFeature.displayScale])
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [builtIn], display: 1))
+        XCTAssertNil(model.lastBigTextRequest, "Mac allow/AX withdrawal removes mode metadata")
+        XCTAssertFalse(model.bigTextMemory.hasSavedChoice(forRoom: "room-a", display: builtIn, among: [builtIn]))
+    }
+
+    func testCouchSkipsAutoLevelAndPictureReturnAppliesIt() throws {
+        defaults.set(false, forKey: "disableBigTextAutoLevel")
+        let features = [SessionFeature.displayScale, SessionFeature.couch, SessionFeature.displaySelection]
+        let packets = recordPackets()
+        try sendSessionStart(features: features)
+        XCTAssertEqual(packets().filter { $0.action.action == "displays" }.count, 1)
+        try send(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 1))
+        try send(RemoteAction(action: "capture", x: 1, epoch: 1, features: features, display: 1, mode: "couch"))
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described()], display: 1))
+        XCTAssertNil(model.lastBigTextRequest)
+        XCTAssertFalse(model.bigTextMemory.hasSavedChoice(forRoom: "room-a", display: builtIn, among: [builtIn]))
+        model.chooseBigText(1024)
+        XCTAssertNil(model.bigText.savedWidth, "manual scaling is also unavailable without a picture")
+        try send(RemoteAction(action: "capture", x: 1, epoch: 1, features: features, display: 1, mode: "picture"))
+        XCTAssertEqual(packets().filter { $0.action.action == "displays" }.count, 2,
+                       "picture return requests a fresh catalog before scaling")
+        XCTAssertNil(model.lastBigTextRequest)
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described()], display: 1))
+        XCTAssertEqual(model.lastBigTextRequest?.width, 1280)
+    }
+
+    func testAutomaticLevelWaitsForTheRememberedDisplayBeforeSavingOrScaling() throws {
+        defaults.set(false, forKey: "disableBigTextAutoLevel")
+        model.connection.startAllowed = { false }
+        let invitation = try TestPairing.invitation()
+        try model.connection.enroll(invitation.code())
+        model.bigTextRoomOverride = nil
+        let oldDisplayMemory = UserDefaults.standard.data(forKey: DisplayMemory.defaultsKey)
+        defer {
+            if let oldDisplayMemory { UserDefaults.standard.set(oldDisplayMemory, forKey: DisplayMemory.defaultsKey) }
+            else { UserDefaults.standard.removeObject(forKey: DisplayMemory.defaultsKey) }
+        }
+        DisplayMemory().remember(.init(id: studio.id, name: studio.name), forRoom: invitation.room)
+        model.sceneChanged(.active)
+        let packets = recordPackets()
+        let features = [SessionFeature.displayScale, SessionFeature.displaySelection]
+        try send(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 1))
+        try send(RemoteAction(action: "viewing", x: 1, epoch: 1))
+        try send(RemoteAction(action: "capture", x: 1, epoch: 1, features: features, display: 1))
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described(), studio], display: 1))
+        XCTAssertNil(model.lastBigTextRequest, "initial healthy status precedes the first controllable frame")
+        XCTAssertFalse(model.bigTextMemory.hasSavedChoice(forRoom: invitation.room, display: builtIn, among: [builtIn, studio]))
+        model.frameReceived()
+        model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime)
+        XCTAssertEqual(packets().last { $0.action.action == "display" }?.action.display, studio.id)
+        XCTAssertNil(model.lastBigTextRequest, "selection must finish before scaling")
+        try send(RemoteAction(action: "geometry", x: studio.width, y: studio.height, epoch: 2))
+        try send(RemoteAction(action: "capture", x: 1, epoch: 2, features: features, display: studio.id))
+        try send(RemoteAction(action: "displays", epoch: 2, displays: [described(), described(studio)], display: studio.id))
+        XCTAssertEqual(model.lastBigTextRequest?.display, studio.id)
+        XCTAssertEqual(packets().filter { $0.action.action == "displayScale" }.count, 1)
+        XCTAssertFalse(model.bigTextMemory.hasSavedChoice(forRoom: invitation.room, display: builtIn, among: [builtIn, studio]))
+    }
+
+    func testLiveViewOnlyDefersAutomaticSelectionUntilForegroundViewingReturns() throws {
+        defaults.set(false, forKey: "disableBigTextAutoLevel")
+        let packets = recordPackets()
+        let features = [SessionFeature.displayScale, SessionFeature.liveViewOnly]
+        try send(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 1))
+        try send(RemoteAction(action: "capture", x: 0, epoch: 1, features: features, display: 1))
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described()], display: 1))
+        try send(RemoteAction(action: "capture", liveViewOnly: true, x: 1, epoch: 1, features: features, display: 1))
+        model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime)
+        XCTAssertTrue(packets().allSatisfy { $0.action.action != "displayScale" })
+        XCTAssertFalse(model.bigTextMemory.hasSavedChoice(forRoom: "room-a", display: builtIn, among: [builtIn]))
+        XCTAssertTrue(model.awaitingViewOnlyExitForTesting)
+        let exit = try XCTUnwrap(packets().last { $0.action.action == "viewOnly" && $0.action.liveViewOnly == false })
+        try send(RemoteAction(action: "capture", liveViewOnly: false,
+                             liveViewOnlyRequestID: exit.action.liveViewOnlyRequestID,
+                             x: 1, epoch: 1, features: features, display: 1))
+        XCTAssertFalse(model.awaitingViewOnlyExitForTesting)
+        model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime)
+        XCTAssertEqual(model.lastBigTextRequest?.width, 1280)
+        XCTAssertEqual(packets().filter { $0.action.action == "displayScale" }.count, 1)
+    }
+
+    func testEnteringCouchCancelsADebouncedManualChange() async throws {
+        try connect(current: 1470)
+        model.chooseBigText(1024)
+        try send(RemoteAction(action: "capture", x: 1, epoch: 1,
+                             features: [SessionFeature.displayScale, SessionFeature.couch], display: 1, mode: "couch"))
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertNil(model.lastBigTextRequest)
+        XCTAssertEqual(model.bigText.savedWidth, 1024, "saved for the next picture session")
+    }
+
+    func testAutomaticLevelWaitsForHealthyPicture() throws {
+        defaults.set(false, forKey: "disableBigTextAutoLevel")
+        try send(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 1))
+        try send(RemoteAction(action: "capture", x: 0, epoch: 1, features: [SessionFeature.displayScale], display: 1))
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described()], display: 1))
+        XCTAssertNil(model.lastBigTextRequest)
+        try send(RemoteAction(action: "capture", x: 1, epoch: 1, features: [SessionFeature.displayScale], display: 1))
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described()], display: 1))
+        XCTAssertEqual(model.lastBigTextRequest?.width, 1280)
     }
 
     func testSavedLevelAppliesOnceWhenTheMacSupportsIt() throws {
@@ -158,6 +322,7 @@ final class BigTextPhoneTests: XCTestCase {
         try reply(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1280), described(studio)], display: 1))
         XCTAssertNil(model.lastBigTextRequest)
         try send(RemoteAction(action: "geometry", x: studio.width, y: studio.height, epoch: 2))
+        try send(RemoteAction(action: "capture", x: 1, epoch: 2, features: [SessionFeature.displayScale], display: 7))
         try reply(RemoteAction(action: "displays", epoch: 2, displays: [described(), described(studio)], display: 7))
         XCTAssertEqual(model.lastBigTextRequest?.display, 7)
         XCTAssertEqual(model.lastBigTextRequest?.width, 1024)
@@ -221,6 +386,7 @@ final class BigTextPhoneTests: XCTestCase {
         XCTAssertNil(model.lastBigTextRequest)
         model.setBigTextOffForSession(true)
         try send(RemoteAction(action: "geometry", x: studio.width, y: studio.height, epoch: 2))
+        try send(RemoteAction(action: "capture", x: 1, epoch: 2, features: [SessionFeature.displayScale], display: 7))
         try reply(RemoteAction(action: "displays", epoch: 2,
                               displays: [described(), described(studio, current: 1280)], display: 7))
         XCTAssertEqual(model.lastBigTextRequest?.display, 7)
@@ -232,6 +398,7 @@ final class BigTextPhoneTests: XCTestCase {
         try connect()
         model.chooseBigTextNow(1024)
         try send(RemoteAction(action: "geometry", x: studio.width, y: studio.height, epoch: 2))
+        try send(RemoteAction(action: "capture", x: 1, epoch: 2, features: [SessionFeature.displayScale], display: 7))
         try reply(RemoteAction(action: "displays", epoch: 2,
                               displays: [described(), described(studio, current: 1280)], display: 7, scaleError: "busy"))
         XCTAssertEqual(model.lastBigTextRequest?.width, 1024, "never while a request is pending")

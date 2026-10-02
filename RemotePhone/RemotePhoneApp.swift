@@ -104,15 +104,7 @@ struct BigTextState: Equatable {
 final class PhoneRemoteModel: ObservableObject {
     /// A lost live session keeps retrying for about 90 seconds, long enough for the Mac's
     /// watchdog to relaunch a crashed or hung Farside with the same pairing.
-    #if DEBUG
-    // E2E mode keeps its own trust (see PhoneE2E.swift); a launch that seeds a pairing keeps it in memory.
-    let connection = RemoteCoordinator(isHost: false, store: PhoneE2E.active?.pairStore ?? LaunchSeeds.pairingStore(),
-                                       sessionLossRetryLimit: 24,
-                                       maximumRetryDelayNanoseconds: 4_000_000_000)
-    #else
-    let connection = RemoteCoordinator(isHost: false, sessionLossRetryLimit: 24,
-                                       maximumRetryDelayNanoseconds: 4_000_000_000)
-    #endif
+    let connection: RemoteCoordinator
     let pointerLocator = PointerLocator()
     let pointerOverlay = PointerOverlayModel()
     let clipboard = PhoneClipboard()
@@ -790,7 +782,16 @@ final class PhoneRemoteModel: ObservableObject {
 
     init(background: BackgroundExecution? = nil, resumeStore: SessionResumeStore = SessionResumeStore(),
          macAudioPlayback: PhoneSystemAudioPlayback? = nil, livePiP: LivePiPController? = nil,
-         preferences: UserDefaults = .standard) {
+         preferences: UserDefaults = .standard, coordinator: RemoteCoordinator? = nil) {
+        #if DEBUG
+        // E2E keeps its own trust; launch-seeded and injected test pairings stay isolated.
+        connection = coordinator ?? RemoteCoordinator(isHost: false,
+            store: PhoneE2E.active?.pairStore ?? LaunchSeeds.pairingStore(),
+            sessionLossRetryLimit: 24, maximumRetryDelayNanoseconds: 4_000_000_000)
+        #else
+        connection = coordinator ?? RemoteCoordinator(isHost: false,
+            sessionLossRetryLimit: 24, maximumRetryDelayNanoseconds: 4_000_000_000)
+        #endif
         self.preferences = preferences
         dataWarningGate = DataWarningGate(defaults: preferences)
         streamQuality = StreamQualityPreference.stored(in: preferences)
@@ -1043,6 +1044,19 @@ final class PhoneRemoteModel: ObservableObject {
             couchStalled = false
             cancelInput()
             sessionMode = mode
+            // Couch restores the Mac's normal mode. Wait for a new streamed display list
+            // when picture returns rather than treating cached scale metadata as confirmation.
+            bigTextDisplayID = nil
+            if mode == .picture { displaysRequested = false }
+            bigText.autoApplied = false
+            if mode == .couch {
+                bigTextSendTask?.cancel()
+                bigTextSendTask = nil
+                bigTextPendingRequest = nil
+                bigTextTimedOut = nil
+                bigText.pendingTarget = nil
+                bigText.pendingSince = nil
+            }
         }
         lastOnScreenMode = mode
         connection.sessionModeRequest = mode
@@ -1309,7 +1323,7 @@ final class PhoneRemoteModel: ObservableObject {
     static let bigTextDebounce: Duration = .milliseconds(600)
     static let bigTextTimeout: TimeInterval = 8
 
-    var bigTextSupported: Bool { supports(SessionFeature.displayScale) }
+    var bigTextSupported: Bool { sessionMode == .picture && !captureScopeViewOnly && supports(SessionFeature.displayScale) }
     var showsSharingStoppedCard: Bool { fresh && !captureHealthy && bigText.pendingTarget == nil }
     private var bigTextRoom: String? { bigTextRoomOverride ?? connection.invitation?.room }
     private var currentDescriptor: DisplayDescriptor? { displays.first { $0.id == currentDisplayID } }
@@ -1317,7 +1331,7 @@ final class PhoneRemoteModel: ObservableObject {
     /// Saves the level for this Mac and display now; the Mac is asked after a short pause, so
     /// several quick choices cost one mode change.
     func chooseBigText(_ width: Double?) {
-        guard bigTextSupported, let id = currentDisplayID, let descriptor = currentDescriptor else { return }
+        guard bigTextSupported, pendingModeSwitch == nil, let id = currentDisplayID, let descriptor = currentDescriptor else { return }
         if let room = bigTextRoom { bigTextMemory.remember(width, forRoom: room, display: descriptor, among: displays) }
         bigText.savedWidth = width
         bigText.sessionOff = false
@@ -1326,7 +1340,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     func setBigTextOffForSession(_ off: Bool) {
-        guard bigTextSupported, let id = currentDisplayID else { return }
+        guard bigTextSupported, pendingModeSwitch == nil, let id = currentDisplayID else { return }
         bigText.sessionOff = off
         bigText.autoApplied = true
         scheduleBigText(display: id, width: off ? 0 : (bigText.savedWidth ?? 0))
@@ -1370,6 +1384,8 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     private func sendBigText(display: UInt32, width: Double) {
+        guard bigTextSupported, pendingModeSwitch == nil, currentDisplayID == display,
+              !viewOnlyConfirmed, !pendingViewOnlyStart, !awaitingViewOnlyExit, !pipBackground else { return }
         if let timedOut = bigTextTimedOut, sessionNoticeGeneration == timedOut.noticeGeneration {
             sessionNoticeTask?.cancel()
             sessionNotice = nil
@@ -1433,8 +1449,26 @@ final class PhoneRemoteModel: ObservableObject {
 
     private func applySavedBigText() {
         guard bigTextSupported, !bigText.autoApplied, bigText.pendingTarget == nil, bigTextSendTask == nil,
+              captureHealthy, pendingModeSwitch == nil, pendingDisplayID == nil,
+              !viewOnlyConfirmed, !pendingViewOnlyStart, !awaitingViewOnlyExit, !pipBackground,
               let baseline = bigText.baselineWidth, let current = bigText.currentWidth,
               let id = currentDisplayID, id == bigTextDisplayID else { return }
+        // The healthy status can precede the first video frame/token needed to select a
+        // remembered monitor. Do not resize/save a temporary initial display on that path.
+        if !rememberedDisplayApplied, controlAllowed, displaySelectionSupported,
+           let room = connection.invitation?.room,
+           let wanted = DisplayMemory.match(displayMemory.choice(forRoom: room), in: displays), wanted.id != id { return }
+        if !bigText.sessionOff, bigText.savedWidth == nil,
+           !bigTextMemory.defaults.bool(forKey: BigTextAutoLevel.disabledKey),
+           let room = bigTextRoom, let descriptor = currentDescriptor,
+           !bigTextMemory.hasSavedChoice(forRoom: room, display: descriptor, among: displays) {
+            // The scene may not exist when the first host status arrives; the normal tick retries.
+            guard let phonePixels = screenPixels() else { return }
+            if let width = BigTextAutoLevel.choose(phonePixels: phonePixels, baselineWidth: baseline, steps: bigText.steps) {
+                bigTextMemory.remember(width, forRoom: room, display: descriptor, among: displays)
+                bigText.savedWidth = width
+            }
+        }
         bigText.autoApplied = true
         // A different phone may have left its level during the host's disconnect grace.
         guard !bigText.sessionOff, let saved = bigText.savedWidth else {
