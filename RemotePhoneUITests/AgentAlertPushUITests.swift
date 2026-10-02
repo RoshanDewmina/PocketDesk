@@ -43,7 +43,13 @@ final class AgentAlertPushUITests: XCTestCase {
         XCTAssertTrue(app.buttons["home.agentAlerts"].waitForExistence(timeout: 10), "Home is showing")
         // iOS asks once per install; a simulator that already answered goes straight on.
         let allow = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Allow"]
-        if allow.waitForExistence(timeout: 8) { allow.tap() }
+        if allow.waitForExistence(timeout: 8) {
+            let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            let notificationCopy = system.alerts.firstMatch.descendants(matching: .any)
+                .matching(NSPredicate(format: "label CONTAINS[c] %@", "notifications")).firstMatch
+            if notificationCopy.exists { attach("System notification permission") }
+            allow.tap()
+        }
         Thread.sleep(forTimeInterval: 1.0)
 
         let ready = environment["FARSIDE_PUSH_READY_FILE"] ?? "/tmp/farside-push-ready"
