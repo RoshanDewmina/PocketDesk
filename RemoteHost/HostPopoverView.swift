@@ -27,9 +27,9 @@ struct HostPopoverView: View {
     var body: some View {
         let presentation = HostPopoverPresentation.make(for: state, now: now ?? Date())
         let maximum = HostPopoverPolicy.maximumHeight(visibleHeight: visibleHeightOverride ?? visibleHeight)
-        // Retain a conservative reserve when Stop expands into confirmation; preferences arrive
-        // one layout pass later. Larger measured footers still increase the reserve.
-        let actionsHeight = max(measuredHeights["actions"] ?? 0, 240)
+        // Reserve confirmation space in the same pass that Stop opens, before preferences arrive.
+        // Once normal actions are measured, return their unused reserve to scrolling details.
+        let actionsHeight = max(measuredHeights["actions"] ?? 240, confirmingStop ? 240 : 0)
         let headerHeight = HostPopoverPolicy.headerHeight(
             content: measuredHeights["naturalWho"] ?? 100, actions: actionsHeight, maximum: maximum)
         VStack(alignment: .leading, spacing: 0) {
