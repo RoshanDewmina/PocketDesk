@@ -2,6 +2,67 @@ import XCTest
 import UIKit
 @testable import PocketDeskRemote
 
+final class SessionWindowLayoutTests: XCTestCase {
+    private let mac = CGSize(width: 1440, height: 900)
+
+    func testCompactWindowsAlwaysKeepThePhoneLayout() {
+        for window in [CGSize(width: 390, height: 844), CGSize(width: 600, height: 834)] {
+            XCTAssertFalse(SessionWindowLayout.stacked(regular: false, window: window, source: mac, wasStacked: true))
+        }
+    }
+
+    func testRegularWindowBandsFollowPictureCoverage() {
+        for window in [CGSize(width: 744, height: 1133), CGSize(width: 834, height: 1210),
+                       CGSize(width: 1032, height: 1376), CGSize(width: 683, height: 1032)] {
+            XCTAssertTrue(SessionWindowLayout.stacked(regular: true, window: window, source: mac, wasStacked: false))
+            XCTAssertEqual(SessionWindowLayout.pictureSize(window: window, source: mac, stacked: true).height,
+                           window.width / 1.6, accuracy: 0.01)
+        }
+        for window in [CGSize(width: 1210, height: 834), CGSize(width: 1376, height: 1032),
+                       CGSize(width: 900, height: 834), CGSize(width: 1920, height: 1080)] {
+            XCTAssertFalse(SessionWindowLayout.stacked(regular: true, window: window, source: mac, wasStacked: false))
+        }
+    }
+
+    func testResizingKeepsHysteresisAtBothBoundaries() {
+        func window(_ coverage: CGFloat) -> CGSize { CGSize(width: coverage * 1600, height: 1000) }
+        XCTAssertTrue(SessionWindowLayout.stacked(regular: true, window: window(0.599), source: mac, wasStacked: false))
+        XCTAssertFalse(SessionWindowLayout.stacked(regular: true, window: window(0.60), source: mac, wasStacked: false))
+        XCTAssertTrue(SessionWindowLayout.stacked(regular: true, window: window(0.63), source: mac, wasStacked: true))
+        XCTAssertFalse(SessionWindowLayout.stacked(regular: true, window: window(0.63), source: mac, wasStacked: false))
+        XCTAssertTrue(SessionWindowLayout.stacked(regular: true, window: window(0.66), source: mac, wasStacked: true))
+        XCTAssertFalse(SessionWindowLayout.stacked(regular: true, window: window(0.661), source: mac, wasStacked: true))
+    }
+
+    func testBigTextAspectAndInvalidGeometry() {
+        XCTAssertTrue(SessionWindowLayout.stacked(regular: true, window: CGSize(width: 834, height: 1210),
+                                                   source: CGSize(width: 1280, height: 832), wasStacked: false))
+        XCTAssertFalse(SessionWindowLayout.stacked(regular: true, window: .zero, source: mac, wasStacked: true))
+        XCTAssertFalse(SessionWindowLayout.stacked(regular: true, window: CGSize(width: 834, height: 1210), source: .zero, wasStacked: true))
+    }
+
+    func testPadZoomAnchorsClampToThePicture() {
+        XCTAssertEqual(SessionWindowLayout.zoomAnchor(CGPoint(x: 400, y: 1000), picture: CGSize(width: 834, height: 521)),
+                       CGPoint(x: 400, y: 521))
+        XCTAssertEqual(SessionWindowLayout.zoomAnchor(CGPoint(x: -10, y: 40), picture: CGSize(width: 834, height: 521)),
+                       CGPoint(x: 0, y: 40))
+    }
+
+    func testTopDockLeavesThePictureBelowItAvailableForPointerFollow() {
+        let safe = CGRect(x: 0, y: 0, width: 834, height: 521)
+        let canvas = CGRect(x: 0, y: 20, width: 834, height: 1210)
+        let dock = CGRect(x: 137, y: 60, width: 560, height: 250)
+        let usable = PointerFollowLayout.usableRect(safeRect: safe, canvasFrame: canvas, dockFrame: dock, topAnchor: true)
+        XCTAssertEqual(usable.minY, 302)
+        XCTAssertEqual(usable.maxY, safe.maxY)
+        XCTAssertEqual(PointerFollowLayout.usableRect(safeRect: safe, canvasFrame: canvas, dockFrame: .zero, topAnchor: true), safe)
+        let bottomDock = CGRect(x: 0, y: 400, width: 834, height: 200)
+        let phone = PointerFollowLayout.usableRect(safeRect: safe, canvasFrame: canvas, dockFrame: bottomDock)
+        XCTAssertEqual(phone.minY, 0)
+        XCTAssertEqual(phone.maxY, 368)
+    }
+}
+
 /// Phone-side glue for hardware keyboards, direct touch and the display picker. The shared
 /// logic behind these (key map, remaps, repeat, pointer router, mapping) is tested on macOS.
 @MainActor

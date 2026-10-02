@@ -1,6 +1,52 @@
 import SwiftUI
 
+/// The window, not the device or its orientation, decides whether the picture needs a pad.
+enum SessionWindowLayout {
+    static func stacked(regular: Bool, window: CGSize, source: CGSize, wasStacked: Bool) -> Bool {
+        guard regular, valid(window), valid(source) else { return false }
+        let coverage = (window.width * source.height / source.width) / window.height
+        return wasStacked ? coverage <= 0.66 : coverage < 0.60
+    }
+
+    static func pictureSize(window: CGSize, source: CGSize, stacked: Bool) -> CGSize {
+        guard stacked, valid(window), valid(source) else { return window }
+        return CGSize(width: window.width, height: min(window.height, window.width * source.height / source.width))
+    }
+
+    static func zoomAnchor(_ point: CGPoint, picture: CGSize) -> CGPoint {
+        CGPoint(x: min(max(0, point.x), picture.width), y: min(max(0, point.y), picture.height))
+    }
+
+    private static func valid(_ size: CGSize) -> Bool {
+        size.width.isFinite && size.height.isFinite && size.width > 0 && size.height > 0
+    }
+}
+
+#if DEBUG
+/// Screenshot fixtures constrain SwiftUI's window and explicitly supply its width class.
+/// These exercise layout bands; they do not emulate system multitasking or scene focus.
+struct SimulatedSessionWindow: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        if let width = LaunchOptions.value("--ui-window-width=").flatMap(Double.init), width.isFinite, width > 0 {
+            GeometryReader { proxy in
+                let height = LaunchOptions.value("--ui-window-height=").flatMap(Double.init)
+                content
+                    .frame(width: min(CGFloat(width), proxy.size.width),
+                           height: height.map { $0.isFinite && $0 > 0 ? min(CGFloat($0), proxy.size.height) : proxy.size.height }
+                            ?? proxy.size.height)
+                    .environment(\.horizontalSizeClass, LaunchOptions.value("--ui-width-class=") == "compact" ? .compact : .regular)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .background(Farside.Palette.void)
+        } else {
+            content
+        }
+    }
+}
+#endif
+
 extension Farside.Motion {
+    static let windowLayout = Animation.easeInOut(duration: 0.32)
     /// Sheets and the dock: a quick spring that settles without wobble.
     static let sheetSpring = Animation.spring(response: 0.42, dampingFraction: 0.8)
 }

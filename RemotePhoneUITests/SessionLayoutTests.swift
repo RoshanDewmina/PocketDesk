@@ -1,6 +1,51 @@
 import XCTest
 
 final class SessionLayoutTests: XCTestCase {
+    @MainActor
+    func testRegularPortraitPictureStacksOverPadAndSurvivesKeyboard() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-software-keyboard"]
+        app.launch()
+        guard app.buttons["remote.session.pill"].waitForExistence(timeout: 4) else {
+            throw XCTSkip("Regular-width iPad fixture")
+        }
+        let picture = app.descendants(matching: .any)["remote.picture"].firstMatch
+        let pad = app.descendants(matching: .any)["remote.stacked.pad"].firstMatch
+        XCTAssertTrue(pad.waitForExistence(timeout: 5))
+        XCTAssertTrue(picture.exists)
+        XCTAssertEqual(picture.frame.height, picture.frame.width / 1.6, accuracy: 2)
+        XCTAssertLessThanOrEqual(picture.frame.maxY, pad.frame.minY + 14)
+        let before = picture.frame
+        app.buttons["remote.session.pill"].doubleTap()
+        XCTAssertTrue(app.buttons["Hide keyboard"].waitForExistence(timeout: 5))
+        XCTAssertEqual(picture.frame.minY, before.minY, accuracy: 1)
+        XCTAssertEqual(picture.frame.height, before.height, accuracy: 1)
+        attachScreenshot("iPad stack with soft keyboard in pad")
+        app.buttons["Hide keyboard"].tap()
+        rotate(app, to: .landscapeLeft)
+        XCTAssertTrue(pad.waitForNonExistence(timeout: 5))
+        XCTAssertGreaterThan(picture.frame.width, picture.frame.height)
+        attachScreenshot("iPad rotated full-bleed picture")
+    }
+
+    @MainActor
+    func testRegular690PointBandStacksAndCompactBandKeepsHandle() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-window-width=690", "--ui-window-height=1032"]
+        app.launch()
+        XCTAssertTrue(app.buttons["remote.session.pill"].waitForExistence(timeout: 5))
+        let picture = app.descendants(matching: .any)["remote.picture"].firstMatch
+        XCTAssertTrue(app.descendants(matching: .any)["remote.stacked.pad"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(picture.frame.width, 690, accuracy: 2)
+        XCTAssertEqual(picture.frame.height, 690 / 1.6, accuracy: 2)
+        app.terminate()
+        app.launchArguments = ["--ui-layout-check", "--ui-window-width=390", "--ui-window-height=834", "--ui-width-class=compact"]
+        app.launch()
+        XCTAssertTrue(app.buttons["Show controls"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["remote.session.pill"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["remote.stacked.pad"].firstMatch.exists)
+        attachScreenshot("Compact iPad band retains phone chrome")
+    }
     /// Opt-in only: uses the owner's existing pairing without typing or clicking on the Mac.
     /// Simulator fixture tests cannot catch the physical-device Swift metadata stack limit.
     @MainActor

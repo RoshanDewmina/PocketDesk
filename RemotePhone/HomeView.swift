@@ -92,6 +92,9 @@ struct PhoneRemoteView: View {
             if !connection.connected && MacStatus(status).tone != .busy { sessionHeld = false }
         }
         .modifier(E2EStateProbeModifier())
+        #if DEBUG
+        .modifier(SimulatedSessionWindow())
+        #endif
     }
 }
 

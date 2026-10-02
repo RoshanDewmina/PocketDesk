@@ -10,6 +10,8 @@ struct NativeSessionView: View {
     @State private var viewport = ViewportTransform(sourceSize: CGSize(width: 1440, height: 900),
                                                     canvasSize: .zero, mode: ViewportPreference.stored())
     @State private var canvasFrame: CGRect = .zero
+    @State private var stackedPicture = false
+    @State private var padTouched = false
     @State private var dataWarningTop: CGFloat = 0
     @State private var safeFrame: CGRect = .zero
     @State private var dockFrame: CGRect = .zero
@@ -229,6 +231,7 @@ struct NativeSessionView: View {
             if status == .accepted { showVoiceInput = false }
         }
         .onChange(of: couch, initial: true) { wasCouch, isCouch in
+            scheduleGeometry()
             if isCouch {
                 couchTouched = false
                 couchClickBaseline = model.acceptedClicks
@@ -412,15 +415,33 @@ struct NativeSessionView: View {
             if couch {
                 couchRestCard
             } else {
-                videoLayer
-                if lockVisible {
-                    ResolutionLockView(connected: connection.connected || offlineLayoutCheck, videoTrack: connection.remoteVideo != nil, pictureReady: model.fresh,
-                                       fixedStage: LaunchOptions.value("--ui-lock-stage=").flatMap(Int.init)) {
-                        lockVisible = false
+                VStack(spacing: 0) {
+                    ZStack {
+                        videoLayer
+                        if lockVisible {
+                            ResolutionLockView(connected: connection.connected || offlineLayoutCheck, videoTrack: connection.remoteVideo != nil, pictureReady: model.fresh,
+                                               fixedStage: LaunchOptions.value("--ui-lock-stage=").flatMap(Int.init)) {
+                                lockVisible = false
+                            }
+                            .transition(.opacity)
+                        }
                     }
-                    .transition(.opacity)
+                    .frame(height: stackedPicture ? pictureSize.height : nil)
+                    .clipped()
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Mac picture")
+                    .accessibilityIdentifier("remote.picture")
+                    if stackedPicture {
+                        GeometryReader { pad in
+                            stackedRestCard
+                                .padding(.bottom, keyboardOpen && keyboardBarFrame.height > 0
+                                         ? min(pad.size.height, max(0, canvasFrame.maxY - keyboardBarFrame.minY)) : 0)
+                        }
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
+            // One native input view survives resizing; gestures work on picture and pad.
             inputSurface
         }
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
@@ -436,7 +457,8 @@ struct NativeSessionView: View {
     private var inputSurface: some View {
             NativeTrackpadSurface(enabled: model.canControl && !panMode && !controlsBlockInput && !showVoiceInput,
                                   panMode: panMode && !couch,
-                                  direct: directTouch && !couch, precision: couch ? .off : precisionTrigger,
+                                  direct: directTouch && !couch && !regularSessionLayout,
+                                  precision: couch || stackedPicture ? .off : precisionTrigger,
                                   revision: model.inputRevision &+ revision,
                                   sensitivity: CGFloat(couch ? sensitivity * CouchTuning.speed : sensitivity),
                                   pointerScale: couch ? 1 : viewport.scale, doubleClickInterval: model.doubleClickInterval,
@@ -477,6 +499,30 @@ struct NativeSessionView: View {
 
     /// Direct touch needs a Mac that places the pointer absolutely; otherwise touches stay a trackpad.
     private var directTouch: Bool { touchMode == .direct && model.absolutePointerSupported }
+
+    private var pictureSize: CGSize {
+        SessionWindowLayout.pictureSize(window: canvasFrame.size, source: model.sourceSize, stacked: stackedPicture)
+    }
+
+    private var stackedRestCard: some View {
+        RoundedRectangle(cornerRadius: 20, style: .continuous)
+            .strokeBorder(Farside.Palette.line, lineWidth: 1)
+            .overlay {
+                VStack(spacing: 8) {
+                    Text("Look up. This is your Mac’s trackpad.")
+                        .font(.title3.weight(.semibold)).foregroundStyle(Farside.Palette.bone)
+                    Text(CouchCopy.restDeadpan)
+                        .font(.footnote).foregroundStyle(Farside.Palette.ash)
+                }
+                .multilineTextAlignment(.center).padding(.horizontal, 24)
+                .opacity(padTouched ? 0 : 1)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("remote.stacked.pad")
+    }
 
     // MARK: - Couch
 
@@ -2950,6 +2996,7 @@ struct NativeSessionView: View {
     private func handle(_ command: NativeGestureCommand) -> Bool {
         noteSessionPillActivity()
         guard !controlsBlockInput, !showVoiceInput, !model.privacyShield, !model.contentConcealed else { return false }
+        if stackedPicture && !padTouched { padTouched = true }
         if couch {
             // No picture to look around or aim at.
             switch command {
@@ -2966,7 +3013,7 @@ struct NativeSessionView: View {
             model.pointerLocator.clear()
             pinchRevision &+= 1
             withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) {
-                viewport.toggleZoom(anchoredAt: anchor)
+                viewport.toggleZoom(anchoredAt: pictureAnchor(anchor))
             }
             reportSettledViewport()
             showZoomBadge()
@@ -2977,7 +3024,7 @@ struct NativeSessionView: View {
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) {
-                viewport.setZoom(viewport.zoom * factor, anchoredAt: anchor)
+                viewport.setZoom(viewport.zoom * factor, anchoredAt: pictureAnchor(anchor))
                 viewport.pan(by: translation)
             }
             showZoomBadge()
@@ -2988,7 +3035,7 @@ struct NativeSessionView: View {
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) {
-                viewport.setZoom(viewport.zoom * factor, anchoredAt: anchor)
+                viewport.setZoom(viewport.zoom * factor, anchoredAt: pictureAnchor(anchor))
             }
             showZoomBadge()
             return true
@@ -3027,7 +3074,7 @@ struct NativeSessionView: View {
     private var followUsableRect: CGRect {
         // With Controls open, the pointer stays clear of the panel rather than the dock.
         PointerFollowLayout.usableRect(safeRect: viewport.safeRect, canvasFrame: canvasFrame,
-                                       dockFrame: showControls ? panelFrame : dockFrame)
+                                       dockFrame: showControls ? panelFrame : dockFrame, topAnchor: regularSessionLayout)
     }
 
     private var followAllowed: Bool {
@@ -3176,18 +3223,32 @@ struct NativeSessionView: View {
     /// other bottom obstructions only change the safe insets.
     private func applyGeometry() {
         guard canvasFrame.width > 0, canvasFrame.height > 0, safeFrame.width > 0, safeFrame.height > 0 else { return }
-        let keyboardBottom = regularSessionLayout && !couch && keyboardOpen && keyboardBarFrame.height > 0
+        let nextStacked = !couch && SessionWindowLayout.stacked(regular: regularSessionLayout,
+            window: canvasFrame.size, source: model.sourceSize, wasStacked: stackedPicture)
+        if nextStacked != stackedPicture {
+            withAnimation(reduceMotion ? nil : Farside.Motion.windowLayout) {
+                stackedPicture = nextStacked
+                padTouched = false
+            }
+        }
+        let size = SessionWindowLayout.pictureSize(window: canvasFrame.size, source: model.sourceSize, stacked: nextStacked)
+        let keyboardBottom = regularSessionLayout && !nextStacked && !couch && keyboardOpen && keyboardBarFrame.height > 0
             ? max(0, canvasFrame.maxY - keyboardBarFrame.minY) : 0
-        let insets = ViewportInsets(top: max(0, safeFrame.minY - canvasFrame.minY),
+        // The keyboard takes space from the pad; the top Fit picture stays fixed.
+        let insets = nextStacked ? ViewportInsets.zero : ViewportInsets(top: max(0, safeFrame.minY - canvasFrame.minY),
                                     left: max(0, safeFrame.minX - canvasFrame.minX),
                                     bottom: max(keyboardBottom, max(0, canvasFrame.maxY - safeFrame.maxY)),
                                     right: max(0, canvasFrame.maxX - safeFrame.maxX))
-        if viewport.canvasSize != canvasFrame.size || viewport.sourceSize != model.sourceSize {
+        if viewport.canvasSize != size || viewport.sourceSize != model.sourceSize {
             cancelGesture()
-            viewport.resize(sourceSize: model.sourceSize, canvasSize: canvasFrame.size, safeInsets: insets)
+            viewport.resize(sourceSize: model.sourceSize, canvasSize: size, safeInsets: insets)
         } else if viewport.safeInsets != insets {
             withAnimation(reduceMotion ? nil : .snappy) { viewport.updateSafeInsets(insets) }
         }
+    }
+
+    private func pictureAnchor(_ point: CGPoint) -> CGPoint {
+        stackedPicture ? SessionWindowLayout.zoomAnchor(point, picture: pictureSize) : point
     }
 
     /// Only a view of the display the model is streaming counts; a stale canvas mid-resize does not.
@@ -3288,7 +3349,13 @@ private struct QuietInputProbe: View {
 /// Keeps automatic pointer follow above the dock without reserving permanent
 /// screen space when the controls are collapsed.
 enum PointerFollowLayout {
-    static func usableRect(safeRect: CGRect, canvasFrame: CGRect, dockFrame: CGRect) -> CGRect {
+    static func usableRect(safeRect: CGRect, canvasFrame: CGRect, dockFrame: CGRect, topAnchor: Bool = false) -> CGRect {
+        if topAnchor {
+            let top = dockFrame.height > 0 && canvasFrame.intersects(dockFrame)
+                ? min(safeRect.maxY - 1, max(safeRect.minY, dockFrame.maxY - canvasFrame.minY + 12))
+                : safeRect.minY
+            return CGRect(x: safeRect.minX, y: top, width: safeRect.width, height: max(1, safeRect.maxY - top))
+        }
         let measuredTop = dockFrame.minY - canvasFrame.minY - 12
         let bottom = dockFrame.height > 0 && canvasFrame.intersects(dockFrame) &&
             measuredTop > safeRect.minY
