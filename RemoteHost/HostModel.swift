@@ -216,6 +216,8 @@ final class RemoteHostModel: ObservableObject {
     private var displaySnapshotGeneration: UInt64 = 0
     /// G12: one per capture session while the ladder switch is on.
     private var loadMonitor: HostLoadMonitor?
+    private var criticalThermalPause = CriticalThermalPausePolicy()
+    private var criticalThermalRecoveryTask: Task<Void, Never>?
     private var vitalsMonitor: MacVitalsMonitor?
     private var phoneLoad: PhoneLoadFeedback?
     private var phoneLoadReceivedAt: TimeInterval?
@@ -232,6 +234,7 @@ final class RemoteHostModel: ObservableObject {
     }
     private var couchSessionSnapshot = CouchSessionSnapshotCache()
     private var unavailabilityTeardown: Task<Void, Never>?
+    private var availabilityTeardownGeneration = AvailabilityTeardownGeneration()
     private var timedPauseTask: Task<Void, Never>?
     private let clipboard = HostClipboardService()
     private let fileTransfer = HostFileTransferService()
@@ -2321,6 +2324,19 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Capture session
 
     private func beginCapture(keepingExclusions: Bool = false) {
+        // Every restart/reconnect must honor an existing emergency pause, not only its first edge.
+        guard !criticalThermalPause.isPaused else {
+            if sessionState == .couch {
+                // Keep an explicit Picture request queued through cooldown; its status must not
+                // silently remain Couch after the request's ticket was consumed.
+                releaseRemoteInput(notifyPhone: true)
+                sessionState = .picture
+                captureHealthy = false
+                advanceEpoch()
+                sendCaptureHealth(false)
+            }
+            return
+        }
         guard !captureScopeNeedsSelection else { stop(); return }
         guard CGPreflightScreenCaptureAccess() else {
             screenRecordingPermission = .denied
@@ -3094,6 +3110,8 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func captureHealthChanged(_ healthy: Bool) {
+        updateCriticalThermalPause()
+        let healthy = healthy && !criticalThermalPause.isPaused
         if !healthy { guests.endAll() }
         guard sessionState == .picture else { return }
         // The capture reports every 0.4 s; the 4 Hz lifecycle timer already re-checks Accessibility,
@@ -3198,6 +3216,8 @@ final class RemoteHostModel: ObservableObject {
     /// Every host statistics second runs the ladder; a rung change is applied at the capture and both
     /// changes go to the phone on the next capture status.
     private func observeLoad(_ report: StreamStatsReport, peer: PeerMedia) {
+        updateCriticalThermalPause()
+        if criticalThermalPause.isPaused { peer.senderQueueGovernorShedding = true; return }
         guard var monitor = loadMonitor, connection.connected else { return }
         let process = ProcessInfo.processInfo
         let longEdge = (ladderState?.rung ?? 0) == 0 ? [report.sentWidth, report.sentHeight].compactMap { $0 }.max() : nil
@@ -3223,6 +3243,48 @@ final class RemoteHostModel: ObservableObject {
             connection.media?.busyState = busy
         }
         if change.ladder != nil || change.busy != nil { sendCaptureHealth(sessionHealthy) }
+    }
+
+    /// The capture health tick observes critical within 0.4 s; statistics continue on the retained
+    /// peer while video is stopped, so cooldown can recover without a new connection attempt.
+    private func updateCriticalThermalPause() {
+        guard active, connection.connected, sessionState == .picture else { return }
+        let process = ProcessInfo.processInfo
+        guard let transition = criticalThermalPause.evaluate(thermalState: process.thermalState, at: process.systemUptime) else { return }
+        switch transition {
+        case .pause:
+            captureAttempt &+= 1
+            captureTask?.cancel(); captureTask = nil
+            _ = capture.stop(keepingExclusions: true) // synchronous source/PCM fence; async SCK stop
+            endLoadMonitor()
+            connection.media?.senderQueueGovernorShedding = true
+            captureHealthChanged(false)
+            events.record(.session, "Picture paused while this Mac cools down")
+            criticalThermalRecoveryTask?.cancel()
+            criticalThermalRecoveryTask = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
+                    guard !Task.isCancelled, let self, self.criticalThermalPause.isPaused else { return }
+                    let process = ProcessInfo.processInfo
+                    if self.criticalThermalPause.evaluate(thermalState: process.thermalState, at: process.systemUptime) == .resume {
+                        self.finishCriticalThermalPause()
+                        return
+                    }
+                }
+            }
+        case .resume:
+            finishCriticalThermalPause()
+        }
+    }
+
+    private func finishCriticalThermalPause() {
+        criticalThermalRecoveryTask?.cancel(); criticalThermalRecoveryTask = nil
+        connection.media?.senderQueueGovernorShedding = false
+        // Full capture startup retires the old input epoch and publishes geometry before pixels.
+        if active, connection.connected, sessionState == .picture, !screenLocked,
+           unavailabilityTeardown == nil, !phonePause.isPaused {
+            beginCapture(keepingExclusions: true)
+        }
     }
 
     private var wakeHelperAvailable: Bool {
@@ -3653,6 +3715,14 @@ final class RemoteHostModel: ObservableObject {
             }
             connection.checkSignalingLiveness()
             if HostScreenLock.isLocked() { guests.endAll(); screenLocked = true; return }
+            availabilityTeardownGeneration.recover()
+            if AvailabilityTeardownGeneration.processStartEnabled, unavailabilityTeardown != nil {
+                // Capture was synchronously fenced already. Finish the old stop before starting
+                // a new registration; merely cancelling the delay leaves a dead active session.
+                unavailabilityTeardown?.cancel()
+                unavailabilityTeardown = nil
+                stop()
+            }
             bigText.retryPendingRestore()
             autoStart.clear()
             detail = nil
@@ -3690,10 +3760,11 @@ final class RemoteHostModel: ObservableObject {
         _ = capture.stop()
         sendCaptureHealth(false, presence: presence)
         unavailabilityTeardown?.cancel()
+        let generation = availabilityTeardownGeneration.beginTeardown()
         unavailabilityTeardown = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 200_000_000)
-            guard !Task.isCancelled else { return }
-            self?.stop()
+            guard !Task.isCancelled, let self, self.availabilityTeardownGeneration.owns(generation) else { return }
+            self.stop()
         }
     }
 

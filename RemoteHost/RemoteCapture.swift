@@ -3,6 +3,7 @@ import Foundation
 import ScreenCaptureKit
 import CoreMedia
 import CoreVideo
+import CryptoKit
 
 struct ScopedCaptureOwner {
     private(set) var current: UInt64 = 0
@@ -57,8 +58,9 @@ struct CaptureHealthState {
     /// Read on the 0.4 s health tick, never on the frame path: once while idle status still arrives
     /// (the baseline), then on every silent tick until it differs; nil (no window list) is a change.
     /// So at most 2.5 window lists a second, and none between frames of moving content.
-    func wantsStillLayout(at time: TimeInterval, streamCapturing: Bool?) -> Bool {
-        guard streamCapturing == true, lastStatusWasIdle, !stillLayoutChanged else { return false }
+    func wantsStillLayout(at time: TimeInterval, streamCapturing: Bool?, stillWitnessEnabled: Bool = false) -> Bool {
+        guard streamCapturing == true || (streamCapturing == nil && stillWitnessEnabled),
+              lastStatusWasIdle, !stillLayoutChanged else { return false }
         return stillLayout == nil || isSilent(at: time)
     }
 
@@ -77,20 +79,109 @@ struct CaptureHealthState {
         stillLayoutChanged = layout != stillLayout || pointerMoved
     }
 
+    mutating func witnessContentChanged() { stillLayoutChanged = true }
+
     /// Fresh complete/idle status, or a still screen: ScreenCaptureKit stops sending idle status
     /// about 9 s after the picture last changed (PocketDeskStreamStats, 1 Oct 2026: captureIdleFPS
     /// ~36 then 0 in every still run), so after an idle status the source counts as alive while
     /// `streamCapturing` (macOS 27's `SCStream.isCapturing`, nil before it) holds and the display's
     /// window layout is unchanged: a window that opened, closed or moved without a frame is a stalled
     /// stream. Any other status, or a stream that says it stopped, fails closed as before.
-    func isHealthy(at time: TimeInterval, staleAfter: TimeInterval = 0.8, streamCapturing: Bool? = nil) -> Bool {
+    func isHealthy(at time: TimeInterval, staleAfter: TimeInterval = 0.8, streamCapturing: Bool? = nil,
+                   stillWitnessAt: TimeInterval? = nil, stillWitnessEnabled: Bool = true) -> Bool {
         guard statusIsHealthy, let lastStatusAt, time >= lastStatusAt else { return false }
         if time - lastStatusAt <= staleAfter { return true }
-        return lastStatusWasIdle && !stillLayoutChanged && streamCapturing == true
+        guard lastStatusWasIdle, !stillLayoutChanged else { return false }
+        if streamCapturing == true { return true }
+        guard streamCapturing == nil, stillWitnessEnabled, let stillWitnessAt,
+              time >= stillWitnessAt else { return false }
+        return time - stillWitnessAt <= CaptureStillWitness.leaseSeconds
     }
 
     func isSilent(at time: TimeInterval, staleAfter: TimeInterval = 0.8) -> Bool {
         lastStatusAt.map { time - $0 > staleAfter } ?? false
+    }
+}
+
+/// Only one screenshot may be outstanding. A hung API call expires its lease but cannot queue
+/// more work. Geometry/filter changes invalidate its token before any replacement can be shown.
+struct CaptureStillWitness {
+    static let disabledDefaultsKey = "farsideStillWitnessDisabled"
+    // Source candidate only: enable explicitly for macOS 26 metadata/device acceptance.
+    static let enabled = resolveEnabled()
+    static func resolveEnabled(defaults: UserDefaults = .standard) -> Bool {
+        !(defaults.object(forKey: disabledDefaultsKey) as? Bool ?? true)
+    }
+    static let leaseSeconds: TimeInterval = 1.2
+    static let interval: TimeInterval = 0.8
+    private(set) var completedAt: TimeInterval?
+    private(set) var pending: UInt64?
+    private var generation: UInt64 = 0
+    private var lastRequestedAt: TimeInterval?
+
+    mutating func begin(at now: TimeInterval) -> UInt64? {
+        guard pending == nil, lastRequestedAt.map({ now >= $0 && now - $0 >= Self.interval }) ?? true else { return nil }
+        generation &+= 1
+        pending = generation
+        lastRequestedAt = now
+        return generation
+    }
+
+    mutating func finish(_ token: UInt64, requestedAt: TimeInterval, at now: TimeInterval, succeeded: Bool) -> Bool {
+        guard pending == token else { return false }
+        pending = nil
+        guard generation == token, succeeded, now >= requestedAt,
+              now - requestedAt <= Self.leaseSeconds else { completedAt = nil; return false }
+        // Callback processing time is not the capture time; latency must spend the lease.
+        completedAt = requestedAt
+        return true
+    }
+
+    mutating func invalidate() {
+        generation &+= 1
+        completedAt = nil
+        // Keep the pending slot until the old callback returns, even across reconfiguration.
+    }
+}
+
+struct CaptureStillContentWitness {
+    private var baseline: Data?
+    private var awaitingIdle: (signature: Data, sourceTicks: UInt64)?
+    mutating func observe(_ signature: Data?, sourceFresh: Bool, sourceTicks: UInt64 = 0) -> Bool {
+        guard let signature else { return false }
+        if sourceFresh, sourceTicks > 0 { awaitingIdle = (signature, sourceTicks) }
+        return baseline == signature
+    }
+
+    /// The stream must confirm idle AFTER the screenshot completed. A timestamp merely still
+    /// inside the freshness window cannot establish a baseline if the stream died before typing.
+    mutating func confirmIdle(sourceTicks: UInt64) {
+        guard let awaitingIdle, sourceTicks > 0, sourceTicks >= awaitingIdle.sourceTicks else { return }
+        baseline = awaitingIdle.signature
+        self.awaitingIdle = nil
+    }
+
+    /// Hash every visible byte (both NV12 planes or all BGRA channels), excluding stride padding.
+    /// A sampled thumbnail can miss one typed character; unchanged layout alone misses it too.
+    static func signature(_ buffer: CVPixelBuffer) -> Data? {
+        let format = CVPixelBufferGetPixelFormatType(buffer)
+        guard format == kCVPixelFormatType_32BGRA || format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+                || format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+              CVPixelBufferLockBaseAddress(buffer, .readOnly) == kCVReturnSuccess else { return nil }
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        var hash = SHA256()
+        let planes = CVPixelBufferGetPlaneCount(buffer)
+        for plane in 0..<max(1, planes) {
+            let base = planes == 0 ? CVPixelBufferGetBaseAddress(buffer) : CVPixelBufferGetBaseAddressOfPlane(buffer, plane)
+            let stride = planes == 0 ? CVPixelBufferGetBytesPerRow(buffer) : CVPixelBufferGetBytesPerRowOfPlane(buffer, plane)
+            let height = planes == 0 ? CVPixelBufferGetHeight(buffer) : CVPixelBufferGetHeightOfPlane(buffer, plane)
+            let width = planes == 0 ? CVPixelBufferGetWidth(buffer) * 4 : CVPixelBufferGetWidthOfPlane(buffer, plane) * (plane == 0 ? 1 : 2)
+            guard let base, width <= stride else { return nil }
+            for row in 0..<height {
+                hash.update(data: Data(bytesNoCopy: base.advanced(by: row * stride), count: width, deallocator: .none))
+            }
+        }
+        return Data(hash.finalize())
     }
 }
 
@@ -649,13 +740,7 @@ enum RemoteCaptureConfiguration {
     /// Above 60: the display's own cadence, unless the display runs faster than the target (a
     /// 144 Hz panel streamed at 120), in which case ScreenCaptureKit thins to the target itself.
     static func minimumFrameInterval(for tuning: StreamTuning, targetFPS: Int, displayRefreshHz: Double?) -> CMTime {
-        if targetFPS > CaptureRatePolicy.standardFPS {
-            if let displayRefreshHz, displayRefreshHz > Double(targetFPS) + 1 {
-                return CMTime(value: 1, timescale: CMTimeScale(targetFPS))
-            }
-            return .zero
-        }
-        return tuning.captureAtNativeRate ? .zero : CMTime(value: 1, timescale: 60)
+        CaptureRatePolicy.minimumFrameInterval(for: tuning, targetFPS: targetFPS, displayRefreshHz: displayRefreshHz)
     }
 
     /// The whole-display output: the mode's (or the client's) long-edge cap at this rate, then the
@@ -725,11 +810,53 @@ private struct CaptureInputs: Equatable {
     var sizeFraction: Double? = nil
 }
 
+/// One owner for the converter and PCM admission. Rollback keeps the original capture queue.
+final class CaptureAudioQueue {
+    static let splitEnabled = !UserDefaults.standard.bool(forKey: "farsideAudioQueueSplitDisabled")
+    let queue: DispatchQueue
+    private let key = DispatchSpecificKey<Bool>()
+
+    init(captureQueue: DispatchQueue, splitEnabled: Bool = CaptureAudioQueue.splitEnabled) {
+        queue = splitEnabled ? DispatchQueue(label: "PocketDesk.capture.audio", qos: .userInteractive) : captureQueue
+        queue.setSpecific(key: key, value: true)
+    }
+
+    func sync(_ body: () -> Void) {
+        if DispatchQueue.getSpecific(key: key) == true { body() }
+        else { queue.sync(execute: body) }
+    }
+}
+
+/// Confined to the selected audio queue; no capture-queue state is consulted by audio callbacks.
+struct CaptureAudioAdmission {
+    private var lease = HostAudioCaptureEpoch()
+    private var capturesAudio = false
+    private var terminal = false
+
+    mutating func configure(capturesAudio: Bool, allowed: Bool, begin: () -> UInt64, end: (UInt64) -> Void) {
+        guard !terminal else { return }
+        self.capturesAudio = capturesAudio
+        if capturesAudio && allowed { lease.arm(allowed: true, begin: begin) }
+        else { retire(end: end) }
+    }
+
+    mutating func retire(terminal: Bool = false, end: (UInt64) -> Void) {
+        self.terminal = self.terminal || terminal
+        capturesAudio = false
+        lease.retire(end: end)
+    }
+
+    func admittedEpoch(consent: Bool) -> UInt64? {
+        capturesAudio && consent ? lease.epoch : nil
+    }
+}
+
 private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
     private let queue = DispatchQueue(label: "PocketDesk.capture", qos: .userInteractive)
     private var stream: SCStream!
     private let audioConverter = SystemAudioPCMConverter()
-    private var audioLease = HostAudioCaptureEpoch()
+    private let audioQueue: CaptureAudioQueue
+    private var audioAdmission = CaptureAudioAdmission()
     private let audioPeer: PeerMedia
     private let scopeLease: CaptureScopeLease
     private let scopeTarget: HostCaptureTarget?
@@ -737,18 +864,27 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
     func fenceCapture() {
         scopeLease.invalidate()
-        fenceAudio()
-        let clear = { [self] in lastBuffer = nil; sourceTiming.reset(); audioConverter.reset() }
+        fenceAudio(terminal: true)
+        let clear = { [self] in lastBuffer = nil; sourceTiming.reset() }
         if DispatchQueue.getSpecific(key: captureQueueKey) == true { clear() }
         else { queue.sync(execute: clear) }
     }
 
-    func fenceAudio() {
-        let fence = { [self] in
-            audioLease.retire(end: audioPeer.endSystemAudioCapture); audioConverter.reset()
+    func fenceAudio(terminal: Bool = false) {
+        audioQueue.sync { [self] in
+            audioAdmission.retire(terminal: terminal, end: audioPeer.endSystemAudioCapture)
+            audioConverter.reset()
         }
-        if DispatchQueue.getSpecific(key: captureQueueKey) == true { fence() }
-        else { queue.sync(execute: fence) }
+    }
+
+    /// Capture queue calls synchronously after a completed configuration or a consent retry.
+    private func synchronizeAudioAdmission(capturesAudio: Bool, allowed: Bool) {
+        audioQueue.sync { [self] in
+            let previous = audioAdmission.admittedEpoch(consent: true)
+            audioAdmission.configure(capturesAudio: capturesAudio, allowed: allowed,
+                                     begin: audioPeer.beginSystemAudioCapture, end: audioPeer.endSystemAudioCapture)
+            if previous != audioAdmission.admittedEpoch(consent: true) { audioConverter.reset() }
+        }
     }
 
     func requestSystemAudio(_ enabled: Bool) {
@@ -757,9 +893,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             guard !stopping, scopeTarget == nil else { return }
             // A failed audio-off configuration can leave SCK on after PCM was retired.
             // A fresh Listen still needs a new epoch even if the configuration is already on.
-            if enabled && audioLease.epoch == nil {
-                audioLease.arm(allowed: audioPeer.systemAudioEnabled, begin: audioPeer.beginSystemAudioCapture)
-                audioConverter.reset()
+            if enabled {
+                synchronizeAudioAdmission(capturesAudio: applied.capturesAudio, allowed: audioPeer.systemAudioEnabled)
             }
             guard requested.capturesAudio != enabled else { return }
             requested.capturesAudio = enabled
@@ -769,6 +904,12 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     private var peer: PeerMedia?
     private var timer: DispatchSourceTimer?
     private var health = CaptureHealthState()
+    private var stillWitness = CaptureStillWitness()
+    private var stillContentWitness = CaptureStillContentWitness()
+    private var witnessFilter: SCContentFilter
+    private var witnessConfiguration: SCStreamConfiguration
+    private var witnessConfigurationUpdating = false
+    private var witnessFilterUpdating = false
     private var lastBuffer: CVPixelBuffer?
     private var bufferVersion: UInt64 = 0
     private var lastBufferDisplayTime: UInt64 = 0
@@ -834,8 +975,11 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             output: output, region: nil, showsCursor: true, fps: fps, displayRefreshHz: refresh, tuning: tuning, capturesAudio: resolved.target == nil && peer.systemAudioEnabled, refinesText: peer.refinementCaptureEnabled, fullColor444: peer.fullColorCaptureEnabled
         )
         self.display = display
+        witnessFilter = filter
+        witnessConfiguration = configuration
         self.peer = peer
         audioPeer = peer
+        audioQueue = CaptureAudioQueue(captureQueue: queue)
         self.tuning = tuning
         self.geometry = geometry
         let inputs = CaptureInputs(quality: quality, showsCursor: true, clientLongEdge: clientLongEdge,
@@ -852,7 +996,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
                                     refresh.map { String(format: "%.0fHz", $0) } ?? "?Hz")
         super.init()
         queue.setSpecific(key: captureQueueKey, value: true)
-        audioLease.arm(allowed: resolved.target == nil && peer.systemAudioEnabled, begin: peer.beginSystemAudioCapture)
+        synchronizeAudioAdmission(capturesAudio: inputs.capturesAudio, allowed: peer.systemAudioEnabled)
         self.stream = SCStream(filter: filter, configuration: configuration, delegate: self)
     }
 
@@ -951,6 +1095,9 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             return
         }
         onGuestSourceFence?()
+        stillWitness.invalidate()
+        stillContentWitness = CaptureStillContentWitness()
+        witnessConfigurationUpdating = true
         let configuration = RemoteCaptureConfiguration.streamConfiguration(
             output: output, region: region, showsCursor: inputs.showsCursor,
             fps: min(targetFPS, inputs.ladderFPS ?? targetFPS),
@@ -967,12 +1114,16 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             queue.async { [self] in
                 // stop() already answered the waiters.
                 guard !stopping else { return }
+                witnessConfigurationUpdating = false
                 if let inFlight = regionSwitchInFlight, inFlight.next == region {
                     lastRegionSwitch = error == nil ? inFlight : nil
                     regionSwitchInFlight = nil
                 }
                 if error == nil {
+                    witnessConfiguration = configuration
                     applied = inputs
+                    synchronizeAudioAdmission(capturesAudio: inputs.capturesAudio,
+                                              allowed: requested.capturesAudio && audioPeer.systemAudioEnabled)
                     // The idle refresh must not resend a frame of the old region under the new one.
                     if CaptureFrameCachePolicy.shouldDiscard(
                         cachedDimensions: lastBuffer.map {
@@ -1013,9 +1164,13 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         guard scopeTarget == nil, !queue.sync(execute: { stopping }) else { return false }
         onGuestSourceFence?()
         do {
-            try await stream.updateContentFilter(SCContentFilter(display: display, excludingWindows: windows))
+            let filter = SCContentFilter(display: display, excludingWindows: windows)
+            queue.sync { stillWitness.invalidate(); stillContentWitness = CaptureStillContentWitness(); witnessFilterUpdating = true }
+            try await stream.updateContentFilter(filter)
+            queue.sync { witnessFilter = filter; witnessFilterUpdating = false; stillWitness.invalidate() }
             return !queue.sync { stopping }
         } catch {
+            queue.sync { witnessFilterUpdating = false }
             return false
         }
     }
@@ -1030,7 +1185,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
     func start() async throws {
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
-        if scopeTarget == nil { try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue) }
+        if scopeTarget == nil { try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQueue.queue) }
         try await stream.startCapture()
         let stoppedDuringStart = queue.sync { stopping }
         if stoppedDuringStart {
@@ -1054,7 +1209,6 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     func stop() async {
         fenceCapture()
         queue.sync {
-            audioConverter.reset()
             if !stopping {
                 stopping = true
                 timer?.cancel()
@@ -1080,15 +1234,20 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
         of type: SCStreamOutputType
     ) {
+        if type == .audio {
+            guard scopeTarget == nil, let audioEpoch = audioAdmission.admittedEpoch(consent: audioPeer.systemAudioEnabled) else { return }
+            for packet in audioConverter.packets(from: sampleBuffer) {
+                // Invalidation waits for actual submission, including a packet converted during a fence.
+                scopeLease.performIfValid {
+                    audioPeer.submitSystemAudio(packet.pcm, epoch: audioEpoch, hostTime: packet.hostTime)
+                }
+            }
+            return
+        }
         let capturedMs = MachClock.nowMs() // Public SCK callback entry, before admission/metadata work.
         guard scopeTarget?.processIsAlive != false,
               scopeLease.performIfValid({}) else {
             reportStopped(HostCaptureScopeError.targetUnavailable)
-            return
-        }
-        if type == .audio {
-            guard !stopping, applied.capturesAudio, let peer, peer.systemAudioEnabled, let audioEpoch = audioLease.epoch else { return }
-            for packet in audioConverter.packets(from: sampleBuffer) { peer.submitSystemAudio(packet.pcm, epoch: audioEpoch, hostTime: packet.hostTime) }
             return
         }
         guard type == .screen, sampleBuffer.isValid,
@@ -1100,8 +1259,10 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
               let status = SCFrameStatus(rawValue: rawStatus), !stopping else { return }
 
         let now = CACurrentMediaTime()
-        health.observe(status, at: now)
         let displayTime = (attachments.first?[.displayTime] as? NSNumber)?.uint64Value ?? 0
+        health.observe(status, at: now)
+        if status != .idle { stillWitness.invalidate(); stillContentWitness = CaptureStillContentWitness() }
+        else { stillContentWitness.confirmIdle(sourceTicks: displayTime) }
         if status == .complete || status == .idle {
             peer?.counters.captured(idle: status == .idle,
                                     displayLatencyMs: CaptureTiming.displayLatencyMs(displayTime: displayTime),
@@ -1132,7 +1293,6 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         failureReported = true
         fenceCapture()
         lastBuffer = nil
-        audioConverter.reset()
         health.observe(.stopped, at: CACurrentMediaTime())
         publishHealthAndIdleFrame()
         let callback = onFailure
@@ -1153,11 +1313,15 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             if notCapturingTicks >= 2 { reportStopped(CaptureNotCapturingError()); return }
         }
         let now = CACurrentMediaTime()
-        if health.wantsStillLayout(at: now, streamCapturing: streamCapturing) {
+        if streamCapturing == nil, CaptureStillWitness.enabled, !failureReported, health.lastStatusWasIdle {
+            requestStillWitness(at: now)
+        }
+        if health.wantsStillLayout(at: now, streamCapturing: streamCapturing, stillWitnessEnabled: CaptureStillWitness.enabled) {
             let (layout, pointer) = stillLayout()
             health.witnessStillLayout(layout, pointer: pointer)
         }
-        let healthy = !failureReported && health.isHealthy(at: now, streamCapturing: streamCapturing)
+        let healthy = !failureReported && health.isHealthy(at: now, streamCapturing: streamCapturing,
+            stillWitnessAt: stillWitness.completedAt, stillWitnessEnabled: CaptureStillWitness.enabled)
         let callback = onHealth
         DispatchQueue.main.async { callback?(healthy) }
 
@@ -1166,6 +1330,31 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         if CaptureIdleRefresh.isDue(healthy: healthy, hasFrame: lastBuffer != nil, now: now, lastSentAt: lastSentAt),
            let lastBuffer {
             deliver(lastBuffer, at: now, timing: sourceTiming.resent(), idleResend: true, region: lastBufferRegion)
+        }
+    }
+
+    /// On macOS 26 establish a screenshot baseline while SCK is fresh, then verify the still
+    /// content against that same screenshot pipeline. No screenshot is injected into the picture.
+    private func requestStillWitness(at now: TimeInterval) {
+        guard !witnessConfigurationUpdating, !witnessFilterUpdating,
+              regionSwitchInFlight == nil, let token = stillWitness.begin(at: now) else { return }
+        let region = appliedRegion
+        SCScreenshotManager.captureSampleBuffer(contentFilter: witnessFilter, configuration: witnessConfiguration) { [weak self] sample, error in
+            guard let self else { return }
+            self.queue.async { [self] in
+                let completed = CACurrentMediaTime()
+                let completedSourceTicks = mach_absolute_time()
+                let buffer = sample.flatMap { $0.isValid ? CMSampleBufferGetImageBuffer($0) : nil }
+                let accepted = self.stillWitness.finish(token, requestedAt: now, at: completed,
+                    succeeded: error == nil && buffer != nil && !self.stopping && !self.failureReported && self.appliedRegion == region && self.health.lastStatusWasIdle)
+                guard accepted, let buffer, self.scopeLease.performIfValid({}), self.scopeTarget?.processIsAlive != false else { return }
+                let sourceFresh = !self.health.isSilent(at: completed)
+                if !self.stillContentWitness.observe(CaptureStillContentWitness.signature(buffer), sourceFresh: sourceFresh, sourceTicks: completedSourceTicks) {
+                    self.stillWitness.invalidate()
+                    if !sourceFresh { self.health.witnessContentChanged() }
+                    self.publishHealthAndIdleFrame()
+                }
+            }
         }
     }
 

@@ -1,5 +1,82 @@
 import Foundation
 
+/// Sample on the host's 0.4-second tick, independently of video statistics (which stop while paused).
+/// Transitions affect video only; the caller retires capture production on pause and starts a fresh
+/// capture generation on resume, preserving the authenticated session and control authority.
+struct CriticalThermalPausePolicy {
+    enum Transition: Equatable { case pause, resume }
+    static let disabledDefaultsKey = "farsideCriticalThermalPauseDisabled"
+    static let processStartEnabled = resolveEnabled()
+    static let recoveryDuration: TimeInterval = 10
+    let enabled: Bool
+    private(set) var isPaused = false
+    private var coolSince: TimeInterval?
+    private var lastSampleTime: TimeInterval?
+
+    init(enabled: Bool = processStartEnabled) {
+        self.enabled = enabled
+    }
+
+    static func resolveEnabled(defaults: UserDefaults = .standard) -> Bool {
+        !defaults.bool(forKey: disabledDefaultsKey)
+    }
+
+    mutating func evaluate(thermalState: ProcessInfo.ThermalState, at time: TimeInterval) -> Transition? {
+        guard enabled else { return nil }
+        if !time.isFinite || lastSampleTime.map({ time < $0 }) == true { coolSince = nil }
+        lastSampleTime = time.isFinite ? time : nil
+        if thermalState == .critical {
+            coolSince = nil
+            guard !isPaused else { return nil }
+            isPaused = true
+            return .pause
+        }
+        guard isPaused else { return nil }
+        guard thermalState == .nominal || thermalState == .fair, time.isFinite else {
+            coolSince = nil
+            return nil
+        }
+        guard let coolSince else {
+            self.coolSince = time
+            return nil
+        }
+        guard time - coolSince >= Self.recoveryDuration else { return nil }
+        isPaused = false
+        self.coolSince = nil
+        return .resume
+    }
+}
+
+/// Availability teardown completions belong to their loss generation. A recovery or another
+/// loss invalidates older completions, so they cannot suspend a newly recovered sharing attempt.
+struct AvailabilityTeardownGeneration {
+    static let disabledDefaultsKey = "farsideAvailabilityGenerationDisabled"
+    static let processStartEnabled = resolveEnabled()
+    let enabled: Bool
+    private var generation: UInt64 = 0
+
+    init(enabled: Bool = processStartEnabled) {
+        self.enabled = enabled
+    }
+
+    static func resolveEnabled(defaults: UserDefaults = .standard) -> Bool {
+        !defaults.bool(forKey: disabledDefaultsKey)
+    }
+
+    mutating func beginTeardown() -> UInt64 {
+        if enabled { generation &+= 1 }
+        return generation
+    }
+
+    mutating func recover() {
+        if enabled { generation &+= 1 }
+    }
+
+    func owns(_ token: UInt64) -> Bool {
+        !enabled || token == generation
+    }
+}
+
 /// One statistics second on the Mac, reduced to what the ladder and the busy state read (G12).
 /// `longEdge` is the long edge in pixels of the rung-0 picture (the capture size before the ladder's
 /// `sizeFraction`); nil keeps the last one. Old phones leave `phoneLoad` nil.

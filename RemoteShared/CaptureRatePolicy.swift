@@ -1,4 +1,5 @@
 import Foundation
+import CoreMedia
 
 /// The frame rate the host captures and sends at (Docs/perf/PLAN-120FPS-AND-LOAD.md §3).
 /// A source of 100 Hz or more is streamed at 120 when `highRefreshCapture` is on; everything else,
@@ -9,6 +10,29 @@ enum CaptureRatePolicy {
     static let highFPS = 120
     static let highRefreshThresholdHz = 100.0
     static let overrideRange = 30...120
+    static let intervalFollowsLadderDisabledKey = "farsideCaptureIntervalFollowsLadderDisabled"
+    /// Frozen on first process use; tests inject the choice instead of mutating standard defaults.
+    static let intervalFollowsLadderEnabled = resolveIntervalFollowsLadder()
+
+    static func resolveIntervalFollowsLadder(defaults: UserDefaults = .standard) -> Bool {
+        !defaults.bool(forKey: intervalFollowsLadderDisabledKey)
+    }
+
+    /// Reduced rates throttle production even with native-rate tuning. At 60 and above the
+    /// existing display-cadence policy is preserved, including the one-Hz high-refresh tolerance.
+    static func minimumFrameInterval(for tuning: StreamTuning, targetFPS: Int, displayRefreshHz: Double?,
+                                     followsLadder: Bool = intervalFollowsLadderEnabled) -> CMTime {
+        if followsLadder, targetFPS > 0, targetFPS < standardFPS {
+            return CMTime(value: 1, timescale: CMTimeScale(targetFPS))
+        }
+        if targetFPS > standardFPS {
+            if let displayRefreshHz, displayRefreshHz > Double(targetFPS) + 1 {
+                return CMTime(value: 1, timescale: CMTimeScale(targetFPS))
+            }
+            return .zero
+        }
+        return tuning.captureAtNativeRate ? .zero : CMTime(value: 1, timescale: 60)
+    }
 
     static func targetFPS(displayRefreshHz: Double?, tuning: StreamTuning) -> Int {
         if let override = tuning.targetFPSOverride, overrideRange.contains(override) { return override }

@@ -146,6 +146,42 @@ final class CaptureRatePolicyTests: XCTestCase {
         XCTAssertEqual(interval(tuned, 90, 60), .zero)
     }
 
+    func testCaptureIntervalFollowsReducedRatesWithNativeTuningAndRollback() {
+        for native in [false, true] {
+            var tuning = StreamTuning.tuned
+            tuning.captureAtNativeRate = native
+            for fps in [30, 45] {
+                for hz: Double? in [nil, 60, 120, 144] {
+                    XCTAssertEqual(CaptureRatePolicy.minimumFrameInterval(for: tuning, targetFPS: fps,
+                        displayRefreshHz: hz, followsLadder: true), CMTime(value: 1, timescale: CMTimeScale(fps)))
+                    XCTAssertEqual(CaptureRatePolicy.minimumFrameInterval(for: tuning, targetFPS: fps,
+                        displayRefreshHz: hz, followsLadder: false), native ? .zero : CMTime(value: 1, timescale: 60))
+                }
+            }
+            for enabled in [false, true] {
+                XCTAssertEqual(CaptureRatePolicy.minimumFrameInterval(for: tuning, targetFPS: 60,
+                    displayRefreshHz: 144, followsLadder: enabled), native ? .zero : CMTime(value: 1, timescale: 60))
+                XCTAssertEqual(CaptureRatePolicy.minimumFrameInterval(for: tuning, targetFPS: 120,
+                    displayRefreshHz: 144, followsLadder: enabled), CMTime(value: 1, timescale: 120))
+                XCTAssertEqual(CaptureRatePolicy.minimumFrameInterval(for: tuning, targetFPS: 120,
+                    displayRefreshHz: 121, followsLadder: enabled), .zero)
+                XCTAssertEqual(CaptureRatePolicy.minimumFrameInterval(for: tuning, targetFPS: 90,
+                    displayRefreshHz: nil, followsLadder: enabled), .zero)
+            }
+        }
+    }
+
+    func testCaptureIntervalSwitchDefaultsToEnabledAndResolvesRollback() throws {
+        let suite = "CaptureIntervalSwitchTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertTrue(CaptureRatePolicy.resolveIntervalFollowsLadder(defaults: defaults))
+        defaults.set(true, forKey: CaptureRatePolicy.intervalFollowsLadderDisabledKey)
+        XCTAssertFalse(CaptureRatePolicy.resolveIntervalFollowsLadder(defaults: defaults))
+        defaults.set(false, forKey: CaptureRatePolicy.intervalFollowsLadderDisabledKey)
+        XCTAssertTrue(CaptureRatePolicy.resolveIntervalFollowsLadder(defaults: defaults))
+    }
+
     func testClientPixelSizeBounds() {
         XCTAssertNoThrow(try PixelSize(width: 1, height: 1).validate())
         XCTAssertNoThrow(try PixelSize(width: 16_384, height: 16_384).validate())
