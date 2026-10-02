@@ -478,6 +478,27 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertEqual(model.connection.status, statusBefore)
     }
 
+    func testInactiveConnectedWindowDoesNotStartAConnectionExpiryTimer() {
+        let background = FakeBackgroundExecution()
+        let model = PhoneRemoteModel(background: background)
+        defer { model.disconnect() }
+        model.prepareConnection(mode: .picture)
+        model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "duo-focus")
+        let revision = model.inputRevision
+        model.sceneChanged(.inactive)
+        XCTAssertEqual(background.begins, 0, "Split View focus loss must not expire a foreground session")
+        XCTAssertTrue(model.connection.connected)
+        XCTAssertTrue(model.privacyShield)
+        XCTAssertGreaterThan(model.inputRevision, revision)
+        model.sceneChanged(.active)
+        XCTAssertTrue(model.connection.connected)
+        XCTAssertFalse(model.privacyShield)
+        model.sceneChanged(.background)
+        XCTAssertTrue(model.contentConcealed, "Real backgrounding still conceals and uses the existing hold policy")
+        XCTAssertEqual(background.begins, 1)
+    }
+
     func testBackgroundWithoutASessionConcealsTheSnapshotAndReturnsHome() {
         let background = FakeBackgroundExecution()
         let model = PhoneRemoteModel(background: background)

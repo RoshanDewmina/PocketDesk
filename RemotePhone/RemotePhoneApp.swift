@@ -2283,9 +2283,12 @@ let now = ProcessInfo.processInfo.systemUptime
                 if sceneWasBackground {
                     sceneWasBackground = false
                     if !pipBackground { returnToForeground() }
-                } else if connection.connected && pendingLockMac == nil && !mayKeepLivePiP {
+                } else if UserDefaults.standard.bool(forKey: "disableDuoInactiveContinuity"),
+                          connection.connected && pendingLockMac == nil && !mayKeepLivePiP {
                     background.begin { [weak self] in self?.endBackgroundHold(immediately: true) }
                 }
+                // Split View focus loss and folding transitions can stay inactive indefinitely.
+                // Release input and shield the snapshot, but only .background starts a hold timer.
             }
         case .background:
             sceneWasBackground = true
