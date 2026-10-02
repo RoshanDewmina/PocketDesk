@@ -147,6 +147,36 @@ final class DeliberateEndProtocolTests: XCTestCase {
         XCTAssertFalse(accepts(requested: 7, ending: true))
     }
 
+    func testCombinedEnrollmentAudioAndEndFitHandshakeAndHostAdvertisement() throws {
+        let suite = "Batch7Handshake-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let request = MacShareBlocker.Handshake.phoneRequest(
+            [SessionFeature.videoRefinement, SessionFeature.textClarity], defaults: defaults)
+        let body = try JSONEncoder().encode(request)
+        let requested = MacShareBlocker.Handshake.features(in: body)
+        XCTAssertEqual(request.features.count, 8)
+        XCTAssertEqual(request.options?.count, 4)
+        XCTAssertEqual(requested, request.requested, "Neither audio consent nor End can be silently dropped")
+        XCTAssertLessThanOrEqual(body.count, 1024)
+        let enrollment = PairEnrollment.Request(commitment: Data(repeating: 1, count: 32),
+                                                handshake: request, phoneName: "Phone")
+        XCTAssertNoThrow(try PairEnrollment.validate(enrollment))
+        let advertised = HostFeatureList.features(
+            base: SessionFeature.host + [SessionFeature.couch, SessionFeature.deliberateEnd,
+                                         SessionFeature.lanWake, SessionFeature.away],
+            allowBigText: true, accessibility: true, peerFeatures: requested)
+        XCTAssertEqual(advertised.count, 32)
+        for feature in [SessionFeature.phoneAudio, SessionFeature.deliberateEnd, SessionFeature.displayScale,
+                        SessionFeature.lanWake, SessionFeature.away] {
+            XCTAssertTrue(advertised.contains(feature), "The 32-feature cap must retain \(feature)")
+        }
+        XCTAssertNoThrow(try RemoteAction(action: "capture", epoch: 1, features: advertised).validate())
+        let scoped = SharedCaptureScopePolicy.features(advertised, kind: .window)
+        XCTAssertFalse(scoped.contains(SessionFeature.phoneAudio))
+        XCTAssertFalse(scoped.contains(SessionFeature.deliberateEnd))
+    }
+
     func testHandshakeOptInPreservesFeatureAndOptionBoundsAndRollback() throws {
         let suite = "DeliberateEndProtocolTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
