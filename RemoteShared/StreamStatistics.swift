@@ -295,6 +295,8 @@ struct StreamStatsReport: Codable, Equatable {
     var nackReceived: Int?
     var pliReceived: Int?
     var remoteLossPercent: Double?
+    /// The RTCP receiver report's round trip (about once a second); `rttMs` is the candidate pair's STUN one.
+    var rtcpRttMs: Double?
 
     var receivedFPS: Double?
     var decodedFPS: Double?
@@ -411,6 +413,8 @@ struct StreamStatsReport: Codable, Equatable {
     var transportPriorityRequested: String?
     var bweCeilingKbps: Double?
     var lanCeilingApplied: Bool?
+    /// `LANTrustTracker`'s verdict this second (host only); the ladder reads it from here.
+    var lanTrusted: Bool?
     /// The `LANBitrateFloor` under the estimate this second, nil while the link is not trusted.
     var lanFloorKbps: Double?
     var senderQueueMs: Double?
@@ -465,6 +469,7 @@ struct StreamStatsReport: Codable, Equatable {
             receivedHeight = inbound.number("frameHeight").map { Int($0) }
         }
         remoteLossPercent = Self.round(current.remoteInbound?.number("fractionLost").map { $0 * 100 })
+        rtcpRttMs = Self.round(current.remoteInbound?.number("roundTripTime").map { $0 * 1000 })
 
         var sentBytes: Double?
         if let previous, current.timestamp > previous.timestamp {

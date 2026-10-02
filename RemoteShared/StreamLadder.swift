@@ -95,7 +95,7 @@ struct LadderInputs: Equatable {
     /// Frames offered to the encoder in the window, after the rate thinning (a 30 fps rung on a 60 Hz
     /// capture offers half of `captureFPS`). nil on an older report.
     var sourceFPS: Double? = nil
-    /// `LANTrustTracker`'s verdict on the link this second (HostLoadMonitor).
+    /// `LANTrustTracker`'s verdict on the link this second (`StreamStatsReport.lanTrusted`, the media layer).
     var lanTrusted = false
 
     var frameIntervalMs: Double { 1000 / Double(max(1, targetFPS)) }

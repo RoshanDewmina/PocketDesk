@@ -998,16 +998,22 @@ final class PeerMedia: NSObject {
     private var lanFloorBps: Int?
     private var lanTrust = LANTrustTracker()
 
-    /// On while the link is trusted (`LANTrustTracker`), back to libwebrtc's own minimum the sample it is not.
-    private func followLANFloor(_ stats: StreamStatsReport) {
-        guard isHost, nativeDesktopCodecs, tuning.qualityBitrates, !closed, remoteDescriptionReady,
-              let floor = LANBitrateFloor.bps(startBitrateBps: streamQuality.startBitrateBps(for: .lan)) else { return }
+    /// Judges the link once a second (RTCP round trip when there is one, the STUN one otherwise) and
+    /// publishes the verdict; the floor is on while trusted and back to libwebrtc's own minimum the
+    /// sample it is not, never above the ceiling, and follows a changed start rate.
+    private func followLANFloor(_ stats: inout StreamStatsReport) {
+        guard isHost, nativeDesktopCodecs, !closed else { return }
         let trusted = lanTrust.observe(provenLocalLink: provenLocalLinkActive, lossPercent: stats.remoteLossPercent,
-                                       rttMs: stats.rttMs, pacerDelayMs: stats.pacerDelayMs)
-        guard trusted != (lanFloorBps != nil) else { return }
-        _ = connection?.setBweMinBitrateBps(NSNumber(value: trusted ? floor : 0), currentBitrateBps: nil,
+                                       rttMs: stats.rtcpRttMs ?? stats.rttMs, pacerDelayMs: stats.pacerDelayMs)
+        stats.lanTrusted = trusted
+        guard tuning.qualityBitrates, remoteDescriptionReady,
+              var floor = LANBitrateFloor.bps(startBitrateBps: streamQuality.startBitrateBps(for: .lan)) else { return }
+        if let maximum = appliedBweMaxBps { floor = min(floor, maximum) }
+        let next = trusted ? floor : nil
+        guard next != lanFloorBps else { return }
+        _ = connection?.setBweMinBitrateBps(NSNumber(value: next ?? 0), currentBitrateBps: nil,
                                              maxBitrateBps: appliedBweMaxBps.map { NSNumber(value: $0) })
-        lanFloorBps = trusted ? floor : nil
+        lanFloorBps = next
     }
 
     /// G5: the capture session's target rate and display. Written on the main queue under
@@ -1088,9 +1094,10 @@ final class PeerMedia: NSObject {
 
     /// A resume after the phone's background pause starts the estimate near libwebrtc's minimum
     /// (1 Oct 2026: target 33 kbps, a 3.1 s pacer queue, 2-9 sent fps for 12 s), and both seed
-    /// attempts were spent at session start. Arms the seed again for the resumed stream.
+    /// attempts were spent at session start. Arms the seed again for the resumed stream on a proven
+    /// local link only: off the LAN the seed rate could exceed the path.
     func rearmBandwidthSeed() {
-        guard BandwidthSeedRearmSwitch.isOn else { return }
+        guard BandwidthSeedRearmSwitch.isOn, provenLocalLinkActive else { return }
         bandwidthSeed = BandwidthSeedPolicy()
     }
 
@@ -1334,7 +1341,7 @@ final class PeerMedia: NSObject {
             if nativeDesktopCodecs { stats.transportPriorityRequested = transportPriority.summary }
             followCeilingRoute(detail: sample.routeDetail, rttMs: stats.rttMs)
             seedBandwidthEstimate(stats, route: sample.route, detail: sample.routeDetail)
-            followLANFloor(stats)
+            followLANFloor(&stats)
             stats.networkQueueMs = SenderQueueEstimate.networkQueueMs(rttMs: stats.rttMs, baselineRTTMs: transportRate.baselineRTT)
                 .map { ($0 * 10).rounded() / 10 }
             if nativeDesktopCodecs && tuning.qualityBitrates {

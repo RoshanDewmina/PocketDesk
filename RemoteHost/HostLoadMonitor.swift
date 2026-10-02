@@ -27,8 +27,7 @@ struct HostLoadSample: Equatable {
     var sentFPS: Double? = nil
     var encoderSessionAgeS: Double? = nil
     var sourceFPS: Double? = nil
-    var rttMs: Double? = nil
-    var remoteLossPercent: Double? = nil
+    var lanTrusted = false
 }
 
 extension HostLoadSample {
@@ -43,8 +42,8 @@ extension HostLoadSample {
                   qualityLimitation: report.qualityLimitation, hostThermalState: hostThermalState,
                   lowPowerMode: lowPowerMode, sentKbps: report.sentKbps, senderQueueMs: report.senderQueueMs,
                   networkQueueMs: report.networkQueueMs, routeDetail: report.routeDetail, sentFPS: report.sentFPS,
-                  encoderSessionAgeS: report.encoderSessionAgeS, sourceFPS: report.sourceFPS, rttMs: report.rttMs,
-                  remoteLossPercent: report.remoteLossPercent)
+                  encoderSessionAgeS: report.encoderSessionAgeS, sourceFPS: report.sourceFPS,
+                  lanTrusted: report.lanTrusted ?? false)
     }
 }
 
@@ -58,7 +57,6 @@ struct HostLoadMonitor {
     private(set) var busy = BusyPolicy()
     private(set) var longEdge = 0
     private(set) var governor: SenderQueueGovernor?
-    private(set) var lanTrust = LANTrustTracker()
     let applyGovernor: Bool
     private(set) var applied: LadderState
 
@@ -81,7 +79,7 @@ struct HostLoadMonitor {
         return feedback
     }
 
-    static func inputs(from sample: HostLoadSample, lanTrusted: Bool = false) -> LadderInputs {
+    static func inputs(from sample: HostLoadSample) -> LadderInputs {
         LadderInputs(targetFPS: sample.targetFPS, captureFPS: sample.captureFPS,
                      captureLatencyP90Ms: sample.captureLatencyP90Ms, encodedFPS: sample.encodedFPS,
                      encodeLatencyP90Ms: sample.encodeLatencyP90Ms, encodeInFlightMax: sample.encodeInFlightMax,
@@ -94,15 +92,14 @@ struct HostLoadMonitor {
                      phonePresentedFPS: sample.phoneLoad?.presentedFPS,
                      phoneThermalState: sample.phoneLoad?.thermalState.map(String.init),
                      phoneLowPowerMode: sample.phoneLoad?.lowPowerMode, sentFPS: sample.sentFPS,
-                     encoderSessionAgeS: sample.encoderSessionAgeS, sourceFPS: sample.sourceFPS, lanTrusted: lanTrusted)
+                     encoderSessionAgeS: sample.encoderSessionAgeS, sourceFPS: sample.sourceFPS,
+                     lanTrusted: sample.lanTrusted)
     }
 
     /// The new rung to apply and the new busy state to send, each nil when unchanged.
     mutating func tick(sample: HostLoadSample, at time: TimeInterval) -> (ladder: LadderState?, busy: BusyState?) {
         if let edge = sample.longEdge, edge > 0 { longEdge = edge }
-        let trusted = lanTrust.observe(provenLocalLink: sample.provenLocalLink, lossPercent: sample.remoteLossPercent,
-                                       rttMs: sample.rttMs, pacerDelayMs: sample.pacerDelayMs)
-        let inputs = Self.inputs(from: sample, lanTrusted: trusted)
+        let inputs = Self.inputs(from: sample)
         _ = ladder.evaluate(inputs, at: time)
         _ = governor?.observe(SenderQueueGovernor.Window(route: sample.routeDetail, availableKbps: sample.availableKbps,
             sentKbps: sample.sentKbps, senderQueueMs: sample.senderQueueMs, networkQueueMs: sample.networkQueueMs,
