@@ -840,6 +840,66 @@ private final class RevocationPasteboard: HostPasteboardAccess, @unchecked Senda
 }
 @MainActor
 final class HostFileLinkRevocationTests: XCTestCase {
+    func testScreenOnlyConsentAndStaleSessionRefuseFileAndLinkAdmission() async throws {
+        let queue = DispatchQueue(label: "fixture.consent"), board = RevocationPasteboard()
+        let offer = HostLinkOffer(showPanel: false, opener: { _ in XCTFail("Screen-only must not open links"); return false })
+        var destinations = 0, allowed = false
+        let service = HostFileTransferService(destination: { destinations += 1; return nil }, pasteboard: board,
+                                              queue: queue, linkOffer: offer)
+        service.refusal = { allowed ? nil : .notAllowed }
+        var results: [FileFrame] = []
+        service.engine.sendControl = { results.append($0); return true }
+        let id = FileTransferID.make()
+        let frames: [FileFrame] = [.offer(id, name: "fixture.txt", bytes: 1, type: nil), .request(id),
+                                   .link(id, url: "https://fixture.invalid")]
+        for frame in frames { service.receive(frame, current: true) }
+        XCTAssertEqual(results.map(\.status), Array(repeating: FileTransferStatus.notAllowed.rawValue, count: 3))
+        allowed = true
+        for frame in frames { service.receive(frame, current: false) }
+        await withCheckedContinuation { c in queue.async { c.resume() } }
+        XCTAssertEqual(results.count, 3); XCTAssertEqual(destinations, 0)
+        XCTAssertNil(service.engine.incoming); XCTAssertNil(offer.currentID); XCTAssertTrue(board.writes.isEmpty)
+        service.reset()
+    }
+
+    func testConsentRevocationRetiresPendingHostAdmission() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let queue = DispatchQueue(label: "fixture.pending-consent"), gate = DispatchSemaphore(value: 0)
+        queue.async { gate.wait() }; defer { gate.signal() }
+        let service = HostFileTransferService(destination: { folder }, queue: queue)
+        var allowed = true
+        service.refusal = { allowed ? nil : .notAllowed }; service.engine.sendControl = { _ in true }
+        service.receive(.offer(FileTransferID.make(), name: "fixture.txt", bytes: 1, type: nil), current: true)
+        XCTAssertEqual(service.engine.incoming?.phase, .waiting)
+        allowed = false; service.revoke()
+        gate.signal(); await withCheckedContinuation { c in queue.async { c.resume() } }
+        await Task.yield()
+        XCTAssertNil(service.engine.incoming)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path), "Retired admission must never create a destination")
+    }
+
+    func testStaleCompletionAndRevokedChunksCannotCommit() async throws {
+        let queue = DispatchQueue(label: "fixture.service-consent-io"), sink = RevocationSink()
+        let service = HostFileTransferService(destination: { nil }, io: FileTransferIO(queue: queue))
+        var allowed = true
+        service.refusal = { allowed ? nil : .notAllowed }; service.engine.sendControl = { _ in true }
+        service.engine.admit = { _, answer in answer(.success(sink)) }
+        let id = FileTransferID.make(), data = Data([1])
+        service.receive(.offer(id, name: "fixture.txt", bytes: 1, type: nil), current: true)
+        service.engine.receiveChunk(try XCTUnwrap(FileChunk.encode(transfer: id, offset: 0, payload: data)))
+        await withCheckedContinuation { c in queue.async { c.resume() } }
+        let complete = FileFrame.complete(id, digest: FileDigest.hex(SHA256.hash(data: data)))
+        service.receive(complete, current: false)
+        XCTAssertEqual(sink.counts.1, 0, "Old epoch completion cannot commit current bytes")
+        allowed = false; service.revoke()
+        service.receive(complete, current: true)
+        service.engine.receiveChunk(try XCTUnwrap(FileChunk.encode(transfer: id, offset: 0, payload: data)))
+        await withCheckedContinuation { c in queue.async { c.resume() } }
+        XCTAssertEqual(sink.counts.0, 1); XCTAssertEqual(sink.counts.1, 0); XCTAssertEqual(sink.counts.2, 1)
+        XCTAssertNil(service.engine.incoming)
+    }
+
     func testActualServiceResetAndRevokeFenceQueuedLinkWriteDismissAndOldOpen() async throws {
         for revoke in [false, true] {
             let queue = DispatchQueue(label: "fixture.link"), gate = DispatchSemaphore(value: 0), board = RevocationPasteboard()
@@ -849,12 +909,12 @@ final class HostFileLinkRevocationTests: XCTestCase {
             let service = HostFileTransferService(destination: { nil }, pasteboard: board, queue: queue, linkOffer: offer)
             service.refusal = { refusal }; service.engine.sendControl = { _ in true }
             let id = String(repeating: "a", count: 32), first = "https://fixture.invalid/old", next = "https://fixture.invalid/new"
-            service.receive(.link(id, url: first)); let old = try XCTUnwrap(offer.currentID)
+            service.receive(.link(id, url: first), current: true); let old = try XCTUnwrap(offer.currentID)
             if revoke { service.revoke() } else { service.reset() }
             XCTAssertNil(offer.currentID); offer.openOffer(old); XCTAssertTrue(opened.isEmpty)
             gate.signal(); await withCheckedContinuation { c in queue.async { c.resume() } }
             XCTAssertTrue(board.writes.isEmpty, "Queued URL must not overwrite clipboard after reset/revoke returns")
-            service.receive(.link(id, url: next)); let current = try XCTUnwrap(offer.currentID)
+            service.receive(.link(id, url: next), current: true); let current = try XCTUnwrap(offer.currentID)
             offer.openOffer(old); XCTAssertTrue(opened.isEmpty, "Old SwiftUI action cannot open replacement link")
             refusal = .notAllowed; offer.openOffer(current); XCTAssertTrue(opened.isEmpty, "Current offer still needs live owner authorization")
             refusal = nil; offer.openOffer(current); XCTAssertEqual(opened.map(\.absoluteString), [next]); XCTAssertNil(offer.currentID)
@@ -862,36 +922,37 @@ final class HostFileLinkRevocationTests: XCTestCase {
         }
     }
     /// MS05: no "Allow file transfer" switch. A stored legacy `false` is ignored; the view-only scope still refuses.
-    func testFilesNeedOnlyALiveFullScopeSessionAndIgnoreTheRemovedMacSetting() throws {
+    func testFilesNeedOwnerControlConsentAndIgnoreTheRemovedMacSetting() throws {
         let suite = "MS05-\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set(false, forKey: "allowFileTransfer")
         _ = HostPreferences(defaults: defaults)
         func refusal(scope: Bool = false, connected: Bool = true, sharing: Bool = true, paused: Bool = false,
-                     viewOnly: Bool = false, locking: Bool = false) -> HostFileTransferService.Refusal? {
-            HostFileTransferService.refusal(viewOnlyScope: scope, connected: connected, sharing: sharing, paused: paused,
+                     viewOnly: Bool = false, locking: Bool = false, control: Bool = true) -> HostFileTransferService.Refusal? {
+            HostFileTransferService.refusal(viewOnlyScope: scope, connected: connected, sharing: sharing, controlAllowed: control, paused: paused,
                                             liveViewOnly: viewOnly, locking: locking)
         }
         XCTAssertNil(refusal())
+        XCTAssertEqual(refusal(control: false), .controlDisabled)
         XCTAssertEqual(refusal(scope: true)?.status, .disabled)
         XCTAssertEqual(refusal(connected: false), .noSession)
         XCTAssertEqual(refusal(sharing: false), .notSharing)
         XCTAssertEqual(refusal(paused: true), .paused)
         XCTAssertEqual(refusal(viewOnly: true), .viewOnly)
         XCTAssertEqual(refusal(locking: true)?.status, .notAllowed)
-        XCTAssertEqual(HostFileTransferService.refusal(viewOnlyScope: false, connected: true, sharing: true, paused: false,
+        XCTAssertEqual(HostFileTransferService.refusal(viewOnlyScope: false, connected: true, sharing: true, controlAllowed: true, paused: false,
                                                        liveViewOnly: false, locking: true, lockFailed: true), .lockFailed)
         XCTAssertThrowsError(try FileFrame(op: "cancel", transfer: String(repeating: "d", count: 32), reason: "paused").validate())
         let service = HostFileTransferService(destination: { nil })
         var sent: [FileFrame] = []
         service.engine.sendControl = { sent.append($0); return true }
         service.refusal = { refusal(scope: true)?.status }
-        service.receive(.request(String(repeating: "b", count: 32)))
+        service.receive(.request(String(repeating: "b", count: 32)), current: true)
         XCTAssertEqual(sent.last?.status, FileTransferStatus.disabled.rawValue, "view-only scope keeps its refusal")
         // 1 Oct device report: every send said only "isn't accepting files". The refusal now says which condition.
         service.refusal = { refusal(paused: true)?.status }
         service.refusalReason = { refusal(paused: true)?.rawValue }
-        service.receive(.offer(String(repeating: "c", count: 32), name: "a.txt", bytes: 1, type: nil))
+        service.receive(.offer(String(repeating: "c", count: 32), name: "a.txt", bytes: 1, type: nil), current: true)
         let result = try XCTUnwrap(sent.last)
         XCTAssertEqual(result.reason, "paused"); XCTAssertNoThrow(try result.validate())
         let phone = FileTransferEngine(acceptsUnsolicitedOffers: false)

@@ -18,7 +18,7 @@ export type Config = {
   testForceRelay: boolean;
   /** Local dev/test migration switch: legacy peers may receive STUN and TURN. Refused on public deployments. */
   allowUnentitledRelay: boolean;
-  /** Staging-only developer pass: these exact rooms are treated as entitled without a purchase. Refused in production. */
+  /** Staging or explicit local dev pass: these exact rooms are treated as entitled without a purchase. */
   devRelayRooms: Set<string>;
   /** 0 disables; otherwise each peer's last `ice` message is re-sent unchanged every N seconds so quiet sockets stay open. */
   keepaliveMs: number;
@@ -49,6 +49,7 @@ export function loadConfig(env: Env): Config {
   const devRelayRooms = new Set(listVar((env as { DEV_RELAY_ROOMS?: string }).DEV_RELAY_ROOMS));
   if (devRelayRooms.size > 0) {
     if (isProduction) throw new Error("DEV_RELAY_ROOMS is refused in production");
+    if (environmentName !== "staging" && env.ENVIRONMENT_NAME !== "dev") throw new Error("DEV_RELAY_ROOMS is allowed only in staging or explicit dev");
     if (devRelayRooms.size > 4 || [...devRelayRooms].some(room => !/^[a-f0-9]{64}$/.test(room))) throw new Error("DEV_RELAY_ROOMS invalid");
   }
   const keepaliveSeconds = parseIntegerVar(env.KEEPALIVE_SECONDS, 0, 0, 600);

@@ -9,7 +9,7 @@ import UserNotifications
 /// Names and contents stay out of logs; only the local notification shows a name.
 @MainActor
 final class HostFileTransferService {
-    let engine = FileTransferEngine(acceptsUnsolicitedOffers: true)
+    let engine: FileTransferEngine
     /// Nil when this session may transfer files, otherwise the refusal to send.
     var refusal: () -> FileTransferStatus? = { .notAllowed }
     /// Which condition refused, sent with the refusal so the phone can say why (and logged by the owner).
@@ -29,7 +29,8 @@ final class HostFileTransferService {
     init(destination: @escaping () -> URL? = HostFileTransferService.defaultDestination,
          pasteboard: HostPasteboardAccess = SystemHostPasteboard(),
          queue: DispatchQueue = DispatchQueue(label: "Farside.file-destination", qos: .userInitiated),
-         linkOffer: HostLinkOffer? = nil) {
+         linkOffer: HostLinkOffer? = nil, io: FileTransferIO = FileTransferIO()) {
+        self.engine = FileTransferEngine(acceptsUnsolicitedOffers: true, io: io)
         self.destination = destination
         self.pasteboard = pasteboard
         self.queue = queue; self.linkOffer = linkOffer ?? .shared
@@ -45,18 +46,19 @@ final class HostFileTransferService {
 
     /// Why files are refused, first failing condition wins. Travels as the result's `reason`.
     enum Refusal: String {
-        case viewOnlyScope, noSession, notSharing, paused, viewOnly, locking, lockFailed
+        case viewOnlyScope, noSession, notSharing, controlDisabled, paused, viewOnly, locking, lockFailed
         var status: FileTransferStatus { self == .viewOnlyScope ? .disabled : .notAllowed }
     }
 
     /// MS05: there is no Mac setting. A view-only sharing scope refuses files; otherwise only a current,
-    /// unpaused, sharing session that is not in live view only or locking may transfer. A stored legacy
+    /// unpaused, sharing session with owner control consent that is not in live view only or locking may transfer. A stored legacy
     /// `allowFileTransfer` value is never read.
-    nonisolated static func refusal(viewOnlyScope: Bool, connected: Bool, sharing: Bool, paused: Bool,
+    nonisolated static func refusal(viewOnlyScope: Bool, connected: Bool, sharing: Bool, controlAllowed: Bool, paused: Bool,
                                     liveViewOnly: Bool, locking: Bool, lockFailed: Bool = false) -> Refusal? {
         if viewOnlyScope { return .viewOnlyScope }
         if !connected { return .noSession }
         if !sharing { return .notSharing }
+        if !controlAllowed { return .controlDisabled }
         if paused { return .paused }
         if liveViewOnly { return .viewOnly }
         if lockFailed { return .lockFailed }
@@ -69,7 +71,9 @@ final class HostFileTransferService {
             .appendingPathComponent("Farside", isDirectory: true)
     }
 
-    func receive(_ frame: FileFrame) {
+    func receive(_ frame: FileFrame, current: Bool) {
+        // Fence every control frame, including completion of an already admitted transfer.
+        guard current else { return }
         if ["offer", "request", "link"].contains(frame.op), let status = refusal() {
             _ = engine.sendControl?(.result(frame.transfer, status, reason: refusalReason()))
             return
@@ -158,6 +162,7 @@ final class HostFileTransferService {
     // MARK: Links
 
     private func receiveLink(_ transfer: String, _ text: String) {
+        guard refusal() == nil else { _ = engine.sendControl?(.result(transfer, .notAllowed)); return }
         guard let url = URL(string: text) else { _ = engine.sendControl?(.result(transfer, .invalid)); return }
         let pasteboard = self.pasteboard, lease = effectLease
         queue.async { _ = lease.performIfActive { pasteboard.write(ClipboardPayload(text: text, kind: .url)) } }

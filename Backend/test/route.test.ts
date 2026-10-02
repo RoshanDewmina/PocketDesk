@@ -114,8 +114,8 @@ describe("route.1 server policy", () => {
     expect(() => loadConfig(staging)).toThrow("ALLOW_UNENTITLED_RELAY is refused on public deployments");
   });
 
-  it("accepts a staging developer pass for exact rooms only and refuses it in production", () => {
-    const withEnv = (name: string, rooms: string) => new Proxy(testEnv, {
+  it("accepts developer passes only in staging or explicit local dev", () => {
+    const withEnv = (name: string | undefined, rooms: string) => new Proxy(testEnv, {
       get(target, property) {
         if (property === "ENVIRONMENT_NAME") return name;
         if (property === "DEV_RELAY_ROOMS") return rooms;
@@ -124,8 +124,12 @@ describe("route.1 server policy", () => {
     });
     const room = "a".repeat(64);
     expect(loadConfig(withEnv("staging", room)).devRelayRooms.has(room)).toBe(true);
+    expect(loadConfig(withEnv("dev", room)).devRelayRooms.has(room)).toBe(true);
     expect(loadConfig(withEnv("staging", "")).devRelayRooms.size).toBe(0);
     expect(() => loadConfig(withEnv("production", room))).toThrow("DEV_RELAY_ROOMS is refused in production");
+    expect(() => loadConfig(withEnv("test", room))).toThrow("DEV_RELAY_ROOMS is allowed only in staging or explicit dev");
+    expect(() => loadConfig(withEnv(undefined, room))).toThrow("DEV_RELAY_ROOMS is allowed only in staging or explicit dev");
+    expect(() => loadConfig(withEnv("preview", room))).toThrow("DEV_RELAY_ROOMS is allowed only in staging or explicit dev");
     expect(() => loadConfig(withEnv("staging", "not-a-room"))).toThrow("DEV_RELAY_ROOMS invalid");
   });
 

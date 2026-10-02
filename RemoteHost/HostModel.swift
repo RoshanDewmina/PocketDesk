@@ -1073,7 +1073,10 @@ final class RemoteHostModel: ObservableObject {
     /// File transfer needs a full-control sharing scope and a current, unpaused session (MS05: no Mac setting).
     /// Received files only land quarantined in Downloads › Farside, never opened; Mac-to-phone needs a pick here.
     private var fileTransferRefusal: HostFileTransferService.Refusal? {
-        HostFileTransferService.refusal(viewOnlyScope: captureScopeViewOnly, connected: connection.connected, sharing: active,
+        // Emergency internal kill switch only removes authority; it cannot bypass consent.
+        if UserDefaults.standard.bool(forKey: "farsideDisableFileEffects") { return .controlDisabled }
+        return HostFileTransferService.refusal(viewOnlyScope: captureScopeViewOnly, connected: connection.connected && !sessionRefused, sharing: active,
+            controlAllowed: sessionControlAllowed,
             paused: phonePause.isPaused, liveViewOnly: liveViewOnly, locking: away.isLocking, lockFailed: awayLockFailed)
     }
 
@@ -2103,6 +2106,7 @@ final class RemoteHostModel: ObservableObject {
         if !effective {
             releaseRemoteInput(notifyPhone: notifyPhone)
             clipboard.reset()
+            fileTransfer.revoke()
         }
         reconcileAutomaticClipboard()
         if notifyPhone, connection.connected {
@@ -3193,7 +3197,7 @@ final class RemoteHostModel: ObservableObject {
             guard let frame = action.clipboard else { return }
             clipboard.receive(frame, allowed: current && !phonePause.isPaused && !liveViewOnly && controlEffective)
         case "file":
-            if let frame = action.file { fileTransfer.receive(frame) }
+            if let frame = action.file { fileTransfer.receive(frame, current: current) }
         case "curtain":
             guard sessionState == .picture else {
                 sendCaptureHealth(sessionHealthy)
@@ -3506,6 +3510,7 @@ final class RemoteHostModel: ObservableObject {
     private func advanceEpoch() {
         clipboard.stopAutomaticSync()
         guests.endAll()
+        fileTransfer.reset()
         // Retire both posted and admitted holds before publishing the new scope.
         releaseRemoteInput(notifyPhone: true)
         invalidateTextFocus()
