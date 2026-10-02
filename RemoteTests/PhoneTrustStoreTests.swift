@@ -340,6 +340,44 @@ final class HostMultiDeviceTests: XCTestCase {
 
 
 extension HostMultiDeviceTests {
+    /// Exercise the actual v2 commitment, reveal and reciprocal confirmation before Mac consent.
+    private func comparisonEnrollment(_ invitation: PairInvitation, host: RemoteCoordinator,
+                                      transport: ScriptedSignaling) throws -> (cipher: SignalCipher, keys: PairEnrollment.Keys) {
+        XCTAssertEqual(invitation.version, PairEnrollment.version)
+        let qrCipher = try SignalCipher(key: invitation.key, room: invitation.room)
+        let ephemeral = try PairEnrollment.Ephemeral(), requestID = try SecureRandom.token()
+        let handshake = MacShareBlocker.Handshake.phone
+        let name = "Fixture iPad"
+        let enrollment = PairEnrollment.Request(commitment: try PairEnrollment.commitment(
+            invitation: invitation, requestID: requestID, reveal: ephemeral.reveal,
+            handshake: handshake, phoneName: name), handshake: handshake, phoneName: name)
+        let request = ProtectedMessage(kind: "enrollmentRequest", request: requestID, session: "", sequence: 0,
+                                       body: try PairEnrollment.encoded(enrollment))
+        transport.deliver(RelayMessage(type: "signal", payload: try qrCipher.seal(request, sender: "client")))
+        let challengeMessage = try qrCipher.open(XCTUnwrap(transport.sent.last?.payload), sender: "host")
+        XCTAssertEqual(challengeMessage.kind, "enrollmentChallenge")
+        XCTAssertEqual(challengeMessage.request, requestID)
+        XCTAssertEqual(challengeMessage.sequence, 0)
+        let challenge = try PairEnrollment.decode(PairEnrollment.Challenge.self, body: challengeMessage.body)
+        let keys = try PairEnrollment.derive(invitation: invitation, requestID: requestID,
+            sessionID: challengeMessage.session, request: enrollment, challenge: challenge,
+            phone: ephemeral.reveal, ephemeral: ephemeral, isHost: false)
+        let proof = ProtectedMessage(kind: "enrollmentProof", request: requestID,
+            session: challengeMessage.session, sequence: 0,
+            body: try PairEnrollment.encoded(PairEnrollment.Proof(reveal: ephemeral.reveal,
+                                                                 confirmation: keys.confirmation(role: "phone"))))
+        transport.deliver(RelayMessage(type: "signal", payload: try qrCipher.seal(proof, sender: "client")))
+        let sessionCipher = try SignalCipher(key: keys.sessionKey, room: invitation.room)
+        let ready = try sessionCipher.open(XCTUnwrap(transport.sent.last?.payload), sender: "host")
+        XCTAssertEqual(ready.kind, "enrollmentReady")
+        XCTAssertEqual(ready.request, requestID)
+        XCTAssertEqual(ready.session, challengeMessage.session)
+        XCTAssertTrue(keys.confirms(try XCTUnwrap(ready.body), role: "host"))
+        XCTAssertEqual(host.pairingComparisonCode, keys.comparisonCode)
+        XCTAssertTrue(host.awaitingApproval)
+        return (sessionCipher, keys)
+    }
+
     private func catalog(count: Int = 2) throws -> HostPair {
         var root = try HostPair.create(server: "wss://example.com/signal", name: "Mac").rotated()
         root.devices = []
@@ -458,17 +496,15 @@ extension HostMultiDeviceTests {
         XCTAssertTrue(host.hostRegistered)
         XCTAssertEqual(host.pendingPairInvitation, pending)
         // Complete a second enrollment through the public encrypted handshake/approval path.
-        let pendingCipher = try SignalCipher(key: pending.key, room: pending.room)
-        let nextRequest = ProtectedMessage(kind: "request", request: try SecureRandom.token(), session: "", sequence: 0)
-        transport.deliver(RelayMessage(type: "signal", payload: try pendingCipher.seal(nextRequest, sender: "client")))
-        let challenge = try pendingCipher.open(XCTUnwrap(transport.sent.last?.payload), sender: "host")
-        let proof = ProtectedMessage(kind: "proof", request: nextRequest.request, session: challenge.session, sequence: 0)
-        transport.deliver(RelayMessage(type: "signal", payload: try pendingCipher.seal(proof, sender: "client")))
-        XCTAssertTrue(host.awaitingApproval)
+        let enrollment = try comparisonEnrollment(pending, host: host, transport: transport)
         host.approve()
-        let accepted = try pendingCipher.open(XCTUnwrap(transport.sent.last?.payload), sender: "host")
+        let acceptedPayload = try XCTUnwrap(transport.sent.last?.payload)
+        let accepted = try enrollment.cipher.open(acceptedPayload, sender: "host")
         XCTAssertEqual(accepted.kind, "accepted")
         let published = try JSONDecoder().decode(PairInvitation.self, from: XCTUnwrap(accepted.body))
+        XCTAssertEqual(published.key, enrollment.keys.trustKey)
+        XCTAssertEqual(published.token, enrollment.keys.trustToken)
+        XCTAssertThrowsError(try SignalCipher(key: pending.key, room: pending.room).open(acceptedPayload, sender: "host"))
         XCTAssertNotEqual(published.key, pending.key)
         XCTAssertNotEqual(published.token, pending.token)
         XCTAssertEqual(published.room, original.room)
@@ -558,14 +594,10 @@ extension HostMultiDeviceTests {
             host.start(); defer { host.stop() }
             transport.deliver(RelayMessage(type: "registered", features: [SignalingFeature.devices]))
             if decline {
-                let cipher = try SignalCipher(key: pending.key, room: pending.room)
-                let request = ProtectedMessage(kind: "request", request: try SecureRandom.token(), session: "", sequence: 0)
-                transport.deliver(RelayMessage(type: "signal", payload: try cipher.seal(request, sender: "client")))
-                let challenge = try cipher.open(XCTUnwrap(transport.sent.last?.payload), sender: "host")
-                let proof = ProtectedMessage(kind: "proof", request: request.request, session: challenge.session, sequence: 0)
-                transport.deliver(RelayMessage(type: "signal", payload: try cipher.seal(proof, sender: "client")))
-                XCTAssertTrue(host.awaitingApproval)
+                let enrollment = try comparisonEnrollment(pending, host: host, transport: transport)
                 host.reject()
+                let declined = try enrollment.cipher.open(XCTUnwrap(transport.sent.last?.payload), sender: "host")
+                XCTAssertEqual(declined.kind, "enrollmentDeclined")
                 XCTAssertEqual(transport.connects.count, 2)
             } else {
                 XCTAssertTrue(host.cancelPendingPairing())
@@ -577,6 +609,13 @@ extension HostMultiDeviceTests {
             XCTAssertEqual(host.invitation, saved.approvedDevices[0].invitation)
             XCTAssertEqual(transport.clientTokenHashes, [SecureRandom.digest(saved.approvedDevices[0].invitation.token)])
             XCTAssertNil(try store.read(HostPair.self)?.pendingInvitation)
+            let registrations = transport.connects.count
+            host.approve() // A queued Allow from the retired candidate must not stop the listener.
+            host.reject() // The retired Decline action also cannot affect established trust.
+            XCTAssertTrue(host.isRunning)
+            XCTAssertEqual(transport.connects.count, registrations)
+            XCTAssertEqual(host.invitation, saved.approvedDevices[0].invitation)
+            XCTAssertEqual(host.pairedDevices, saved.approvedDevices)
         }
     }
 
@@ -618,6 +657,12 @@ extension HostMultiDeviceTests {
 
 
 extension HostMultiDeviceTests {
+    private func expireConsentWithoutRunningItsTimeout(_ invitation: PairInvitation) {
+        // Keep the Allow/disconnect expiry regression distinct from the v2 timer-expiry path.
+        // A synchronous wait lets the owner action run before the MainActor timeout resumes.
+        Thread.sleep(forTimeInterval: max(0, invitation.expires.timeIntervalSinceNow) + 0.05)
+    }
+
     func testExpiryDuringAuthenticatedConsentRecoversOriginalAdmissionWithoutRelaunch() async throws {
         for approveExpired in [true, false] {
             let store = MemoryPairStore(), saved = try catalog(count: 1)
@@ -635,14 +680,9 @@ extension HostMultiDeviceTests {
             host.allowLegacyPrivateRoute = true
             host.restore(); host.start(); defer { host.stop() }
             transport.deliver(RelayMessage(type: "registered", features: [SignalingFeature.devices]))
-            let cipher = try SignalCipher(key: pending.key, room: pending.room)
-            let request = ProtectedMessage(kind: "request", request: try SecureRandom.token(), session: "", sequence: 0)
-            transport.deliver(RelayMessage(type: "signal", payload: try cipher.seal(request, sender: "client")))
-            let challenge = try cipher.open(XCTUnwrap(transport.sent.last?.payload), sender: "host")
-            let proof = ProtectedMessage(kind: "proof", request: request.request, session: challenge.session, sequence: 0)
-            transport.deliver(RelayMessage(type: "signal", payload: try cipher.seal(proof, sender: "client")))
-            XCTAssertTrue(host.awaitingApproval)
-            try await Task.sleep(nanoseconds: 2_100_000_000)
+            _ = try comparisonEnrollment(pending, host: host, transport: transport)
+            expireConsentWithoutRunningItsTimeout(pending)
+            XCTAssertTrue(host.awaitingApproval, "Expiry must be exercised at consent, before automatic retirement")
             if approveExpired { host.approve() }
             else { transport.deliver(RelayMessage(type: "peer", online: false)) }
             let deadline = Date().addingTimeInterval(2)

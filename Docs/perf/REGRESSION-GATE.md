@@ -1,3 +1,7 @@
+# Batch 7b gate qualifications — 2 October 2026
+
+Use the shared two-slot `~/bin/farside-lock`. Set `FARSIDE_BUILD_LANE=batch-7b` so priority exemptions are checked for the actual integration lane. The gate **does not toggle PocketDeskScrollFixes** or installed-app defaults. G04's core replay calls the test helper with **keepBand=true**, an explicit opt-in policy override; package default off still exhibits covered-region churn. `testGoldenCoveredPinchReplayRequiresTheOptInKeepBand` asserts both outcomes. A green G04 tests the proposed keep-band fix; it is not a claim that the default-off runtime passes that engineering requirement or that physical pinch is smooth. G21 stays RETIRED; all DEVICE rows await hardware smoke.
+
 # Golden regression gate
 
 Run from the integration checkout before making a device candidate:

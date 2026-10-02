@@ -1,3 +1,7 @@
+# Batch 7b integration freshness — 2 October 2026
+
+Verified Xcode27.0/27A266a and macOS27.0.1/26A434. Live TLS Markdown re-fetched macOS/iOS27 release notes, CGDisplayRegisterReconfigurationCallback and privacy collected-data type; receipts `/Volumes/Studio/Development/Caches/batch7b-logs/apple-refresh`. Product Interaction key checked against Apple's current [collected data type documentation](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacycollecteddatatypes/nsprivacycollecteddatatype). No new OS27-only symbol introduced; existing SDK27.1 Duo guards remain. Optional scroll same-size crop/frame ordering remains a physical acceptance risk because configuration completion alone does not prove sample cutover.
+
 # Apple API reference and freshness record
 
 Latest focused refresh **2 October 2026**; original capture/transport snapshot **12 September 2026**. This is a focused engineering reference, subordinate to [PRODUCT.md](../PRODUCT.md). It records the relevant material actually inspected, not a claim to have read all Apple documentation or demonstrated runtime compatibility.

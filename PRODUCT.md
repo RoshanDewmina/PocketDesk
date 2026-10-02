@@ -1,3 +1,7 @@
+# Batch 7b defaults and regression boundary — 2 October 2026
+
+Roshan explicitly chose **Privacy curtain ON by default**; preserve existing explicit On/Off choices. The Mac stays covered during a brief phone background pause and bounds its post-session hold around Big Text restoration. Optional scroll/zoom/crop changes remain **OFF** behind `PocketDeskScrollFixes` pending on-device A/B. Preserve the historical behaviors in `Docs/perf/REGRESSION-GOLDEN.md`; automated proxies are separate from physical acceptance. This task integrates six specified lanes, sets build20261002.4, verifies local candidates and pushes the integration branch. Installation, backend deployment, notarization and release execution remain separate actions.
+
 # Universal 1.0 iPad decision — 2 October 2026
 
 Roshan's latest direction is a universal iPhone/iPad 1.0 around **27 October**. This supersedes the older launch dates and dedicated-iPad deferrals below for this scoped candidate. The reviewed design is `/Users/roshansilva/Documents/Codex/2026-10-01/ipad-design/IPAD-DESIGN-SPEC.md`. Regular windows use the two-column Home, top session pill and coverage-based picture/trackpad stack with hysteresis. Compact-width windows retain the iPhone layout; no user-facing setting is added. Pencil works without its opt-in toggle; explicit mouse lock, shortcut remapping and Mini map remain.

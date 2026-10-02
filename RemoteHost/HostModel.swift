@@ -1960,6 +1960,7 @@ final class RemoteHostModel: ObservableObject {
         if let held = heldScale, held.requestID == requestID { scaleHoldTask?.cancel(); heldScale = nil } else { cancelHeldScale() }
         heldScale = (display, width, requestID)
         scaleHoldTask?.cancel()
+        let epoch = inputEpoch.value
         let deadline = ProcessInfo.processInfo.systemUptime + PrivacyCurtainPolicy.scaleHoldLimit
         scaleHoldTask = Task { @MainActor [weak self] in
             while true {
@@ -1970,7 +1971,12 @@ final class RemoteHostModel: ObservableObject {
             guard let self, !Task.isCancelled, let held = self.heldScale else { return }
             self.heldScale = nil
             self.scaleHoldTask = nil
-            guard self.sessionState == .picture, held.display == self.selected, held.display == self.capturedDisplayID else {
+            guard PrivacyCurtainPolicy.heldScaleMayApply(connected: self.connection.connected, sharing: self.active,
+                    picture: self.sessionState == .picture, viewOnly: self.liveViewOnly || self.captureScopeViewOnly,
+                    paused: self.phonePause.isPaused, refused: self.sessionRefused,
+                    ending: self.deliberatePeerEnding || self.away.isLocking,
+                    sameEpoch: epoch == self.inputEpoch.value),
+                  held.display == self.selected, held.display == self.capturedDisplayID else {
                 return self.sendDisplayList(scaleError: .busy, scaleRequestID: held.requestID)
             }
             self.events.record(.curtain, self.curtain.phase == .up ? "Big Text applied under the curtain"
@@ -3420,7 +3426,7 @@ final class RemoteHostModel: ObservableObject {
             invalidateTextFocus(); clipboard.reset(); fileTransfer.reset()
             // Restore only the Mac owner's existing producer consent when leaving live PiP.
             // Phone playback remains muted until the person explicitly enables it again.
-            if next { phoneAudioRequested = false }
+            if next { cancelHeldScale(); phoneAudioRequested = false }
             reconcileSystemAudio()
             applyControlState(notifyPhone: true)
             sendCaptureHealth(sessionHealthy, viewOnlyRequestID: action.liveViewOnlyRequestID)
@@ -3432,7 +3438,7 @@ final class RemoteHostModel: ObservableObject {
             }
             // Suspension retired the old capture audio epoch; enabling consent cannot revive it.
             // A real transition back starts a newly scoped stream/epoch, with owner consent intact.
-            if wasViewOnly && systemAudioAllowedNow { beginCapture() }
+            if wasViewOnly && systemAudioAllowedNow { restartCapture() }
         case "sessionEnd":
             // The control envelope already binds this to the authenticated current peer. A display
             // reconfiguration may advance the geometry epoch while End travels; close is still valid.
@@ -3512,6 +3518,8 @@ final class RemoteHostModel: ObservableObject {
                   displays.contains(where: { $0.displayID == requested }) else {
                 return sendDisplayList(scaleError: .unsupported, scaleRequestID: action.scaleRequestID)
             }
+            // A newer valid selection (including Off) supersedes the curtain-delayed request.
+            if heldScale?.requestID != action.scaleRequestID || width <= 0 { cancelHeldScale() }
             if width > 0, !bigText.isEngaged, curtainWillCoverSoon {
                 holdScaleRequest(display: requested, width: width, requestID: action.scaleRequestID)
                 return

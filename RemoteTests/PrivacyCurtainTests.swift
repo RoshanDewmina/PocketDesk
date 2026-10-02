@@ -8,6 +8,17 @@ final class PrivacyCurtainPolicyTests: XCTestCase {
                              accessibilityGranted: true)
     }
 
+    func testHeldScaleCannotCrossAViewOnlyPauseEndOrGeometryAuthorityChange() {
+        func permits(_ index: Int? = nil) -> Bool {
+            let values = (0..<8).map { $0 != index }
+            return PrivacyCurtainPolicy.heldScaleMayApply(connected: values[0], sharing: values[1],
+                picture: values[2], viewOnly: !values[3], paused: !values[4], refused: !values[5],
+                ending: !values[6], sameEpoch: values[7])
+        }
+        XCTAssertTrue(permits())
+        for index in 0..<8 { XCTAssertFalse(permits(index), "Retired authority \(index) denies the held scale") }
+    }
+
     func testRaisesOnlyForALiveHealthySessionWithThePreferenceOn() {
         XCTAssertEqual(PrivacyCurtainPolicy.desired(live, currentlyUp: false), .up)
         var off = live; off.preference = false

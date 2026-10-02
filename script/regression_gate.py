@@ -45,7 +45,7 @@ def receipts(log):
 def priority_blocks(text):
     # The orchestrator explicitly lists exemptions; an unknown format fails closed.
     match = re.search(r"(?m)^Exempt lanes \(may build\): ([^.\n]+)\.", text)
-    return not match or 'b7-regress' not in {lane.strip() for lane in match[1].split(',')}
+    return not match or os.environ.get('FARSIDE_BUILD_LANE', 'b7-regress') not in {lane.strip() for lane in match[1].split(',')}
 
 
 def coordination_blocks(ui=False):
@@ -77,7 +77,7 @@ def run_locked(command, logfile, ui=False, cleanup=False):
     while True:
         wait_permission(ui)
         with logfile.open('w') as handle:
-            process = subprocess.run(['/usr/bin/lockf', '-k', '/tmp/farside-xcodebuild.lock', *wrapper, *command], cwd=ROOT, env=env, stdout=handle, stderr=subprocess.STDOUT)
+            process = subprocess.run([str(Path.home() / 'bin/farside-lock'), *wrapper, *command], cwd=ROOT, env=env, stdout=handle, stderr=subprocess.STDOUT)
         if process.returncode != 75:
             break
         # The wrapper released the lock before waiting, so priority builds can acquire it.
@@ -158,7 +158,7 @@ def main():
         stages[name] = status
         return status
     def tests(suite, selections, prefix):
-        command = ['xcodebuild', *common, '-scheme', 'PocketDeskRemote', '-destination', f'platform=iOS Simulator,id={destination}', 'ARCHS=arm64', 'test-without-building', '-parallel-testing-enabled', 'NO', '-test-timeouts-enabled', 'YES', '-maximum-test-execution-time-allowance', '120', '-resultBundlePath', str(logs / (suite + '.xcresult'))]
+        command = ['xcodebuild', *common, '-scheme', 'PocketDeskRemote', '-destination', f'platform=iOS Simulator,id={destination}', 'ARCHS=arm64', 'test-without-building', '-collect-test-diagnostics', 'never', '-parallel-testing-enabled', 'NO', '-test-timeouts-enabled', 'YES', '-maximum-test-execution-time-allowance', '120', '-resultBundlePath', str(logs / (suite + '.xcresult'))]
         command += [f'-only-testing:{prefix}/{cls}/{method}' for cls, method in sorted(selections)]
         stage(suite, command, suite == 'ui')
         observed.update({(suite, k): v for k, v in receipts((logs / (suite + '.log')).read_text()).items()})

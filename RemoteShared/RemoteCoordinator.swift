@@ -989,7 +989,9 @@ final class RemoteCoordinator: ObservableObject {
         } catch { fail(error.localizedDescription) }
     }
     func approve() {
-        guard isHost, awaitingApproval, proofReceived, enrollmentKeys != nil, pairingComparisonCode != nil else { fail("Pairing expired. Create a fresh code."); return }
+        // A stale Allow tap after timeout/cancellation cannot stop the recovered device listener.
+        guard isHost, awaitingApproval else { return }
+        guard proofReceived, enrollmentKeys != nil, pairingComparisonCode != nil else { fail("Pairing expired. Create a fresh code."); return }
         guard (hostPair?.invitation.expires ?? .distantPast) > Date() else {
             let resume = isRunning
             if cancelPendingPairing(), resume, !pairedDevices.isEmpty { start() }
@@ -1000,6 +1002,7 @@ final class RemoteCoordinator: ObservableObject {
         acceptSession()
     }
     func reject() {
+        guard !isHost || awaitingApproval else { return }
         if awaitingApproval, enrollmentKeys != nil { send(kind: "enrollmentDeclined", handshake: true) }
         if isHost, awaitingApproval {
             let resume = isRunning

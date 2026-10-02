@@ -42,6 +42,135 @@ private final class TestFrameReceiver: NSObject, RTCVideoRenderer {
     }
 }
 
+/// The private Bun service has a scalar clientHash. This bounded service fixture admits the
+/// catalog's token list and one client slot, forwarding the actual sealed coordinator traffic.
+/// WebRTC offer/answer, ICE and control channels remain the real native implementation.
+@MainActor
+private final class MultiDeviceIntegrationRig {
+    let hostStore = MemoryTrust()
+    let phoneStores = [MemoryTrust(), MemoryTrust()]
+    let hostSignal = ScriptedSignaling()
+    let phoneSignals = [ScriptedSignaling(), ScriptedSignaling()]
+    let host: RemoteCoordinator
+    let phones: [RemoteCoordinator]
+    var beforeHostSignalForward: ((RelayMessage) -> Void)?
+    private(set) var busyAttempts = 0
+    private(set) var activeClient: Int?
+    private var hostRegistration: ScriptedSignaling.Connect?
+    private var hostGeneration = 0
+    private var clientGeneration = 0
+    private struct Delivery {
+        let target: ScriptedSignaling
+        let message: RelayMessage
+        let hostGeneration: Int
+        let clientGeneration: Int
+    }
+    private var deliveries: [Delivery] = []
+    private var drainScheduled = false
+
+    init() {
+        host = RemoteCoordinator(isHost: true, store: hostStore, retryLimit: 3,
+            retryBaseNanoseconds: 10_000_000, signaling: hostSignal)
+        phones = zip(phoneStores, phoneSignals).map { store, signal in
+            RemoteCoordinator(isHost: false, store: store, retryLimit: 0, signaling: signal)
+        }
+        host.allowLegacyPrivateRoute = true
+        for (index, phone) in phones.enumerated() {
+            phone.allowLegacyPrivateRoute = true
+            phone.localDisplayName = index == 0 ? "Original iPhone" : "Second iPad"
+        }
+        hostSignal.onConnect = { [weak self] in self?.registerHost($0) }
+        hostSignal.respond = { [weak self] message in
+            guard let self, message.type == "signal", let activeClient else { return }
+            beforeHostSignalForward?(message)
+            enqueue(message, to: phoneSignals[activeClient])
+        }
+        for (index, signal) in phoneSignals.enumerated() {
+            signal.onConnect = { [weak self] in self?.registerClient(index, connection: $0) }
+            signal.respond = { [weak self] message in
+                guard let self, message.type == "signal", activeClient == index else { return }
+                enqueue(message, to: hostSignal)
+            }
+        }
+    }
+
+    private func registerHost(_ connection: ScriptedSignaling.Connect) {
+        guard hostSignal.isOpen else { return }
+        XCTAssertNil(activeClient, "A host registration cannot replace an occupied session")
+        XCTAssertEqual(connection.invitation.room, connection.hostToken.map(SecureRandom.digest))
+        XCTAssertTrue(connection.features.contains(SignalingFeature.devices))
+        let hashes = hostSignal.clientTokenHashes ?? []
+        XCTAssertTrue((1...5).contains(hashes.count), "Approved grants plus a pending invitation stay within the five-device cap")
+        XCTAssertEqual(Set(hashes).count, hashes.count)
+        hostRegistration = connection
+        hostGeneration += 1
+        hostSignal.deliver(RelayMessage(type: "registered", role: "host", features: [SignalingFeature.devices]))
+        hostSignal.deliver(RelayMessage(type: "ice", servers: []))
+    }
+
+    private func registerClient(_ index: Int, connection: ScriptedSignaling.Connect) {
+        let signal = phoneSignals[index]
+        guard signal.isOpen else { return }
+        guard hostSignal.isOpen, let registered = hostRegistration,
+              registered.invitation.room == connection.invitation.room,
+              hostSignal.clientTokenHashes?.contains(SecureRandom.digest(connection.invitation.token)) == true else {
+            signal.deliver(RelayMessage(type: "error", code: "host_unavailable_or_unauthorized"))
+            return
+        }
+        guard activeClient == nil else {
+            busyAttempts += 1
+            signal.deliver(RelayMessage(type: "error", code: "already_connected"))
+            return
+        }
+        activeClient = index
+        clientGeneration += 1
+        signal.deliver(RelayMessage(type: "registered", role: "client"))
+        signal.deliver(RelayMessage(type: "ice", servers: []))
+        hostSignal.deliver(RelayMessage(type: "peer", online: true))
+        signal.deliver(RelayMessage(type: "peer", online: true))
+    }
+
+    private func enqueue(_ message: RelayMessage, to target: ScriptedSignaling) {
+        guard deliveries.count < 256 else { XCTFail("Multi-device signaling exceeded its bounded queue"); return }
+        deliveries.append(Delivery(target: target, message: message,
+            hostGeneration: hostGeneration, clientGeneration: clientGeneration))
+        guard !drainScheduled else { return }
+        drainScheduled = true
+        // Defer delivery until the sender returns and installs its newly derived cipher.
+        Task { @MainActor [weak self] in self?.drain() }
+    }
+
+    private func drain() {
+        for _ in 0..<256 {
+            guard !deliveries.isEmpty else { drainScheduled = false; return }
+            let delivery = deliveries.removeFirst()
+            guard delivery.hostGeneration == hostGeneration,
+                  delivery.clientGeneration == clientGeneration, delivery.target.isOpen else { continue }
+            delivery.target.deliver(delivery.message)
+        }
+        drainScheduled = false
+        XCTFail("Multi-device signaling did not settle within its bounded drain")
+        deliveries.removeAll()
+    }
+
+    func disconnect(_ index: Int) {
+        phones[index].stop()
+        guard activeClient == index else { return }
+        activeClient = nil
+        clientGeneration += 1
+        hostSignal.deliver(RelayMessage(type: "peer", online: false))
+        if !hostSignal.isOpen { hostRegistration = nil }
+    }
+
+    func stop() {
+        beforeHostSignalForward = nil
+        host.stop()
+        phones.forEach { $0.stop() }
+        deliveries.removeAll()
+        activeClient = nil
+    }
+}
+
 final class SessionIntegrationTests: XCTestCase {
     @MainActor
     private func waitFor(_ description: String, seconds: Double = 8, predicate: () -> Bool) async throws {
@@ -63,6 +192,156 @@ final class SessionIntegrationTests: XCTestCase {
             process.terminate(); throw RemoteError.invalidMessage
         }
         return (process, "ws://127.0.0.1:\(port)/signal")
+    }
+
+    @MainActor
+    func testTwoV2DevicesPersistBeforeAcceptanceAndReconnectWithoutTakeover() async throws {
+        let rig = MultiDeviceIntegrationRig()
+        defer { rig.stop() }
+        let host = rig.host, first = rig.phones[0], second = rig.phones[1]
+        let originalQR = try host.createPair(server: "wss://offline.invalid/signal", name: "Multi-device Mac")
+        let room = originalQR.room, hostProof = try XCTUnwrap(host.hostPair?.hostToken)
+        XCTAssertEqual(originalQR.version, PairEnrollment.version)
+        host.start()
+        try await waitFor("initial host registration") { host.hostRegistered }
+        try first.enroll(originalQR.code())
+        try await waitFor("first v2 comparison on both screens") {
+            host.awaitingApproval && first.pairingComparisonCode != nil
+        }
+        let firstCode = try XCTUnwrap(host.pairingComparisonCode)
+        XCTAssertEqual(firstCode, first.pairingComparisonCode)
+        XCTAssertEqual(firstCode.filter(\.isNumber).count, 6)
+        XCTAssertTrue(host.pairedDevices.isEmpty)
+        XCTAssertNil(rig.phoneStores[0].data)
+        XCTAssertFalse(host.connected); XCTAssertFalse(first.connected)
+
+        var publications = 0
+        rig.beforeHostSignalForward = { message in
+            rig.beforeHostSignalForward = nil
+            publications += 1
+            do {
+                let durable = try XCTUnwrap(rig.hostStore.read(HostPair.self))
+                XCTAssertEqual(durable.approvedDevices.count, 1, "Persist the entire catalog before publishing accepted")
+                XCTAssertNil(durable.pendingInvitation)
+                XCTAssertEqual(durable.invitation, durable.approvedDevices[0].invitation)
+                XCTAssertNil(rig.phoneStores[0].data, "Publication is observed before delivery to the phone")
+                XCTAssertThrowsError(try SignalCipher(key: originalQR.key, room: room)
+                    .open(XCTUnwrap(message.payload), sender: "host"), "The photographed QR cannot open accepted")
+            } catch { XCTFail("First accepted was published without durable catalog: \(error)") }
+        }
+        host.approve()
+        try await waitFor("first device's real WebRTC connection", seconds: 25) { host.connected && first.connected }
+        XCTAssertEqual(publications, 1)
+        let firstGrant = try XCTUnwrap(rig.phoneStores[0].read(PairInvitation.self))
+        XCTAssertEqual(firstGrant.version, 1)
+        XCTAssertEqual(firstGrant.room, room)
+        XCTAssertNotEqual(firstGrant.key, originalQR.key)
+        XCTAssertNotEqual(firstGrant.token, originalQR.token)
+        XCTAssertEqual(host.invitation, firstGrant)
+        XCTAssertNil(first.pairingComparisonCode)
+
+        rig.disconnect(0)
+        try await waitFor("host refreshes original saved-token admission") { host.hostRegistered && !host.connected }
+        let secondQR = try host.createPair(server: originalQR.server, name: "Multi-device Mac")
+        XCTAssertEqual(secondQR.version, PairEnrollment.version)
+        XCTAssertEqual(secondQR.room, room)
+        XCTAssertEqual(host.hostPair?.hostToken, hostProof)
+        XCTAssertEqual(host.pairedDevices.map(\.invitation), [firstGrant])
+        host.start()
+        try await waitFor("host registers original and additional QR") { host.hostRegistered }
+        XCTAssertEqual(Set(rig.hostSignal.clientTokenHashes ?? []),
+                       Set([firstGrant.token, secondQR.token].map(SecureRandom.digest)))
+        try second.enroll(secondQR.code())
+        try await waitFor("second v2 comparison on both screens") {
+            host.awaitingApproval && second.pairingComparisonCode != nil
+        }
+        let secondCode = try XCTUnwrap(host.pairingComparisonCode)
+        XCTAssertEqual(secondCode, second.pairingComparisonCode)
+        XCTAssertEqual(secondCode.filter(\.isNumber).count, 6)
+        XCTAssertEqual(try rig.hostStore.read(HostPair.self)?.approvedDevices.map(\.invitation), [firstGrant])
+        XCTAssertNil(rig.phoneStores[1].data)
+        XCTAssertFalse(host.connected); XCTAssertFalse(second.connected)
+        rig.beforeHostSignalForward = { message in
+            rig.beforeHostSignalForward = nil
+            publications += 1
+            do {
+                let durable = try XCTUnwrap(rig.hostStore.read(HostPair.self))
+                XCTAssertEqual(durable.approvedDevices.count, 2, "Both grants must be durable before the second accepted")
+                XCTAssertEqual(durable.approvedDevices[0].invitation, firstGrant)
+                XCTAssertEqual(durable.invitation, durable.approvedDevices[1].invitation)
+                XCTAssertEqual(durable.invitation.room, room)
+                XCTAssertEqual(durable.hostToken, hostProof)
+                XCTAssertNil(durable.pendingInvitation)
+                XCTAssertNil(rig.phoneStores[1].data)
+                XCTAssertThrowsError(try SignalCipher(key: secondQR.key, room: room)
+                    .open(XCTUnwrap(message.payload), sender: "host"))
+            } catch { XCTFail("Second accepted was published without both durable grants: \(error)") }
+        }
+        host.approve()
+        try await waitFor("second device's real WebRTC connection", seconds: 25) { host.connected && second.connected }
+        XCTAssertEqual(publications, 2)
+        let secondGrant = try XCTUnwrap(rig.phoneStores[1].read(PairInvitation.self))
+        XCTAssertEqual(secondGrant.version, 1)
+        XCTAssertEqual(secondGrant.room, room)
+        XCTAssertNotEqual(secondGrant.key, secondQR.key)
+        XCTAssertNotEqual(secondGrant.token, secondQR.token)
+        XCTAssertNotEqual(firstGrant.key, secondGrant.key)
+        XCTAssertNotEqual(firstGrant.token, secondGrant.token)
+        XCTAssertNil(host.pendingPairInvitation)
+        XCTAssertEqual(host.pairedDevices.map(\.invitation), [firstGrant, secondGrant])
+
+        let activeMedia = host.media, activePresentation = host.presentationSessionID
+        first.start()
+        try await waitFor("original device is refused while the second holds the slot") { rig.busyAttempts == 1 && !first.isRunning }
+        XCTAssertTrue(first.status.contains("another device"))
+        XCTAssertFalse(first.connected)
+        XCTAssertTrue(host.connected); XCTAssertTrue(second.connected)
+        XCTAssertTrue(host.media === activeMedia)
+        XCTAssertEqual(host.presentationSessionID, activePresentation)
+        XCTAssertEqual(host.invitation, secondGrant)
+        XCTAssertFalse(host.awaitingApproval)
+        // Also bypass fixture admission with the other valid key: the coordinator itself must
+        // ignore it while an existing session owns the cipher, consent and presentation.
+        let ignored = host.staleMessagesIgnored, sent = rig.hostSignal.sent.count
+        let competing = ProtectedMessage(kind: "request", request: try SecureRandom.token(), session: "", sequence: 0)
+        rig.hostSignal.deliver(RelayMessage(type: "signal", payload: try SignalCipher(key: firstGrant.key, room: room)
+            .seal(competing, sender: "client")))
+        XCTAssertEqual(host.staleMessagesIgnored, ignored + 1)
+        XCTAssertEqual(rig.hostSignal.sent.count, sent)
+        XCTAssertTrue(host.connected); XCTAssertTrue(second.connected)
+        XCTAssertTrue(host.media === activeMedia)
+        XCTAssertEqual(host.presentationSessionID, activePresentation)
+
+        var received: RemoteAction?
+        host.onControl = { received = try? JSONDecoder().decode(RemoteAction.self, from: $0) }
+        XCTAssertTrue(second.sendControl(RemoteAction(action: "text", text: "Second still controls", key: "second-active", epoch: 42)))
+        try await waitFor("refused contender leaves the second device's real control channel working") { received?.text == "Second still controls" }
+
+        rig.disconnect(1)
+        try await waitFor("both durable tokens are registered after second disconnect") { host.hostRegistered && !host.connected }
+        XCTAssertEqual(Set(rig.hostSignal.clientTokenHashes ?? []),
+                       Set([firstGrant.token, secondGrant.token].map(SecureRandom.digest)))
+        for (index, grant) in [firstGrant, secondGrant].enumerated() {
+            let phone = rig.phones[index]
+            phone.restore(); phone.start()
+            try await waitFor("saved device \(index + 1) reconnects with real WebRTC", seconds: 25) { host.connected && phone.connected }
+            XCTAssertFalse(host.awaitingApproval)
+            XCTAssertNil(host.pairingComparisonCode); XCTAssertNil(phone.pairingComparisonCode)
+            XCTAssertFalse(phone.enrollmentPending)
+            XCTAssertEqual(phone.invitation, grant)
+            XCTAssertEqual(host.invitation, grant)
+            XCTAssertEqual(host.hostPair?.hostToken, hostProof)
+            XCTAssertEqual(host.invitation?.room, room)
+            XCTAssertEqual(try rig.hostStore.read(HostPair.self)?.approvedDevices.map(\.invitation), [firstGrant, secondGrant])
+            received = nil
+            let text = "Saved device \(index + 1)"
+            XCTAssertTrue(phone.sendControl(RemoteAction(action: "text", text: text, key: "reconnect-\(index)", epoch: 42)))
+            try await waitFor("reconnected device \(index + 1) controls through its own channel") { received?.text == text }
+            rig.disconnect(index)
+            try await waitFor("host ready after device \(index + 1)") { host.hostRegistered && !host.connected }
+        }
+        XCTAssertEqual(try rig.phoneStores[0].read(PairInvitation.self), firstGrant)
+        XCTAssertEqual(try rig.phoneStores[1].read(PairInvitation.self), secondGrant)
     }
 
     @MainActor

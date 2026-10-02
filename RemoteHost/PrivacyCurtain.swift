@@ -84,6 +84,11 @@ enum PrivacyCurtainPolicy {
         !curtainUp && expected && !raiseFailed && !liftedLocally && !paused && !bigTextEngaged
     }
 
+    static func heldScaleMayApply(connected: Bool, sharing: Bool, picture: Bool, viewOnly: Bool,
+                                  paused: Bool, refused: Bool, ending: Bool, sameEpoch: Bool) -> Bool {
+        connected && sharing && picture && !viewOnly && !paused && !refused && !ending && sameEpoch
+    }
+
     static func desired(_ inputs: PrivacyCurtainInputs, currentlyUp: Bool) -> Desired {
         // Only the Away machine's positive verifier retires awayCovered; notifications cannot.
         if inputs.awayCovered { return .up }

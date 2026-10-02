@@ -528,6 +528,27 @@ final class ViewportCaptureTests: XCTestCase {
                                  "covered pinch/pan must not repeatedly reconfigure and race region status against video")
     }
 
+    func testGoldenCoveredPinchReplayRequiresTheOptInKeepBand() throws {
+        let whole = try output(moreSpace, fps: 60)
+        func changes(keepBand: Bool) -> Int {
+            var previous = region(iPhone17(zoom: 2.5, portrait: false, on: moreSpace),
+                                  on: moreSpace, output: whole, keepBand: keepBand)
+            var count = 0
+            for step in 1...24 {
+                var viewport = iPhone17(zoom: 2.5 + Double(step) / 192, portrait: false,
+                                        on: moreSpace, epoch: UInt64(step + 1))
+                viewport.x += Double(step) / 2
+                let next = region(viewport, on: moreSpace, output: whole,
+                                  previous: previous, keepBand: keepBand)
+                if previous.rect != next.rect { count += 1 }
+                previous = next
+            }
+            return count
+        }
+        XCTAssertGreaterThan(changes(keepBand: false), 1, "The default-off package retains the existing churn")
+        XCTAssertLessThanOrEqual(changes(keepBand: true), 1, "G04's replay validates the opt-in keep-band rule")
+    }
+
     /// Replay actual builder/cache admission, including size changes and a return to an earlier crop.
     /// This checks host region/frame consistency; RTP frames already in flight remain a DEVICE gate.
     func testReplayConfigurationMatchesEveryEchoedRegion() throws {

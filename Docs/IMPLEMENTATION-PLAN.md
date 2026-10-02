@@ -1,3 +1,11 @@
+# Batch 7b integration in verification — 2 October 2026
+
+Branch `claude/batch-7b`, base `9ee6b24` (.3), merges `596ec47`, `439447e`, `f24d906`, `916fc03`, `2a6e547`, `f8db1c9` in that order. Build **20261002.4** uses four YAML/eight PBX version entries. Privacy default on with explicit choices preserved; optional scroll package default off. Product Interaction manifest matches linked/no tracking/App Functionality answers. Release product change is only nonexempt encryption metadata; iPad orientation override remains.
+
+Independent GPT source review found and resolved delayed Big Text authority/superseding-Off races, PiP audio capture exclusions, and stale Allow/Decline after candidate retirement. Catalog integration retains v2 commitment/comparison/downgrade refusal, derived trust and whole-catalog persistence before accepted, pending-only retirement, stable room and busy admission. Bounded test worker owns comparison/catalog fixture updates; parent owns integrated checks. Synthetic explicit-End timing and opt-in G04/default-off distinction are covered separately. No install/deploy/main/portal action.
+
+Checks pending behind two-slot gates and internal >=10GiB rule; free space observed9.27GiB while other lane work active. Logs `/Volumes/Studio/Development/Caches/batch7b-logs`, task state/handoff `/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/batch-7b`. iPad lane keyboard AX acceptance, strict phone pixel parity, full tablet matrix and real device acceptance remain open.
+
 # B7 universal iPad candidate — 2 October 2026
 
 Authorized branch `claude/b7-ipad`, worktree `/Users/roshansilva/Developer/farside-b7-ipad`, baseline `20aded1`. Separate checkpoints: A shell/copy `4b0a6a6`; B top chrome/default `b9355f1`; C coverage stack/hysteresis `942d588`; D Pencil/drop/phase logging `34ebd3c`; E screenshot harness `8bad15c`. Follow-ups add pure decision tests, semantic UI queries, a nonpublishing local-input idle clock, and the compiler-expression/test-gesture correction (`0616bf5`, `38b67f3`, `77b6a70`, `90f87ed`). Fresh independent GPT source review approved the reviewed source checkpoints; runtime acceptance remains separate.
