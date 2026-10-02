@@ -46,6 +46,7 @@ enum SessionVirtualDisplayHarness {
 @MainActor
 private final class SessionVirtualDisplayHarnessController: NSObject {
     private let outputDirectory: URL
+    private let quietGrantURL = URL(fileURLWithPath: "/Users/roshansilva/Documents/Codex/2026-10-01/testing/QUIET-GRANTED-b8-vdisplay")
     private let adapter = SessionVirtualDisplay()
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
     private var window: NSWindow?
@@ -58,6 +59,14 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
     private var adapterStopInFlight = false
     private var adapterStopWaiters: [CheckedContinuation<Void, Never>] = []
     private var adapterStopError: String?
+    private var activeStream: SCStream?
+    private var activeStreamStarting = false
+    private var activeStreamStarted = false
+    private var activeStreamStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var activeStreamStopInFlight = false
+    private var activeStreamStopWaiters: [CheckedContinuation<Void, Never>] = []
+    private var activeStreamStopError: String?
+    private var captureStopError: String?
     private var report: [String: Any] = ["schema": 1, "harness": "synthetic-session-virtual-display"]
     private(set) var exitCode: Int32 = 0
 
@@ -121,12 +130,12 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
             try await showFixture(on: screen(for: portraitDisplay))
             fixture?.freeze(at: 0x10203)
             let portraitConfiguration = try virtualConfiguration(phonePortrait, fps: 60, tuning: tuning)
-            report["portraitStill"] = try await capture(label: "phone-portrait-still",
-                filter: SCContentFilter(display: portraitDisplay, excludingWindows: []), displayID: portraitDisplay.displayID,
-                fps: 60, seconds: 1, stillName: "iphone17-portrait.png", configuration: portraitConfiguration,
+            report["portraitStill"] = try await captureProvenWholeDisplayStill(label: "phone-portrait-still",
+                display: portraitDisplay, fps: 60, stillName: "iphone17-portrait.png", configuration: portraitConfiguration,
                 width: portraitConfiguration.width, height: portraitConfiguration.height,
                 barcodeScaleX: 2, barcodeScaleY: 2,
                 barcodeOriginX: Double(portraitDisplay.width) / 2 - 18, barcodeOriginY: 5)
+            guard hasLiveFixture(on: portraitDisplay.displayID) else { throw HarnessFailure("still-composite-invalidated") }
             try createSideBySide(
                 outputDirectory.appendingPathComponent("shots/physical-phone-fill-baseline.png"),
                 outputDirectory.appendingPathComponent("shots/iphone17-portrait.png"),
@@ -136,19 +145,26 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
                 outputDirectory.appendingPathComponent("shots/iphone17-portrait.png"))
             fixture?.unfreeze()
             report["phonePortrait60"] = try await observe("iphone17-portrait-60", viewport: phonePortrait,
-                display: portraitDisplay, fps: 60, stillName: nil)
+                display: portraitDisplay, fps: 60)
             report["phonePortrait120"] = try await observe("iphone17-portrait-120", viewport: phonePortrait,
-                display: portraitDisplay, fps: 120, stillName: nil)
+                display: portraitDisplay, fps: 120)
 
             let oldOutput = lastOutputTime.value
             let resizeStarted = MachClock.nowMs()
             let landscapeDisplay = try await prepare(phoneLandscape)
             try await showFixture(on: screen(for: landscapeDisplay))
             let landscape60 = try await observe("iphone17-landscape-60", viewport: phoneLandscape,
-                display: landscapeDisplay, fps: 60, stillName: nil)
+                display: landscapeDisplay, fps: 60)
             let firstNewOutput = landscape60["firstCompleteCallbackMs"] as? Double
-            let landscape120 = try await observe("iphone17-landscape-120", viewport: phoneLandscape,
-                display: landscapeDisplay, fps: 120, stillName: "iphone17-landscape.png")
+            var landscape120 = try await observe("iphone17-landscape-120", viewport: phoneLandscape,
+                display: landscapeDisplay, fps: 120)
+            landscape120["provedStill"] = try await captureProvenWholeDisplayStill(label: "iphone17-landscape-still",
+                display: landscapeDisplay, fps: 120, stillName: "iphone17-landscape.png",
+                configuration: try virtualConfiguration(phoneLandscape, fps: 120, tuning: tuning),
+                width: phoneLandscape.pixelWidth, height: phoneLandscape.pixelHeight,
+                barcodeScaleX: 2, barcodeScaleY: 2,
+                barcodeOriginX: Double(VirtualDisplaySpecification(viewport: phoneLandscape)!.logicalWidth) / 2 - 18,
+                barcodeOriginY: 5)
             report["portraitToLandscape"] = ["adapterObjectReused": true,
                 "lastOldToPrepareStartMs": oldOutput.map { resizeStarted - $0 } as Any? ?? NSNull(),
                 "prepareStartToFirstNewOutputMs": firstNewOutput.map { $0 - resizeStarted } as Any? ?? NSNull(),
@@ -157,19 +173,29 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
 
             let ipadDisplay = try await prepare(ipadPortrait)
             try await showFixture(on: screen(for: ipadDisplay))
-            report["ipadAir5_60"] = try await observe("ipad-air-5-60", viewport: ipadPortrait,
-                display: ipadDisplay, fps: 60, stillName: "ipad-air-5.png")
+            var ipad = try await observe("ipad-air-5-60", viewport: ipadPortrait,
+                display: ipadDisplay, fps: 60)
+            ipad["provedStill"] = try await captureProvenWholeDisplayStill(label: "ipad-air-5-still",
+                display: ipadDisplay, fps: 60, stillName: "ipad-air-5.png",
+                configuration: try virtualConfiguration(ipadPortrait, fps: 60, tuning: tuning),
+                width: ipadPortrait.pixelWidth, height: ipadPortrait.pixelHeight,
+                barcodeScaleX: 2, barcodeScaleY: 2,
+                barcodeOriginX: ipadPortrait.width / 2 - 18, barcodeOriginY: 5)
+            report["ipadAir5_60"] = ipad
             await stop(reason: "complete")
             report["elapsedSeconds"] = Date().timeIntervalSince(started)
-            if let adapterStopError {
+            if let captureStopError {
+                finish(error: "capture-retirement-unverified: \(captureStopError)")
+            } else if let adapterStopError {
                 finish(error: "owned-display-removal-unverified: \(adapterStopError)")
             } else {
                 finish(error: nil)
             }
         } catch {
             await stop(reason: "failure")
-            let cleanup = adapterStopError.map { "; owned-display-removal-unverified: \($0)" } ?? ""
-            finish(error: "\(error)\(cleanup)")
+            let captureCleanup = captureStopError.map { "; capture-retirement-unverified: \($0)" } ?? ""
+            let displayCleanup = adapterStopError.map { "; owned-display-removal-unverified: \($0)" } ?? ""
+            finish(error: "\(error)\(captureCleanup)\(displayCleanup)")
         }
     }
 
@@ -331,6 +357,7 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
               let cropped = fillCrop(regionImage, topLeftRect: sourceRectPixels, width: finalWidth, height: finalHeight) else {
             throw HarnessFailure("physical-fill-crop-raster-failed")
         }
+        guard hasLiveFixture(on: id) else { throw HarnessFailure("physical-baseline-crop-invalidated-before-write") }
         try writePNG(cropped, to: outputDirectory.appendingPathComponent("shots/physical-phone-fill-baseline.png"))
         geometry["wholeDisplayRawCaptureRecipe"] = ["quality": StreamQuality.sharp.rawValue,
             "representativeH264Level": 52, "targetFPS": 60, "streamOutputPixels": [output.width, output.height],
@@ -376,21 +403,134 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
     }
 
     private func observe(_ label: String, viewport: VirtualDisplayViewport, display: SCDisplay,
-                         fps: Int, stillName: String?) async throws -> [String: Any] {
+                         fps: Int) async throws -> [String: Any] {
         let spec = VirtualDisplaySpecification(viewport: viewport)!
         let configuration = try virtualConfiguration(viewport, fps: fps, tuning: StreamTuning.current)
-        let tickStart = fixture?.tickCount ?? 0
         var result = try await capture(label: label,
             filter: SCContentFilter(display: display, excludingWindows: []), displayID: display.displayID,
-            fps: fps, seconds: 5, stillName: stillName, configuration: configuration,
+            fps: fps, seconds: 5, stillName: nil, configuration: configuration,
             width: spec.width, height: spec.height,
             barcodeScaleX: Double(spec.width) / Double(spec.logicalWidth),
             barcodeScaleY: Double(spec.height) / Double(spec.logicalHeight),
             barcodeOriginX: Double(spec.logicalWidth) / 2 - 18, barcodeOriginY: 5)
-        let ticks = (fixture?.tickCount ?? tickStart) - tickStart
+        let start = result["measurementStartMs"] as? Double ?? 0
+        let end = result["measurementEndMs"] as? Double ?? start
+        let ticks = fixture?.ticks(from: start, through: end) ?? 0
         result["syntheticDispatchTimerTicks"] = ticks
-        result["syntheticDispatchTimerTickFPS"] = Double(ticks) / 5
+        let elapsed = result["measurementSeconds"] as? Double ?? 0
+        result["syntheticDispatchTimerTickFPS"] = elapsed > 0 ? Double(ticks) / elapsed : 0
         return result
+    }
+
+    private func captureProvenWholeDisplayStill(label: String, display: SCDisplay, fps: Int, stillName: String,
+                                                configuration: SCStreamConfiguration, width: Int, height: Int,
+                                                barcodeScaleX: Double, barcodeScaleY: Double,
+                                                barcodeOriginX: Double, barcodeOriginY: Double) async throws -> [String: Any] {
+        guard !stopping, FileManager.default.fileExists(atPath: quietGrantURL.path),
+              let fixture, let window, window.isVisible else {
+            throw HarnessFailure("still-proof-requires-live-grant-and-visible-owned-fixture")
+        }
+        fixture.freeze(at: fixture.frameNumber)
+        window.contentView?.displayIfNeeded()
+        defer { fixture.unfreeze() }
+        let content = try await shareableContent()
+        let (ownedWindow, windowDisplayID) = try ownWindow(in: content)
+        guard windowDisplayID == display.displayID else { throw HarnessFailure("still-proof-owned-window-on-wrong-display") }
+        let proofName = "\(URL(fileURLWithPath: stillName).deletingPathExtension().lastPathComponent)-window-proof.png"
+        let proofMetrics = try await capture(label: "\(label)-window-proof",
+            filter: SCContentFilter(desktopIndependentWindow: ownedWindow),
+            displayID: display.displayID, fps: fps, seconds: 1, stillName: proofName,
+            configuration: configuration, width: width, height: height,
+            barcodeScaleX: barcodeScaleX, barcodeScaleY: barcodeScaleY,
+            barcodeOriginX: barcodeOriginX, barcodeOriginY: barcodeOriginY,
+            requiresCornerMarkers: true)
+        let proofURL = outputDirectory.appendingPathComponent("shots/\(proofName)")
+        guard let proof = image(at: proofURL), hasCornerMarkers(proof, scaleX: barcodeScaleX, scaleY: barcodeScaleY) else {
+            throw HarnessFailure("owned-window-still-proof-missing-or-invalid")
+        }
+        let stillMetrics = try await capture(label: label,
+            filter: SCContentFilter(display: display, excludingWindows: []), displayID: display.displayID,
+            fps: fps, seconds: 1, stillName: stillName, configuration: configuration,
+            width: width, height: height, barcodeScaleX: barcodeScaleX, barcodeScaleY: barcodeScaleY,
+            barcodeOriginX: barcodeOriginX, barcodeOriginY: barcodeOriginY,
+            mustMatchImageAtURL: proofURL, requiresCornerMarkers: true)
+        return ["ownWindowProof": proofMetrics, "wholeDisplayStill": stillMetrics,
+                "fixtureFrameNumber": fixture.frameNumber]
+    }
+
+    private func startOwnedCapture(_ stream: SCStream) async throws {
+        guard activeStream == nil, !activeStreamStarting, !activeStreamStopInFlight else {
+            throw HarnessFailure("another-screen-capture-stream-is-still-active")
+        }
+        activeStream = stream
+        activeStreamStarting = true
+        activeStreamStarted = false
+        activeStreamStopError = nil
+        do {
+            try await stream.startCapture()
+            activeStreamStarted = true
+            activeStreamStarting = false
+            let waiters = activeStreamStartWaiters
+            activeStreamStartWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        } catch {
+            do {
+                try await stream.stopCapture()
+                activeStream = nil
+                activeStreamStarted = false
+                activeStreamStopError = nil
+            } catch let stopError {
+                // Start may have partially activated the stream. Retain its owner so `stop()` retries
+                // retirement and keeps the fixture/display intact if the retry also fails.
+                activeStream = stream
+                activeStreamStarted = true
+                activeStreamStopError = String(describing: stopError)
+            }
+            activeStreamStarting = false
+            let waiters = activeStreamStartWaiters
+            activeStreamStartWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+            throw error
+        }
+    }
+
+    private func retireActiveCapture() async throws {
+        if activeStreamStarting {
+            await withCheckedContinuation { activeStreamStartWaiters.append($0) }
+        }
+        if activeStreamStopInFlight {
+            await withCheckedContinuation { activeStreamStopWaiters.append($0) }
+            if let activeStreamStopError { throw HarnessFailure("ScreenCaptureKit stop failed: \(activeStreamStopError)") }
+            return
+        }
+        guard let stream = activeStream else { return }
+        guard activeStreamStarted else {
+            throw HarnessFailure("ScreenCaptureKit stream start did not settle before retirement")
+        }
+        activeStreamStopInFlight = true
+        do {
+            try await stream.stopCapture()
+            activeStream = nil
+            activeStreamStarted = false
+            activeStreamStopError = nil
+        } catch {
+            activeStreamStopError = String(describing: error)
+        }
+        activeStreamStopInFlight = false
+        let waiters = activeStreamStopWaiters
+        activeStreamStopWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+        if let activeStreamStopError { throw HarnessFailure("ScreenCaptureKit stop failed: \(activeStreamStopError)") }
+    }
+
+    private func hasLiveFixture(on expectedDisplayID: CGDirectDisplayID) -> Bool {
+        guard !stopping, FileManager.default.fileExists(atPath: quietGrantURL.path),
+              let window, let fixture, let screen = window.screen,
+              displayID(screen) == expectedDisplayID, fixture.window === window, window.isVisible,
+              window.isOpaque, window.alphaValue == 1, window.ignoresMouseEvents,
+              window.level == .screenSaver, rectClose(window.frame, screen.frame),
+              rectClose(fixture.bounds, CGRect(origin: .zero, size: screen.frame.size)) else { return false }
+        return true
     }
 
     private func capture(label: String, filter: SCContentFilter,
@@ -399,10 +539,11 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
                          barcodeScaleX: Double, barcodeScaleY: Double,
                          barcodeOriginX: Double = 34, barcodeOriginY: Double = 5,
                          mustMatchImageAtURL: URL? = nil, requiresCornerMarkers: Bool = false) async throws -> [String: Any] {
-        guard configuration.width == width, configuration.height == height,
+        guard hasLiveFixture(on: displayID),
+              configuration.width == width, configuration.height == height,
               barcodeScaleX.isFinite, barcodeScaleX > 0, barcodeScaleY.isFinite, barcodeScaleY > 0,
               barcodeOriginX.isFinite, barcodeOriginY.isFinite else {
-            throw HarnessFailure("capture-configuration-does-not-match-requested-output-\(label)")
+            throw HarnessFailure("capture-preflight-or-geometry-rejected-\(label)")
         }
         let output = SessionVirtualDisplayCaptureOutput(width: width, height: height,
             barcodeScaleX: barcodeScaleX, barcodeScaleY: barcodeScaleY,
@@ -410,18 +551,44 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
             onFrame: { [weak self] time in self?.lastOutputTime.value = time })
         let stream = SCStream(filter: filter, configuration: configuration, delegate: output)
         try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: output.queue)
-        output.begin()
+        let startupInclusive = stillName != nil
+        if startupInclusive { output.begin() }
         do {
-            try await stream.startCapture()
+            try await startOwnedCapture(stream)
+        } catch {
+            if startupInclusive { _ = output.end() }
+            throw error
+        }
+        guard hasLiveFixture(on: displayID) else {
+            output.end()
+            try await retireActiveCapture()
+            throw HarnessFailure("capture-cancelled-before-measurement-\(label)")
+        }
+        if !startupInclusive { output.begin() }
+        do {
             try await Task.sleep(for: .seconds(seconds))
         } catch {
             _ = output.end()
-            try? await stream.stopCapture()
+            try await retireActiveCapture()
             throw error
         }
         let metrics = output.end()
-        // Verification and PNG failures must never skip explicit capture retirement.
-        try await stream.stopCapture()
+        try await retireActiveCapture()
+        guard !stopping, FileManager.default.fileExists(atPath: quietGrantURL.path) else {
+            throw HarnessFailure("capture-result-invalidated-before-acceptance-\(label)")
+        }
+        guard metrics.complete > 0, metrics.barcodeDecodeFailures == 0,
+              metrics.geometryErrors == 0, metrics.blank == 0, metrics.suspended == 0,
+              output.delegateError == nil else {
+            throw HarnessFailure("invalid-capture-geometry-or-frame-status-\(label)")
+        }
+        let elapsed = metrics.elapsedSeconds
+        guard elapsed.isFinite, elapsed > 0 else { throw HarnessFailure("capture-measurement-window-invalid-\(label)") }
+        var result = metrics.json(label: label, displayID: displayID, fps: fps, width: width, height: height,
+                                  requestedSeconds: seconds)
+        result["streamError"] = output.delegateError as Any? ?? NSNull()
+        result["measurementKind"] = startupInclusive ? "startup-inclusive-still-proof" : "steady-state-after-start"
+        result["streamStartupIncluded"] = startupInclusive
         if let stillName, let capturedImage = output.latestImage {
             if let mustMatchImageAtURL {
                 guard let comparison = image(at: mustMatchImageAtURL), samePixels(capturedImage, comparison) else {
@@ -433,15 +600,13 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
                     throw HarnessFailure("capture-still-fixture-corner-markers-missing")
                 }
             }
+            guard hasLiveFixture(on: displayID) else {
+                throw HarnessFailure("still-save-invalidated-before-write-\(label)")
+            }
             try writePNG(capturedImage, to: outputDirectory.appendingPathComponent("shots/\(stillName)"))
+        } else if stillName != nil {
+            throw HarnessFailure("still-image-missing-\(label)")
         }
-        guard metrics.complete > 0, metrics.barcodeDecodeFailures == 0,
-              metrics.geometryErrors == 0, metrics.blank == 0, metrics.suspended == 0,
-              output.delegateError == nil else {
-            throw HarnessFailure("invalid-capture-geometry-or-frame-status-\(label)")
-        }
-        var result = metrics.json(label: label, displayID: displayID, fps: fps, width: width, height: height, seconds: seconds)
-        result["streamError"] = output.delegateError as Any? ?? NSNull()
         return result
     }
 
@@ -481,9 +646,18 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
     private func stop(reason: String) async {
         if !stopping {
             stopping = true; timer?.cancel(); timer = nil
-            window?.orderOut(nil); window?.close(); window = nil; fixture = nil
             report["stopReason"] = reason
         }
+        do {
+            try await retireActiveCapture()
+        } catch {
+            captureStopError = String(describing: error)
+            report["captureStopError"] = captureStopError
+            // Keep the owned fixture visible and the display retained while SCK retirement is unknown.
+            return
+        }
+        captureStopError = nil
+        window?.orderOut(nil); window?.close(); window = nil; fixture = nil
         guard !adapterStopped else { return }
         if adapterStopInFlight {
             await withCheckedContinuation { adapterStopWaiters.append($0) }
@@ -702,11 +876,18 @@ private struct HarnessMeasurement {
     var barcodes = Set<UInt32>()
     var firstCallbackTime: Double?
     var lastCallbackTime: Double?
+    var measurementStartMs: Double?
+    var measurementEndMs: Double?
+
+    var elapsedSeconds: Double {
+        guard let measurementStartMs, let measurementEndMs, measurementEndMs > measurementStartMs else { return 0 }
+        return (measurementEndMs - measurementStartMs) / 1_000
+    }
 
     mutating func record(status: SCFrameStatus, displayTime: UInt64?, barcode: UInt32?, callbackTime: Double, geometryOK: Bool) {
-        if !geometryOK { geometryErrors += 1 }
         switch status {
         case .complete:
+            if !geometryOK { geometryErrors += 1 }
             complete += 1
             if let barcode { barcodes.insert(barcode) } else { barcodeDecodeFailures += 1 }
             firstCallbackTime = firstCallbackTime ?? callbackTime; lastCallbackTime = callbackTime
@@ -720,16 +901,20 @@ private struct HarnessMeasurement {
     }
 
     func json(label: String, displayID: CGDirectDisplayID, fps: Int, width: Int, height: Int,
-              seconds: TimeInterval) -> [String: Any] {
+              requestedSeconds: TimeInterval) -> [String: Any] {
+        let elapsed = elapsedSeconds
         let unique = Array(Set(displayTimesMs)).sorted()
         let intervals = zip(unique, unique.dropFirst()).map { $1 - $0 }.sorted()
         return ["label": label, "displayID": displayID, "requestedCaptureFPS": fps,
-                "requestedPixels": [width, height], "measurementSeconds": seconds,
+                "requestedPixels": [width, height], "requestedMeasurementSeconds": requestedSeconds,
+                "measurementSeconds": elapsed,
+                "measurementStartMs": measurementStartMs as Any? ?? NSNull(),
+                "measurementEndMs": measurementEndMs as Any? ?? NSNull(),
                 "status": ["complete": complete, "idle": idle, "blank": blank, "suspended": suspended, "other": other],
-                "callbackCompleteFPS": Double(complete) / seconds,
+                "callbackCompleteFPS": elapsed > 0 ? Double(complete) / elapsed : 0,
                 "distinctDecodedBarcodeContentFrames": barcodes.count,
-                "distinctDecodedBarcodeContentFPS": Double(barcodes.count) / seconds,
-                "uniqueDisplayTimeFPS": Double(unique.count) / seconds,
+                "distinctDecodedBarcodeContentFPS": elapsed > 0 ? Double(barcodes.count) / elapsed : 0,
+                "uniqueDisplayTimeFPS": elapsed > 0 ? Double(unique.count) / elapsed : 0,
                 "displayTimeDeltaMsP50": percentile(intervals, 0.50), "displayTimeDeltaMsP95": percentile(intervals, 0.95),
                 "missingDisplayTime": missingDisplayTime, "geometryErrors": geometryErrors,
                 "firstCompleteCallbackMs": firstCallbackTime as Any? ?? NSNull(),
@@ -763,8 +948,21 @@ private final class SessionVirtualDisplayCaptureOutput: NSObject, SCStreamOutput
         self.barcodeScaleY = barcodeScaleY; self.barcodeOriginX = barcodeOriginX
         self.barcodeOriginY = barcodeOriginY; self.onFrame = onFrame
     }
-    func begin() { queue.sync { stats = HarnessMeasurement(); measuring = true } }
-    func end() -> HarnessMeasurement { queue.sync { measuring = false; return stats } }
+    func begin() {
+        queue.sync {
+            stats = HarnessMeasurement()
+            latestBuffer = nil
+            stats.measurementStartMs = MachClock.nowMs()
+            measuring = true
+        }
+    }
+    func end() -> HarnessMeasurement {
+        queue.sync {
+            measuring = false
+            stats.measurementEndMs = MachClock.nowMs()
+            return stats
+        }
+    }
     var latestImage: CGImage? {
         let buffer = queue.sync { latestBuffer }
         guard let buffer else { return nil }
@@ -826,13 +1024,20 @@ private final class SessionVirtualDisplayFixtureView: NSView {
     private(set) var frameNumber: UInt32 = 0
     private var frozen = false
     private(set) var tickCount = 0
+    private var tickTimesMs: [Double] = []
     init(frame: NSRect) { super.init(frame: frame) }
     required init?(coder: NSCoder) { nil }
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { true }
-    func advance() { guard !frozen else { return }; tickCount += 1; frameNumber &+= 1; needsDisplay = true }
+    func advance() {
+        guard !frozen else { return }
+        tickCount += 1; frameNumber &+= 1; tickTimesMs.append(MachClock.nowMs()); needsDisplay = true
+    }
     func freeze(at value: UInt32) { frozen = true; frameNumber = value; needsDisplay = true }
     func unfreeze() { frozen = false }
+    func ticks(from start: Double, through end: Double) -> Int {
+        tickTimesMs.reduce(into: 0) { if $1 >= start && $1 <= end { $0 += 1 } }
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
