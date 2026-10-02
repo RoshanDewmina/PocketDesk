@@ -14,11 +14,48 @@ enum StreamQualityPreference {
     static let key = "streamQuality"
 
     static func stored(in defaults: UserDefaults = .standard) -> StreamQuality {
-        defaults.string(forKey: key).flatMap(StreamQuality.init(rawValue:)) ?? .sharp
+        PictureModePreference.stored(in: defaults).streamQuality
     }
 
     static func store(_ quality: StreamQuality, in defaults: UserDefaults = .standard) {
         defaults.set(quality.rawValue, forKey: key)
+        defaults.set(PictureMode(quality: quality).rawValue, forKey: PictureModePreference.key)
+    }
+}
+
+enum PictureModePreference {
+    static let key = "pictureMode"
+    /// Internal rollback/testing switch: reads the old preset and independent motion keys.
+    static let legacyKey = PictureMode.legacyKey
+
+    static func stored(in defaults: UserDefaults = .standard) -> PictureMode {
+        if !defaults.bool(forKey: legacyKey),
+           let mode = defaults.string(forKey: key).flatMap(PictureMode.init(rawValue:)) { return mode }
+        let old = defaults.string(forKey: StreamQualityPreference.key).flatMap(StreamQuality.init(rawValue:))
+        let mode = old.map(PictureMode.init(quality:)) ?? .defaultMode
+        if !defaults.bool(forKey: legacyKey) {
+            // One-time nearest-mode migration. Keep the old keys for mixed-version testing.
+            StreamQualityPreference.store(mode.streamQuality, in: defaults)
+        }
+        return mode
+    }
+
+    static func motion(for mode: PictureMode, defaults: UserDefaults = .standard) -> SmoothMotionMode {
+        defaults.bool(forKey: legacyKey) ? .stored(defaults) : mode.smoothMotion
+    }
+}
+
+extension PictureMode {
+    /// Auto yields for typing/taps; Always adds delay to precise input as well as motion.
+    var smoothMotion: SmoothMotionMode { self == .quality ? .off : .auto }
+    func localizedTitle(bundle: Bundle = .main) -> String {
+        CommerceLocalization.text(self == .quality ? "PICTURE_MODE_QUALITY" : "PICTURE_MODE_PERFORMANCE",
+                                  title, bundle: bundle)
+    }
+    var localizedDescription: String {
+        self == .quality
+            ? CommerceLocalization.text("PICTURE_MODE_QUALITY_DETAIL", "Crisp text and full picture detail. No frame interpolation. Uses more bandwidth.")
+            : CommerceLocalization.text("PICTURE_MODE_PERFORMANCE_DETAIL", "Lower resolution for responsive control. Smooth motion during scrolling and video adds about one frame of delay while active.")
     }
 }
 
@@ -32,12 +69,12 @@ enum DataUseCopy {
     }
     static func presetLine(_ quality: StreamQuality, _ estimate: DataUseEstimate, bundle: Bundle = .main, locale: Locale = .current) -> String {
         let value = range(estimate, locale: locale)
-        return CommerceLocalization.text("DATA_USE_PRESET", "%@: about %@–%@ GB per hour", quality.title, value.low, value.high,
+        return CommerceLocalization.text("DATA_USE_PRESET", "%@: about %@–%@ GB per hour", PictureMode(quality: quality).localizedTitle(bundle: bundle), value.low, value.high,
                                          bundle: bundle, locale: locale)
     }
     static func presetSpoken(_ quality: StreamQuality, _ estimate: DataUseEstimate, bundle: Bundle = .main, locale: Locale = .current) -> String {
         let value = range(estimate, locale: locale)
-        return CommerceLocalization.text("DATA_USE_PRESET_SPOKEN", "%@: about %@ to %@ gigabytes per hour", quality.title, value.low, value.high,
+        return CommerceLocalization.text("DATA_USE_PRESET_SPOKEN", "%@: about %@ to %@ gigabytes per hour", PictureMode(quality: quality).localizedTitle(bundle: bundle), value.low, value.high,
                                          bundle: bundle, locale: locale)
     }
     static func note(bundle: Bundle = .main, locale: Locale = .current) -> String {
@@ -60,7 +97,7 @@ struct DataWarningContent: Equatable {
         for preset in [quality] + (lower.map { [$0] } ?? []) {
             let estimate = DataUseEstimate(preset, tuning: tuning, audio: audio, packetRepair: false)
             let value = DataUseCopy.range(estimate, locale: locale)
-            written.append(CommerceLocalization.text("DATA_WARNING_RATE", "%@ uses about %@–%@ GB per hour.", preset.title, value.low, value.high,
+            written.append(CommerceLocalization.text("DATA_WARNING_RATE", "%@ uses about %@–%@ GB per hour.", PictureMode(quality: preset).localizedTitle(bundle: bundle), value.low, value.high,
                                                      bundle: bundle, locale: locale))
             spoken.append(DataUseCopy.presetSpoken(preset, estimate, bundle: bundle, locale: locale) + ".")
         }
@@ -144,7 +181,8 @@ struct DataWarningCard: View {
         if let lower = content.lessData {
             Button(CommerceLocalization.text("DATA_WARNING_LESS", "Use less data"), action: useLessData)
                 .buttonStyle(FarsidePrimaryButtonStyle(height: 40))
-                .accessibilityHint(CommerceLocalization.text("DATA_WARNING_LESS_HINT", "Switches the picture to %@.", lower.title))
+                .accessibilityHint(CommerceLocalization.text("DATA_WARNING_LESS_HINT", "Switches the picture to %@.",
+                                                            PictureMode(quality: lower).localizedTitle()))
                 .accessibilityIdentifier("remote.dataWarning.less")
         }
         Button(CommerceLocalization.text("DATA_WARNING_KEEP", "Keep"), action: keep)

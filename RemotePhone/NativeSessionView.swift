@@ -66,6 +66,7 @@ struct NativeSessionView: View {
     @AppStorage(StreamDebug.markerReadingKey) private var markerReadingEnabled = true
     @AppStorage(StreamTuning.legacyDefaultsKey) private var legacyStreamTuning = false
     @AppStorage(SmoothMotionMode.key) private var smoothMotion: SmoothMotionMode = .defaultMode
+    @AppStorage(PictureModePreference.legacyKey) private var legacyPictureSettings = false
     @AppStorage(SmoothMotionController.upscaleKey) private var smoothMotionUpscale = false
     @AppStorage("dockHintSessions") private var dockHintSessions = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -590,7 +591,8 @@ struct NativeSessionView: View {
                                         ? model.sourceSize : .zero,
                                        displayedPixelWidth: streamStatsEnabled ? rect.width * displayScale : 0,
                                        fillsFrame: model.captureRegion != nil,
-                                       smoothMotion: smoothMotion, smoothMotionUpscale: smoothMotionUpscale,
+                                       smoothMotion: legacyPictureSettings ? smoothMotion : model.pictureMode.smoothMotion,
+                                       smoothMotionUpscale: smoothMotionUpscale,
                                        admission: model.inlinePresentationAdmission,
                                        onOriginalSourcePresented: { [weak model] identity, receipt in
                                            Task { @MainActor in model?.originalSourcePresented(identity, receipt: receipt) }
@@ -2091,7 +2093,7 @@ struct NativeSessionView: View {
                 }
             }
             Section {
-                summaryRow("Picture", "photo", value: model.streamQuality.title, page: .picture)
+                summaryRow("Picture", "photo", value: model.pictureMode.localizedTitle(), page: .picture)
                 summaryRow("Pointer", "cursorarrow", value: "", page: .pointer)
                 summaryRow("View", "arrow.up.left.and.arrow.down.right", value: zoomDescription, page: .view)
                 if showsClipboard && !model.automaticClipboardSupported {
@@ -2452,11 +2454,6 @@ struct NativeSessionView: View {
         }
         bigTextSection
         Section { FullColorSettingRows() } header: { sectionHeader("Experimental full color") }
-        Section {
-            SmoothMotionPictureRows(mode: $smoothMotion)
-        } header: {
-            sectionHeader("Smooth motion")
-        }
     }
 
     private var macAudioSection: some View {
@@ -2486,18 +2483,20 @@ struct NativeSessionView: View {
 
     private var pictureQualitySection: some View {
         Section {
-            FarsideSegmented(label: "Picture quality",
-                             options: StreamQuality.allCases.map { (value: $0, title: $0.title) },
-                             selection: $model.streamQuality, accessibilityStacked: true)
+            FarsideSegmented(label: CommerceLocalization.text("PICTURE_MODE", "Picture mode"),
+                             options: PictureMode.allCases.map { (value: $0, title: $0.localizedTitle()) },
+                             selection: Binding(get: { model.pictureMode }, set: { model.pictureMode = $0 }),
+                             accessibilityStacked: true)
+                .accessibilityIdentifier("remote.pictureMode")
                 .disabled(model.appliedStreamQuality == nil && !offlineLayoutCheck)
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
-            Text(model.streamQuality == .sharp ? "Sharper text and detail. Uses more bandwidth."
-                                               : "Lower resolution for a more responsive connection.")
+            Text(model.pictureMode.localizedDescription)
                 .font(.footnote).foregroundStyle(Farside.Palette.ash)
                 .listRowBackground(Farside.Palette.panel)
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(StreamQuality.allCases, id: \.self) { quality in
+                ForEach(PictureMode.allCases, id: \.self) { mode in
+                    let quality = mode.streamQuality
                     let estimate = model.dataUseEstimate(for: quality)
                     Text(DataUseCopy.presetLine(quality, estimate))
                         .foregroundStyle(quality == model.streamQuality ? Farside.Palette.bone : Farside.Palette.ash)
@@ -2521,7 +2520,7 @@ struct NativeSessionView: View {
                     .listRowBackground(Farside.Palette.panel)
             }
         } header: {
-            sectionHeader("Quality")
+            sectionHeader(CommerceLocalization.text("PICTURE_MODE", "Picture mode"))
         }
     }
 

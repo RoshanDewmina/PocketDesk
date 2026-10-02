@@ -151,17 +151,21 @@ enum TransportPriorityPolicy {
 /// The video sender's rate settings (G5). `maxFramerate` follows the session rate, lowered by the
 /// ladder's rung; above 60 fps `highRefreshNoAdaptation` turns WebRTC's own degradation off
 /// (`maintainFramerateAndResolution`, the header's successor to `disabled`) so the app's ladder
-/// decides. At 60 this is exactly the tuned policy: 60 fps and `tuning.degradationPreference`.
+/// decides. At up to 60 fps, Performance favours frame rate; Quality keeps the tuning preference.
 struct SenderRateParameters: Equatable {
     var maxFramerate: Int
     var degradationPreference: RTCDegradationPreference?
 
-    static func make(targetFPS: Int, tuning: StreamTuning, ladderFPS: Int? = nil) -> SenderRateParameters {
+    static func make(targetFPS: Int, tuning: StreamTuning, ladderFPS: Int? = nil,
+                     quality: StreamQuality = .sharp, legacyPictureSettings: Bool = false) -> SenderRateParameters {
         let target = max(1, targetFPS)
         let noAdaptation = target > CaptureRatePolicy.standardFPS && tuning.highRefreshNoAdaptation
+        let preference: RTCDegradationPreference? = target <= CaptureRatePolicy.standardFPS
+            && !legacyPictureSettings && tuning.qualityBitrates
+            && PictureMode(quality: quality).prioritizesFrameRate ? .maintainFramerate : tuning.degradationPreference
         return SenderRateParameters(maxFramerate: min(target, max(1, ladderFPS ?? target)),
                                     degradationPreference: noAdaptation ? .maintainFramerateAndResolution
-                                                                        : tuning.degradationPreference)
+                                                                        : preference)
     }
 }
 
@@ -1070,7 +1074,9 @@ final class PeerMedia: NSObject {
     var captureSharpness: Double?
 
     private var currentSenderRate: SenderRateParameters {
-        SenderRateParameters.make(targetFPS: targetFPS, tuning: tuning, ladderFPS: ladderState?.fps)
+        SenderRateParameters.make(targetFPS: targetFPS, tuning: tuning, ladderFPS: ladderState?.fps,
+                                  quality: streamQuality,
+                                  legacyPictureSettings: UserDefaults.standard.bool(forKey: PictureMode.legacyKey))
     }
 
     /// The capture applies a size rung itself (`RemoteCapture.setLadder`), so the sender scales only

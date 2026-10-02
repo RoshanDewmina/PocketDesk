@@ -1,6 +1,26 @@
 import XCTest
 
 final class DataUseEstimateTests: XCTestCase {
+    func testPictureModesKeepWirePresetsAndModeSpecificDataUse() throws {
+        XCTAssertEqual(PictureMode.allCases, [.quality, .performance])
+        XCTAssertEqual(PictureMode.defaultMode, .quality)
+        XCTAssertEqual(PictureMode.quality.streamQuality, .sharp)
+        XCTAssertEqual(PictureMode.performance.streamQuality, .balanced)
+        XCTAssertEqual(PictureMode(quality: .sharp), .quality)
+        XCTAssertEqual(PictureMode(quality: .balanced), .performance)
+        XCTAssertFalse(PictureMode.quality.prioritizesFrameRate)
+        XCTAssertTrue(PictureMode.performance.prioritizesFrameRate)
+        XCTAssertEqual(StreamQuality.sharp.title, "Quality")
+        XCTAssertEqual(StreamQuality.balanced.title, "Performance")
+        // The transport still sends the old enum values, even to a pre-modes Mac.
+        XCTAssertEqual(String(data: try JSONEncoder().encode(PictureMode.quality.streamQuality), encoding: .utf8), "\"sharp\"")
+        for mode in PictureMode.allCases {
+            let estimate = DataUseEstimate(mode.streamQuality, audio: false, packetRepair: false)
+            XCTAssertEqual(estimate.highGBPerHour, mode == .quality ? 11.25 : 5.4, accuracy: 1e-9)
+            XCTAssertEqual(estimate.lowGBPerHour, mode == .quality ? 0.18 : 0.09, accuracy: 1e-9)
+        }
+    }
+
     func testSustained25MbpsIs11Point25GigabytesPerHour() {
         XCTAssertEqual(DataUseEstimate.gigabytesPerHour(kbps: 25_000), 11.25, accuracy: 1e-9)
         XCTAssertEqual(DataUseEstimate.gigabytesPerHour(kbps: 8_000), 3.6, accuracy: 1e-9)

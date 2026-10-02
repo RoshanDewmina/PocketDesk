@@ -3,6 +3,24 @@ import CoreMedia
 import WebRTC
 
 final class CaptureRatePolicyTests: XCTestCase {
+    func testPictureModeSenderPreferencePreservesRateLimitsAndRollback() {
+        func rate(_ quality: StreamQuality, fps: Int = 60, legacy: Bool = false,
+                  tuning: StreamTuning = .tuned) -> SenderRateParameters {
+            SenderRateParameters.make(targetFPS: fps, tuning: tuning, ladderFPS: 30,
+                                      quality: quality, legacyPictureSettings: legacy)
+        }
+        XCTAssertEqual(rate(.sharp).degradationPreference, .maintainResolution)
+        XCTAssertEqual(rate(.balanced).degradationPreference, .maintainFramerate)
+        XCTAssertEqual(rate(.balanced).maxFramerate, 30, "The safety ladder still caps the rate")
+        XCTAssertEqual(rate(.balanced, legacy: true).degradationPreference, .maintainResolution)
+        XCTAssertNil(rate(.balanced, tuning: .legacy).degradationPreference)
+        XCTAssertEqual(rate(.balanced, fps: 120).degradationPreference, .maintainFramerateAndResolution,
+                       "High-refresh ladder ownership stays unchanged")
+        var adaptive120 = StreamTuning.tuned
+        adaptive120.highRefreshNoAdaptation = false
+        XCTAssertEqual(rate(.balanced, fps: 120, tuning: adaptive120).degradationPreference, .maintainResolution)
+    }
+
     private func target(_ hz: Double?, _ tuning: StreamTuning = .tuned) -> Int {
         CaptureRatePolicy.targetFPS(displayRefreshHz: hz, tuning: tuning)
     }
@@ -364,7 +382,9 @@ final class CaptureRateSenderTests: XCTestCase {
 
         XCTAssertEqual(host.targetFPS, 60)
         XCTAssertEqual(host.appliedSenderMaxFramerate, 60, "the 60 fps control")
-        if let preference = host.tuning.degradationPreference {
+        if host.tuning.qualityBitrates && !UserDefaults.standard.bool(forKey: PictureMode.legacyKey) {
+            XCTAssertEqual(host.appliedDegradationPreference, .maintainFramerate)
+        } else if let preference = host.tuning.degradationPreference {
             XCTAssertEqual(host.appliedDegradationPreference, preference)
         }
 
@@ -404,7 +424,9 @@ final class CaptureRateSenderTests: XCTestCase {
         host.applyCaptureRate(targetFPS: 60, displayRefreshHz: 60, display: nil)
         XCTAssertEqual(host.appliedSenderMaxFramerate, 60)
         XCTAssertNil(host.ladderState, "a new capture rate starts at rung 0")
-        if let preference = host.tuning.degradationPreference {
+        if host.tuning.qualityBitrates && !UserDefaults.standard.bool(forKey: PictureMode.legacyKey) {
+            XCTAssertEqual(host.appliedDegradationPreference, .maintainFramerate, "back to Performance at 60")
+        } else if let preference = host.tuning.degradationPreference {
             XCTAssertEqual(host.appliedDegradationPreference, preference, "back to the tuned policy at 60")
         }
         XCTAssertNil(phone.appliedSenderMaxFramerate, "the phone does not send video")

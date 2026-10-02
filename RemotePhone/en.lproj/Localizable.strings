@@ -137,3 +137,12 @@
 "DATA_WARNING_LESS_HINT" = "Switches the picture to %@.";
 "DATA_WARNING_KEEP" = "Keep";
 "DATA_WARNING_KEEP_HINT" = "Keeps the current picture quality. This notice won’t appear again.";
+
+// The single Picture mode choice
+"PICTURE_MODE" = "Picture mode";
+"PICTURE_MODE_QUALITY" = "Quality";
+"PICTURE_MODE_PERFORMANCE" = "Performance";
+"PICTURE_MODE_QUALITY_DETAIL" = "Crisp text and full picture detail. No frame interpolation. Uses more bandwidth.";
+"PICTURE_MODE_PERFORMANCE_DETAIL" = "Lower resolution for responsive control. Smooth motion during scrolling and video adds about one frame of delay while active.";
+"PICTURE_MODE_SWITCHING" = "Switching to %@…";
+"PICTURE_MODE_PENDING" = "Mac is still using %@. Switch modes to retry.";

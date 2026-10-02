@@ -134,3 +134,12 @@
 "DATA_WARNING_LESS_HINT" = "Passe l’image en %@.";
 "DATA_WARNING_KEEP" = "Conserver";
 "DATA_WARNING_KEEP_HINT" = "Conserve la qualité d’image actuelle. Cet avis ne réapparaîtra pas.";
+
+// The single Picture mode choice
+"PICTURE_MODE" = "Mode d’image";
+"PICTURE_MODE_QUALITY" = "Qualité";
+"PICTURE_MODE_PERFORMANCE" = "Performance";
+"PICTURE_MODE_QUALITY_DETAIL" = "Texte net et tous les détails de l’image. Aucune interpolation. Utilise plus de bande passante.";
+"PICTURE_MODE_PERFORMANCE_DETAIL" = "Résolution réduite pour un contrôle réactif. Le mouvement fluide pendant le défilement et les vidéos ajoute environ une image de délai lorsqu’il est actif.";
+"PICTURE_MODE_SWITCHING" = "Passage en %@…";
+"PICTURE_MODE_PENDING" = "Le Mac utilise toujours %@. Changez de mode pour réessayer.";

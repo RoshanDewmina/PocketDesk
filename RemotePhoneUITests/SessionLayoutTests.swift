@@ -136,15 +136,18 @@ final class SessionLayoutTests: XCTestCase {
         app.buttons["Controls"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["remote.controls.content"].firstMatch.waitForExistence(timeout: 3))
         openSettingsPage(app, "picture")
-        let responsive = app.buttons["Responsive"]
+        let responsive = app.buttons["Performance"]
         XCTAssertTrue(responsive.waitForExistence(timeout: 3) && responsive.isHittable,
                       "Picture quality must be one page away in Controls › Settings")
         responsive.tap()
-        XCTAssertTrue(app.staticTexts["Lower resolution for a more responsive connection."].exists)
-        app.buttons["Sharper"].tap()
-        XCTAssertTrue(app.staticTexts["Sharper text and detail. Uses more bandwidth."].exists)
+        XCTAssertTrue(app.staticTexts["Lower resolution for responsive control. Smooth motion during scrolling and video adds about one frame of delay while active."].exists)
+        app.buttons["Quality"].tap()
+        XCTAssertTrue(app.staticTexts["Crisp text and full picture detail. No frame interpolation. Uses more bandwidth."].exists)
         XCTAssertFalse(app.keyboards.firstMatch.exists)
-        attachScreenshot("Picture quality controls - offline layout")
+        XCTAssertFalse(app.descendants(matching: .any)["remote.smoothMotion"].firstMatch.exists)
+        XCTAssertFalse(app.buttons["Sharper"].exists)
+        XCTAssertFalse(app.buttons["Responsive"].exists)
+        attachScreenshot("Picture modes - offline layout")
     }
 
     @MainActor

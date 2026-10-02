@@ -1,3 +1,7 @@
+# Picture modes — 2 October 2026
+
+Roshan requests one **Quality | Performance** choice on the Picture page, replacing the separate picture presets and Smooth motion selector. **Quality is the default**: sharp text/detail with the existing high-resolution preset, QP/bitrate sharpness defaults and no interpolation. **Performance** uses the existing lower-resolution preset and Auto Smooth motion, which yields for typing/precise taps; interpolation adds about one source frame of delay while active. Show a modelled data-use range for each mode. Saved Sharper maps to Quality and Responsive to Performance; preserve internal testing keys. Keep established negotiated pixel/rate/thermal safety limits, rather than promising native panel resolution on every path. The scroll lane owns load adaptation; this lane owns the surface/mapping and a minimal sender preference seam. No installation, real-device changes or deployment authorized in this lane.
+
 # Full-feature implementation authorized — 30 September 2026
 
 Roshan approved the independently reviewed full-feature proposal and asked for parallel implementation until a candidate is ready for later testing. The 35 competition-report recommendations, including all 18 formerly after-launch items, plus relevant continuity/acceptance obligations are active. Existing historical stop lines and post-launch labels below do not remove those features from this program. Submission 3 November and release 17 November remain stretch targets.
