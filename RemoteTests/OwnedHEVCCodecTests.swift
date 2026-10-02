@@ -107,39 +107,50 @@ final class OwnedHEVCCodecTests: XCTestCase {
         var now = 10_000.0
         let decoder = OwnedHEVCDecoder(onFailure: { XCTFail("bad data is not terminal") }, recovery: true, clock: { now })
         defer { _ = decoder.release() }
-        // The delivery mailbox keeps only the newest decoded frame, so two quick decodes may publish once.
-        let decoded = expectation(description: "the frames after the request decode normally")
+        // The delivery mailbox keeps only the newest decoded frame, so quick decodes may publish fewer times.
+        let decoded = expectation(description: "frames keep decoding while the request is pending")
         decoded.assertForOverFulfill = false
         decoder.setCallback { _ in decoded.fulfill() }
         XCTAssertEqual(decoder.startDecode(withNumberOfCores: 1), 0)
-        let image = RTCEncodedImage(); image.buffer = NativeHEVCCapability.fixture; image.captureTimeMs = 1000; image.timeStamp = 90000
+        let delta = RTCEncodedImage(); delta.buffer = NativeHEVCCapability.fixture; delta.captureTimeMs = 1000; delta.timeStamp = 90000
+        delta.frameType = .videoFrameDelta
         decoder.submissionStatusForTesting = kVTVideoDecoderBadDataErr
-        XCTAssertEqual(decoder.decode(image, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), -1)
+        XCTAssertEqual(decoder.decode(delta, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), -1)
         decoder.submissionStatusForTesting = nil
-        XCTAssertEqual(decoder.decode(image, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0),
-                       OwnedHEVCDecoder.requestKeyFrameResult, "the frame after the error asks for a key frame")
+        XCTAssertEqual(decoder.decode(delta, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0),
+                       OwnedHEVCDecoder.requestKeyFrameResult, "the frame after the error is taken and asks for a key frame")
         now += 100
-        XCTAssertEqual(decoder.decode(image, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), 0, "then decoding resumes")
-        decoder.submissionStatusForTesting = kVTVideoDecoderReferenceMissingErr
-        XCTAssertEqual(decoder.decode(image, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), -1)
-        decoder.submissionStatusForTesting = nil
-        now += 100
-        XCTAssertEqual(decoder.decode(image, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), 0,
-                       "a second error within 500 ms of the last request does not ask again yet")
+        XCTAssertEqual(decoder.decode(delta, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), 0,
+                       "within the half second the next frame decodes without asking again")
         now += 400
-        XCTAssertEqual(decoder.decode(image, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0),
-                       OwnedHEVCDecoder.requestKeyFrameResult, "it asks once the half second has passed")
+        XCTAssertEqual(decoder.decode(delta, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0),
+                       OwnedHEVCDecoder.requestKeyFrameResult, "still no key frame: it asks again after half a second")
         wait(for: [decoded], timeout: 5)
+
+        let keyDecoded = expectation(description: "the key frame decodes")
+        keyDecoded.assertForOverFulfill = false
+        // A late delta delivery must not count: only the key frame's own timestamp fulfils.
+        decoder.setCallback { frame in if frame.timeStamp == Int32(bitPattern: 180000) { keyDecoded.fulfill() } }
+        let key = RTCEncodedImage(); key.buffer = NativeHEVCCapability.fixture; key.captureTimeMs = 2000; key.timeStamp = 180000
+        key.frameType = .videoFrameKey
+        now += 500
+        XCTAssertEqual(decoder.decode(key, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0),
+                       OwnedHEVCDecoder.requestKeyFrameResult, "a key frame is decoded, never rejected")
+        wait(for: [keyDecoded], timeout: 5)
+        now += 500
+        XCTAssertEqual(decoder.decode(delta, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), 0,
+                       "a decoded key frame clears the request")
 
         let stock = OwnedHEVCDecoder(onFailure: { XCTFail("bad data is not terminal") }, recovery: false, clock: { now })
         defer { _ = stock.release() }
         let passive = expectation(description: "with the switch off the next frame just decodes")
+        passive.assertForOverFulfill = false
         stock.setCallback { _ in passive.fulfill() }
         XCTAssertEqual(stock.startDecode(withNumberOfCores: 1), 0)
         stock.submissionStatusForTesting = kVTVideoDecoderBadDataErr
-        XCTAssertEqual(stock.decode(image, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), -1)
+        XCTAssertEqual(stock.decode(delta, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), -1)
         stock.submissionStatusForTesting = nil
-        XCTAssertEqual(stock.decode(image, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), 0)
+        XCTAssertEqual(stock.decode(delta, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), 0)
         wait(for: [passive], timeout: 5)
     }
 
