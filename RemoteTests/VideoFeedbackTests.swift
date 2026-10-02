@@ -226,6 +226,11 @@ final class VideoFeedbackTests: XCTestCase {
         }
         var bad = tag; bad.region = CaptureRegion(epoch: 1, x: 0, y: 0, width: 0, height: 10, outputWidth: 16, outputHeight: 16)
         XCTAssertThrowsError(try bad.validate())
+        // The encoder rebuilds the final tag from the submitted one at output: the region must survive.
+        let final = try XCTUnwrap(context.encoded(token: nil, expected: tag))
+        XCTAssertEqual(final.region, crop)
+        XCTAssertEqual(final.nonce, tag.nonce)
+        XCTAssertNil(try XCTUnwrap(context.encoded(token: nil, expected: nil)).region)
         // An older Mac's tag has no region; an older phone reads a tag with one as if it had none.
         struct OldTag: Codable { let version: Int; let generation: String; let nonce: String; let geometryEpoch: UInt64; let scopeEpoch: UInt64 }
         XCTAssertEqual(try JSONDecoder().decode(OldTag.self, from: json).geometryEpoch, 7)
@@ -244,6 +249,8 @@ final class VideoFeedbackTests: XCTestCase {
         XCTAssertEqual(context.submittedRegion(buffer: first), whole, "a re-pushed buffer carries its latest region")
         context.pushedRegion(nil, buffer: first)
         XCTAssertNil(context.submittedRegion(buffer: first))
+        context.pushedRegion(bad.region, buffer: first)
+        XCTAssertNil(context.submittedRegion(buffer: first), "an invalid region is dropped, not the tag")
         context.configure(allowed: false, geometry: 7, scope: 3)
         context.pushedRegion(crop, buffer: first)
         XCTAssertNil(context.submittedRegion(buffer: first), "no tags, no regions")

@@ -119,6 +119,7 @@ final class VideoFeedbackContext: @unchecked Sendable {
         var tag = VideoFrameTag(generation: generation, nonce: expected?.nonce ?? Self.id(), geometryEpoch: geometry, scopeEpoch: scope, ltrToken: token)
         tag.refinement = expected?.refinement
         tag.timing = timingAllowed ? expected?.timing : nil
+        tag.region = expected?.region
         if token != nil, tokens.count < 32 { tokens[tag.nonce] = (tag, now) }
         return tag
     }
@@ -242,10 +243,12 @@ final class VideoFeedbackContext: @unchecked Sendable {
         guard allowed, !ended, let region else { return }
         regionPushes.pushed(region, buffer: buffer)
     }
+    /// Nil for a region that would not validate: it must never cost the frame its whole tag.
     func submittedRegion(buffer: CVPixelBuffer) -> CaptureRegion? {
         lock.lock(); defer { lock.unlock() }
-        guard allowed, !ended else { return nil }
-        return regionPushes.submitted(buffer: buffer)
+        guard allowed, !ended, let region = regionPushes.submitted(buffer: buffer),
+              (try? region.validate()) != nil else { return nil }
+        return region
     }
     /// Caller must hold its actual public presentation fence; interpolated/redrawn outputs never enter here.
     func presentedTiming(_ tag: VideoFrameTag?, originalSource: Bool, newSubmission: Bool, presentedTime: Double, clock: ClockSyncEstimate?, observedAtMs: Double?, nowMs: Double = MachClock.nowMs()) {

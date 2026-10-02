@@ -157,6 +157,9 @@ final class NativeGestureEngine {
     /// the Mac's capture (b7-scroll NOTES, 2 Oct). `NavigateZoomDeadbandSwitch` restores the old behaviour.
     static let zoomDeadband: CGFloat = 0.055
     private let zoomDeadbandEnabled: Bool
+    /// A View-mode navigation that may not have zoomed yet still ends with `.zoomEnded`, so the
+    /// viewport settles and reports exactly as before the dead band.
+    private var navigating = false
 
     init(enabled: Bool, panMode: Bool, revision: UInt64, sensitivity: CGFloat,
          pointerScale: CGFloat, doubleClickInterval: TimeInterval, direct: Bool = false,
@@ -539,6 +542,7 @@ final class NativeGestureEngine {
             let previousCenter = starting ? multiStartCenter : multiLastCenter
             let previousSpan = starting ? multiStartDistance : multiLastDistance
             mode = .zoom
+            navigating = true
             var factor = span / max(previousSpan, 1)
             if zoomDeadbandEnabled, !zoomActive {
                 // The span is re-based at the crossing, so the zoom starts from the fingers' current
@@ -831,8 +835,9 @@ final class NativeGestureEngine {
             _ = onCommand(.dragEnded(id: id))
             dragID = nil
         }
-        if zoomActive {
+        if zoomActive || navigating {
             zoomActive = false
+            navigating = false
             _ = onCommand(.zoomEnded)
         }
         if precisionActive {
@@ -871,5 +876,5 @@ private func midpoint(_ a: CGPoint, _ b: CGPoint) -> CGPoint {
 /// PocketDeskNavigateZoomDeadband -bool NO`, then relaunch the app).
 enum NavigateZoomDeadbandSwitch {
     static let defaultsKey = "PocketDeskNavigateZoomDeadband"
-    static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+    static let isOn = ScrollFixesSwitch.isOn && (UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true)
 }

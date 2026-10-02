@@ -764,6 +764,11 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     private var appliedRegion: CaptureRegion
     /// The whole-display output changed, so the next region must not keep a size held for the old one.
     private var heldOutputInvalid = false
+    /// The region switch whose `updateConfiguration` has not completed, and the last completed one
+    /// (CaptureFrameRegionPolicy). Confined to `queue`.
+    private var regionSwitchInFlight: CaptureFrameRegionPolicy.Switch?
+    private var lastRegionSwitch: CaptureFrameRegionPolicy.Switch?
+    private var lastBufferRegion: CaptureRegion?
     private var gate = ConfigurationUpdateGate()
     private var trailingUpdate: DispatchSourceTimer?
     private var waiters: [(Bool) -> Void] = []
@@ -916,7 +921,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         }
         let output = RemoteCaptureConfiguration.scaled(whole, by: inputs.sizeFraction)
         let region = ViewportCapturePolicy.region(for: viewport, display: geometry, output: output, tuning: tuning,
-                                                  previous: previous)
+                                                  previous: previous, cropEngaged: !appliedRegion.isWholeDisplay)
         let geometryChanges = ViewportCapturePolicy.needsReconfiguration(from: appliedRegion, to: region)
         guard inputs != applied || geometryChanges else {
             publish(region)
@@ -932,10 +937,18 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         let previousRegion = appliedRegion
         let bufferVersionAtStart = bufferVersion
         let updateRequestedAt = mach_absolute_time()
+        if geometryChanges {
+            regionSwitchInFlight = CaptureFrameRegionPolicy.Switch(
+                previous: previousRegion, next: region, requestedMs: CaptureTiming.milliseconds(fromMachTicks: updateRequestedAt))
+        }
         stream.updateConfiguration(configuration) { [self] error in
             queue.async { [self] in
                 // stop() already answered the waiters.
                 guard !stopping else { return }
+                if let inFlight = regionSwitchInFlight, inFlight.next == region {
+                    lastRegionSwitch = error == nil ? inFlight : nil
+                    regionSwitchInFlight = nil
+                }
                 if error == nil {
                     applied = inputs
                     // The idle refresh must not resend a frame of the old region under the new one.
@@ -945,7 +958,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
                         }, frameArrivedDuringUpdate: bufferVersion != bufferVersionAtStart,
                         cachedDisplayTime: lastBufferDisplayTime, updateRequestedAt: updateRequestedAt,
                         previous: previousRegion, next: region
-                    ) { lastBuffer = nil }
+                    ) { lastBuffer = nil; lastBufferRegion = nil }
                     publish(region)
                 } else if requested == inputs {
                     requested = applied
@@ -1076,7 +1089,12 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         bufferVersion &+= 1
         lastBufferDisplayTime = displayTime
         let timing = sourceTiming.captured(displayTicks: displayTime, atMs: capturedMs)
-        deliver(buffer, at: now, displayMs: displayTime > 0 ? CaptureTiming.milliseconds(fromMachTicks: displayTime) : 0, timing: timing)
+        let displayMs = displayTime > 0 ? CaptureTiming.milliseconds(fromMachTicks: displayTime) : 0
+        let region = CaptureFrameRegionPolicy.region(
+            displayMs: displayMs, bufferWidth: CVPixelBufferGetWidth(buffer), bufferHeight: CVPixelBufferGetHeight(buffer),
+            applied: appliedRegion, inFlight: regionSwitchInFlight, lastSwitch: lastRegionSwitch)
+        lastBufferRegion = region
+        deliver(buffer, at: now, displayMs: displayMs, timing: timing, region: region)
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
@@ -1121,7 +1139,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         // screen silences it, the stream's own capturing state) proves the source is still alive.
         if CaptureIdleRefresh.isDue(healthy: healthy, hasFrame: lastBuffer != nil, now: now, lastSentAt: lastSentAt),
            let lastBuffer {
-            deliver(lastBuffer, at: now, timing: sourceTiming.resent(), idleResend: true)
+            deliver(lastBuffer, at: now, timing: sourceTiming.resent(), idleResend: true, region: lastBufferRegion)
         }
     }
 
@@ -1135,13 +1153,14 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         return (layout, pointer.flatMap { captured.contains($0) ? $0 : nil })
     }
 
-    private func deliver(_ buffer: CVPixelBuffer, at time: TimeInterval, displayMs: Double = 0, timing: ExactVideoTiming? = nil, idleResend: Bool = false) {
+    private func deliver(_ buffer: CVPixelBuffer, at time: TimeInterval, displayMs: Double = 0, timing: ExactVideoTiming? = nil,
+                         idleResend: Bool = false, region: CaptureRegion?) {
         lastSentAt = time
         guard scopeTarget?.processIsAlive != false else { return }
         scopeLease.performIfValid {
             if idleResend { peer?.counters.idleResent() }
             peer?.pushFrame(buffer, timeStampNs: Int64(time * 1_000_000_000), displayMs: displayMs, exactTiming: timing,
-                            region: appliedRegion)
+                            region: region)
             onGuestFrame?(buffer, time)
         }
     }

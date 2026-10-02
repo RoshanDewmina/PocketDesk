@@ -342,6 +342,7 @@ final class PhoneRemoteModel: ObservableObject {
     /// the Mac has stopped tagging and the fallbacks apply again.
     private var taggedRegionFrames = 0
     private var untaggedRun = 0
+    private var placedOutput: PixelSize?
     static let untaggedRunLimit = 30
     var regionByFrame = RegionByFrameSwitch.isOn
     /// G12: the Mac's own account of its load, for the pill; nil from a Mac without the ladder.
@@ -1599,12 +1600,15 @@ final class PhoneRemoteModel: ObservableObject {
 
     func framePlacement(tag: VideoFrameTag?, width: Int, height: Int) {
         guard regionByFrame else { return }
-        if tag?.region != nil, tag?.geometryEpoch == geometryEpoch {
+        if let region = tag?.region, tag?.geometryEpoch == geometryEpoch {
             taggedRegionFrames += 1
             untaggedRun = 0
+            placedOutput = PixelSize(width: region.outputWidth, height: region.outputHeight)
         } else {
             untaggedRun += 1
-            if taggedRegionFrames > 0, untaggedRun < Self.untaggedRunLimit { return }
+            // A midpoint of the same size keeps its sources' placement; another size is another stream.
+            if taggedRegionFrames > 0, untaggedRun < Self.untaggedRunLimit,
+               placedOutput == PixelSize(width: width, height: height) { return }
         }
         let placed = FramePlacementPolicy.region(tag: tag, geometryEpoch: geometryEpoch, frameWidth: width,
                                                  frameHeight: height, history: regionHistory, echo: captureRegion)
@@ -1623,6 +1627,7 @@ final class PhoneRemoteModel: ObservableObject {
         regionHistory.removeAll()
         taggedRegionFrames = 0
         untaggedRun = 0
+        placedOutput = nil
         if placementRegion != nil { placementRegion = nil }
     }
 
@@ -3162,7 +3167,6 @@ let now = ProcessInfo.processInfo.systemUptime
     }
 }
 
-/// A cropped capture for the dock caption and the statistics overlay, e.g. "crop 1280×720 · 2.0×":
 /// Which region a drawn frame is placed by (see `PhoneRemoteModel.placementRegion`).
 enum FramePlacementPolicy {
     static func region(tag: VideoFrameTag?, geometryEpoch: UInt64, frameWidth: Int, frameHeight: Int,
@@ -3182,9 +3186,10 @@ enum FramePlacementPolicy {
 /// status echo, as build 20261002.2 did.
 enum RegionByFrameSwitch {
     static let defaultsKey = "PocketDeskRegionByFrame"
-    static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+    static let isOn = ScrollFixesSwitch.isOn && (UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true)
 }
 
+/// A cropped capture for the dock caption and the statistics overlay, e.g. "crop 1280×720 · 2.0×":
 /// the stream's pixel size and how many times smaller than the display its region is per side, by area,
 /// so a crop along one axis reads the same as an even one.
 struct CropSummary: Equatable {

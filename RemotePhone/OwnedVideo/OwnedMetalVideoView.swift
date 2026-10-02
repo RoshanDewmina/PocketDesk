@@ -218,7 +218,6 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             return
         }
         missingDrawableSince = nil
-        drawnEnvelope = envelope
         let buffer = pixels.buffer
         var wrappers: [CVMetalTexture] = []
         func texture(_ format: MTLPixelFormat, plane: Int, width: Int, height: Int) -> MTLTexture? {
@@ -236,6 +235,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             mailbox.completed(submission.id); showFallbackIfAdmitted(envelope); return
         }
         fallback?.removeFromSuperview(); fallback = nil; redraw = false
+        drawnEnvelope = envelope // From here the frame is presented.
         #if targetEnvironment(simulator)
         timingAvailable = false // Simulator SDK does not expose actual presented handlers.
         #else
@@ -338,6 +338,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     }
     private func showFallback(_ envelope: VideoFrameEnvelope) {
         timingAvailable = false
+        drawnEnvelope = envelope // The compatibility view shows this frame; its region places it too.
         var buffer = envelope.frame.buffer
         if let cv = buffer as? RTCCVPixelBuffer, HEVC444PixelTransfer.isFullColor(cv.pixelBuffer) {
             // Pinned M153 stock/crop/toI420 paths do not support raw 444. Public declared-color

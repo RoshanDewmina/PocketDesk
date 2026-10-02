@@ -192,8 +192,10 @@ final class ViewportCaptureTests: XCTestCase {
         let bigText = CGSize(width: 1280, height: 828)
         let visible = CGRect(x: 82, y: 157, width: 1116, height: 513)
         let request = ViewportCaptureRequest(rect: visible, pixelWidth: 2622, pixelHeight: 1206, zoom: 2.35, displaySize: bigText)
-        let widened = request.widened(by: 2)
+        let widened = request.widened(by: 2, capped: true)
         XCTAssertTrue(widened.rect.contains(visible))
+        XCTAssertEqual(request.widened(by: 2, capped: false).rect, CGRect(origin: .zero, size: bigText),
+                       "the switch restores the whole-display request of 20261002.2")
         XCTAssertLessThan(widened.rect.width * widened.rect.height, 0.86 * bigText.width * bigText.height)
         XCTAssertEqual(widened.rect.width, 1180, accuracy: 1)
         XCTAssertEqual(widened.rect.height, 763, accuracy: 1)
@@ -204,7 +206,7 @@ final class ViewportCaptureTests: XCTestCase {
         // A view that already covers most of the display is not widened at all.
         let wide = ViewportCaptureRequest(rect: CGRect(x: 20, y: 10, width: 1240, height: 800), pixelWidth: 2622,
                                           pixelHeight: 1206, zoom: 2.1, displaySize: bigText)
-        XCTAssertEqual(wide.widened(by: 2).rect, wide.rect)
+        XCTAssertEqual(wide.widened(by: 2, capped: true).rect, wide.rect)
     }
 
     func testAPanOrAOneOffChangePastTheCropGetsExactlyWhatItShows() throws {
@@ -545,9 +547,11 @@ final class ViewportCaptureTests: XCTestCase {
             try deliver(status(c), to: model)
             model.framePlacement(tag: tag(b), width: 2432, height: 1200)
             XCTAssertEqual(model.placementRegion, byFrame ? b : c)
-            model.framePlacement(tag: nil, width: 2416, height: 976)
-            model.framePlacement(tag: tag(c, geometry: 9), width: 2416, height: 976)
+            model.framePlacement(tag: nil, width: 2432, height: 1200)
+            model.framePlacement(tag: tag(b, geometry: 9), width: 2432, height: 1200)
             XCTAssertEqual(model.placementRegion, byFrame ? b : c, "a midpoint never moves the picture")
+            model.framePlacement(tag: nil, width: 2416, height: 976)
+            XCTAssertEqual(model.placementRegion, c, "an untagged frame of another size is another stream: the echo of that size")
             model.framePlacement(tag: tag(c), width: 2416, height: 976)
             XCTAssertEqual(model.placementRegion, c)
             // A new geometry drops everything.
@@ -570,10 +574,10 @@ final class ViewportCaptureTests: XCTestCase {
             // A Mac that stops tagging for half a second hands the placement back to the fallbacks.
             model.framePlacement(tag: tag(a, geometry: 5), width: 2432, height: 1200)
             XCTAssertEqual(model.placementRegion, byFrame ? a : c)
-            for _ in 0..<(PhoneRemoteModel.untaggedRunLimit - 1) { model.framePlacement(tag: nil, width: 2416, height: 976) }
+            for _ in 0..<(PhoneRemoteModel.untaggedRunLimit - 1) { model.framePlacement(tag: nil, width: 2432, height: 1200) }
             XCTAssertEqual(model.placementRegion, byFrame ? a : c)
-            model.framePlacement(tag: nil, width: 2416, height: 976)
-            XCTAssertEqual(model.placementRegion, c)
+            model.framePlacement(tag: nil, width: 2432, height: 1200)
+            XCTAssertEqual(model.placementRegion, byFrame ? b : c, "the newest echo of that size again")
         }
     }
 

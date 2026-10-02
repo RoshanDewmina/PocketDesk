@@ -28,12 +28,13 @@ final class ViewportCaptureTests: XCTestCase {
     }
 
     /// `phoneNative: false` is the rule before the phone-native crop, kept behind `CropPhoneNativeSwitch`.
-    /// `nearNative: false` and `keepBand: false` are the rules of build 20261002.2, kept behind
-    /// `CropNearNativeSwitch` and `CropKeepBandSwitch`; the crop maths below is checked with them off.
+    /// `nearNative: false` is the engagement rule of build 20261002.2 (kept behind `CropNearNativeSwitch`),
+    /// so the crop maths below is checked at every zoom; `keepBand` defaults on, the behaviour the golden
+    /// replay (G04, testSmallPinchAndPanReplayKeepsCoveredRegionAndEncoderSizeStable) demands.
     private func region(_ viewport: ViewportRegion?, on display: DisplayGeometry? = nil,
                         output: CapturePixelDimensions, tuning: StreamTuning = .tuned,
                         previous: CaptureRegion? = nil, phoneNative: Bool = true,
-                        nearNative: Bool = false, keepBand: Bool = false) -> CaptureRegion {
+                        nearNative: Bool = false, keepBand: Bool = true) -> CaptureRegion {
         Policy.region(for: viewport, display: display ?? asus, output: output, tuning: tuning, previous: previous,
                       phoneNative: phoneNative, nearNative: nearNative, keepBand: keepBand)
     }
@@ -595,6 +596,74 @@ final class ViewportCaptureTests: XCTestCase {
                        "one flip per crossing of the band, none inside it")
     }
 
+    func testCropGainHysteresisSurvivesARungChangeAndIsJudgedOnTheTarget() throws {
+        let whole = try output(moreSpace, fps: 60)
+        let crop = region(iPhone17(zoom: 2, portrait: false, on: moreSpace), on: moreSpace, output: whole, nearNative: true)
+        XCTAssertFalse(crop.isWholeDisplay)
+        // 1.45 px/pt gives 1.09: released only without the engaged state that `previous` carries.
+        let wobble = iPhone17(zoom: 1.45, portrait: false, on: moreSpace)
+        XCTAssertTrue(region(wobble, on: moreSpace, output: whole, previous: nil, nearNative: true).isWholeDisplay)
+        XCTAssertFalse(region(wobble, on: moreSpace, output: whole, previous: nil, nearNative: true, cropEngaged: true).isWholeDisplay,
+                       "a rung or quality change passes previous nil; the engaged state still holds the crop")
+        XCTAssertTrue(region(wobble, on: moreSpace, output: whole, previous: crop, nearNative: true, cropEngaged: false).isWholeDisplay)
+        // The held output may lag the phone-native target by 10 %: the gain is judged on the target.
+        var held = crop
+        held.outputWidth = Int(Double(crop.outputWidth) * 0.91) / 16 * 16
+        held.outputHeight = Int(Double(crop.outputHeight) * 0.91) / 16 * 16
+        let judged = region(iPhone17(zoom: 1.6, portrait: false, on: moreSpace), on: moreSpace, output: whole,
+                            previous: held, nearNative: true)
+        XCTAssertFalse(judged.isWholeDisplay, "1.6 px/pt is 1.2x however the held size lags")
+    }
+
+    /// The shipping combination (`PocketDeskScrollFixes` on): both rules together.
+    func testCropGainAndKeepBandTogetherOnTheASUSAndOnMoreSpace() throws {
+        let asusWhole = try output(asus, fps: 120)
+        XCTAssertTrue(region(centered(zoom: 2, on: asus), output: asusWhole, nearNative: true, keepBand: true).isWholeDisplay,
+                      "a 1x display streamed at its own pixels: no crop can add any")
+        let whole = try output(moreSpace, fps: 60)
+        var previous: CaptureRegion?
+        var changes = 0, wholes = 0
+        for (epoch, zoom) in [2.0, 2.05, 1.95, 2.1, 2.0, 1.9, 3.0, 2.9, 1.45, 1.38].enumerated() {
+            let next = region(iPhone17(zoom: zoom, portrait: false, on: moreSpace, epoch: UInt64(epoch + 1)), on: moreSpace,
+                              output: whole, previous: previous, nearNative: true, keepBand: true)
+            if let previous, Policy.needsReconfiguration(from: previous, to: next) { changes += 1 }
+            if next.isWholeDisplay { wholes += 1 }
+            XCTAssertNoThrow(try next.validate())
+            if !next.isWholeDisplay {
+                XCTAssertEqual(next.outputWidth % 16, 0); XCTAssertEqual(next.outputHeight % 16, 0)
+                XCTAssertLessThanOrEqual(next.outputWidth * next.outputHeight, whole.width * whole.height)
+                XCTAssertTrue(next.rect.contains(iPhone17(zoom: zoom, portrait: false, on: moreSpace).rect.intersection(moreSpace.bounds)))
+            }
+            previous = next
+        }
+        XCTAssertEqual(changes, 3, "2x -> 3x, 3x -> 1.45x (released under 1.05 at 1.38) and the whole display: everything else held")
+        XCTAssertEqual(wholes, 1)
+    }
+
+    func testAFrameNearAReconfigurationIsTaggedByDisplayTimeAndSizeOrNotAtAll() {
+        typealias Frames = CaptureFrameRegionPolicy
+        let a = CaptureRegion(epoch: 29, x: 32, y: 268, width: 1216, height: 560, outputWidth: 2432, outputHeight: 1200)
+        let b = CaptureRegion(epoch: 33, x: 32, y: 148, width: 1216, height: 600, outputWidth: 2432, outputHeight: 1200)
+        let c = CaptureRegion(epoch: 55, x: 36, y: 340, width: 1208, height: 488, outputWidth: 2416, outputHeight: 976)
+        let move = Frames.Switch(previous: a, next: b, requestedMs: 1000)
+        XCTAssertEqual(Frames.region(displayMs: 990, bufferWidth: 2432, bufferHeight: 1200, applied: a, inFlight: move, lastSwitch: nil), a,
+                       "shown before the request: the old crop")
+        XCTAssertNil(Frames.region(displayMs: 1010, bufferWidth: 2432, bufferHeight: 1200, applied: a, inFlight: move, lastSwitch: nil),
+                     "same size, after the request, completion pending: unknown")
+        XCTAssertNil(Frames.region(displayMs: 0, bufferWidth: 2432, bufferHeight: 1200, applied: a, inFlight: move, lastSwitch: nil))
+        let resize = Frames.Switch(previous: b, next: c, requestedMs: 2000)
+        XCTAssertEqual(Frames.region(displayMs: 2010, bufferWidth: 2416, bufferHeight: 976, applied: b, inFlight: resize, lastSwitch: nil), c,
+                       "the new size can only be the new crop")
+        XCTAssertEqual(Frames.region(displayMs: 2010, bufferWidth: 2432, bufferHeight: 1200, applied: b, inFlight: resize, lastSwitch: nil), b)
+        XCTAssertNil(Frames.region(displayMs: 2010, bufferWidth: 1600, bufferHeight: 640, applied: b, inFlight: resize, lastSwitch: nil))
+        // After the completion: a late frame shown before the request is still the old crop.
+        XCTAssertEqual(Frames.region(displayMs: 1990, bufferWidth: 2432, bufferHeight: 1200, applied: c, inFlight: nil, lastSwitch: resize), b)
+        XCTAssertEqual(Frames.region(displayMs: 2020, bufferWidth: 2416, bufferHeight: 976, applied: c, inFlight: nil, lastSwitch: resize), c)
+        XCTAssertNil(Frames.region(displayMs: 2020, bufferWidth: 2432, bufferHeight: 1200, applied: c, inFlight: nil, lastSwitch: resize),
+                     "the applied crop's size is the only one a frame may carry now")
+        XCTAssertEqual(Frames.region(displayMs: 3000, bufferWidth: 2416, bufferHeight: 976, applied: c, inFlight: nil, lastSwitch: nil), c)
+    }
+
     func testKeepBandKeepsACropAcrossAZoomWobbleAndAnEdgeShrink() throws {
         let whole = try output(asus, fps: 120)
         let first = region(centered(zoom: 2, on: asus, epoch: 1), output: whole, keepBand: true)
@@ -605,8 +674,8 @@ final class ViewportCaptureTests: XCTestCase {
         XCTAssertEqual(wobble.rect, first.rect)
         XCTAssertEqual(size(wobble.outputWidth, wobble.outputHeight), size(1536, 704))
         XCTAssertFalse(Policy.needsReconfiguration(from: first, to: wobble))
-        XCTAssertNotEqual(region(centered(zoom: 2.1, on: asus, epoch: 2), output: whole, previous: first).rect, first.rect,
-                          "the switch restores the exact-size rule")
+        XCTAssertNotEqual(region(centered(zoom: 2.1, on: asus, epoch: 2), output: whole, previous: first, keepBand: false).rect,
+                          first.rect, "the switch restores the exact-size rule")
         // At a display edge the visible rect loses the safe inset (21 pt of 603 at the bottom in landscape).
         var edge = centered(zoom: 2, on: asus, epoch: 3)
         edge.height *= 0.92

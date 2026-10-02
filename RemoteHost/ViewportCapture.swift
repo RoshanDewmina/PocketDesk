@@ -87,7 +87,8 @@ enum ViewportCapturePolicy {
                        tuning: StreamTuning, previous: CaptureRegion?,
                        phoneNative: Bool = CropPhoneNativeSwitch.isOn,
                        nearNative: Bool = CropNearNativeSwitch.isOn,
-                       keepBand: Bool = CropKeepBandSwitch.isOn) -> CaptureRegion {
+                       keepBand: Bool = CropKeepBandSwitch.isOn,
+                       cropEngaged: Bool? = nil) -> CaptureRegion {
         let whole = wholeDisplay(display, output: output)
         // Epoch 0 means the whole display on the wire, so a crop can never carry it.
         guard tuning.viewportCapture, let viewport, viewport.epoch != 0, viewport.zoom > 1,
@@ -117,8 +118,11 @@ enum ViewportCapturePolicy {
             ? phoneNativeOutputSize(source: source, zoom: viewport.zoom, display: display, budget: output, held: held)
             : outputSize(source: source, whole: output, held: held)
         if nearNative, phoneNative, rect.width > 0, display.size.width > 0 {
-            let gain = (Double(size.width) / rect.width) / (Double(output.width) / display.size.width)
-            let engaged = previous.map { !$0.isWholeDisplay } ?? false
+            // Judged on the phone-native target, not a held size that may lag it by up to 10 %.
+            let target = phoneNativeOutputSize(source: source, zoom: viewport.zoom, display: display, budget: output, held: nil)
+            let gain = (Double(target.width) / rect.width) / (Double(output.width) / display.size.width)
+            // `cropEngaged` carries the state across a quality or rung change, when `previous` is nil.
+            let engaged = cropEngaged ?? (previous.map { !$0.isWholeDisplay } ?? false)
             if gain < (engaged ? cropGainRelease : cropGainEngage) { return whole }
         }
         return CaptureRegion(epoch: viewport.epoch, x: Double(rect.minX), y: Double(rect.minY),
@@ -288,6 +292,41 @@ enum ViewportCapturePolicy {
     }
 }
 
+/// Which capture region a captured frame is tagged with (`VideoFrameTag.region`) while an
+/// `SCStream.updateConfiguration` may be in flight: ScreenCaptureKit delivers frames and the completion
+/// in either order (RemoteCaptureSession, CaptureFrameCachePolicy), so a frame near a switch is judged by
+/// its display time against the request and by its pixel size against the two outputs. When neither
+/// tells (same size, display time after the request, completion pending) the frame carries no region
+/// and the phone keeps its placement until the first frame after the completion.
+enum CaptureFrameRegionPolicy {
+    struct Switch: Equatable {
+        var previous: CaptureRegion
+        var next: CaptureRegion
+        /// The `updateConfiguration` request time, in the display clock's milliseconds.
+        var requestedMs: Double
+    }
+
+    static func region(displayMs: Double, bufferWidth: Int, bufferHeight: Int, applied: CaptureRegion,
+                       inFlight: Switch?, lastSwitch: Switch?) -> CaptureRegion? {
+        func matches(_ region: CaptureRegion) -> Bool {
+            region.outputWidth == bufferWidth && region.outputHeight == bufferHeight
+        }
+        if let inFlight {
+            if displayMs > 0, displayMs < inFlight.requestedMs {
+                return matches(inFlight.previous) ? inFlight.previous : nil
+            }
+            let previous = matches(inFlight.previous), next = matches(inFlight.next)
+            if next && !previous { return inFlight.next }
+            if previous && !next { return inFlight.previous }
+            return nil
+        }
+        if let lastSwitch, displayMs > 0, displayMs < lastSwitch.requestedMs, matches(lastSwitch.previous) {
+            return lastSwitch.previous
+        }
+        return matches(applied) ? applied : nil
+    }
+}
+
 /// Kill switch for the phone-native crop (`defaults write <bundle id> PocketDeskCropPhoneNative -bool NO`,
 /// then relaunch the host). Off restores the crop widened to the output's aspect and the output capped at
 /// the rung's whole-display width and height.
@@ -300,14 +339,14 @@ enum CropPhoneNativeSwitch {
 /// relaunch the host). Off crops whenever the phone would upscale at all, as build 20261002.2 did.
 enum CropNearNativeSwitch {
     static let defaultsKey = "PocketDeskCropNearNative"
-    static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+    static let isOn = ScrollFixesSwitch.isOn && (UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true)
 }
 
 /// Kill switch for the keep-band rule (`defaults write <bundle id> PocketDeskCropKeepBand -bool NO`, then
 /// relaunch the host). Off keeps a crop only while the viewport asks for exactly the same size.
 enum CropKeepBandSwitch {
     static let defaultsKey = "PocketDeskCropKeepBand"
-    static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+    static let isOn = ScrollFixesSwitch.isOn && (UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true)
 }
 
 /// Serialises `SCStream.updateConfiguration`: one call in flight, viewport changes at most every

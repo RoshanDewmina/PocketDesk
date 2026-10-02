@@ -58,6 +58,20 @@ final class NativeGestureEngineTests: XCTestCase {
         XCTAssertTrue(log.clicks.isEmpty)
     }
 
+    func testAPureViewTwoFingerPanStillEndsWithZoomEnded() {
+        let log = CommandLog()
+        let input = engine(log, enabled: false, panMode: true)
+        input.update([touch(1, 0), touch(2, 100)], at: 1)
+        input.update([touch(1, 0, 30), touch(2, 101, 30)], at: 1.05)
+        input.update([touch(1, 0, 60), touch(2, 100, 60)], at: 1.1)
+        input.update([], at: 1.2)
+        XCTAssertEqual(log.navigation.map(\.factor), [1, 1])
+        XCTAssertEqual(log.zoomEnds, 1, "the viewport settles after a pure pan as it did before the dead band")
+        input.update([touch(1, 0), touch(2, 100)], at: 2)
+        input.update([], at: 2.1)
+        XCTAssertEqual(log.zoomEnds, 1, "a touch that never moved is not a navigation")
+    }
+
     /// A two-finger scroll in View mode: the fingers drift apart and together by a few percent on the way.
     func testViewTwoFingerScrollWobbleDoesNotZoomUntilTheDeadBandIsCrossed() {
         for deadband in [true, false] {
