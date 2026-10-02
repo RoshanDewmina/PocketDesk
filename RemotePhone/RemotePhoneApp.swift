@@ -472,6 +472,8 @@ final class PhoneRemoteModel: ObservableObject {
     @Published private(set) var contentConcealed = false { willSet { if newValue { invalidatePresentation(keepingPiP: pipBackground && mayHoldBackgroundPiP) } } }
 
     @Published var sourceSize = CGSize(width: 1440, height: 900)
+    @Published private(set) var virtualDisplayActive = false
+    private var virtualDisplayViewport: VirtualDisplayViewport?
     @Published private(set) var inputRevision: UInt64 = 0
     @Published private(set) var acceptedClicks: UInt64 = 0
     /// Which click the last accepted one was ("click", "right" or "double"), for the contact ripple.
@@ -1604,7 +1606,22 @@ final class PhoneRemoteModel: ObservableObject {
             phoneLoadReportedAt.map({ now >= $0 && now - $0 <= 2.5 }) == true ? phoneLoad : nil
         return RemoteAction(action: "heartbeat", macAudioRequested: phoneAudioRequestSupported ? currentMacAudioConsent() && !macAudioSuspended : nil, epoch: geometryEpoch, pointerSync: pointerOverlay.advertisement(),
                             streamQuality: appliedStreamQuality == nil ? nil : streamQuality, clock: clock,
-                            screenPixels: screenPixels(), viewport: viewport, phoneLoad: load)
+                            screenPixels: screenPixels(),
+                            virtualDisplayViewport: hostFeatures.contains(SessionFeature.virtualDisplay) ? virtualDisplayViewport : nil,
+                            virtualDisplayViewportUnavailable: hostFeatures.contains(SessionFeature.virtualDisplay) && virtualDisplayViewport == nil ? true : nil,
+                            viewport: viewport, phoneLoad: load)
+    }
+
+    /// This is the streamed canvas, including current iPad window size; zoom is unrelated.
+    func virtualDisplayViewportChanged(size: CGSize, scale: CGFloat, maximumFPS: Int) {
+        let value = VirtualDisplayViewport(width: Double(size.width), height: Double(size.height),
+                                          scale: Double(scale), maximumFPS: maximumFPS)
+        let admitted = (try? value.validate()) != nil ? value : nil
+        guard admitted != virtualDisplayViewport else { return }
+        virtualDisplayViewport = admitted
+        if hostFeatures.contains(SessionFeature.virtualDisplay), connection.connected {
+            _ = connection.sendControl(heartbeatAction())
+        }
     }
 
     /// Statistics run on every live media connection, including when the overlay is hidden.
@@ -2708,7 +2725,12 @@ let now = ProcessInfo.processInfo.systemUptime
                 }
             }
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
-            hostFeatures = Set(SharedCaptureScopePolicy.features(action.features ?? [], kind: sharedCaptureScope?.kind ?? .display))
+            if action.features != nil || !virtualDisplayActive {
+                hostFeatures = Set(SharedCaptureScopePolicy.features(action.features ?? [], kind: sharedCaptureScope?.kind ?? .display))
+            }
+            if action.epoch == geometryEpoch, action.features != nil {
+                virtualDisplayActive = hostFeatures.contains(SessionFeature.virtualDisplay) && action.virtualDisplayActive == true
+            }
             if hostFeatures.contains(SessionFeature.causalInput) { connection.requestCausalInput(epoch: geometryEpoch) }
             hostPresence = action.hostState.flatMap(HostPresence.init(rawValue:))
             sessionBlocker = action.hostState.flatMap(MacShareBlocker.init(rawValue:))
@@ -3147,6 +3169,7 @@ let now = ProcessInfo.processInfo.systemUptime
         pendingText = nil
         textStatus = ""
         hostFeatures = []
+        virtualDisplayActive = false
         hostPresence = nil
         sessionBlocker = nil
         curtainState = nil

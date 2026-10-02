@@ -3,6 +3,19 @@ import CoreMedia
 import WebRTC
 
 final class CaptureRatePolicyTests: XCTestCase {
+    func testVirtualResolutionRemainsExactInQualityPerformanceAndSixtyHzFallback() {
+        for quality in [StreamQuality.sharp, .balanced] {
+            for fps in [60, 120] {
+                let result = SenderRateParameters.make(targetFPS: fps, tuning: .tuned, ladderFPS: 30,
+                    quality: quality, exactResolution: true)
+                XCTAssertEqual(result.maxFramerate, 30)
+                XCTAssertEqual(result.degradationPreference,
+                    fps == 120 ? .maintainFramerateAndResolution : .maintainResolution)
+            }
+        }
+        XCTAssertEqual(SenderRateParameters.make(targetFPS: 60, tuning: .tuned,
+            quality: .balanced, exactResolution: false).degradationPreference, .maintainFramerate)
+    }
     func testPictureModeSenderPreferencePreservesRateLimitsAndRollback() {
         func rate(_ quality: StreamQuality, fps: Int = 60, legacy: Bool = false,
                   tuning: StreamTuning = .tuned) -> SenderRateParameters {
@@ -365,6 +378,32 @@ final class SenderOutputFormatTests: XCTestCase {
 
 @MainActor
 final class CaptureRateSenderTests: XCTestCase {
+    func testVirtualCapturePreservesResolutionAndPhysicalCaptureRestoresSenderPreference() async throws {
+        let host = PeerMedia(isHost: true, servers: [])
+        let phone = PeerMedia(isHost: false, servers: [])
+        defer { host.close(); phone.close() }
+        host.onSignal = { [weak phone] in phone?.receive($0) }
+        phone.onSignal = { [weak host] in host?.receive($0) }
+        var connected = false
+        host.onState = { if $0 == "connected" { connected = true } }
+        host.offer()
+        let deadline = Date().addingTimeInterval(15)
+        while !connected, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(connected)
+        for quality in [StreamQuality.sharp, .balanced] {
+            host.applyStreamQuality(quality)
+            host.applyCaptureRate(targetFPS: 60, displayRefreshHz: 60, display: "virtual", exactResolution: true)
+            XCTAssertEqual(host.appliedDegradationPreference, .maintainResolution)
+            host.applyLadder(LadderState(rung: 2, fps: 30, sizeFraction: 1, reason: "encode"))
+            XCTAssertEqual(host.appliedSenderMaxFramerate, 30)
+            XCTAssertEqual(host.appliedDegradationPreference, .maintainResolution)
+        }
+        host.applyCaptureRate(targetFPS: 60, displayRefreshHz: 60, display: "physical")
+        XCTAssertEqual(host.appliedDegradationPreference,
+            SenderRateParameters.make(targetFPS: 60, tuning: host.tuning, quality: .balanced,
+                legacyPictureSettings: UserDefaults.standard.bool(forKey: PictureMode.legacyKey)).degradationPreference)
+    }
+
     func testSenderFollowsTheCaptureRateAndTheLadderOnALiveConnection() async throws {
         let host = PeerMedia(isHost: true, servers: [])
         let phone = PeerMedia(isHost: false, servers: [])

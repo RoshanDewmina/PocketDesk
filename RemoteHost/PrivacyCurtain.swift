@@ -205,6 +205,15 @@ final class PrivacyCurtainController {
     var followsScreenChanges = true
     /// Both observers use the host's verified receipt, so a late duplicate never lifts the curtain.
     var ownsScreenChange: (() -> Bool)?
+    /// An extended phone workspace is captured directly; curtains belong on physical screens.
+    var excludesDisplay: ((CGDirectDisplayID) -> Bool)?
+    private var sharingScreens: [NSScreen] {
+        NSScreen.screens.filter { screen in
+            guard style == .sharing,
+                  let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value else { return true }
+            return excludesDisplay?(id) != true
+        }
+    }
     private var changeCoverage: CGRect?
     private var finishingDisplayChange = false
     private(set) var style: PrivacyCurtainStyle = .sharing
@@ -236,7 +245,7 @@ final class PrivacyCurtainController {
         let current = generation
         phase = .raising
         // Sharing waits for exclusion; Away protects the local screen before any async work.
-        windows = makeWindows?() ?? NSScreen.screens.map { Self.makeWindow(for: $0, style: style) }
+        windows = makeWindows?() ?? sharingScreens.map { Self.makeWindow(for: $0, style: style) }
         guard !windows.isEmpty else { phase = .down; return .noScreens }
         if style != .sharing { windows.forEach { $0.alphaValue = 1 } }
         windows.forEach { $0.orderFrontRegardless() }
@@ -295,7 +304,7 @@ final class PrivacyCurtainController {
         if style != .sharing { refitAwayCover(); return }
         guard phase == .up, let coverage = changeCoverage else { return }
         if finishingDisplayChange { return refitToScreens() }
-        let expanded = NSScreen.screens.reduce(coverage) { $0.union($1.frame) }
+        let expanded = sharingScreens.reduce(coverage) { $0.union($1.frame) }
         changeCoverage = expanded
         for window in windows { window.setFrame(window.frame.union(expanded), display: true) }
     }
@@ -314,7 +323,7 @@ final class PrivacyCurtainController {
             refitAwayCover()
             return
         }
-        let screens = NSScreen.screens
+        let screens = sharingScreens
         guard windows.count == screens.count else { return lift() }
         if changeCoverage != nil {
             finishingDisplayChange = true

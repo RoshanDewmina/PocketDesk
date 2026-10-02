@@ -51,6 +51,11 @@ struct RemoteAction: Codable {
     var videoFeedback: VideoFeedback? = nil
     /// The client's screen in device pixels, on heartbeats, so the host caps the capture to it.
     var screenPixels: PixelSize? = nil
+    /// Negotiated display.virtual.1: actual scene canvas, independent of crop/pan/zoom.
+    var virtualDisplayViewport: VirtualDisplayViewport? = nil
+    var virtualDisplayViewportUnavailable: Bool? = nil
+    /// Host-applied display route, only on negotiated capture status.
+    var virtualDisplayActive: Bool? = nil
     /// G4: the desktop region the phone shows, on heartbeats (only after `SessionFeature.viewportCapture`).
     var viewport: ViewportRegion? = nil
     /// G12: bounded receiver load from a phone that knows the host supports the ladder.
@@ -81,6 +86,11 @@ struct RemoteAction: Codable {
     var inputAppliedReceipt: InputAppliedReceipt? = nil
 
     func validate() throws {
+        try virtualDisplayViewport?.validate()
+        guard virtualDisplayViewport == nil || action == "heartbeat",
+              virtualDisplayViewportUnavailable == nil || action == "heartbeat",
+              virtualDisplayViewportUnavailable != true || virtualDisplayViewport == nil,
+              virtualDisplayActive == nil || action == "capture" else { throw RemoteError.invalidMessage }
         guard macAudioRequested == nil || action == "heartbeat" else { throw RemoteError.invalidMessage }
 try pencil?.validate(action: action, interaction: interaction)
         if try validateWakeExtension() { return }

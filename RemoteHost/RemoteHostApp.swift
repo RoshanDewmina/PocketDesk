@@ -8,6 +8,17 @@ struct RemoteHostApp: App {
 
     init() {
         #if DEBUG
+        if CommandLine.arguments.contains("--session-virtual-display-window-guard") {
+            guard !CommandLine.arguments.contains("--session-virtual-display"),
+                  !PortraitPrototypeOptions.requested(CommandLine.arguments),
+                  !CommandLine.arguments.contains(VirtualDisplaySpike.launchArgument) else { exit(2) }
+            exit(SessionVirtualDisplayHarnessWindowGuard.run(arguments: CommandLine.arguments))
+        }
+        if CommandLine.arguments.contains("--session-virtual-display") {
+            guard !PortraitPrototypeOptions.requested(CommandLine.arguments),
+                  !CommandLine.arguments.contains(VirtualDisplaySpike.launchArgument) else { exit(2) }
+            exit(SessionVirtualDisplayHarness.run(arguments: CommandLine.arguments))
+        }
         if PortraitPrototypeOptions.requested(CommandLine.arguments) {
             exit(VirtualDisplayPortraitPrototype.run(arguments: CommandLine.arguments))
         }

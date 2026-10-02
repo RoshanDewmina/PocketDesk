@@ -1,3 +1,9 @@
+# B8 phone-sized display lane — 2 October 2026
+
+Authorized default-off A/B in `~/Developer/farside-b8-vdisplay`, branch `claude/b8-vdisplay`, baseline `cfe3a76` (batch 7a). Parent owns protocol/phone/capture/session integration; bounded GPT workers own new SPI+geometry, AX+journal, and Debug measurement harness packages. Current state/receipts: `~/Documents/Codex/2026-10-01/perf-push/b8-vdisplay/NOTES.md`. DerivedData `/Volumes/Studio/Development/Caches/b8-vdisplay/DD`. No installs/devices/version bumps; every compiler/build/test uses shared `lockf -k`, with gate flags checked after acquisition. Fresh GPT source review and granted <2-minute harness windows precede runtime acceptance. Existing implementation backlog is not automatically executed.
+
+Engineering record and A/B gates: [PHONE-SIZED-DISPLAY-2026-10-02.md](PHONE-SIZED-DISPLAY-2026-10-02.md). Source review accepted the corrected lifecycle/sender/window-safety paths. Builds, tests and granted measurements are pending; this does not establish default-off runtime parity or seamless rotation.
+
 # Batch 7 simplicity lane — 2 October 2026
 
 Authorized branch `claude/b7-simplify`, worktree `~/Developer/farside-b7-simplify`, base `20aded1` (build 20261002.2). PRODUCT D57–D61 record universal iPhone+iPad 1.0 (dedicated iPad layout design still in progress), Apple silicon host, phone-owned Listen, comparison at existing Mac approval and removal of Session check. This lane does not install, merge to main, bump versions, deploy or accept physical behavior.

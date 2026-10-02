@@ -1,6 +1,43 @@
 import CoreGraphics
 import XCTest
 
+final class VirtualDisplayCaptureWiringTests: XCTestCase {
+    func testExactPixelsBypassPresetCapAt120ButKeepReceiverBudget() throws {
+        let spec = try XCTUnwrap(VirtualDisplaySpecification(viewport: .init(width: 402, height: 874, scale: 3, maximumFPS: 120)))
+        XCTAssertEqual(RemoteCaptureConfiguration.virtualDisplayOutput(spec, budget: .level(52), fps: 120),
+                       CapturePixelDimensions(width: 1206, height: 2622))
+        XCTAssertNil(RemoteCaptureConfiguration.virtualDisplayOutput(spec, budget: .level(31), fps: 120))
+        XCTAssertNil(RemoteCaptureConfiguration.virtualDisplayOutput(spec, budget: nil, fps: 120))
+    }
+
+    func testVirtualMetadataValidatesOnlyOnItsMessageAndLegacyBytesOmitIt() throws {
+        let viewport = VirtualDisplayViewport(width: 402, height: 874, scale: 3, maximumFPS: 120)
+        XCTAssertNoThrow(try RemoteAction(action: "heartbeat", virtualDisplayViewport: viewport).validate())
+        XCTAssertThrowsError(try RemoteAction(action: "click", virtualDisplayViewport: viewport).validate())
+        XCTAssertThrowsError(try RemoteAction(action: "heartbeat", virtualDisplayActive: true).validate())
+        XCTAssertNoThrow(try RemoteAction(action: "heartbeat", virtualDisplayViewportUnavailable: true).validate())
+        XCTAssertThrowsError(try RemoteAction(action: "click", virtualDisplayViewportUnavailable: true).validate())
+        XCTAssertThrowsError(try RemoteAction(action: "heartbeat", virtualDisplayViewport: viewport,
+                                             virtualDisplayViewportUnavailable: true).validate())
+        let legacy = try JSONSerialization.jsonObject(with: JSONEncoder().encode(RemoteAction(action: "heartbeat"))) as! [String: Any]
+        XCTAssertNil(legacy["virtualDisplayViewport"])
+        XCTAssertNil(legacy["virtualDisplayActive"])
+        XCTAssertNil(legacy["virtualDisplayViewportUnavailable"])
+    }
+
+    func testVirtualFeatureIsOffByDefaultAndFits32OnlyOnModernPeers() {
+        let base = SessionFeature.host + [SessionFeature.couch, SessionFeature.deliberateEnd, SessionFeature.lanWake, SessionFeature.away]
+        let peer: Set<String> = [SessionFeature.extendedFeatureList, SessionFeature.causalInput]
+        let legacy = HostFeatureList.features(base: base, allowBigText: true, accessibility: true, peerFeatures: peer)
+        XCTAssertFalse(legacy.contains(SessionFeature.virtualDisplay))
+        let enabled = HostFeatureList.features(base: base, allowBigText: true, accessibility: true, peerFeatures: peer, virtualDisplayEnabled: true)
+        XCTAssertTrue(enabled.contains(SessionFeature.virtualDisplay))
+        XCTAssertFalse(enabled.contains(SessionFeature.displayScale))
+        XCTAssertLessThanOrEqual(enabled.count, 32)
+        XCTAssertFalse(HostFeatureList.features(base: base, allowBigText: true, accessibility: true, peerFeatures: [], virtualDisplayEnabled: true).contains(SessionFeature.virtualDisplay))
+    }
+}
+
 final class BigTextHostWiringTests: XCTestCase {
     func testFeatureIsAdvertisedOnlyWhenAllowedAndAccessible() {
         let base = ["curtain.1"]

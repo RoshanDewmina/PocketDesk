@@ -157,7 +157,8 @@ struct SenderRateParameters: Equatable {
     var degradationPreference: RTCDegradationPreference?
 
     static func make(targetFPS: Int, tuning: StreamTuning, ladderFPS: Int? = nil,
-                     quality: StreamQuality = .sharp, legacyPictureSettings: Bool = false) -> SenderRateParameters {
+                     quality: StreamQuality = .sharp, legacyPictureSettings: Bool = false,
+                     exactResolution: Bool = false) -> SenderRateParameters {
         let target = max(1, targetFPS)
         let noAdaptation = target > CaptureRatePolicy.standardFPS && tuning.highRefreshNoAdaptation
         let preference: RTCDegradationPreference? = target <= CaptureRatePolicy.standardFPS
@@ -165,7 +166,7 @@ struct SenderRateParameters: Equatable {
             && PictureMode(quality: quality).prioritizesFrameRate ? .maintainFramerate : tuning.degradationPreference
         return SenderRateParameters(maxFramerate: min(target, max(1, ladderFPS ?? target)),
                                     degradationPreference: noAdaptation ? .maintainFramerateAndResolution
-                                                                        : preference)
+                                                                        : (exactResolution ? .maintainResolution : preference))
     }
 }
 
@@ -1061,6 +1062,7 @@ final class PeerMedia: NSObject {
     /// G5: the capture session's target rate and display. Written on the main queue under
     /// `captureLock`, because `pushFrame` reads the rate and the ladder on the capture queue.
     private(set) var targetFPS = CaptureRatePolicy.standardFPS
+    private var exactCaptureResolution = false
     private(set) var displayRefreshHz: Double?
     private(set) var captureDisplay: String?
     /// G12: the rung last applied with `applyLadder`, nil after a capture (re)start.
@@ -1076,7 +1078,8 @@ final class PeerMedia: NSObject {
     private var currentSenderRate: SenderRateParameters {
         SenderRateParameters.make(targetFPS: targetFPS, tuning: tuning, ladderFPS: ladderState?.fps,
                                   quality: streamQuality,
-                                  legacyPictureSettings: UserDefaults.standard.bool(forKey: PictureMode.legacyKey))
+                                  legacyPictureSettings: UserDefaults.standard.bool(forKey: PictureMode.legacyKey),
+                                  exactResolution: exactCaptureResolution)
     }
 
     /// The capture applies a size rung itself (`RemoteCapture.setLadder`), so the sender scales only
@@ -1089,11 +1092,12 @@ final class PeerMedia: NSObject {
 
     /// Host, main queue: the capture session's rate (on every capture start, including a display
     /// switch). Clears the ladder to rung 0 and re-applies the sender when the rate settings change.
-    func applyCaptureRate(targetFPS: Int, displayRefreshHz: Double?, display: String?) {
+    func applyCaptureRate(targetFPS: Int, displayRefreshHz: Double?, display: String?, exactResolution: Bool = false) {
         let fps = max(1, targetFPS)
         captureLock.lock()
         if fps != self.targetFPS { adaptedFormat = nil }
         self.targetFPS = fps
+        exactCaptureResolution = exactResolution
         ladderState = nil
         captureLock.unlock()
         observeLadder(nil)

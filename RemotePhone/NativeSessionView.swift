@@ -10,6 +10,7 @@ struct NativeSessionView: View {
 
     @State private var viewport = ViewportTransform(sourceSize: CGSize(width: 1440, height: 900),
                                                     canvasSize: .zero, mode: ViewportPreference.stored())
+    @State private var virtualDisplayPreviousMode: ViewportMode?
     @State private var canvasFrame: CGRect = .zero
     @State private var dataWarningTop: CGFloat = 0
     @State private var safeFrame: CGRect = .zero
@@ -270,9 +271,29 @@ struct NativeSessionView: View {
             mode: viewport.mode.rawValue, safeRect: viewport.safeRect, canvasFrame: canvasFrame,
             dockFrame: dockFrame, keyboardOpen: keyboardOpen, panMode: panMode,
             showControls: showControls, controlsCollapsed: controlsCollapsed)))
-        .onChange(of: viewport.mode) { _, mode in ViewportPreference.store(mode) }
+        .onChange(of: viewport.mode) { _, mode in
+            if !model.virtualDisplayActive { ViewportPreference.store(mode) }
+        }
         .onChange(of: viewport.captureRequest(displayScale: displayScale), initial: true) { _, request in
             model.viewportChanged(request)
+        }
+        .onChange(of: viewport.canvasSize, initial: true) { _, size in
+            let fps = UIApplication.shared.connectedScenes.compactMap { scene -> Int? in
+                guard scene.activationState == .foregroundActive, let windowScene = scene as? UIWindowScene,
+                      windowScene.screen.scale == displayScale else { return nil }
+                return windowScene.screen.maximumFramesPerSecond
+            }.min() ?? 60
+            model.virtualDisplayViewportChanged(size: size, scale: displayScale, maximumFPS: fps)
+        }
+        .onChange(of: model.virtualDisplayActive, initial: true) { _, enabled in
+            if enabled {
+                virtualDisplayPreviousMode = viewport.mode
+                viewport.setMode(.fill)
+                viewport.setZoom(1, anchoredAt: CGPoint(x: viewport.canvasSize.width / 2, y: viewport.canvasSize.height / 2))
+            } else if let previous = virtualDisplayPreviousMode {
+                virtualDisplayPreviousMode = nil
+                viewport.setMode(previous)
+            }
         }
         .onChange(of: viewport.offset) { _, _ in pokeMiniMap(); VideoPresentationProbe.noteUserActivity() }
         .onChange(of: viewport.zoom) { _, _ in pokeMiniMap(); VideoPresentationProbe.noteUserActivity() }

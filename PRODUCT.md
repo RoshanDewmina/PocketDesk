@@ -1,3 +1,9 @@
+# B8 phone-sized display A/B — 2 October 2026
+
+Roshan authorizes a phone/iPad-sized virtual display now, behind the internal host Bool `farsideVirtualDisplayEnabled`, **default false**, with no new user-facing setting. Quality comes first; existing small behavior must remain intact with the switch off. The route uses the actual picture canvas, exact backing pixels, runtime-probed private SPI and normal-path fallback. A 3× iPhone viewport maps to an exact-pixel Mac 2× workspace; 3× Mac logical scaling is not established. Keep physical display modes/main/mirroring unchanged. Only current-Space standard windows of the frontmost app migrate, with originals persisted before moving and restoration before removal; unsupported app/Space/Stage Manager placement falls back. Big Text skips this route, Couch uses physical displays, and the existing opt-in curtain remains. This lane prepares source/builds and isolated Debug experiments only, under granted quiet windows of less than two minutes; no installed host or real devices. Physical A/B acceptance and private-SPI distribution support remain separate gates.
+
+Engineering scope and acceptance limits: [phone-sized display record](Docs/PHONE-SIZED-DISPLAY-2026-10-02.md). Initial-app migration, exact-pixel Mac 2× geometry and retained recovery are source preparation; arbitrary Spaces recovery, app following, seamless rotation and runtime/private-SPI compatibility remain explicit gaps until their evidence exists.
+
 # Morning simplification decisions — 2 October 2026
 
 D57–D61 below record Roshan’s current direction: universal iPhone+iPad 1.0 with a dedicated iPad layout in progress, Apple silicon host, phone-owned Listen with a Mac privacy veto, a pairing comparison at the existing approval moment, and no Session check UI. This lane prepares source, tests and builds only; the batch orchestrator integrates and installs. No deployment, installation, release or physical acceptance is implied.
