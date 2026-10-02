@@ -34,9 +34,9 @@ final class ViewportCaptureTests: XCTestCase {
     private func region(_ viewport: ViewportRegion?, on display: DisplayGeometry? = nil,
                         output: CapturePixelDimensions, tuning: StreamTuning = .tuned,
                         previous: CaptureRegion? = nil, phoneNative: Bool = true,
-                        nearNative: Bool = false, keepBand: Bool = true) -> CaptureRegion {
+                        nearNative: Bool = false, keepBand: Bool = true, cropEngaged: Bool? = nil) -> CaptureRegion {
         Policy.region(for: viewport, display: display ?? asus, output: output, tuning: tuning, previous: previous,
-                      phoneNative: phoneNative, nearNative: nearNative, keepBand: keepBand)
+                      phoneNative: phoneNative, nearNative: nearNative, keepBand: keepBand, cropEngaged: cropEngaged)
     }
 
     private func size(_ width: Int, _ height: Int) -> CapturePixelDimensions {
