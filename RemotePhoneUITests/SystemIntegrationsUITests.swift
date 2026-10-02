@@ -626,15 +626,18 @@ final class NativeContainerSurfaceUITests: XCTestCase {
     @MainActor
     private func waitForShareRoot(_ safari: XCUIApplication, _ extensionApp: XCUIApplication,
                                   timeout: TimeInterval) -> Bool {
-        let predicate = NSPredicate(format: "label == 'Send to My Mac' OR identifier == 'share.send'")
-        let candidates = [
-            safari.descendants(matching: .any).matching(predicate).firstMatch,
-            springboard.descendants(matching: .any).matching(predicate).firstMatch,
-            extensionApp.descendants(matching: .any).matching(predicate).firstMatch
-        ]
+        let candidates = [safari, springboard, extensionApp]
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
-            if candidates.contains(where: { $0.exists && $0.isHittable }) { return true }
+            for app in candidates {
+                let close = app.descendants(matching: .any)
+                    .matching(NSPredicate(format: "identifier == 'share.close'")).firstMatch
+                let heading = app.descendants(matching: .any)
+                    .matching(NSPredicate(format: "label == 'Send to My Mac'")).firstMatch
+                if close.exists && close.isHittable && heading.exists && heading.isHittable {
+                    return true
+                }
+            }
             Thread.sleep(forTimeInterval: 0.25)
         } while Date() < deadline
         return false
