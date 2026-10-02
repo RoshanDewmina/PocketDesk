@@ -618,8 +618,10 @@ final class ViewportCaptureTests: XCTestCase {
     /// The shipping combination (`PocketDeskScrollFixes` on): both rules together.
     func testCropGainAndKeepBandTogetherOnTheASUSAndOnMoreSpace() throws {
         let asusWhole = try output(asus, fps: 120)
-        XCTAssertTrue(region(centered(zoom: 2, on: asus), output: asusWhole, nearNative: true, keepBand: true).isWholeDisplay,
-                      "a 1x display streamed at its own pixels: no crop can add any")
+        // A 1x display: a crop delivers 1 px per point, the whole display asusWhole.width / 2560.
+        XCTAssertEqual(region(centered(zoom: 2, on: asus), output: asusWhole, nearNative: true, keepBand: true).isWholeDisplay,
+                       Double(asusWhole.width) > 2560 / Policy.cropGainEngage,
+                       "whole only while the stream is within 15 % of the panel's own pixels (\(asusWhole.width) wide)")
         let whole = try output(moreSpace, fps: 60)
         var previous: CaptureRegion?
         var changes = 0, wholes = 0
