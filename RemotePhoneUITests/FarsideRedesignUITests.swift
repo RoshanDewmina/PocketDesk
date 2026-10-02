@@ -58,9 +58,15 @@ final class FarsideRedesignUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 5))
         let step = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Point this iPad")).firstMatch
-        let scroll = app.scrollViews.firstMatch
+        let form = app.descendants(matching: .any)["pairing.sheet"].firstMatch
+        let scroll = form.scrollViews.allElementsBoundByIndex.first { !$0.frame.isEmpty && $0.isHittable }
+        XCTAssertNotNil(scroll, "Scroll the presented form, rather than its covered Home")
+        guard let scroll else { return }
         for _ in 0..<5 where !step.isHittable { scroll.swipeUp() }
-        XCTAssertTrue(step.isHittable, "A short form must scroll through both pairing steps")
+        XCTAssertTrue(step.isHittable, "The device-specific instruction remains reachable")
+        let finish = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Choose Allow on your Mac to finish")).firstMatch
+        for _ in 0..<5 where !finish.isHittable { scroll.swipeUp() }
+        XCTAssertTrue(finish.isHittable, "A short form must scroll through its final instruction")
         XCTAssertTrue(app.buttons["Cancel"].isHittable)
         attach("iPad pairing form scrolled")
     }
