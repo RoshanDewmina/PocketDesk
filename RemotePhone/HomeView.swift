@@ -26,7 +26,8 @@ struct PhoneRemoteView: View {
                     .transition(.opacity)
             } else if presentedSession {
                 // A held background session keeps its viewport; the overlay hides every remote pixel.
-                NativeSessionView(model: model, connection: connection, offlineLayoutCheck: false)
+                NativeSessionView(model: model, connection: connection, offlineLayoutCheck: false,
+                                  replayCoach: onboarding.replayCoach)
                     .overlay {
                         if model.contentConcealed { ConcealedRemoteView(model: model, connection: connection) }
                     }
@@ -35,7 +36,8 @@ struct PhoneRemoteView: View {
             } else if model.contentConcealed {
                 ConcealedRemoteView(model: model, connection: connection)
             } else {
-                NativeSessionView(model: model, connection: connection, offlineLayoutCheck: true)
+                NativeSessionView(model: model, connection: connection, offlineLayoutCheck: true,
+                                  replayCoach: onboarding.replayCoach)
             }
         }
         .overlay(alignment: .bottom) {
@@ -45,12 +47,6 @@ struct PhoneRemoteView: View {
                 DataWarningCard(content: warning, useLessData: model.useLessData, keep: model.keepDataQuality)
                     .padding(.bottom, 12)
                     .transition(.opacity)
-            }
-        }
-        .overlay(alignment: .topLeading) {
-            if presentedSession && !model.contentConcealed && !model.privacyShield {
-                UsefulSessionEntry(progress: model.usefulSession, replayCoach: onboarding.replayCoach)
-                    .padding(.leading, 12).padding(.top, 8)
             }
         }
         // Read once per change of Home's art, never on keyboard or rotation frames of the session.
@@ -340,8 +336,6 @@ struct HomeView: View {
                     .padding(.top, Farside.Space.m)
             }
             Spacer(minLength: verticalSizeClass == .compact ? Farside.Space.l : Farside.Space.xl)
-            UsefulSessionEntry(progress: model.usefulSession, replayCoach: onboarding.replayCoach)
-                .padding(.bottom, Farside.Space.m)
             if macName != nil || savedMacState == .choose { homeList }
             AnywherePlanRow(store: anywhere) { showPaywall = true }
                 .padding(.top, Farside.Space.m)

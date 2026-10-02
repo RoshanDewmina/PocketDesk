@@ -6,6 +6,7 @@ struct NativeSessionView: View {
     @ObservedObject var model: PhoneRemoteModel
     @ObservedObject var connection: RemoteCoordinator
     let offlineLayoutCheck: Bool
+    let replayCoach: @MainActor () -> Void
 
     @State private var viewport = ViewportTransform(sourceSize: CGSize(width: 1440, height: 900),
                                                     canvasSize: .zero, mode: ViewportPreference.stored())
@@ -2413,6 +2414,13 @@ struct NativeSessionView: View {
                    + (model.middleButtonSupported ? " Tap with three fingers to middle-click." : ""))
                 .foregroundStyle(Farside.Palette.bone)
                 .listRowBackground(Farside.Palette.panel)
+            Button(CommerceLocalization.text("REPLAY_COACH", "Practice gestures again")) {
+                model.usefulSession.count("coachReplay")
+                closeControls()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { replayCoach() }
+            }
+            .frame(minHeight: 44)
+            .listRowBackground(Farside.Palette.panel)
         } header: {
             sectionHeader("Gestures")
         }
