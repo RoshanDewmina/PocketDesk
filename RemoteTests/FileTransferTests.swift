@@ -921,6 +921,18 @@ final class HostFileLinkRevocationTests: XCTestCase {
             service.reset(); await withCheckedContinuation { c in queue.async { c.resume() } }
         }
     }
+    /// Batch-5 review: a new capture geometry used to reset the Mac's transfer silently, leaving the phone showing
+    /// progress until the stall timeout. The Mac now revokes with a cancel the phone can show.
+    func testRevokeTellsThePhoneAboutAnInFlightTransfer() throws {
+        let service = HostFileTransferService(destination: { nil })
+        var sent: [FileFrame] = []
+        service.engine.sendControl = { sent.append($0); return true }
+        let transfer = try service.engine.send(DataByteSource(Data([1, 2, 3])), name: "a.txt", type: nil).get()
+        XCTAssertEqual(sent.last?.op, "offer")
+        service.revoke()
+        XCTAssertEqual(sent.last?.op, "cancel"); XCTAssertEqual(sent.last?.transfer, transfer)
+        XCTAssertTrue(service.engine.isIdle)
+    }
     /// MS05: no "Allow file transfer" switch. A stored legacy `false` is ignored; the view-only scope still refuses.
     func testFilesNeedOwnerControlConsentAndIgnoreTheRemovedMacSetting() throws {
         let suite = "MS05-\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

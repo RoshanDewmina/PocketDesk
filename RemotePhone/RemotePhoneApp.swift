@@ -2309,6 +2309,8 @@ let now = ProcessInfo.processInfo.systemUptime
         setMacAudioMuted(true) // Background is a terminal boundary for Mac-audio consent.
         if !mayKeepLivePiP, autoPiPMayStart, !autoPiPGraceSpent, autoPiPBackgroundGrace == nil {
             LivePiPController.log.notice("pip background grace: waiting for the automatic start")
+            // Background is terminal for clipboard replies and file I/O whether or not PiP then starts.
+            clipboard.cancel(); clipboard.clearNotice(); files.stopForBackground()
             privacyShield = true // The app-switcher snapshot stays shielded while the prepared PiP waits.
             pipTransitional = true
             autoPiPBackgroundGrace = Task { @MainActor [weak self] in
@@ -2721,6 +2723,7 @@ let now = ProcessInfo.processInfo.systemUptime
             guard action.epoch != geometryEpoch else { return }
             cancelInput()
             inputToken = nil
+            files.stopForMacChange()
             if action.x.isFinite, action.y.isFinite, action.x > 0, action.y > 0 {
                 sourceSize = CGSize(width: action.x, height: action.y)
             }
