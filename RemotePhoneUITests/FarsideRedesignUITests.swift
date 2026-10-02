@@ -726,7 +726,8 @@ final class ClaimsVerificationUITests: XCTestCase {
                 if let title = fixture.navigationTitle, !app.navigationBars[title].waitForExistence(timeout: 5) {
                     issues.append("\(name): expected settings page title missing: \(title)")
                 }
-                audit(app, name: name, issues: &issues)
+                // LAN keeps its initial hierarchy before revealing a virtualized owner field.
+                audit(app, name: name, issues: &issues, includeHierarchy: fixture.action != .openLANWake)
                 // Audit content reachable below the fold as well as the initial view. Use a
                 // container swipe, never press permission/connection/purchase actions.
                 let scroll = app.scrollViews.firstMatch
@@ -842,11 +843,12 @@ final class ClaimsVerificationUITests: XCTestCase {
         for step in 0...6 {
             if row.exists, row.isHittable {
                 row.tap()
-                guard app.navigationBars["LAN wake"].waitForExistence(timeout: 5),
-                      app.textFields["Owner-registered wake target ID"].waitForExistence(timeout: 5) else {
-                    issues.append("\(name): LAN wake destination title or owner target field missing")
+                guard app.navigationBars["LAN wake"].waitForExistence(timeout: 5) else {
+                    issues.append("\(name): LAN wake destination title missing")
                     return false
                 }
+                audit(app, name: "\(name)-lan-initial", issues: &issues)
+                guard revealRecoveryLANOwnerField(app, name: name, issues: &issues) else { return false }
                 receipt("\(name)-navigation", "Landscape Controls → Settings → LAN wake through the real row after \(step) bounded form scroll(s). "
                         + "Owner target field and LAN wake title checked; no field entry, toggle or wake request.")
                 return true
@@ -855,6 +857,34 @@ final class ClaimsVerificationUITests: XCTestCase {
             form.swipeUp()
         }
         issues.append("\(name): LAN wake row not reachable in the real Settings form after six scrolls")
+        return false
+    }
+
+    @MainActor
+    private func revealRecoveryLANOwnerField(_ app: XCUIApplication, name: String, issues: inout [String]) -> Bool {
+        let owner = app.textFields["Owner-registered wake target ID"]
+        // A correct LAN destination can virtualize this field below its explanatory text.
+        // Only the foreground Form may be scrolled; exclude the prior Settings form.
+        let forms = (app.collectionViews.allElementsBoundByIndex + app.scrollViews.allElementsBoundByIndex
+                     + app.tables.allElementsBoundByIndex).filter {
+            $0.exists && $0.isHittable && $0.identifier != "remote.controls.page"
+        }
+        guard forms.count == 1 else {
+            issues.append("\(name): expected one foreground LAN Form; found \(forms.count), no destination scroll attempted")
+            return false
+        }
+        let form = forms[0]
+        for step in 0...6 {
+            guard app.navigationBars["LAN wake"].exists, form.exists, form.isHittable else {
+                issues.append("\(name): foreground LAN Form lost before owner field was revealed")
+                return false
+            }
+            if owner.exists, owner.isHittable { return true }
+            guard step < 6 else { break }
+            form.swipeUp()
+            audit(app, name: "\(name)-lan-scrolled-\(step + 1)", issues: &issues, includeHierarchy: false)
+        }
+        issues.append("\(name): owner target field not reachable after six foreground LAN Form scrolls")
         return false
     }
 
@@ -1113,17 +1143,29 @@ extension ClaimsVerificationUITests {
     private func supplementalVisibleMenuBounds(_ menu: XCUIElement, in app: XCUIApplication) -> CGRect? {
         guard menu.exists else { return nil }
         let frame = menu.frame
-        guard !frame.isNull, !frame.isEmpty, frame.width.isFinite, frame.height.isFinite else { return nil }
-        var visible = frame.intersection(app.frame)
-        var matchedAncestor = false
+        let appFrame = app.frame
+        guard !frame.isNull, !frame.isEmpty, !appFrame.isNull, !appFrame.isEmpty,
+              [frame.minX, frame.minY, frame.width, frame.height,
+               appFrame.minX, appFrame.minY, appFrame.width, appFrame.height].allSatisfy({ $0.isFinite }) else { return nil }
+        var visible = frame.intersection(appFrame)
+        var matchedPopupAncestor = false
         // Public containment queries select only ancestors of a collection. Match this one's
         // frame so an unrelated container cannot authorize a gesture on the underlying Home.
         for ancestor in app.otherElements.containing(.collectionView, identifier: nil).allElementsBoundByIndex {
             guard ancestor.collectionViews.allElementsBoundByIndex.contains(where: { $0.frame == frame }) else { continue }
-            matchedAncestor = true
-            visible = visible.intersection(ancestor.frame)
+            let bounds = ancestor.frame
+            guard !bounds.isNull, !bounds.isEmpty,
+                  [bounds.minX, bounds.minY, bounds.width, bounds.height].allSatisfy({ $0.isFinite }) else { return nil }
+            // Full-screen wrappers and the oversized collection's own rectangle do not
+            // establish a popup clip. Require a finite on-window popup ancestor whose
+            // horizontal edges match this collection and whose bounds differ from the app.
+            if appFrame.contains(bounds), !bounds.insetBy(dx: -1, dy: -1).contains(appFrame),
+               abs(bounds.minX - frame.minX) <= 1, abs(bounds.maxX - frame.maxX) <= 1 {
+                matchedPopupAncestor = true
+            }
+            visible = visible.intersection(bounds)
         }
-        guard matchedAncestor, !visible.isNull, !visible.isEmpty,
+        guard matchedPopupAncestor, !visible.isNull, !visible.isEmpty,
               visible.minX.isFinite, visible.minY.isFinite,
               visible.width.isFinite, visible.height.isFinite,
               visible.width > 60, visible.height > 100 else { return nil }
