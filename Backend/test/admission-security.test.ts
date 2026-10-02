@@ -93,7 +93,7 @@ describe("fail-closed public admission", () => {
     const host = await open();
     try {
       host.send(registerMessage(p, "host", { features }));
-      expect(await host.closed).toEqual({ code: 1013, reason: "rate_limited" });
+      expect(await host.closed).toEqual(failure === "denied" ? { code: 1008, reason: "rate_limited" } : { code: 1013, reason: "rate_limit_unavailable" });
       expect(host.messages).toEqual([]);
       expect(await stubFor(p.room).snapshot()).toMatchObject({ hostOnline: false, leaseEndsAt: null, liveCredentials: 0 });
     } finally {

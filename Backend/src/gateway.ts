@@ -1,6 +1,6 @@
 import { log } from "./log";
 import { AUTH_TIMEOUT_MS, MAX_FRAME_BYTES, MAX_GATEWAY_BACKLOG_FRAMES, OUTBOUND_BYTES_PER_SECOND, parseJsonFrame, parseRegister } from "./protocol";
-import { WindowCounter, addressKey, allow } from "./ratelimit";
+import { WindowCounter, addressKey, publicRateDecision } from "./ratelimit";
 import type { RoomDO } from "./room";
 
 // The apps send the room only inside the first `register` frame, so the Worker accepts the socket,
@@ -110,7 +110,8 @@ export async function handleSignalUpgrade(request: Request, env: Env): Promise<R
   if (request.headers.has("origin")) return new Response("Native clients only", { status: 403 });
   if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return new Response("Upgrade required", { status: 426 });
   const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
-  if (!(await allow(env.RL_SIGNAL, addressKey(ip), "RL_SIGNAL"))) return new Response("Try later", { status: 429, headers: { "retry-after": "60" } });
+  const admission = await publicRateDecision(env.RL_SIGNAL, addressKey(ip), "RL_SIGNAL", env as Env & { STRICT_RATE_LIMITS?: string });
+  if (admission !== "allowed") return new Response("Try later", { status: admission === "unavailable" ? 503 : 429, headers: { "retry-after": "60" } });
 
   const pair = new WebSocketPair();
   const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
@@ -156,7 +157,8 @@ export async function handleGuestUpgrade(request: Request, env: Env): Promise<Re
   if (request.method !== "GET" || url.search || request.headers.get("origin") !== url.origin) return new Response("Not found", { status: 404 });
   if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return new Response("Upgrade required", { status: 426 });
   const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
-  if (!(await allow(env.RL_SIGNAL, addressKey(ip), "RL_SIGNAL"))) return new Response("Try later", { status: 429 });
+  const admission = await publicRateDecision(env.RL_SIGNAL, addressKey(ip), "RL_SIGNAL", env as Env & { STRICT_RATE_LIMITS?: string });
+  if (admission !== "allowed") return new Response("Try later", { status: admission === "unavailable" ? 503 : 429 });
   const pair = new WebSocketPair(); const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
   server.accept(); const relay = new ClientRelay(server);
   void (async () => {

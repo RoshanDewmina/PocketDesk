@@ -6,13 +6,16 @@ import { accessEndMs, claimDeviceRoom, entitlementForDevice, hasAccess, restoreD
 import { environmentLetter, verifyEntitlementToken } from "./entitlement/token";
 import { fingerprint, log, logError } from "./log";
 import { forgetPushRoom } from "./push";
+import { PUSH_PAIRING_RETENTION_MS, shouldExpirePushPairing } from "./push-pairing-retention";
 import {
   AUTH_TIMEOUT_MS, MESSAGES_PER_SECOND, OUTBOUND_BYTES_PER_SECOND, REMOTE_FEATURE, RENEWAL_FEATURE, ROUTE_FEATURE, iceWithinClientLimits,
   parseAuthenticatedFrame, parseJsonFrame, parseRegister, type ErrorCode, type IceServer, type PeerRole, type RegisterMessage,
 } from "./protocol";
-import { WindowCounter, addressKey, allowStrict, withTimeout } from "./ratelimit";
+import { WindowCounter, addressKey, allowStrict, strictRateDecision, strictRateLimitsEnabled, withTimeout } from "./ratelimit";
 import { turnProviderFromEnv, type TurnProvider } from "./turn";
 import { randomHex, secureEqual, sha256Hex } from "./util";
+
+const MAX_PENDING_SOCKETS = 8;
 
 type Attachment = {
   role?: PeerRole;
@@ -138,7 +141,8 @@ export class RoomDO extends DurableObject<Env> {
       }
       const retired = this.ctx.storage.sql.exec<{ username: string }>("SELECT username FROM credentials WHERE role LIKE 'guest:%' AND revoke_pending = 0").toArray();
       this.revokeUsernames(retired.map(row => row.username));
-      if (retired.length) await this.scheduleAlarm();
+      const hasRetainedPairing = this.ctx.storage.sql.exec("SELECT id FROM push_pairing WHERE id=1").toArray().length > 0;
+      if (retired.length || (this.pushPairingRetentionEnabled() && hasRetainedPairing)) await this.scheduleAlarm();
     });
   }
 
@@ -176,7 +180,8 @@ export class RoomDO extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS push_pairing (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         room TEXT NOT NULL,
-        client_hash TEXT NOT NULL
+        client_hash TEXT NOT NULL,
+        updated_at INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS activity_ends (
         epoch TEXT PRIMARY KEY, room TEXT NOT NULL, reason TEXT NOT NULL,
@@ -188,6 +193,12 @@ export class RoomDO extends DurableObject<Env> {
     if (!columns.has("route_epoch")) this.ctx.storage.sql.exec("ALTER TABLE room ADD COLUMN route_epoch TEXT");
     if (!columns.has("route_revision")) this.ctx.storage.sql.exec("ALTER TABLE room ADD COLUMN route_revision INTEGER NOT NULL DEFAULT 0");
     if (!columns.has("route_expires_at")) this.ctx.storage.sql.exec("ALTER TABLE room ADD COLUMN route_expires_at INTEGER");
+    const pairingColumns = new Set(this.ctx.storage.sql.exec<{ name: string }>("PRAGMA table_info(push_pairing)").toArray().map(row => row.name));
+    if (!pairingColumns.has("updated_at")) {
+      this.ctx.storage.sql.exec("ALTER TABLE push_pairing ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0");
+      // Start the retention clock at migration time for legacy rows; never age them from epoch zero.
+      this.ctx.storage.sql.exec("UPDATE push_pairing SET updated_at=? WHERE updated_at=0", Date.now());
+    }
   }
 
   /** Removes room data. Pending TURN usernames survive until revocation is confirmed or their TTL expires. */
@@ -369,7 +380,17 @@ export class RoomDO extends DurableObject<Env> {
     if (nextRevoke !== null) next = Math.min(next ?? Infinity, nextRevoke);
     const nextActivity = this.ctx.storage.sql.exec<{ at: number | null }>("SELECT MIN(next_attempt) AS at FROM activity_ends").one().at;
     if (nextActivity !== null) next = Math.min(next ?? Infinity, nextActivity);
-    if (next === undefined && this.openSockets().length === 0 && state.room !== null) next = now + IDLE_DELETE_MS;
+    const pairing = this.ctx.storage.sql.exec<{ updated_at: number }>("SELECT updated_at FROM push_pairing WHERE id=1").toArray()[0];
+    const hasActiveAuthority = this.openSockets().length > 0 ||
+      (state.lease_ends_at !== null && state.lease_ends_at > now) ||
+      (state.route_expires_at !== null && state.route_expires_at > now);
+    if (pairing && this.pushPairingRetentionEnabled() && !hasActiveAuthority) {
+      next = Math.min(next ?? Infinity, Math.max(now + 1, pairing.updated_at + PUSH_PAIRING_RETENTION_MS));
+    }
+    if (this.openSockets().length === 0 && state.room !== null) {
+      if (this.pushPairingRetentionEnabled()) next = Math.min(next ?? Infinity, state.last_activity + IDLE_DELETE_MS);
+      else if (next === undefined) next = now + IDLE_DELETE_MS;
+    }
     if (next === undefined) {
       await this.ctx.storage.deleteAlarm();
     } else {
@@ -406,6 +427,13 @@ export class RoomDO extends DurableObject<Env> {
     }
     this.retryRevocations(now);
     await this.drainActivityEnds().catch(error => logError("activity_end_queue_failed", error));
+    const pairing = this.ctx.storage.sql.exec<{ updated_at: number }>("SELECT updated_at FROM push_pairing WHERE id=1").toArray()[0];
+    const hasActiveAuthority = this.openSockets().length > 0 ||
+      (state.lease_ends_at !== null && state.lease_ends_at > now) ||
+      (state.route_expires_at !== null && state.route_expires_at > now);
+    if (pairing && this.pushPairingRetentionEnabled() && shouldExpirePushPairing(pairing.updated_at, now, hasActiveAuthority)) {
+      this.ctx.storage.sql.exec("DELETE FROM push_pairing WHERE id=1");
+    }
     if (this.openSockets().length === 0 && state.last_activity + IDLE_DELETE_MS <= now) {
       this.revokeAll();
       await this.wipe();
@@ -413,6 +441,10 @@ export class RoomDO extends DurableObject<Env> {
       return;
     }
     await this.scheduleAlarm();
+  }
+
+  private pushPairingRetentionEnabled(): boolean {
+    return (this.env as Env & { PUSH_PAIRING_RETENTION_ENABLED?: string }).PUSH_PAIRING_RETENTION_ENABLED !== "0";
   }
 
   /** Repeats each authenticated peer's last `ice` message unchanged; the apps only store its contents. */
@@ -568,7 +600,7 @@ export class RoomDO extends DurableObject<Env> {
     const now = Date.now();
     if (!this.issueCounter.hit(now) || !(await allowStrict(this.env.RL_TURN, "turn", "RL_TURN"))) throw new IssuanceRateLimited();
     if (entitlementId && !(await allowStrict(this.env.RL_TURN_ENTITLEMENT, entitlementId, "RL_TURN_ENTITLEMENT"))) throw new IssuanceRateLimited();
-    const issued = await this.provider.issue();
+    const issued = await this.provider.issue(entitlementId);
     const combined = [...servers, ...issued];
     if (!iceWithinClientLimits(combined)) {
       this.rememberIssued(role, issued, now);
@@ -693,6 +725,13 @@ export class RoomDO extends DurableObject<Env> {
 
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if ((url.pathname === "/connect" || url.pathname === "/guest-connect") && request.headers.get("upgrade") === "websocket" &&
+        strictRateLimitsEnabled(this.env as Env & { STRICT_RATE_LIMITS?: string })) {
+      // Include registrations awaiting storage/provider work and guests awaiting approval.
+      // Guest attachments never gain native authentication; counting them also keeps their capacity bounded.
+      const pending = this.ctx.getWebSockets().filter(ws => ws.readyState === WebSocket.OPEN && !this.attachment(ws).authenticated).length;
+      if (pending >= MAX_PENDING_SOCKETS) return new Response("Try later", { status: 503, headers: { "retry-after": "5" } });
+    }
     if (url.pathname === "/guest-connect" && request.headers.get("upgrade") === "websocket") {
       const pair = new WebSocketPair(); const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
       this.ctx.acceptWebSocket(server, ["guest"]);
@@ -866,9 +905,12 @@ export class RoomDO extends DurableObject<Env> {
       if (!this.takeSlot("host", ws, now)) { this.error(ws, "already_connected"); return; }
       if (!state.room) {
         // A brand-new room: bound how many rooms one address can create, closing bare so the app simply retries later.
-        if (!(await allowStrict(this.env.RL_ROOM_CREATE, addressKey(attachment.ip), "RL_ROOM_CREATE"))) {
+        const admission = await strictRateDecision(this.env.RL_ROOM_CREATE, addressKey(attachment.ip), "RL_ROOM_CREATE");
+        if (admission !== "allowed") {
           log("room_create_rate_limited", { room: fingerprint(room) });
-          this.close(ws, 1013, "rate_limited");
+          const strict = strictRateLimitsEnabled(this.env as Env & { STRICT_RATE_LIMITS?: string });
+          this.close(ws, strict && admission === "denied" ? 1008 : 1013,
+            strict && admission === "unavailable" ? "rate_limit_unavailable" : "rate_limited");
           return;
         }
         // Honour a block recorded in D1 before the object existed.
@@ -902,8 +944,8 @@ export class RoomDO extends DurableObject<Env> {
       }
       if (ws.readyState !== WebSocket.OPEN || this.slotTaken("host", ws)) return;
       this.ctx.storage.sql.exec(
-        "INSERT INTO push_pairing (id,room,client_hash) VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET room=excluded.room, client_hash=excluded.client_hash",
-        room, msg.clientTokenHash,
+        "INSERT INTO push_pairing (id,room,client_hash,updated_at) VALUES (1,?,?,?) ON CONFLICT(id) DO UPDATE SET room=excluded.room, client_hash=excluded.client_hash, updated_at=excluded.updated_at",
+        room, msg.clientTokenHash, now,
       );
       const leaseEndsAt = now + this.config.leaseMs;
       this.update({ room, client_token_hash: msg.clientTokenHash, lease_ends_at: leaseEndsAt, entitlement_id: null, entitled_device: null, recheck_at: null, last_activity: now,

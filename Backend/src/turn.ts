@@ -1,4 +1,5 @@
 import type { IceServer } from "./protocol";
+import { log } from "./log";
 
 /**
  * `not_found` is not success: right after `generate-ice-servers` Cloudflare's revoke endpoint answers 404
@@ -10,7 +11,7 @@ export type RevokeOutcome = { username: string; status: RevokeStatus };
 
 export type TurnProvider = {
   readonly ttlSeconds: number;
-  issue(): Promise<IceServer[]>;
+  issue(entitlementId?: string): Promise<IceServer[]>;
   /** One outcome per distinct username; never throws for a single username's failure. */
   revoke(usernames: string[]): Promise<RevokeOutcome[]>;
 };
@@ -77,6 +78,10 @@ export function createCloudflareTurnProvider(config: {
   timeoutMs: number;
   fetch?: typeof globalThis.fetch;
   endpoint?: string;
+  issuanceDisabled?: boolean;
+  circuitBreakerEnabled?: boolean;
+  analyticsEnabled?: boolean;
+  now?: () => number;
 }): TurnProvider {
   if (!/^[A-Za-z0-9]{32}$/.test(config.keyId)) throw new Error("invalid Cloudflare TURN key ID");
   if (config.apiToken.length !== 64) throw new Error("invalid Cloudflare TURN API token");
@@ -86,25 +91,45 @@ export function createCloudflareTurnProvider(config: {
   const fetcher = (): typeof globalThis.fetch => config.fetch ?? globalThis.fetch;
   const base = config.endpoint ?? "https://rtc.live.cloudflare.com";
   const keyPath = `/v1/turn/keys/${encodeURIComponent(config.keyId)}`;
+  const clock = config.now ?? Date.now;
+  let failures = 0;
+  let openUntil = 0;
+  let probing = false;
 
   return {
     ttlSeconds: config.ttlSeconds,
-    async issue() {
+    async issue(entitlementId) {
+      if (config.issuanceDisabled) throw new Error("TURN issuance disabled");
+      if (entitlementId !== undefined && !/^[a-f0-9]{64}$/.test(entitlementId)) throw new Error("invalid TURN analytics identifier");
+      const circuitEnabled = config.circuitBreakerEnabled !== false;
+      if (circuitEnabled && (openUntil > clock() || probing)) throw new Error("TURN circuit open");
+      const probe = circuitEnabled && openUntil !== 0;
+      if (probe) probing = true;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), config.timeoutMs);
       try {
         const response = await fetcher()(new URL(`${keyPath}/credentials/generate-ice-servers`, base), {
           method: "POST",
           headers: { authorization: `Bearer ${config.apiToken}`, "content-type": "application/json" },
-          body: JSON.stringify({ ttl: config.ttlSeconds }),
+          body: JSON.stringify({ ttl: config.ttlSeconds, ...(entitlementId && config.analyticsEnabled !== false ? { customIdentifier: entitlementId } : {}) }),
           signal: controller.signal,
         });
         if (response.status !== 201) throw new Error("TURN credential provider rejected request");
         const body = (await readBoundedJSON(response)) as { iceServers?: unknown };
-        return validateIceServers(body?.iceServers);
+        const servers = validateIceServers(body?.iceServers);
+        failures = 0;
+        openUntil = 0;
+        log("turn_issue", { outcome: "issued", attributed: entitlementId !== undefined });
+        return servers;
       } catch {
+        if (circuitEnabled && ++failures >= 3) {
+          openUntil = clock() + 30_000;
+          log("turn_circuit_open", { cooldownSeconds: 30 });
+        }
+        log("turn_issue", { outcome: "unavailable", attributed: entitlementId !== undefined });
         throw new Error("TURN credential provider unavailable");
       } finally {
+        if (probe) probing = false;
         clearTimeout(timer);
       }
     },
@@ -146,6 +171,9 @@ export function turnProviderFromEnv(env: Env, fetcher?: typeof globalThis.fetch)
     apiToken: env.CLOUDFLARE_TURN_KEY_API_TOKEN,
     ttlSeconds: Number(env.TURN_CREDENTIAL_TTL_SECONDS || 3600),
     timeoutMs: 3000,
+    issuanceDisabled: (env as Env & { TURN_ISSUANCE_DISABLED?: string }).TURN_ISSUANCE_DISABLED === "1",
+    circuitBreakerEnabled: (env as Env & { TURN_CIRCUIT_BREAKER_ENABLED?: string }).TURN_CIRCUIT_BREAKER_ENABLED !== "0",
+    analyticsEnabled: (env as Env & { TURN_ANALYTICS_ENABLED?: string }).TURN_ANALYTICS_ENABLED !== "0",
     ...(fetcher ? { fetch: fetcher } : {}),
   });
 }

@@ -1,8 +1,9 @@
 import { appleApiConfigFromEnv, getTransactionInfo } from "../apple/server-api";
 import { decodeJwsUnverified, JwsVerificationError, verifyAppleJws } from "../apple/jws";
 import type { Config } from "../config";
+import { refreshSubscriptionFromApple, subscriptionRecoveryEnabled, type SubscriptionSnapshot } from "./recovery";
 import { fingerprint, log, logError } from "../log";
-import { addressKey, allow } from "../ratelimit";
+import { addressKey, publicRateDecision, type RateDecision } from "../ratelimit";
 import type { RoomDO } from "../room";
 import { BodyTooLarge, HEX64, isoFromMs, isRecord, json, readJsonBody } from "../util";
 import {
@@ -116,9 +117,13 @@ export const statusFromTransaction = (tx: TransactionInfo, now: number): Entitle
 
 const clientIp = (request: Request) => addressKey(request.headers.get("cf-connecting-ip"));
 
+const rateResponse = (decision: RateDecision) => json({ error: decision === "unavailable" ? "unavailable" : "rate_limited", retryAfterSeconds: 60 },
+  decision === "unavailable" ? 503 : 429, { "retry-after": "60" });
+
 export async function handleVerify(request: Request, env: Env, ctx: ExecutionContext, config: Config): Promise<Response> {
   const now = Date.now();
-  if (!(await allow(env.RL_API_IP, clientIp(request), "RL_API_IP"))) return json({ error: "rate_limited", retryAfterSeconds: 60 }, 429, { "retry-after": "60" });
+  const ipAdmission = await publicRateDecision(env.RL_API_IP, clientIp(request), "RL_API_IP", env as Env & { STRICT_RATE_LIMITS?: string });
+  if (ipAdmission !== "allowed") return rateResponse(ipAdmission);
   let body: unknown;
   try {
     body = await readJsonBody(request, MAX_BODY_BYTES);
@@ -131,7 +136,8 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
     return json({ error: "invalid_request" }, 400);
   }
   const deviceId = body.deviceId;
-  if (!(await allow(env.RL_API_DEVICE, deviceId, "RL_API_DEVICE"))) return json({ error: "rate_limited", retryAfterSeconds: 60 }, 429, { "retry-after": "60" });
+  const deviceAdmission = await publicRateDecision(env.RL_API_DEVICE, deviceId, "RL_API_DEVICE", env as Env & { STRICT_RATE_LIMITS?: string });
+  if (deviceAdmission !== "allowed") return rateResponse(deviceAdmission);
   if (config.roots.length === 0 && !(config.allowXcode && !config.isProduction)) {
     log("verify_unavailable", { reason: "no_apple_roots" });
     return json({ error: "unavailable" }, 503);
@@ -147,6 +153,16 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
   }
   let tx = verified.tx;
   const kind = config.oneTimeProducts?.get(tx.productId) ?? "subscription";
+  let snapshot: SubscriptionSnapshot | undefined;
+  if (kind === "subscription" && subscriptionRecoveryEnabled(env) && (tx.environment === "Production" || tx.environment === "Sandbox")) {
+    try {
+      snapshot = await refreshSubscriptionFromApple(env, config, tx, now);
+      tx = snapshot.tx;
+    } catch {
+      log("verify_unavailable", { reason: "subscription_refresh" });
+      return json({ error: "unavailable" }, 503);
+    }
+  }
   // One-time rights cannot repeatedly renew authorization from a years-old cached JWS after a missed refund.
   // Xcode is exclusively local/test. Real environments require the current Apple server transaction.
   if (kind !== "subscription" && (tx.environment === "Production" || tx.environment === "Sandbox")) {
@@ -163,17 +179,30 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
       tx = current.tx;
     } catch { return json({ error: "unavailable" }, 503); }
   }
-  if (tx.environment === "Sandbox" && !(await allow(env.RL_API_SANDBOX, deviceId, "RL_API_SANDBOX"))) {
-    return json({ error: "rate_limited", retryAfterSeconds: 60 }, 429, { "retry-after": "60" });
+  if (tx.environment === "Sandbox") {
+    const sandboxAdmission = await publicRateDecision(env.RL_API_SANDBOX, deviceId, "RL_API_SANDBOX", env as Env & { STRICT_RATE_LIMITS?: string });
+    if (sandboxAdmission !== "allowed") return rateResponse(sandboxAdmission);
   }
   const id = await entitlementIdFor(env.ENTITLEMENT_HASH_KEY, tx.originalTransactionId);
   const environment = tx.environment === "LocalTesting" ? "Xcode" : tx.environment;
 
   try {
-    const appTransactionHash = tx.appTransactionId ? await appTransactionHashFor(env.ENTITLEMENT_HASH_KEY, tx.appTransactionId) : undefined;
+    const appTransactionId = verified.tx.appTransactionId ?? tx.appTransactionId;
+    const appTransactionHash = appTransactionId ? await appTransactionHashFor(env.ENTITLEMENT_HASH_KEY, appTransactionId) : undefined;
     if (appTransactionHash && (await consentStopped(env.DB, appTransactionHash))) {
       ctx.waitUntil(audit(env.DB, "verify_consent_stopped", { entitlementId: id }, now));
       return json({ entitled: false, reason: "consent_revoked", environment });
+    }
+    if (snapshot) {
+      // Commit the signed server state under the same ordering guard as cron recovery.
+      // A notification delivered during Apple's request keeps priority over this older snapshot.
+      await upsertEntitlement(env.DB, {
+        id, productId: tx.productId, environment, kind: "subscription",
+        status: tx.revocationDate !== undefined ? "revoked" : snapshot.graceUntil !== null ? "grace" : statusFromTransaction(tx, now),
+        expiresAt: tx.expiresDate!, graceUntil: snapshot.graceUntil, revokedAt: tx.revocationDate,
+        purchaseAt: tx.purchaseDate, appTransactionHash, originalTransactionId: tx.originalTransactionId,
+        notificationSignedAt: snapshot.signedAt, source: "recheck",
+      }, now);
     }
     const existing = await getEntitlement(env.DB, id);
     // A notification may already know about a later renewal or a grace period; never move access backwards from a stale JWS.
@@ -184,10 +213,12 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
     const revokedAt = tx.revocationDate ?? (supersedesRefund ? null : existing?.revoked_at ?? null);
     let status = statusFromTransaction({ ...tx, expiresDate: expiresAt, revocationDate: revokedAt ?? undefined }, now);
     if (status === "expired" && existing && existing.status === "grace" && (existing.grace_until ?? 0) > now) status = "grace";
-    await upsertEntitlement(env.DB, {
+    if (!snapshot) await upsertEntitlement(env.DB, {
       id, productId: tx.productId, environment, status, expiresAt, kind,
       graceUntil: existing?.grace_until ?? null, revokedAt, purchaseAt: tx.purchaseDate, appTransactionHash, source: "verify",
+      originalTransactionId: kind === "subscription" && subscriptionRecoveryEnabled(env) ? tx.originalTransactionId : undefined,
     }, now);
+    if (snapshot) await env.DB.prepare("UPDATE entitlements SET last_verified_at=?2 WHERE id=?1").bind(id, now).run();
     // A refund may have committed after the read above. Use the row that actually survived the
     // conditional upsert before linking a device or issuing a token.
     const row = await getEntitlement(env.DB, id);
@@ -228,7 +259,8 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
 
 export async function handleForget(request: Request, env: Env, config: Config): Promise<Response> {
   const now = Date.now();
-  if (!(await allow(env.RL_API_IP, clientIp(request), "RL_API_IP"))) return json({ error: "rate_limited", retryAfterSeconds: 60 }, 429, { "retry-after": "60" });
+  const ipAdmission = await publicRateDecision(env.RL_API_IP, clientIp(request), "RL_API_IP", env as Env & { STRICT_RATE_LIMITS?: string });
+  if (ipAdmission !== "allowed") return rateResponse(ipAdmission);
   let body: unknown;
   try {
     body = await readJsonBody(request, MAX_BODY_BYTES);

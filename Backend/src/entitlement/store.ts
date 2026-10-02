@@ -20,6 +20,8 @@ export type EntitlementRow = {
   last_notification_signed_at: number | null;
   app_transaction_hash: string | null;
   consent_stopped_at: number | null;
+  subscription_original_transaction_id: string | null;
+  last_recovery_attempt_at: number | null;
 };
 
 export type DeviceRow = { device_id: string; last_room: string | null };
@@ -62,6 +64,10 @@ export type UpsertEntitlement = {
   notificationSignedAt?: number;
   /** HMAC of the transaction's appTransactionId, the key a parental consent withdrawal names. */
   appTransactionHash?: string;
+  /** Only a verified own-purchase subscription id; Apple cannot query our HMAC. Never log. */
+  originalTransactionId?: string;
+  /** Explicit false preserves pre-recovery subscription-notification ordering for the rollback switch. */
+  enforceSubscriptionOrder?: boolean;
   source: "verify" | "notification" | "recheck";
 };
 
@@ -69,13 +75,13 @@ export type UpsertEntitlement = {
 export async function upsertEntitlement(db: D1Database, fields: UpsertEntitlement, now: number): Promise<boolean> {
   const verified = fields.source === "verify" ? now : null;
   const notified = fields.source === "notification" ? now : null;
-  const signed = fields.source === "notification" && Number.isFinite(fields.notificationSignedAt) && (fields.notificationSignedAt ?? 0) > 0
+  const signed = fields.source !== "verify" && Number.isFinite(fields.notificationSignedAt) && (fields.notificationSignedAt ?? 0) > 0
     ? fields.notificationSignedAt! : null;
   const result = await db.prepare(`
     INSERT INTO entitlements (id, product_id, environment, status, expires_at, grace_until, revoked_at, created_at, updated_at, last_verified_at, last_notification_at, purchase_at,
-      app_transaction_hash, consent_stopped_at, kind, last_notification_signed_at)
+      app_transaction_hash, consent_stopped_at, kind, last_notification_signed_at, subscription_original_transaction_id)
     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, ?11,
-      ?13, (SELECT stopped_at FROM consent_stops WHERE app_transaction_hash = ?13), ?14, ?15)
+      ?13, (SELECT stopped_at FROM consent_stops WHERE app_transaction_hash = ?13), ?14, ?15, ?16)
     ON CONFLICT(id) DO UPDATE SET
       product_id = excluded.product_id,
       kind = excluded.kind,
@@ -90,18 +96,23 @@ export async function upsertEntitlement(db: D1Database, fields: UpsertEntitlemen
       last_notification_at = COALESCE(excluded.last_notification_at, entitlements.last_notification_at),
       last_notification_signed_at = COALESCE(excluded.last_notification_signed_at, entitlements.last_notification_signed_at),
       app_transaction_hash = COALESCE(excluded.app_transaction_hash, entitlements.app_transaction_hash),
-      consent_stopped_at = COALESCE(entitlements.consent_stopped_at, excluded.consent_stopped_at)
+      consent_stopped_at = COALESCE(entitlements.consent_stopped_at, excluded.consent_stopped_at),
+      subscription_original_transaction_id = COALESCE(entitlements.subscription_original_transaction_id, excluded.subscription_original_transaction_id)
     WHERE excluded.kind = entitlements.kind AND (excluded.kind = 'subscription' OR excluded.product_id = entitlements.product_id)
       AND excluded.environment = entitlements.environment AND excluded.purchase_at >= entitlements.purchase_at
-      AND (excluded.kind = 'subscription' OR ?10 IS NULL OR
+      AND ((excluded.kind = 'subscription' AND ?10 IS NOT NULL AND ?17 = 0) OR (?10 IS NULL AND ?15 IS NULL) OR (excluded.kind = 'subscription' AND ?15 IS NULL) OR
         (?15 IS NOT NULL AND (entitlements.last_notification_signed_at IS NULL OR ?15 > entitlements.last_notification_signed_at
-          OR (?15 = entitlements.last_notification_signed_at AND excluded.revoked_at IS NOT NULL))))
+          OR (?15 = entitlements.last_notification_signed_at AND (excluded.revoked_at IS NOT NULL
+            OR (excluded.kind = 'subscription' AND ?10 IS NOT NULL AND
+              (excluded.expires_at > entitlements.expires_at OR excluded.status = 'expired' OR ?12 = 1)))))))
       AND (entitlements.revoked_at IS NULL OR excluded.revoked_at IS NOT NULL
         OR excluded.purchase_at > entitlements.revoked_at OR (?12 = 1 AND
           (excluded.kind = 'subscription' OR ?15 > entitlements.revoked_at)))
   `).bind(fields.id, fields.productId, fields.environment, fields.status, fields.expiresAt,
     fields.graceUntil ?? null, fields.revokedAt ?? null, now, verified, notified,
-    fields.purchaseAt ?? 0, fields.refundReversed ? 1 : 0, fields.appTransactionHash ?? null, fields.kind ?? "subscription", signed).run();
+    fields.purchaseAt ?? 0, fields.refundReversed ? 1 : 0, fields.appTransactionHash ?? null, fields.kind ?? "subscription", signed,
+    (fields.kind === undefined || fields.kind === "subscription") && ["Production", "Sandbox"].includes(fields.environment) &&
+      /^[A-Za-z0-9._-]{1,64}$/.test(fields.originalTransactionId ?? "") ? fields.originalTransactionId! : null, fields.enforceSubscriptionOrder === false ? 0 : 1).run();
   return result.meta.changes > 0;
 }
 

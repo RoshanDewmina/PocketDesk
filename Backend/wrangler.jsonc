@@ -38,6 +38,12 @@
     "MAX_DEVICES_PER_ENTITLEMENT": "3",
     "TEST_FORCE_RELAY": "0",
     "ALLOW_UNENTITLED_RELAY": "0",
+    "STRICT_RATE_LIMITS": "1",
+    "SUBSCRIPTION_RECOVERY_ENABLED": "0",
+    "TURN_CIRCUIT_BREAKER_ENABLED": "1",
+    "TURN_ISSUANCE_DISABLED": "0",
+    "TURN_ANALYTICS_ENABLED": "1",
+    "PUSH_PAIRING_RETENTION_ENABLED": "1",
     "KEEPALIVE_SECONDS": "0",
     "REPLACE_QUIET_SECONDS": "10"
   },
@@ -80,6 +86,12 @@
         "MAX_DEVICES_PER_ENTITLEMENT": "3",
         "TEST_FORCE_RELAY": "0",
         "ALLOW_UNENTITLED_RELAY": "0",
+        "STRICT_RATE_LIMITS": "1",
+        "SUBSCRIPTION_RECOVERY_ENABLED": "0",
+        "TURN_CIRCUIT_BREAKER_ENABLED": "1",
+        "TURN_ISSUANCE_DISABLED": "0",
+        "TURN_ANALYTICS_ENABLED": "1",
+        "PUSH_PAIRING_RETENTION_ENABLED": "1",
         "KEEPALIVE_SECONDS": "50",
         "REPLACE_QUIET_SECONDS": "0"
       }
@@ -97,7 +109,7 @@
       "triggers": { "crons": ["* * * * *", "17 4 * * *"] },
       "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "RoomDO" }] },
       "d1_databases": [
-        { "binding": "DB", "database_name": "farside-entitlements-production", "database_id": "REPLACE_WITH_PRODUCTION_D1_ID", "migrations_dir": "migrations" }
+        { "binding": "DB", "database_name": "farside-entitlements-production", "database_id": "d8a30ade-adb7-4ec8-bb1f-1c81a43e9b73", "migrations_dir": "migrations" }
       ],
       "ratelimits": [
         { "name": "RL_SIGNAL", "namespace_id": "3001", "simple": { "limit": 30, "period": 60 } },
@@ -122,6 +134,12 @@
         "MAX_DEVICES_PER_ENTITLEMENT": "3",
         "TEST_FORCE_RELAY": "0",
         "ALLOW_UNENTITLED_RELAY": "0",
+        "STRICT_RATE_LIMITS": "1",
+        "SUBSCRIPTION_RECOVERY_ENABLED": "0",
+        "TURN_CIRCUIT_BREAKER_ENABLED": "1",
+        "TURN_ISSUANCE_DISABLED": "0",
+        "TURN_ANALYTICS_ENABLED": "1",
+        "PUSH_PAIRING_RETENTION_ENABLED": "1",
         "KEEPALIVE_SECONDS": "0",
         "REPLACE_QUIET_SECONDS": "0"
       }

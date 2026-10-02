@@ -1,7 +1,7 @@
 import { APPLE_JWS_CLOCK_SKEW_MS, JwsVerificationError, verifyAppleJws } from "../apple/jws";
 import type { Config } from "../config";
 import { fingerprint, log, logError } from "../log";
-import { addressKey, allow } from "../ratelimit";
+import { addressKey, publicRateDecision } from "../ratelimit";
 import type { RoomDO } from "../room";
 import { BodyTooLarge, isRecord, json, readJsonBody } from "../util";
 import {
@@ -46,7 +46,8 @@ function resolveRevokedAt(existing: EntitlementRow | null, tx: TransactionInfo, 
   return (tx.purchaseDate ?? 0) > current ? null : current;
 }
 
-export async function applyNotification(env: Env, config: Config, decoded: Record<string, unknown>, now: number): Promise<NotificationOutcome> {
+export async function applyNotification(env: Env, config: Config, decoded: Record<string, unknown>, now: number,
+  options: { deferRevocationPush?: boolean } = {}): Promise<NotificationOutcome> {
   const notificationType = typeof decoded.notificationType === "string" ? decoded.notificationType : "UNKNOWN";
   const subtype = typeof decoded.subtype === "string" ? decoded.subtype : undefined;
   const uuid = typeof decoded.notificationUUID === "string" && decoded.notificationUUID.length <= 64 ? decoded.notificationUUID : undefined;
@@ -98,6 +99,8 @@ export async function applyNotification(env: Env, config: Config, decoded: Recor
   const expiresAt = kind === "subscription" ? Math.max(tx.expiresDate ?? 0, existing?.expires_at ?? 0) : 0;
   const revokedAt = resolveRevokedAt(existing, tx, notificationType);
   const base = { kind, id: entitlementId, productId: tx.productId, environment: txEnvironment, expiresAt, revokedAt,
+    originalTransactionId: kind === "subscription" && env.SUBSCRIPTION_RECOVERY_ENABLED === "1" ? tx.originalTransactionId : undefined,
+    enforceSubscriptionOrder: env.SUBSCRIPTION_RECOVERY_ENABLED === "1",
     notificationSignedAt: typeof decoded.signedDate === "number" ? decoded.signedDate : undefined,
     purchaseAt: tx.purchaseDate, refundReversed: notificationType === "REFUND_REVERSED", source: "notification" as const };
   const statusFor = (fallback: EntitlementStatus): EntitlementStatus => revokedAt !== null ? "revoked" : fallback;
@@ -155,7 +158,9 @@ export async function applyNotification(env: Env, config: Config, decoded: Recor
       }
       const applied = await upsertEntitlement(env.DB, { ...base, status: "revoked", graceUntil: null, revokedAt: tx.revocationDate ?? now }, now);
       if (!applied) return finish("recorded");
-      await pushRevocation(env, entitlementId, now);
+      // History recovery drains the persistent trigger queue under its RPC/run budget.
+      // The live notification route preserves immediate delivery.
+      if (!options.deferRevocationPush) await pushRevocation(env, entitlementId, now);
       break;
     }
     default:
@@ -217,7 +222,8 @@ async function pushRevocation(env: Env, entitlementId: string, now: number): Pro
 
 export async function handleNotification(request: Request, env: Env, config: Config): Promise<Response> {
   const now = Date.now();
-  if (!(await allow(env.RL_NOTIFY, addressKey(request.headers.get("cf-connecting-ip")), "RL_NOTIFY"))) return json({ error: "rate_limited" }, 429);
+  const admission = await publicRateDecision(env.RL_NOTIFY, addressKey(request.headers.get("cf-connecting-ip")), "RL_NOTIFY", env as Env & { STRICT_RATE_LIMITS?: string });
+  if (admission !== "allowed") return json({ error: admission === "unavailable" ? "unavailable" : "rate_limited" }, admission === "unavailable" ? 503 : 429);
   let body: unknown;
   try {
     body = await readJsonBody(request, MAX_BODY_BYTES);

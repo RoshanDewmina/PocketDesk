@@ -2,6 +2,7 @@ import { adminRoom, adminTestNotification, forgetRoom, health, isAdmin, ready } 
 import { handleActivityRegister, handleActivityRemove, purgeActivityRetention, retryPendingActivityEnds } from "./activity";
 import { loadConfig } from "./config";
 import { handleNotification } from "./entitlement/notifications";
+import { recoverSubscriptions } from "./entitlement/recovery";
 import { purgeRetention } from "./entitlement/store";
 import { handleForget, handleVerify } from "./entitlement/verify";
 import { handleGuestUpgrade, handleSignalUpgrade } from "./gateway";
@@ -68,6 +69,7 @@ export default {
 
   async scheduled(controller, env, ctx): Promise<void> {
     if (controller.cron === "* * * * *") {
+      ctx.waitUntil(recoverSubscriptions(env, loadConfig(env)).catch(() => log("subscription_recovery_failed")));
       ctx.waitUntil(retryPendingActivityEnds(env).then(result => {
         if (result.accepted || result.failed || result.invalidToken || result.expired)
           log("activity_end_retry", result);

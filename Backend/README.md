@@ -13,3 +13,5 @@ bun run check         # wrangler deploy --dry-run --env staging
 ```
 
 Deploy steps, secrets and environments: DESIGN.md §8 and §13. Nothing here deploys or creates Cloudflare resources on its own.
+
+Operational acceptance, alert thresholds, retention and rollback notes: [RUNBOOK.md](RUNBOOK.md). `scripts/load-test.ts` requires `route.1` for public targets; free rooms may run concurrently, while entitlement-backed rooms are serialized automatically to respect one live room per paid device. Supply one token via `FARSIDE_LOAD_ENTITLEMENT_TOKEN` or `--token`, or one distinct token per room as a JSON array via `FARSIDE_LOAD_ENTITLEMENT_TOKENS` or `--tokens`. Tokens and URL credentials/query values are never printed.
