@@ -788,8 +788,11 @@ final class First60PairingSafetyTests: XCTestCase {
     func testCameraLinkAndLegacyCodeRetainExactInvitation() throws {
         let invitation = try HostPair.create(server: "wss://example.test/signal", name: "Studio Mac").invitation
         XCTAssertEqual(try PairInvitation.parse(invitation.code()), invitation)
-        XCTAssertEqual(try PairInvitation.parse(invitation.cameraCode()), invitation)
-        XCTAssertEqual(try PairInvitation.normalizedCode(invitation.cameraCode()), try invitation.code())
+        let cameraCode = try invitation.cameraCode()
+        XCTAssertEqual(try PairInvitation.parse(cameraCode), invitation)
+        // Check the exact emitted payload; independently encoded JSON has no key-order contract.
+        let emittedPayload = try XCTUnwrap(cameraCode.split(separator: "#", maxSplits: 1).last)
+        XCTAssertEqual(try PairInvitation.normalizedCode(cameraCode), "pocketdesk:" + emittedPayload)
     }
 
     func testCameraLinkRejectsAmbiguousAndWebRoutes() throws {
