@@ -114,6 +114,7 @@ struct DataWarningCard: View {
     var useLessData: () -> Void
     var keep: () -> Void
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     var body: some View {
         Group {
@@ -132,7 +133,9 @@ struct DataWarningCard: View {
         }
         .padding(16)
         .farsidePlate(Farside.Radius.card, fill: Farside.Palette.panel.opacity(0.97), stroke: Farside.Palette.line2)
-        .frame(maxWidth: 420)
+        // Use the short landscape window's width before spending its limited height on wrapping.
+        .frame(maxWidth: dynamicTypeSize.isAccessibilitySize && verticalSizeClass == .compact
+            && FarsideAccessibilityLayout.enabled ? .infinity : 420)
         .padding(.horizontal, 16)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("remote.dataWarning")
