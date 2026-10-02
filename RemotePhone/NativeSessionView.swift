@@ -66,6 +66,11 @@ struct NativeSessionView: View {
     @AppStorage(PointerSizePreference.key) private var storedPointerSize: PointerSizePreference?
     @AppStorage(PointerFollowStyle.key) private var followStyle: PointerFollowStyle = .smooth
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    private var accessibleCommands: Bool {
+        PhoneCommandAccessibility.usesKeyList(typeSize: dynamicTypeSize, enabled: PhoneCommandAccessibility.keyListEnabled)
+    }
+    private var commandTypeLimit: DynamicTypeSize { accessibleCommands ? dynamicTypeSize : .xxxLarge }
+    private var commandTargetHeight: CGFloat { PhoneCommandAccessibility.target(40, enabled: PhoneCommandAccessibility.targetsEnabled) }
     private var adaptiveLayout: Bool { dynamicTypeSize.isAccessibilitySize && FarsideAccessibilityLayout.enabled }
     private var pointerSize: PointerSizePreference {
         PointerSizePreference.resolved(stored: storedPointerSize, largerText: dynamicTypeSize.isAccessibilitySize)
@@ -654,7 +659,7 @@ struct NativeSessionView: View {
             .buttonStyle(FarsideTileButtonStyle())
             .frame(maxWidth: wide ? CGFloat.infinity : nil)
             .disabled(model.pendingModeSwitch != nil)
-            .accessibilityHint(DeviceWord.copy("Shows your Mac’s screen on this iPhone"))
+            .accessibilityHint(DeviceWord.copy("Shows your Mac’s screen on this device"))
             .accessibilityIdentifier("remote.couch.picture")
         Button { openControls() } label: { Label("Controls", systemImage: "slider.horizontal.3") }
             .buttonStyle(FarsideTileButtonStyle())
@@ -751,7 +756,7 @@ struct NativeSessionView: View {
                     .foregroundStyle(Farside.Palette.bone)
                 if model.canWakeDisplay {
                     Button("Wake display", action: model.wakeMacDisplay)
-                        .buttonStyle(FarsidePrimaryButtonStyle(height: 40))
+                        .buttonStyle(FarsidePrimaryButtonStyle(height: PhoneCommandAccessibility.target(40, enabled: PhoneCommandAccessibility.targetsEnabled)))
                         .fixedSize()
                         .accessibilityHint("Turns your Mac’s display back on")
                 }
@@ -855,13 +860,13 @@ struct NativeSessionView: View {
                     Image(systemName: "hand.draw").accessibilityHidden(true)
                     Text("View · drag or pinch").font(.subheadline.weight(.medium))
                     Button("Control") { setInteractionMode(false) }
-                        .buttonStyle(FarsidePrimaryButtonStyle(height: 34))
+                        .buttonStyle(FarsidePrimaryButtonStyle(height: PhoneCommandAccessibility.target(34, enabled: PhoneCommandAccessibility.targetsEnabled)))
                         .fixedSize()
                         .accessibilityLabel("Control desktop")
                         .accessibilityShowsLargeContentViewer()
                 }
                 .foregroundStyle(Farside.Palette.bone)
-                .dynamicTypeSize(...(adaptiveLayout ? DynamicTypeSize.xxxLarge : dynamicTypeSize))
+                .dynamicTypeSize(...(accessibleCommands ? dynamicTypeSize : (adaptiveLayout ? DynamicTypeSize.xxxLarge : dynamicTypeSize)))
                 .padding(.leading, 16).padding(.trailing, 5).padding(.vertical, 5)
                 .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.96), stroke: Farside.Palette.line2)
                 .transition(.opacity)
@@ -1139,7 +1144,7 @@ struct NativeSessionView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("remote.dock")
         // Compact chrome must leave a touchable desktop even with AX-XXXL text.
-        .dynamicTypeSize(...(adaptiveLayout ? DynamicTypeSize.xxxLarge : dynamicTypeSize))
+        .dynamicTypeSize(...(accessibleCommands ? dynamicTypeSize : (adaptiveLayout ? DynamicTypeSize.xxxLarge : dynamicTypeSize)))
     }
 
     private var grabHandle: some View {
@@ -1147,7 +1152,7 @@ struct NativeSessionView: View {
         return Capsule()
             .fill(Farside.Palette.dim)
             .frame(width: 40, height: 5)
-            .frame(width: 120, height: 26)
+            .frame(width: 120, height: PhoneCommandAccessibility.target(26, enabled: PhoneCommandAccessibility.targetsEnabled))
             .contentShape(.rect)
             .gesture(taps.onEnded { result in
                 switch result {
@@ -1247,7 +1252,7 @@ struct NativeSessionView: View {
                 .accessibilityShowsLargeContentViewer()
                 .disabled(!voiceEntryAvailable)
                 .accessibilityLabel("Voice input")
-                .accessibilityHint(DeviceWord.copy("Speak on this iPhone, then tap Done to insert text on your Mac"))
+                .accessibilityHint(DeviceWord.copy("Speak on this device, then tap Insert on Mac to send the text"))
         }
     }
 
@@ -1295,7 +1300,7 @@ struct NativeSessionView: View {
                 Button { openControls() } label: {
                     Image(systemName: "slider.horizontal.3")
                 }
-                .buttonStyle(FarsideRoundButtonStyle(diameter: 40))
+                .buttonStyle(FarsideRoundButtonStyle(diameter: PhoneCommandAccessibility.target(40, enabled: PhoneCommandAccessibility.targetsEnabled)))
                 .accessibilityLabel("Controls")
             }
             Button("End session") { model.disconnect() }
@@ -1426,7 +1431,7 @@ struct NativeSessionView: View {
                     }
                     .buttonStyle(FarsideSecondaryButtonStyle(height: 44, fullWidth: false))
                     .disabled(!model.canControl || !model.clipboardAvailable || model.clipboard.isBusy)
-                    .accessibilityHint(DeviceWord.copy("Presses Command-C on your Mac, then copies the selection to this iPhone"))
+                    .accessibilityHint(DeviceWord.copy("Presses Command-C on your Mac, then copies the selection to this device"))
                 }
                 HStack {
                     Text("Text · 256 KB max").farsideCaption()
@@ -1434,7 +1439,7 @@ struct NativeSessionView: View {
                     Button("Get Mac clipboard") { model.fetchMacClipboard() }
                         .buttonStyle(FarsideLinkButtonStyle())
                         .disabled(!model.clipboardAvailable || model.clipboard.isBusy)
-                        .accessibilityHint(DeviceWord.copy("Copies what is already on your Mac’s clipboard to this iPhone"))
+                        .accessibilityHint(DeviceWord.copy("Copies what is already on your Mac’s clipboard to this device"))
                 }
                 Divider().overlay(Farside.Palette.line)
             }
@@ -1472,7 +1477,7 @@ struct NativeSessionView: View {
                     .padding(.horizontal, 4)
                 iconButton("Copy from Mac", "doc.on.doc", enabled: model.canControl && !model.clipboard.isBusy,
                            action: model.copySelectionFromMac)
-                    .accessibilityHint(DeviceWord.copy("Presses Command-C on your Mac, then copies the selection to this iPhone"))
+                    .accessibilityHint(DeviceWord.copy("Presses Command-C on your Mac, then copies the selection to this device"))
             }
         }
         .padding(.horizontal, 6)
@@ -1663,19 +1668,19 @@ struct NativeSessionView: View {
         if voiceInput.phase == .requestingPermission || voiceInput.phase == .finishing || model.voiceDeliveryStatus == .waiting {
             ProgressView()
                 .tint(Farside.Palette.bone)
-                .frame(width: 44, height: 40)
+                .frame(width: 44, height: commandTargetHeight)
                 .accessibilityLabel(model.voiceDeliveryStatus == .waiting ? "Waiting for your Mac to confirm insertion"
                                                                          : "Finishing speech")
         } else if [.refused, .uncertain, .notQueued].contains(model.voiceDeliveryStatus), !displayedVoiceTranscript.isEmpty {
             Button("Retry", action: retryVoiceInsertion)
-                .buttonStyle(FarsidePrimaryButtonStyle(height: 40))
+                .buttonStyle(FarsidePrimaryButtonStyle(height: commandTargetHeight))
                 .fixedSize()
                 .disabled(!model.canControl || model.isComposingText || voiceLimitMessage != nil)
                 .accessibilityLabel("Try insertion again")
                 .accessibilityHint("Check your Mac first if delivery was uncertain")
         } else {
-            Button("Done") { voiceInput.finish(insertVoiceTranscript) }
-                .buttonStyle(FarsidePrimaryButtonStyle(height: 40))
+            Button("Insert on Mac") { voiceInput.finish(insertVoiceTranscript) }
+                .buttonStyle(FarsidePrimaryButtonStyle(height: commandTargetHeight))
                 .fixedSize()
                 .disabled(!voiceInput.canFinish ||
                           displayedVoiceTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
@@ -1689,9 +1694,9 @@ struct NativeSessionView: View {
         if model.voiceDeliveryStatus == .waiting { return "Waiting for your Mac" }
         switch voiceInput.phase {
         case .requestingPermission: return "Checking microphone access"
-        case .listening: return "Listening · speak, then Done"
+        case .listening: return "Listening · speak, then Insert on Mac"
         case .finishing: return "Finishing speech"
-        case .ready: return "Ready · tap Done to insert"
+        case .ready: return "Ready · tap Insert on Mac"
         case .idle: return "Voice input"
         }
     }
@@ -1861,7 +1866,7 @@ struct NativeSessionView: View {
             Image(systemName: symbol)
                 .font(.body.weight(.medium))
                 .foregroundStyle(Farside.Palette.bone)
-                .frame(width: 40, height: 40)
+                .frame(width: commandTargetHeight, height: commandTargetHeight)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -1875,7 +1880,7 @@ struct NativeSessionView: View {
             Image(systemName: symbol)
                 .font(.body.weight(.medium))
                 .foregroundStyle(Farside.Palette.bone)
-                .frame(width: 40, height: 40)
+                .frame(width: commandTargetHeight, height: commandTargetHeight)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -1894,7 +1899,7 @@ struct NativeSessionView: View {
                 .foregroundStyle(active ? Farside.Palette.ink : Farside.Palette.bone)
                 .frame(width: 38, height: 38)
                 .background(active ? Farside.Palette.bone : .clear, in: .circle)
-                .frame(width: 42, height: 40)
+                .frame(width: PhoneCommandAccessibility.target(42, enabled: PhoneCommandAccessibility.targetsEnabled), height: commandTargetHeight)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -1919,7 +1924,7 @@ struct NativeSessionView: View {
     /// Settings pages cover the picture; the key panel never does.
     private var controlsBlockInput: Bool {
         guard showControls else { return false }
-        if controlsAsOverlay { return showOverlaySettings }
+        if controlsAsOverlay { return showOverlaySettings || accessibleCommands }
         return !controlsPath.isEmpty || controlsDetent == .large
     }
 
@@ -1949,7 +1954,7 @@ struct NativeSessionView: View {
         return height
     }
 
-    private var panelDetent: PresentationDetent { .height(panelHeight) }
+    private var panelDetent: PresentationDetent { accessibleCommands ? .large : .height(panelHeight) }
 
     private var macKeysDisabled: Bool { !model.canControl || panMode }
 
@@ -1960,7 +1965,7 @@ struct NativeSessionView: View {
                 .navigationDestination(for: ControlsPage.self) { controlsPage($0) }
         }
         .tint(Farside.Palette.bone)
-        .presentationDetents([panelDetent, .large], selection: $controlsDetent)
+        .presentationDetents(accessibleCommands ? [.large] : [panelDetent, .large], selection: $controlsDetent)
         .presentationBackgroundInteraction(.enabled(upThrough: panelDetent))
         .presentationDragIndicator(.visible)
         .farsideSheet()
@@ -1975,7 +1980,16 @@ struct NativeSessionView: View {
         .onAppear { controlsDetent = controlsPath.isEmpty ? panelDetent : .large }
     }
 
-    private var controlsPanel: some View {
+    @ViewBuilder private var controlsPanel: some View {
+        if accessibleCommands {
+            ScrollView { controlsPanelContent }
+                .accessibilityIdentifier("remote.controls.scroll")
+        } else {
+            controlsPanelContent
+        }
+    }
+
+    private var controlsPanelContent: some View {
         VStack(spacing: 0) {
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -2013,14 +2027,14 @@ struct NativeSessionView: View {
             }
             .frame(minHeight: 44)
             // Past xxxLarge the header wraps and pushes the keys below the fixed panel height.
-            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            .dynamicTypeSize(...commandTypeLimit)
             .padding(.bottom, 12)
             macKeys(compact: false)
             if showsSessionRows {
                 // The panel height is fixed and nothing in it scrolls, so the rows stop growing at
                 // xxxLarge like the header. Each row is also in Settings, which scrolls at any size.
                 sessionRows.padding(.top, 14)
-                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                    .dynamicTypeSize(...commandTypeLimit)
             }
             Spacer(minLength: 0)
         }
@@ -2052,12 +2066,12 @@ struct NativeSessionView: View {
     private func macKeys(compact: Bool) -> some View {
         // There are always eight non-scrolling keys. Eager cells keep them present after
         // keyboard rotation/dismissal, when a lazy grid can retain a zero-sized viewport.
-        let columns = compact ? 8 : 4
+        let columns = PhoneCommandAccessibility.columns(compact: compact, accessible: accessibleCommands)
         return Grid(horizontalSpacing: 8, verticalSpacing: 8) {
             ForEach(0..<(8 / columns), id: \.self) { row in
                 GridRow {
                     ForEach(0..<columns, id: \.self) { column in
-                        macKey(at: row * columns + column, compact: compact)
+                        macKey(at: row * columns + column, compact: accessibleCommands ? false : compact)
                             .frame(maxWidth: .infinity)
                     }
                 }
@@ -2065,7 +2079,8 @@ struct NativeSessionView: View {
         }
         // Fixed-size keys: past xLarge their two-line titles truncate, so they stop growing there
         // and a long press shows the Large Content Viewer instead.
-        .dynamicTypeSize(...DynamicTypeSize.xLarge)
+        .dynamicTypeSize(...(accessibleCommands ? dynamicTypeSize : DynamicTypeSize.xLarge))
+        .accessibilityIdentifier(accessibleCommands ? "remote.keys.accessible" : "remote.keys.fixed")
     }
 
     @ViewBuilder private func macKey(at index: Int, compact: Bool) -> some View {
@@ -2136,15 +2151,15 @@ struct NativeSessionView: View {
                 Text(title)
                     .font(compact ? .caption2.weight(.medium) : .caption.weight(.medium))
                     .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.8)
-                    .frame(height: compact ? 26 : 30)
+                    .lineLimit(accessibleCommands ? nil : 2)
+                    .minimumScaleFactor(accessibleCommands ? 1 : 0.8)
+                    .frame(height: accessibleCommands ? nil : (compact ? 26 : 30))
                 if !compact {
                     Text(hint)
                         .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(Farside.Palette.ash)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .lineLimit(accessibleCommands ? nil : 1)
+                        .minimumScaleFactor(accessibleCommands ? 1 : 0.8)
                 }
             }
             .foregroundStyle(Farside.Palette.bone)
@@ -2279,13 +2294,43 @@ struct NativeSessionView: View {
     }
 
     /// Landscape and iPad: one row of keys over the picture, with Settings and Done at the end.
-    private var overlayControls: some View {
+    @ViewBuilder private var overlayControls: some View {
+        if accessibleCommands {
+            VStack(spacing: 10) {
+                HStack {
+                    Text("Controls").font(.headline).accessibilityAddTraits(.isHeader)
+                    Spacer(minLength: 8)
+                    Button { showOverlaySettings = true } label: { Image(systemName: "gearshape") }
+                        .buttonStyle(FarsideRoundButtonStyle(diameter: 44))
+                        .accessibilityLabel("Settings")
+                        .accessibilityIdentifier("remote.controls.settings")
+                    controlsDoneButton
+                }
+                ScrollView { macKeys(compact: false) }
+                    .accessibilityIdentifier("remote.controls.scroll")
+            }
+            .padding(12)
+            .frame(maxWidth: 860)
+            .frame(maxHeight: max(180, min(620, canvas.height * 0.8)))
+            .farsidePlate(Farside.Radius.sheet, fill: Farside.Palette.void2.opacity(0.97), stroke: Farside.Palette.line2)
+            .padding(.horizontal, 8)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { panelFrame = $0 }
+            .accessibilityIdentifier("remote.controls.content")
+        } else {
+            compactOverlayControls
+        }
+    }
+
+    private var compactOverlayControls: some View {
         HStack(alignment: .center, spacing: 10) {
             macKeys(compact: true)
                 .frame(maxWidth: .infinity)
             VStack(spacing: 6) {
                 Button { showOverlaySettings = true } label: { Image(systemName: "gearshape") }
-                    .buttonStyle(FarsideRoundButtonStyle(diameter: 40))
+                    .buttonStyle(FarsideRoundButtonStyle(diameter: PhoneCommandAccessibility.target(40, enabled: PhoneCommandAccessibility.targetsEnabled)))
+                    .frame(minWidth: PhoneCommandAccessibility.target(40, enabled: PhoneCommandAccessibility.targetsEnabled),
+                           minHeight: commandTargetHeight)
+                    .contentShape(.rect)
                     .accessibilityLabel("Settings")
                     .accessibilityIdentifier("remote.controls.settings")
                 controlsDoneButton
@@ -2655,7 +2700,7 @@ struct NativeSessionView: View {
                 }
             } footer: {
                 Text(model.automaticClipboardSupported
-                     ? DeviceWord.copy("Mac text copies arrive here automatically while you control it. Paste sends iPhone text only when you tap. Text only, up to 256 KB; items marked as passwords are never shared.")
+                     ? DeviceWord.copy("Mac text copies arrive here automatically while you control it. Paste sends this device’s text only when you tap. Text only, up to 256 KB; items marked as passwords are never shared.")
                      : "Send and copy from the dock’s Clip button. Text only, up to 256 KB. Farside reads your Mac’s clipboard only when you ask, and never shares items marked as passwords.")
                     .foregroundStyle(Farside.Palette.ash)
             }
@@ -2957,7 +3002,7 @@ struct NativeSessionView: View {
                 .toggleStyle(FarsideSwitchStyle())
                 .listRowBackground(Farside.Palette.panel)
             if streamStatsEnabled {
-                Text(DeviceWord.copy("Shows per-stage timing over the picture and records it on this iPhone for export."))
+                Text(DeviceWord.copy("Shows per-stage timing over the picture and records it on this device for export."))
                     .font(.footnote).foregroundStyle(Farside.Palette.ash)
                     .listRowBackground(Farside.Palette.panel)
                 Toggle("Read bench marker", isOn: $markerReadingEnabled)
@@ -3051,7 +3096,7 @@ struct NativeSessionView: View {
         } header: {
             sectionHeader("Feel")
         } footer: {
-            Text(DeviceWord.copy("Your iPhone draws the Mac pointer at every zoom level, larger when Larger Text is on. An older Mac companion shows its streamed pointer instead. While zoomed in, the picture eases after the pointer near an edge."))
+            Text(DeviceWord.copy("This device draws the Mac pointer at every zoom level, larger when Larger Text is on. An older Mac companion shows its streamed pointer instead. While zoomed in, the picture eases after the pointer near an edge."))
                 .foregroundStyle(Farside.Palette.ash)
         }
     }
@@ -3489,7 +3534,9 @@ private struct SessionPill: View {
                             .padding(.horizontal, 12)
                         }
                     }
-                    .frame(height: dynamicTypeSize.isAccessibilitySize ? 36 : 28)
+                    .frame(height: PhoneCommandAccessibility.target(dynamicTypeSize.isAccessibilitySize ? 36 : 28,
+                                                                  enabled: PhoneCommandAccessibility.targetsEnabled))
+                    .frame(minWidth: PhoneCommandAccessibility.target(42, enabled: PhoneCommandAccessibility.targetsEnabled))
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
@@ -3506,13 +3553,13 @@ private struct SessionPill: View {
                 .accessibilityAction(named: Text("Show keyboard")) { keyboard() }
                 if reconnecting {
                     Button("End", action: end)
-                        .buttonStyle(FarsideEndButtonStyle(height: 24))
+                        .buttonStyle(FarsideEndButtonStyle(height: PhoneCommandAccessibility.target(24, enabled: PhoneCommandAccessibility.targetsEnabled)))
                         .fixedSize()
                         .accessibilityLabel("End session")
                         .padding(.trailing, 4)
                 } else if canReturnToControl {
                     Button("Control", action: control)
-                        .buttonStyle(FarsidePrimaryButtonStyle(height: 24))
+                        .buttonStyle(FarsidePrimaryButtonStyle(height: PhoneCommandAccessibility.target(24, enabled: PhoneCommandAccessibility.targetsEnabled)))
                         .fixedSize()
                         .accessibilityLabel("Control desktop")
                         .padding(.trailing, 4)
@@ -3707,7 +3754,7 @@ private struct DropButtonStyle: ButtonStyle {
             .font(.body.weight(.semibold))
             .foregroundStyle(Farside.Palette.ink)
             .padding(.horizontal, 18)
-            .frame(minHeight: 42)
+            .frame(minHeight: PhoneCommandAccessibility.target(42, enabled: PhoneCommandAccessibility.targetsEnabled))
             .background(Farside.Palette.bone.opacity(configuration.isPressed ? 0.82 : 1),
                         in: .rect(cornerRadius: 12, style: .continuous))
             .contentShape(.rect)

@@ -5,7 +5,7 @@
 // Commerce and useful-session guidance
 "ANYWHERE_UNAVAILABLE" = "Anywhere n’est pas encore disponible.";
 "APP_STORE_OFFLINE" = "L’App Store n’a pas pu être contacté. Vérifiez votre connexion, puis réessayez.";
-"BENEFIT_ENCRYPTION" = "Chiffrement entre votre iPhone et votre Mac, même via notre relais";
+"BENEFIT_ENCRYPTION" = "Chiffrement entre cet appareil et votre Mac, même via notre service de connexion";
 "BENEFIT_ROUTE" = "Sur réseau cellulaire ou Wi-Fi, loin de chez vous";
 "BENEFIT_SETUP" = "Aucun VPN ni transfert de ports à configurer";
 "BILLING_RETRY" = "Apple n’a pas pu renouveler votre abonnement. Anywhere est suspendu. Mettez à jour votre moyen de paiement dans Réglages › Compte Apple.";

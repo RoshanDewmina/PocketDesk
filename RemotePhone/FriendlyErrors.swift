@@ -66,7 +66,7 @@ struct FriendlyError: Identifiable, Equatable {
         case .verifyFailed, .sessionGlitch: "Stopped to stay safe"
         case .keychain: "Pairing locked · unlock this \(DeviceWord.current)"
         case .codeRejected: "Pairing code not accepted"
-        case .relayUnavailable, .serviceNotReady: "Relay unavailable"
+        case .relayUnavailable, .serviceNotReady: "Anywhere unavailable"
         case .unreachable, .connectionLost: "Couldn’t reach it"
         case .screenSharingOff: "Screen sharing stopped"
         case .screenRecordingOff: "Screen Recording off on Mac"
@@ -175,8 +175,9 @@ struct FriendlyError: Identifiable, Equatable {
 
     static let declined = FriendlyError(kind: .declined, headline: "Your Mac said no",
                                         message: "Someone chose Decline on the Mac.",
-                                        fix: "If that was a mistake, pair again and choose Allow.",
-                                        action: .pairAgain)
+                                        fix: PhoneRecovery.enabled ? "If that was a mistake, try again and choose Allow on your Mac."
+                                            : "If that was a mistake, pair again and choose Allow.",
+                                        action: PhoneRecovery.enabled ? .retry : .pairAgain)
 
     static let approvalTimedOut = FriendlyError(kind: .approvalTimedOut, headline: "Nobody said yes",
                                                 message: "Your Mac asked, but nobody chose Allow in time.",
@@ -184,19 +185,20 @@ struct FriendlyError: Identifiable, Equatable {
 
     static let verifyFailed = FriendlyError(kind: .verifyFailed, headline: "Could not verify your Mac",
                                             message: "The secure handshake didn’t match, so Farside stopped.",
-                                            fix: "Try again. If it keeps happening, pair again.")
+                                            fix: PhoneRecovery.enabled ? "Try again. If it keeps happening, open Farside on your Mac and check it says Ready."
+                                                : "Try again. If it keeps happening, pair again.")
 
     static let keychain = FriendlyError(kind: .keychain, headline: "Could not save this pairing",
                                         message: "iOS didn’t let Farside store the pairing key.",
                                         fix: "Unlock this \(DeviceWord.current) and try again.")
 
-    static let relayUnavailable = FriendlyError(kind: .relayUnavailable, headline: "The relay is resting",
-                                                message: "The connection service couldn’t provide a relay route.",
-                                                fix: "Join the same Wi-Fi as your Mac, or try again later.")
+    static let relayUnavailable = FriendlyError(kind: .relayUnavailable, headline: "Anywhere is unavailable",
+                                                message: "Farside couldn’t set up an internet connection to your Mac just now.",
+                                                fix: "Check that both devices have internet access, then try again later.")
 
-    static let serviceNotReady = FriendlyError(kind: .serviceNotReady, headline: "The relay needs a nod",
-                                               message: "The connection service hasn’t approved this Mac yet.",
-                                               fix: "Approve it on the service, then try again.")
+    static let serviceNotReady = FriendlyError(kind: .serviceNotReady, headline: "Anywhere isn’t ready",
+                                               message: "Farside’s service couldn’t connect to this Mac yet.",
+                                               fix: "Open Farside on your Mac and check it says Ready, then try again.")
 
     static let connectionLost = FriendlyError(kind: .connectionLost, headline: "The line went quiet",
                                               message: "The connection dropped, and retrying didn’t bring it back.",
@@ -381,9 +383,82 @@ struct FriendlyErrorView: View {
     }
 }
 
-/// "Can't connect?": the five things worth checking, in order.
+/// Recovery remembers the attempted access path, rather than guessing from today's Wi-Fi.
+/// A direct internet connection is still Anywhere; media transport is not an access policy.
+enum PhoneRecovery {
+    enum Route: Equatable { case localNetwork, anywhere, unknown }
+    enum Failure: Equatable {
+        case unavailable, invalidPairing, revokedPairing, needsPlan, unverifiedPlan, localPermission
+
+        init(_ error: FriendlyError?) {
+            switch error?.kind {
+            case .codeRejected: self = .invalidPairing
+            case .needsPlan: self = .needsPlan
+            case .anywhereUnverified: self = .unverifiedPlan
+            case .localNetworkOff: self = .localPermission
+            default: self = .unavailable
+            }
+        }
+    }
+    static let key = "PocketDeskRouteAwareTroubleshooting"
+    static let enabled = resolve(UserDefaults.standard)
+    static func resolve(_ defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: key) == nil ? true : defaults.bool(forKey: key)
+    }
+    static func route(localOnly: Bool, couch: Bool, serviceAccess: String?, hasPlan: Bool) -> Route {
+        if localOnly || couch { return .localNetwork }
+        if serviceAccess == "local" { return .localNetwork }
+        if serviceAccess == "remote" || hasPlan { return .anywhere }
+        return .unknown
+    }
+    static func mayPairAgain(_ failure: Failure, enabled: Bool) -> Bool {
+        !enabled || failure == .invalidPairing || failure == .revokedPairing
+    }
+    static func showsSettings(route: Route, failure: Failure, enabled: Bool) -> Bool {
+        !enabled || route == .localNetwork || failure == .localPermission
+    }
+    static func steps(mac: String, route: Route, failure: Failure, enabled: Bool) -> [String] {
+        let common = ["\(mac) is awake and unlocked.", "Farside is running in the Mac’s menu bar."]
+        guard enabled else {
+            return common + ["Your \(DeviceWord.current) and Mac are on the same Wi-Fi.",
+                             "Local Network is on for Farside in Settings.",
+                             "Still stuck? Pair again from the Mac’s Farside menu."]
+        }
+        var steps = common
+        switch route {
+        case .localNetwork:
+            steps += ["This device and your Mac share the same Wi-Fi or local network.",
+                      "Local Network is on for Farside in Settings."]
+        case .anywhere:
+            steps += ["Both this device and your Mac have internet access.",
+                      "In Farside Anywhere, check your plan or choose Restore Purchases."]
+        case .unknown:
+            steps += ["Nearby? Use your Mac’s Wi-Fi and allow Local Network for Farside in Settings.",
+                      "Away? Both devices need internet access and an active Farside Anywhere plan."]
+        }
+        if failure == .needsPlan { steps += ["Away from your Mac? Open Farside Anywhere to see the plans."] }
+        if failure == .unverifiedPlan { steps += ["Your plan couldn’t be confirmed. Check Farside Anywhere and try again."] }
+        if mayPairAgain(failure, enabled: enabled) {
+            steps += ["This pairing is no longer valid. At your Mac, open Farside and scan a fresh pairing code."]
+        } else {
+            steps += ["Keep your saved pairing. Try again after checking these steps."]
+        }
+        return steps
+    }
+    static func error(_ error: FriendlyError, route: Route, enabled: Bool) -> FriendlyError {
+        guard enabled, route == .anywhere, error.kind == .unreachable else { return error }
+        var result = error
+        result.tipTitle = "Farside Anywhere"
+        result.tip = "Both devices need internet access. Check your plan in Farside Anywhere, then try again."
+        return result
+    }
+}
+
+/// Plain next steps for the access path the last connection attempted.
 struct TroubleshootSheet: View {
     var macName: String
+    var route: PhoneRecovery.Route
+    var failure: PhoneRecovery.Failure
     var retry: () -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
@@ -394,17 +469,18 @@ struct TroubleshootSheet: View {
                 VStack(alignment: .leading, spacing: Farside.Space.l) {
                     FarsideHeading("Trouble connecting?", accent: "connecting", size: 30)
                     VStack(spacing: 0) {
-                        check(1, "\(macName) is awake and unlocked.")
-                        check(2, "Farside is running in the Mac’s menu bar.")
-                        check(3, "Your \(DeviceWord.current) and Mac are on the same Wi-Fi.")
-                        check(4, "Local Network is on for Farside in Settings.")
-                        check(5, "Still stuck? Pair again from the Mac’s Farside menu.", last: true)
+                        let steps = PhoneRecovery.steps(mac: macName, route: route, failure: failure, enabled: PhoneRecovery.enabled)
+                        ForEach(Array(steps.enumerated()), id: \.offset) { index, text in
+                            check(index + 1, text, last: index == steps.count - 1)
+                        }
                     }
                     .farsidePlate()
-                    Button("Open Settings") {
-                        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                    if PhoneRecovery.showsSettings(route: route, failure: failure, enabled: PhoneRecovery.enabled) {
+                        Button("Open Settings") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                        }
+                        .buttonStyle(FarsideLinkButtonStyle())
                     }
-                    .buttonStyle(FarsideLinkButtonStyle())
                 }
                 .padding(Farside.Space.l)
                 .frame(maxWidth: 560, alignment: .leading)

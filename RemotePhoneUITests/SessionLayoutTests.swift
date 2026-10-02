@@ -222,6 +222,109 @@ final class SessionLayoutTests: XCTestCase {
     }
 
     @MainActor
+    func testTroubleshootingShowsAttemptRouteAndRollbackWithoutPairingReplacement() {
+        let app = XCUIApplication()
+        for (route, enabled) in [("anywhere", true), ("local", true), ("anywhere", false)] {
+            app.launchArguments = ["--ui-demo-mac", "--ui-troubleshoot-\(route)",
+                                   "-PocketDeskRouteAwareTroubleshooting", enabled ? "YES" : "NO"]
+            app.launch()
+            XCTAssertTrue(app.staticTexts["Trouble connecting?"].waitForExistence(timeout: 5))
+            let internet = app.staticTexts["Both this device and your Mac have internet access."]
+            if enabled && route == "anywhere" {
+                XCTAssertTrue(internet.exists)
+                XCTAssertFalse(app.buttons["Open Settings"].exists)
+                XCTAssertTrue(app.staticTexts["Keep your saved pairing. Try again after checking these steps."].exists)
+            } else {
+                XCTAssertFalse(internet.exists)
+                XCTAssertTrue(app.buttons["Open Settings"].exists)
+            }
+            if !enabled {
+                XCTAssertTrue(app.staticTexts["Still stuck? Pair again from the Mac’s Farside menu."].exists)
+            }
+            attachScreenshot("Troubleshooting \(route) \(enabled ? "ON" : "OFF")")
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testAccessibleCommandListAndRollbackAtLargestTextSize() {
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = XCUIApplication()
+        for enabled in [false, true] {
+            for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+                XCUIDevice.shared.orientation = orientation
+                app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill", "--ui-controls-check",
+                    "-PocketDeskAccessibleKeyList", enabled ? "YES" : "NO",
+                    "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+                launchOfflineFixture(app)
+                let keys = app.descendants(matching: .any)[enabled ? "remote.keys.accessible" : "remote.keys.fixed"].firstMatch
+                XCTAssertTrue(keys.waitForExistence(timeout: 5))
+                if enabled {
+                    let scroll = app.scrollViews["remote.controls.scroll"].firstMatch
+                    XCTAssertTrue(scroll.exists)
+                    let mission = app.buttons["Mission Control"].firstMatch
+                    let left = app.buttons["Move left a Space"].firstMatch
+                    XCTAssertEqual(mission.frame.minY, left.frame.minY, accuracy: 2, "Two columns share the first row")
+                    let desktop = app.buttons["Show Desktop"].firstMatch
+                    for _ in 0..<8 where !desktop.isHittable { scroll.swipeUp() }
+                    XCTAssertTrue(desktop.isHittable, "Last command stays reachable by scrolling")
+                    XCTAssertGreaterThanOrEqual(desktop.frame.height, 44)
+                    XCTAssertGreaterThanOrEqual(desktop.frame.width, 44)
+                    XCTAssertFalse(app.descendants(matching: .any)["remote.keys.fixed"].firstMatch.exists)
+                } else {
+                    XCTAssertFalse(app.descendants(matching: .any)["remote.keys.accessible"].firstMatch.exists)
+                }
+                attachScreenshot("AX5 command list \(enabled ? "ON" : "OFF") \(orientation)")
+                app.terminate()
+            }
+        }
+    }
+
+    @MainActor
+    func testHandleAndDropTouchTargetsAndRollback() {
+        let app = XCUIApplication()
+        for enabled in [false, true] {
+            app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill", "--ui-hold-preview=explicit",
+                                   "-PocketDeskSessionTouchTargets", enabled ? "YES" : "NO"]
+            launchOfflineFixture(app)
+            revealDock(app)
+            let handle = app.buttons["Hide controls"].firstMatch
+            XCTAssertTrue(handle.waitForExistence(timeout: 5))
+            let regular = app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists
+            XCTAssertEqual(handle.frame.height, enabled ? 44 : (regular ? 28 : 26), accuracy: 1)
+            let drop = app.buttons["Drop"].firstMatch
+            XCTAssertTrue(drop.waitForExistence(timeout: 5))
+            XCTAssertGreaterThanOrEqual(drop.frame.height, enabled ? 44 : 42)
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testKeyboardTouchTargetsAndRollback() {
+        let app = XCUIApplication()
+        for enabled in [false, true] {
+            app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill", "--ui-software-keyboard",
+                                   "-PocketDeskSessionTouchTargets", enabled ? "YES" : "NO"]
+            launchOfflineFixture(app)
+            let handle = app.buttons["Show controls"]
+            XCTAssertTrue(handle.waitForExistence(timeout: 5))
+            if app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists {
+                XCTAssertGreaterThanOrEqual(handle.frame.width, enabled ? 44 : 42)
+                XCTAssertEqual(handle.frame.height, enabled ? 44 : 28, accuracy: 1)
+            }
+            handle.doubleTap()
+            let command = app.buttons["Command"].firstMatch
+            let escape = app.buttons["Escape"].firstMatch
+            XCTAssertTrue(command.waitForExistence(timeout: 5))
+            XCTAssertEqual(command.frame.height, enabled ? 44 : 40, accuracy: 1)
+            XCTAssertEqual(command.frame.width, enabled ? 44 : 42, accuracy: 1)
+            XCTAssertEqual(escape.frame.height, enabled ? 44 : 40, accuracy: 1)
+            XCTAssertEqual(escape.frame.width, enabled ? 44 : 40, accuracy: 1)
+            app.terminate()
+        }
+    }
+
+    @MainActor
     func testPictureQualityCanSwitchWithoutOpeningKeyboard() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill"]

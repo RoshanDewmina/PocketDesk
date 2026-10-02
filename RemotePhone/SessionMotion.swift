@@ -250,7 +250,7 @@ struct PairingBurstView: View {
             .frame(width: 240, height: 240)
             VStack(spacing: Farside.Space.xs) {
                 Text("Paired").farsideCaption(Farside.Palette.bone)
-                Text("Now choose Allow on your Mac.")
+                Text("Your Mac is paired.")
                     .font(.body)
                     .foregroundStyle(Farside.Palette.ash)
                 AwaitingAllowMark().padding(.top, Farside.Space.s)
@@ -269,7 +269,7 @@ struct PairingBurstView: View {
         }
         .sensoryFeedback(.success, trigger: settled)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Paired. Now choose Allow on your Mac.")
+        .accessibilityLabel("Paired with your Mac.")
         .accessibilityIdentifier("pairing.success")
     }
 }

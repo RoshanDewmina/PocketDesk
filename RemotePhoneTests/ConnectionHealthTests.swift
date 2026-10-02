@@ -9,6 +9,57 @@ final class ConnectionHealthTests: XCTestCase {
         .connectionLost, .sessionGlitch
     ]
 
+    func testRecoveryMatchesAccessRouteAndPreservesTrustExceptExplicitInvalidation() {
+        let local = PhoneRecovery.steps(mac: "Mac", route: .localNetwork, failure: .unavailable, enabled: true)
+        XCTAssertTrue(local.contains { $0.contains("Local Network") })
+        let away = PhoneRecovery.steps(mac: "Mac", route: .anywhere, failure: .unavailable, enabled: true)
+        XCTAssertTrue(away.contains { $0.contains("internet access") })
+        XCTAssertFalse(away.contains { $0.contains("same Wi-Fi") || $0.contains("Local Network") })
+        XCTAssertTrue(away.contains { $0.contains("Keep your saved pairing") })
+        XCTAssertFalse(PhoneRecovery.showsSettings(route: .anywhere, failure: .unavailable, enabled: true))
+        XCTAssertTrue(PhoneRecovery.showsSettings(route: .localNetwork, failure: .unavailable, enabled: true))
+        for failure in [PhoneRecovery.Failure.unavailable, .needsPlan, .unverifiedPlan, .localPermission] {
+            XCTAssertFalse(PhoneRecovery.mayPairAgain(failure, enabled: true))
+        }
+        for failure in [PhoneRecovery.Failure.invalidPairing, .revokedPairing] {
+            XCTAssertTrue(PhoneRecovery.mayPairAgain(failure, enabled: true))
+            XCTAssertTrue(PhoneRecovery.steps(mac: "Mac", route: .anywhere, failure: failure, enabled: true)
+                .contains { $0.contains("scan a fresh pairing code") })
+        }
+        XCTAssertEqual(PhoneRecovery.Failure(.verifyFailed), .unavailable)
+        XCTAssertEqual(PhoneRecovery.Failure(.codeRejected), .invalidPairing)
+        XCTAssertEqual(PhoneRecovery.Failure(.anywhereUnverified), .unverifiedPlan)
+        let original = FriendlyError.unreachable("Mac")
+        XCTAssertEqual(PhoneRecovery.error(original, route: .anywhere, enabled: true).tipTitle, "Farside Anywhere")
+        XCTAssertEqual(PhoneRecovery.error(original, route: .anywhere, enabled: false).tipTitle, original.tipTitle)
+    }
+
+    func testRecoveryRollbackAndRouteAuthority() {
+        let legacy = PhoneRecovery.steps(mac: "Mac", route: .anywhere, failure: .unavailable, enabled: false)
+        XCTAssertEqual(legacy.count, 5)
+        XCTAssertTrue(legacy[2].contains("same Wi-Fi"))
+        XCTAssertTrue(legacy.last!.contains("Pair again"))
+        XCTAssertTrue(PhoneRecovery.showsSettings(route: .anywhere, failure: .unavailable, enabled: false))
+        XCTAssertEqual(PhoneRecovery.route(localOnly: true, couch: false, serviceAccess: "remote", hasPlan: true), .localNetwork)
+        XCTAssertEqual(PhoneRecovery.route(localOnly: false, couch: true, serviceAccess: "remote", hasPlan: true), .localNetwork)
+        XCTAssertEqual(PhoneRecovery.route(localOnly: false, couch: false, serviceAccess: "local", hasPlan: true), .localNetwork)
+        XCTAssertEqual(PhoneRecovery.route(localOnly: false, couch: false, serviceAccess: "remote", hasPlan: false), .anywhere)
+        XCTAssertEqual(PhoneRecovery.route(localOnly: false, couch: false, serviceAccess: nil, hasPlan: true), .anywhere)
+        XCTAssertEqual(PhoneRecovery.route(localOnly: false, couch: false, serviceAccess: nil, hasPlan: false), .unknown)
+        let defaults = UserDefaults(suiteName: "b8-recovery-tests")!
+        defer { defaults.removePersistentDomain(forName: "b8-recovery-tests") }
+        defaults.removePersistentDomain(forName: "b8-recovery-tests")
+        XCTAssertTrue(PhoneRecovery.resolve(defaults))
+        defaults.set(false, forKey: PhoneRecovery.key)
+        XCTAssertFalse(PhoneRecovery.resolve(defaults))
+        defaults.set(true, forKey: PhoneRecovery.key)
+        XCTAssertTrue(PhoneRecovery.resolve(defaults))
+        defaults.set("NO", forKey: PhoneRecovery.key)
+        XCTAssertFalse(PhoneRecovery.resolve(defaults))
+        defaults.set("YES", forKey: PhoneRecovery.key)
+        XCTAssertTrue(PhoneRecovery.resolve(defaults))
+    }
+
     func testEveryFailureBecomesOneStateWithOneNextStep() {
         for failure in everyFailure {
             let health = ConnectionHealth.after(failure)

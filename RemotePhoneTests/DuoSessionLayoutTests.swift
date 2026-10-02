@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import PocketDeskRemote
 
 final class DuoSessionLayoutTests: XCTestCase {
@@ -54,5 +55,42 @@ final class DuoSessionLayoutTests: XCTestCase {
             occlusions: [CGRect(x: 450, y: 0, width: 40, height: 40)])
         XCTAssertEqual(layout.reservedFrames, [CGRect(x: 450, y: 0, width: 16, height: 40)])
         XCTAssertTrue(DuoSessionLayout(bounds: layout.bounds).reservedFrames.isEmpty)
+    }
+}
+
+final class PhoneCommandAccessibilityTests: XCTestCase {
+    func testAccessibleCommandsUseTwoColumnsOnlyWhenExplicitlyEnabledAtAccessibilitySizes() {
+        for size in [DynamicTypeSize.accessibility1, .accessibility5] {
+            XCTAssertTrue(PhoneCommandAccessibility.usesKeyList(typeSize: size, enabled: true))
+            XCTAssertFalse(PhoneCommandAccessibility.usesKeyList(typeSize: size, enabled: false))
+        }
+        XCTAssertFalse(PhoneCommandAccessibility.usesKeyList(typeSize: .xxxLarge, enabled: true))
+        XCTAssertEqual(PhoneCommandAccessibility.columns(compact: true, accessible: true), 2)
+        XCTAssertEqual(PhoneCommandAccessibility.columns(compact: false, accessible: true), 2)
+        XCTAssertEqual(PhoneCommandAccessibility.columns(compact: true, accessible: false), 8)
+        XCTAssertEqual(PhoneCommandAccessibility.columns(compact: false, accessible: false), 4)
+        XCTAssertEqual(PhoneCommandAccessibility.headingSize(scaled: 120, base: 30, accessible: true), 120)
+        XCTAssertEqual(PhoneCommandAccessibility.headingSize(scaled: 120, base: 30, accessible: false), 48)
+    }
+    func testTouchTargetsAndDefaultOffKeyListBothRestoreTheirLegacyState() {
+        XCTAssertEqual(PhoneCommandAccessibility.target(40, enabled: true), 44)
+        XCTAssertEqual(PhoneCommandAccessibility.target(42, enabled: true), 44)
+        XCTAssertEqual(PhoneCommandAccessibility.target(46, enabled: true), 46)
+        XCTAssertEqual(PhoneCommandAccessibility.target(40, enabled: false), 40)
+        let defaults = UserDefaults(suiteName: "b8-command-tests")!
+        defer { defaults.removePersistentDomain(forName: "b8-command-tests") }
+        defaults.removePersistentDomain(forName: "b8-command-tests")
+        XCTAssertFalse(PhoneCommandAccessibility.resolve(defaults, key: PhoneCommandAccessibility.keyListKey, defaultValue: false))
+        XCTAssertTrue(PhoneCommandAccessibility.resolve(defaults, key: PhoneCommandAccessibility.targetsKey, defaultValue: true))
+        defaults.set("YES", forKey: PhoneCommandAccessibility.keyListKey)
+        XCTAssertTrue(PhoneCommandAccessibility.resolve(defaults, key: PhoneCommandAccessibility.keyListKey, defaultValue: false))
+        defaults.set("NO", forKey: PhoneCommandAccessibility.targetsKey)
+        XCTAssertFalse(PhoneCommandAccessibility.resolve(defaults, key: PhoneCommandAccessibility.targetsKey, defaultValue: true))
+        for flag in [true, false] {
+            for key in [PhoneCommandAccessibility.keyListKey, PhoneCommandAccessibility.targetsKey] {
+                defaults.set(flag, forKey: key)
+                XCTAssertEqual(PhoneCommandAccessibility.resolve(defaults, key: key, defaultValue: !flag), flag)
+            }
+        }
     }
 }

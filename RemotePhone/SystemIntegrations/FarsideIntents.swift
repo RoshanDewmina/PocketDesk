@@ -96,7 +96,7 @@ struct ConnectToMacIntent: AppIntent {
             try await $mac.requestDisambiguation(among: options, dialog: "Which Mac?")
         }
         SystemRequestInbox.shared.post(.connect(macID: target.id))
-        return .result(dialog: "Connecting to \(target.name).")
+        return .result(dialog: "Opening \(target.name) in Farside.")
     }
 }
 

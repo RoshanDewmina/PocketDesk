@@ -14,6 +14,45 @@ final class FarsideDesignTests: XCTestCase {
         XCTAssertNotEqual(info["UIRequiresFullScreen"] as? Bool, true)
     }
 
+    func testPairingAnnouncementLaunchSwitchDefaultsOnAndHonorsBothOverrides() {
+        let defaults = UserDefaults(suiteName: "b8-pairing-switch-tests")!
+        defer { defaults.removePersistentDomain(forName: "b8-pairing-switch-tests") }
+        defaults.removePersistentDomain(forName: "b8-pairing-switch-tests")
+        XCTAssertTrue(PairingAnnouncementSettings.resolve(defaults: defaults))
+        defaults.set(false, forKey: PairingAnnouncementSettings.key)
+        XCTAssertFalse(PairingAnnouncementSettings.resolve(defaults: defaults))
+        defaults.set(true, forKey: PairingAnnouncementSettings.key)
+        XCTAssertTrue(PairingAnnouncementSettings.resolve(defaults: defaults))
+    }
+
+    func testPairingAnnouncementsAreOncePerOutcomeWhenEnabled() {
+        var policy = PairingAnnouncementPolicy(enabled: true)
+        let failure = PairingAnnouncementOutcome.failure("Pairing was declined on the Mac.")
+        let paired = PairingAnnouncementOutcome.paired
+
+        XCTAssertTrue(policy.shouldDisplayFailure(status: "Pairing was declined on the Mac.", coordinatorRunning: false))
+        XCTAssertFalse(policy.shouldDisplayFailure(status: "Pairing was declined on the Mac.", coordinatorRunning: true))
+        XCTAssertFalse(policy.shouldDisplayFailure(status: "Disconnected", coordinatorRunning: false))
+        XCTAssertEqual(policy.announcement(for: failure), "Pairing was declined on the Mac.")
+        XCTAssertNil(policy.announcement(for: failure), "The same failed outcome must not be announced twice")
+        XCTAssertEqual(policy.announcement(for: paired), "Paired with your Mac.")
+        XCTAssertNil(policy.announcement(for: paired), "Success must not be announced twice")
+        policy.beginAttempt()
+        XCTAssertEqual(policy.announcement(for: failure), "Pairing was declined on the Mac.",
+                       "A new pairing attempt may announce the same result again")
+    }
+
+    func testDisabledPairingAnnouncementsPreserveSilentBehavior() {
+        var policy = PairingAnnouncementPolicy(enabled: false)
+        let failure = PairingAnnouncementOutcome.failure("That code has expired.")
+        let paired = PairingAnnouncementOutcome.paired
+
+        XCTAssertFalse(policy.shouldDisplayFailure(status: "Pairing was declined on the Mac.", coordinatorRunning: false))
+        XCTAssertNil(policy.announcement(for: failure))
+        XCTAssertNil(policy.announcement(for: failure))
+        XCTAssertNil(policy.announcement(for: paired))
+    }
+
     @MainActor
     func testDeviceWordPreservesPhoneCopyAndNamesIPadInEveryWindowWidth() {
         XCTAssertEqual(DeviceWord.name(for: .phone), "iPhone")
