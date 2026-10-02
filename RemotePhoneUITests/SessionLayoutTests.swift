@@ -287,14 +287,16 @@ final class SessionLayoutTests: XCTestCase {
             app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill", "--ui-hold-preview=explicit",
                                    "-PocketDeskSessionTouchTargets", enabled ? "YES" : "NO"]
             launchOfflineFixture(app)
+            let drop = app.buttons["Drop"].firstMatch
+            XCTAssertTrue(drop.waitForExistence(timeout: 5))
+            XCTAssertGreaterThanOrEqual(drop.frame.height, enabled ? 44 : 42)
+            // Revealing chrome deliberately releases held input; measure Drop while it is held.
             revealDock(app)
             let handle = app.buttons["Hide controls"].firstMatch
             XCTAssertTrue(handle.waitForExistence(timeout: 5))
             let regular = app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists
             XCTAssertEqual(handle.frame.height, enabled ? 44 : (regular ? 28 : 26), accuracy: 1)
-            let drop = app.buttons["Drop"].firstMatch
-            XCTAssertTrue(drop.waitForExistence(timeout: 5))
-            XCTAssertGreaterThanOrEqual(drop.frame.height, enabled ? 44 : 42)
+            XCTAssertTrue(drop.waitForNonExistence(timeout: 3), "Revealing the dock must still release held input")
             app.terminate()
         }
     }
@@ -814,6 +816,8 @@ final class SessionLayoutTests: XCTestCase {
         app.launch()
         let showControls = app.buttons["Show controls"]
         if showControls.waitForExistence(timeout: 3) { return }
+        if app.launchArguments.contains("--ui-controls-check"),
+           app.descendants(matching: .any)["remote.controls.content"].firstMatch.waitForExistence(timeout: 3) { return }
         let returnButton = app.buttons["Return to Farside"]
         guard returnButton.waitForExistence(timeout: 5) else {
             return XCTFail("Offline fixture must either open directly or offer explicit privacy recovery")
