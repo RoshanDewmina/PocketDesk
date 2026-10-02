@@ -169,6 +169,30 @@ final class SmoothMotionPresenterTests: XCTestCase {
         XCTAssertEqual(shown, ["1"])
         XCTAssertFalse(presenter.hasPending)
     }
+
+    func testAnOverdueMidpointIsDroppedAndItsSourceShownAtOnce() {
+        var shown: [String] = []
+        let presenter = SmoothMotionPresenter<String>(deliver: { shown.append($0) })
+        let tick = 1.0 / 120
+        XCTAssertTrue(presenter.presentNow("1", order: 2, at: 0))
+        presenter.enqueue([.init(payload: "1.5", order: 3, spacing: 0, arrival: nil, deadline: 0.0334),
+                           .init(payload: "2", order: 4, spacing: 1.0 / 120, arrival: 0.0167)])
+        XCTAssertEqual(presenter.pump(at: 0.04, tick: tick)?.order, 4, "past its deadline the midpoint is skipped")
+        XCTAssertEqual(shown, ["1", "2"])
+        XCTAssertEqual(presenter.dropped, 1)
+        XCTAssertFalse(presenter.hasPending)
+
+        presenter.enqueue([.init(payload: "2.5", order: 5, spacing: 0, arrival: nil, deadline: 0.07),
+                           .init(payload: "3", order: 6, spacing: 1.0 / 120, arrival: 0.05)])
+        presenter.dropMidpoints()
+        XCTAssertEqual(presenter.pump(at: 0.055, tick: tick)?.order, 6, "a newer source arrived: the midpoint is stale")
+        XCTAssertEqual(shown, ["1", "2", "3"])
+        XCTAssertEqual(presenter.dropped, 2)
+
+        presenter.enqueue([.init(payload: "3.5", order: 7, spacing: 0, arrival: nil, deadline: 0.09),
+                           .init(payload: "4", order: 8, spacing: 1.0 / 120, arrival: 0.07)])
+        XCTAssertEqual(presenter.pump(at: 0.075, tick: tick)?.order, 7, "a midpoint within its deadline is still shown")
+    }
 }
 
 final class SmoothMotionPipelineTests: XCTestCase {
@@ -184,15 +208,18 @@ final class SmoothMotionPipelineTests: XCTestCase {
         makeController(mode: .always)
     }
 
-    private func makeController(mode: SmoothMotionMode, supported: Bool = true) {
+    private func makeController(mode: SmoothMotionMode, supported: Bool = true, limits: InterpolationLimits = .documented,
+                                fitOversize: Bool = false, midpointDeadline: Bool = true) {
         let environment = SmoothMotionController.Environment(
             makeEngine: { [unowned self] in supported ? engine : nil },
             supported: supported,
-            limits: .documented,
+            limits: limits,
             upscaleLimits: nil,
             now: { [unowned self] in clock },
             thermal: { [unowned self] in thermal },
-            queue: DispatchQueue(label: "SmoothMotionTests"))
+            queue: DispatchQueue(label: "SmoothMotionTests"),
+            fitOversize: fitOversize,
+            midpointDeadline: midpointDeadline)
         controller = SmoothMotionController(mode: mode, environment: environment)
         delivered = []
         controller.deliver = { [unowned self] in delivered.append($0) }
@@ -228,6 +255,49 @@ final class SmoothMotionPipelineTests: XCTestCase {
         let snapshot = controller.diagnostics.snapshot()
         XCTAssertEqual(snapshot.interpolatedFrames, 1)
         XCTAssertEqual(try XCTUnwrap(snapshot.addedLatencyP95Ms), (0.035 + 1.0 / 120 - 0.0333) * 1000, accuracy: 0.5)
+    }
+
+    func testALateMidpointIsSkippedSoItsSourceIsNotHeldBehindIt() throws {
+        let frames = try (0..<3).map { try Self.frame(width: 64, height: 48, luma: UInt8(40 * $0)) }
+        for (index, frame) in frames.enumerated() { send(frame, at: Double(index) * 0.0167) }
+        XCTAssertEqual(delivered.count, 2, "frame 2 is held for its midpoint")
+        tick(at: 0.0334 + 0.0167 + 0.002)
+        XCTAssertTrue(delivered.last?.frame === frames[2], "one source interval later the source goes, not the midpoint")
+        XCTAssertEqual(delivered.count, 3)
+        XCTAssertEqual(controller.diagnostics.snapshot().droppedFrames, 1)
+
+        makeController(mode: .always, midpointDeadline: false)
+        for (index, frame) in frames.enumerated() { send(frame, at: 1 + Double(index) * 0.0167) }
+        tick(at: 1.0334 + 0.0167 + 0.002)
+        let late = try XCTUnwrap(delivered.last?.frame.buffer as? RTCCVPixelBuffer)
+        XCTAssertTrue(engine.producedMiddles.contains { $0 === late.pixelBuffer }, "kill switch: the late midpoint is shown")
+    }
+
+    func testAnOversizedSourceIsShownAtItsDecodedSizeAndNotInterpolated() throws {
+        let small = InterpolationLimits(maxDimension: 64, maxPixels: 64 * 48)
+        makeController(mode: .always, limits: small)
+        let frames = try (0..<3).map { try Self.frame(width: 80, height: 60, luma: UInt8(40 * $0)) }
+        for (index, frame) in frames.enumerated() {
+            send(frame, at: Double(index) * 0.0167)
+            XCTAssertTrue(delivered.last?.frame === frame, "frame \(index) is the decoded frame itself")
+        }
+        XCTAssertEqual(delivered.count, frames.count)
+        XCTAssertTrue(engine.started.isEmpty)
+        XCTAssertTrue(engine.pairs.isEmpty)
+        XCTAssertEqual(controller.diagnostics.snapshot().state, SmoothMotionBlock.size.rawValue)
+
+        makeController(mode: .always, limits: small, fitOversize: true)
+        send(frames[0], at: 1)
+        send(frames[1], at: 1.0167)
+        let primed = try XCTUnwrap(delivered.last?.frame.buffer as? RTCCVPixelBuffer)
+        XCTAssertEqual(engine.started.map(\.input.width), [64], "kill switch: the old fitted interpolation")
+        XCTAssertEqual(CVPixelBufferGetWidth(primed.pixelBuffer), 64, "and the source is shown from the fitted copy")
+        send(frames[2], at: 1.0334)
+        tick(at: 1.035)
+        tick(at: 1.035 + 1.0 / 120)
+        let source = try XCTUnwrap(delivered.last?.frame.buffer as? RTCCVPixelBuffer)
+        XCTAssertFalse(engine.producedMiddles.contains { $0 === source.pixelBuffer })
+        XCTAssertEqual(CVPixelBufferGetWidth(source.pixelBuffer), 64)
     }
 
     func testGeometryChangeReconfiguresAndNeverPairsMismatchedFrames() throws {

@@ -31,6 +31,8 @@ final class SmoothMotionController: @unchecked Sendable {
         var now: () -> TimeInterval
         var thermal: () -> ProcessInfo.ThermalState
         var queue: DispatchQueue
+        var fitOversize = SmoothMotionFitOversizeSwitch.isOn
+        var midpointDeadline = SmoothMotionMidpointDeadlineSwitch.isOn
 
         static var live: Environment {
             Environment(makeEngine: InterpolationAvailability.makeEngine,
@@ -211,7 +213,7 @@ final class SmoothMotionController: @unchecked Sendable {
         lastGeometry = source?.geometry
         let plan = source.flatMap {
             InterpolationPlan.make(for: $0.geometry, limits: environment.limits, upscaleLimits: environment.upscaleLimits,
-                                   upscale: upscale, fitOversize: true)
+                                   upscale: upscale, fitOversize: environment.fitOversize)
         }
         let block = currentBlock(at: now, source: source, plan: plan)
         policy.block = block
@@ -264,6 +266,7 @@ final class SmoothMotionController: @unchecked Sendable {
             presentDirect(frame, marker, order: order, at: now, arrival: nil)
             return
         }
+        if environment.midpointDeadline { presenter.dropMidpoints() }
         let submission = interpolator.submit(time: now, setup: plan.setup, prepare: { [preparer] in
             preparer.input(for: source, setup: plan.setup)
         }, completion: { [weak self] outcome in
@@ -297,7 +300,8 @@ final class SmoothMotionController: @unchecked Sendable {
             let sourceOutput: Output = (shown.map { Self.frame($0, like: source) } ?? frame, marker)
             let spacing = min(max(interval / 2, 1.0 / 120), 1.0 / 40)
             presenter.enqueue([
-                .init(payload: (Self.frame(frames.middle, like: source), nil), order: order - 1, spacing: 0, arrival: nil),
+                .init(payload: (Self.frame(frames.middle, like: source), nil), order: order - 1, spacing: 0, arrival: nil,
+                      deadline: environment.midpointDeadline ? arrival + interval : nil),
                 .init(payload: sourceOutput, order: order, spacing: spacing, arrival: arrival),
             ])
         case .primed(let input):
@@ -385,4 +389,21 @@ final class SmoothMotionController: @unchecked Sendable {
                                        cropWidth: cropWidth, cropHeight: cropHeight, cropX: cropX, cropY: cropY)
         return RTCVideoFrame(buffer: wrapped, rotation: source.rotation, timeStampNs: 0)
     }
+}
+
+/// Kill switch for full-size pass-through (`defaults write com.roshan.PocketDesk.Remote
+/// PocketDeskSmoothMotionFitOversize -bool YES`, then relaunch the phone app). YES restores
+/// interpolating a source above the interpolator's limit from a fitted copy, which also shows the
+/// source frames at that smaller size while engaged.
+enum SmoothMotionFitOversizeSwitch {
+    static let defaultsKey = "PocketDeskSmoothMotionFitOversize"
+    static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? false
+}
+
+/// Kill switch for the midpoint deadline (`defaults write com.roshan.PocketDesk.Remote
+/// PocketDeskSmoothMotionMidpointDeadline -bool NO`, then relaunch the phone app). NO shows every
+/// midpoint however late its pair finished, and the source frame waits behind it.
+enum SmoothMotionMidpointDeadlineSwitch {
+    static let defaultsKey = "PocketDeskSmoothMotionMidpointDeadline"
+    static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
 }
