@@ -107,6 +107,74 @@ final class AnywherePaywallUITests: XCTestCase {
         XCTAssertTrue(app.buttons["anywhere.notNow"].waitForExistence(timeout: 10), "The plan sheet opens")
     }
 
+    @MainActor
+    func testAccessibilityXXXLPaywallCanScrollAndDismissInPortrait() {
+        checkAccessibilityPaywallScrollAndDismiss(orientation: .portrait)
+    }
+
+    @MainActor
+    func testAccessibilityXXXLPaywallCanScrollAndDismissInLandscape() {
+        checkAccessibilityPaywallScrollAndDismiss(orientation: .landscapeLeft)
+    }
+
+    @MainActor
+    func testAccessibilityXXXLPaywallCloseRemainsReachableInLandscape() {
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = launchAccessibilityPaywall(orientation: .landscapeLeft)
+        let close = app.buttons["anywhere.close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        XCTAssertTrue(close.isHittable)
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(close.frame), "Close stays fully inside the window")
+        close.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["anywhere.paywall"].firstMatch.waitForNonExistence(timeout: 5))
+    }
+
+    @MainActor
+    private func checkAccessibilityPaywallScrollAndDismiss(orientation: UIDeviceOrientation) {
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = launchAccessibilityPaywall(orientation: orientation)
+        let yearly = app.buttons["anywhere.plan.yearly"]
+        XCTAssertTrue(yearly.waitForExistence(timeout: 15), "StoreKit fixture plans must load")
+        let paywall = app.descendants(matching: .any)["anywhere.paywall"].firstMatch
+        let scroll = paywall.elementType == .scrollView ? paywall : paywall.scrollViews.firstMatch
+        XCTAssertTrue(scroll.exists, "Scroll the paywall rather than the underlying Home")
+        reveal(yearly, in: scroll)
+        XCTAssertTrue(yearly.isHittable, "The plan remains reachable at AX-XXXL")
+        let privacy = app.buttons["anywhere.privacy"]
+        reveal(privacy, in: scroll)
+        XCTAssertTrue(privacy.isHittable, "Purchase information and links can be reached by scrolling")
+        let notNow = app.buttons["anywhere.notNow"]
+        reveal(notNow, in: scroll)
+        XCTAssertTrue(notNow.isHittable, "Not now stays reachable after the purchase information")
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(notNow.frame), "Dismissal stays fully inside the window")
+        attach(app, orientation == .portrait ? "paywall-axxxl-portrait-dismiss" : "paywall-axxxl-landscape-dismiss")
+        notNow.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["anywhere.paywall"].firstMatch.waitForNonExistence(timeout: 5))
+    }
+
+    @MainActor
+    private func reveal(_ element: XCUIElement, in scroll: XCUIElement) {
+        for _ in 0..<24 {
+            let frame = element.frame
+            // Avoid requesting an activation point for a fully offscreen link.
+            if scroll.frame.contains(frame) && element.isHittable { return }
+            let above = frame.minY < scroll.frame.minY
+            let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: above ? 0.35 : 0.75))
+            let end = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: above ? 0.75 : 0.35))
+            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.1)
+        }
+    }
+
+    @MainActor
+    private func launchAccessibilityPaywall(orientation: UIDeviceOrientation) -> XCUIApplication {
+        XCUIDevice.shared.orientation = orientation
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-paywall", "-UIPreferredContentSizeCategoryName",
+                               "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        return app
+    }
+
     private func attach(_ app: XCUIApplication, _ name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name

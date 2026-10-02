@@ -1,6 +1,10 @@
 # Apple API reference and freshness record
 
-Latest focused refresh **1 October 2026**; original capture/transport snapshot **12 September 2026**. This is a focused engineering reference, subordinate to [PRODUCT.md](../PRODUCT.md). It records the relevant material actually inspected, not a claim to have read all Apple documentation or demonstrated runtime compatibility.
+Latest focused refresh **2 October 2026**; original capture/transport snapshot **12 September 2026**. This is a focused engineering reference, subordinate to [PRODUCT.md](../PRODUCT.md). It records the relevant material actually inspected, not a claim to have read all Apple documentation or demonstrated runtime compatibility.
+
+## Accessibility layout refresh — 2 October 2026
+
+Codex-a11y re-fetched the live [iOS 27 release notes](https://developer.apple.com/documentation/ios-ipados-release-notes/ios-ipados-27-release-notes), [ViewThatFits](https://developer.apple.com/documentation/swiftui/viewthatfits) and [accessibilityShowsLargeContentViewer](https://developer.apple.com/documentation/swiftui/view/accessibilityshowslargecontentviewer()) Markdown documents. ViewThatFits is iOS 16+ and Large Content Viewer is iOS 15+, both below the iOS 26 target. Apple advises reserving Large Content Viewer for controls that must stay compact; scrolling instructions and ordinary choices keep Dynamic Type expansion. Xcode remains 27.0 / 27A266a, pinned WebRTC 153.0.0 and Sparkle 2.10.0. Dated raw receipts live in the authorized codex/a11y-logs directory. Runtime layout, gesture arbitration and default-size parity require the lane's simulator checks; no physical acceptance follows from these documents.
 
 ## Couch input cadence and session freshness — 1 October 2026
 

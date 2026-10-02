@@ -10,6 +10,7 @@ struct AnywherePaywallView: View {
     @Environment(\.purchase) private var purchaseAction
     @Environment(\.openURL) private var openURL
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var selectedID: String = AnywherePlan.yearlyID
     @State private var showManage = false
     @State private var showRedeem = false
@@ -22,6 +23,7 @@ struct AnywherePaywallView: View {
     private var selected: PlanOffer? { offers.first { $0.id == selectedID } ?? offers.first }
     private var subscribed: Bool { store.entitlement.hasAccess || store.entitlement.phase == .billingRetry }
     private var canSell: Bool { store.canSell }
+    private var adaptiveLayout: Bool { dynamicTypeSize.isAccessibilitySize && FarsideAccessibilityLayout.enabled }
 
     var body: some View {
         ScrollView {
@@ -52,6 +54,7 @@ struct AnywherePaywallView: View {
                 if store.entitlement.kind == .subscription { oneTimeOffers.padding(.top, Farside.Space.m) }
                 notices.padding(.top, Farside.Space.m)
                 links.padding(.top, Farside.Space.m)
+                if adaptiveLayout { actionBar.padding(.horizontal, -Farside.Space.l) }
             }
             .padding(.horizontal, Farside.Space.l)
             .padding(.bottom, Farside.Space.m)
@@ -59,7 +62,9 @@ struct AnywherePaywallView: View {
             .frame(maxWidth: .infinity)
         }
         .scrollBounceBehavior(.basedOnSize)
-        .safeAreaInset(edge: .bottom) { actionBar }
+        .safeAreaInset(edge: .bottom) {
+            if !adaptiveLayout { actionBar }
+        }
         .overlay(alignment: .topTrailing) {
             Button { dismiss() } label: { Image(systemName: "xmark") }
                 .buttonStyle(FarsideRoundButtonStyle())

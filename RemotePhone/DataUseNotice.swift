@@ -76,17 +76,21 @@ struct DataWarningCard: View {
     let content: DataWarningContent
     var useLessData: () -> Void
     var keep: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // At the largest text sizes the message scrolls and the buttons stack, so both stay on screen.
-            ViewThatFits(in: .vertical) {
-                notice
-                ScrollView { notice.frame(maxWidth: .infinity, alignment: .leading) }.scrollBounceBehavior(.basedOnSize)
-            }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { buttons }
-                VStack(spacing: 10) { buttons }
+        Group {
+            if dynamicTypeSize.isAccessibilitySize && FarsideAccessibilityLayout.enabled {
+                ViewThatFits(in: .vertical) {
+                    cardContents
+                    // In short landscape space, even the actions need to scroll inside the plate.
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) { notice; actionButtons }
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                }
+            } else {
+                cardContents
             }
         }
         .padding(16)
@@ -96,6 +100,24 @@ struct DataWarningCard: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("remote.dataWarning")
         .onAppear { AccessibilityNotification.Announcement("\(content.title). \(content.spoken)").post() }
+    }
+
+    private var cardContents: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // At the largest text sizes the message scrolls and the buttons stack, so both stay on screen.
+            ViewThatFits(in: .vertical) {
+                notice
+                ScrollView { notice.frame(maxWidth: .infinity, alignment: .leading) }.scrollBounceBehavior(.basedOnSize)
+            }
+            actionButtons
+        }
+    }
+
+    private var actionButtons: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) { buttons }
+            VStack(spacing: 10) { buttons }
+        }
     }
 
     private var notice: some View {

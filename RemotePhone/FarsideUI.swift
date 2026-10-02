@@ -360,35 +360,31 @@ struct LiveDot: View {
     }
 }
 
-/// Two-option segmented control in the Reach style. Each side is a real button.
+/// Internal rollback for the accessibility-only layouts; never exposed as a setting.
+enum FarsideAccessibilityLayout {
+    static var enabled: Bool {
+        UserDefaults.standard.object(forKey: "accessibility.adaptiveLayoutsEnabled") as? Bool ?? true
+    }
+}
+
+/// Segmented control in the Reach style. Each option is a real button.
 struct FarsideSegmented<Value: Hashable>: View {
     let label: String
     let options: [(value: Value, title: String)]
     @Binding var selection: Value
+    var accessibilityStacked = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var stacked: Bool {
+        accessibilityStacked && dynamicTypeSize.isAccessibilitySize && FarsideAccessibilityLayout.enabled
+    }
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(options, id: \.value) { option in
-                let selected = option.value == selection
-                Button { selection = option.value } label: {
-                    Text(option.title)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(selected ? Farside.Palette.bone : Farside.Palette.ash)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .frame(maxWidth: .infinity, minHeight: 38)
-                        .background(selected ? Farside.Palette.panel2 : .clear, in: .rect(cornerRadius: 11, style: .continuous))
-                        .overlay {
-                            if selected {
-                                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                    .strokeBorder(Farside.Palette.line2, lineWidth: 1)
-                            }
-                        }
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(option.title)
-                .accessibilityAddTraits(selected ? .isSelected : [])
+        Group {
+            if stacked {
+                VStack(spacing: 0) { segments }
+            } else {
+                HStack(spacing: 0) { segments }
             }
         }
         .padding(3)
@@ -396,6 +392,32 @@ struct FarsideSegmented<Value: Hashable>: View {
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Farside.Palette.line, lineWidth: 1))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(label)
+    }
+
+    private var segments: some View {
+        ForEach(options, id: \.value) { option in
+            let selected = option.value == selection
+            Button { selection = option.value } label: {
+                Text(option.title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(selected ? Farside.Palette.bone : Farside.Palette.ash)
+                    .lineLimit(stacked ? nil : 1)
+                    .minimumScaleFactor(stacked ? 1 : 0.8)
+                    .frame(maxWidth: .infinity, minHeight: 38)
+                    .background(selected ? Farside.Palette.panel2 : .clear, in: .rect(cornerRadius: 11, style: .continuous))
+                    .overlay {
+                        if selected {
+                            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                .strokeBorder(Farside.Palette.line2, lineWidth: 1)
+                        }
+                    }
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(option.title)
+            .accessibilityShowsLargeContentViewer()
+            .accessibilityAddTraits(selected ? .isSelected : [])
+        }
     }
 }
 

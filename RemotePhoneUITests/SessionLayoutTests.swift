@@ -99,6 +99,35 @@ final class SessionLayoutTests: XCTestCase {
     }
 
     @MainActor
+    func testAccessibilityXXXLDataNoticeWithBannerLeavesDockReachable() {
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = XCUIApplication()
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+            XCUIDevice.shared.orientation = orientation
+            app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill", "--ui-data-warning",
+                                   "--ui-data-warning-lower", "--ui-reconnect-back",
+                                   "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            launchOfflineFixture(app)
+            revealDock(app)
+            let card = app.descendants(matching: .any)["remote.dataWarning"].firstMatch
+            let end = app.buttons["End session"].firstMatch
+            XCTAssertTrue(card.waitForExistence(timeout: 5))
+            XCTAssertTrue(end.isHittable && app.buttons["Controls"].firstMatch.isHittable)
+            XCTAssertFalse(card.frame.intersects(end.frame), "Notice below another banner must stop above End")
+            for id in ["remote.dataWarning.less", "remote.dataWarning.keep"] {
+                let button = app.buttons[id]
+                let scroll = card.elementType == .scrollView ? card : card.scrollViews.firstMatch
+                for _ in 0..<6 where !button.isHittable { scroll.swipeUp() }
+                XCTAssertTrue(button.isHittable, "Both notice actions must be reachable in \(orientation)")
+            }
+            attachScreenshot("AX-XXXL data warning with banner \(orientation)")
+            app.buttons["remote.dataWarning.less"].tap()
+            XCTAssertTrue(card.waitForNonExistence(timeout: 3))
+            app.terminate()
+        }
+    }
+
+    @MainActor
     func testPictureQualityCanSwitchWithoutOpeningKeyboard() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill"]

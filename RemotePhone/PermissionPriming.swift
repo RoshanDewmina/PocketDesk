@@ -46,6 +46,9 @@ struct PermissionPrimingView: View {
     let kind: PermissionKind
     let onContinue: () -> Void
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var adaptiveLayout: Bool { dynamicTypeSize.isAccessibilitySize && FarsideAccessibilityLayout.enabled }
 
     var body: some View {
         ScrollView {
@@ -86,6 +89,11 @@ struct PermissionPrimingView: View {
                 }
                 .farsidePlate()
                 .padding(.top, Farside.Space.l)
+                if adaptiveLayout {
+                    Text(copy.footnote).farsideCaption().multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, Farside.Space.s)
+                }
             }
             .padding(.horizontal, Farside.Space.l)
             .frame(maxWidth: 560, alignment: .leading)
@@ -100,7 +108,9 @@ struct PermissionPrimingView: View {
                 }
                 .buttonStyle(FarsidePrimaryButtonStyle(height: 60))
                 .accessibilityIdentifier("priming.continue")
-                Text(copy.footnote).farsideCaption().multilineTextAlignment(.center)
+                if !adaptiveLayout {
+                    Text(copy.footnote).farsideCaption().multilineTextAlignment(.center)
+                }
             }
             .padding(.horizontal, Farside.Space.l)
             .padding(.bottom, Farside.Space.s)
