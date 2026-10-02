@@ -210,18 +210,11 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
                 pending.remove(ticket); fail(injected); return injected == noErr ? 0 : -1
             }
             #endif
-<<<<<<< HEAD
-            if recoveryNeeded, clock() - lastRecoveryRequestMs >= Self.recoveryRequestIntervalMs {
-                recoveryNeeded = false; lastRecoveryRequestMs = clock(); pending.remove(ticket)
-                return Self.requestKeyFrameResult
-            }
             // Apple public output-handler decode API (official docs checked 1 October 2026);
             // timestamp at entry before the ownership hop.
             // https://developer.apple.com/documentation/videotoolbox/vtdecompressionsessiondecodeframe(_:samplebuffer:flags:infoflagsout:outputhandler:)
             let submitMs = timing?.renderTimingEnabled == true ? MachClock.nowMs() : nil
-=======
             let isKey = image.frameType == .videoFrameKey
->>>>>>> origin/claude/quality-first
             let result = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample, flags: [._EnableAsynchronousDecompression], infoFlagsOut: nil) { [weak self] status, flags, pixels, _, _ in
                 let callbackMs = submitMs != nil ? MachClock.nowMs() : nil
                 guard let self else { return }
