@@ -144,4 +144,9 @@ describe("configuration guards", () => {
     expect([...config.allowedProductIds]).toEqual(["com.roshan.PocketDesk.remote.monthly", "com.roshan.PocketDesk.remote.yearly"]);
     expect(config.leaseMs).toBe(1800 * 1000);
   });
+
+  it("preserves disabled quiet replacement on public deployments", () => {
+    expect(loadConfig({ ...base, ENVIRONMENT_NAME: "staging", REPLACE_QUIET_SECONDS: "0" } as unknown as Env).replaceQuietMs).toBe(0);
+    expect(loadConfig({ ...base, ENVIRONMENT_NAME: "production", REPLACE_QUIET_SECONDS: "0" } as unknown as Env).replaceQuietMs).toBe(0);
+  });
 });

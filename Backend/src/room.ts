@@ -10,7 +10,7 @@ import {
   AUTH_TIMEOUT_MS, MESSAGES_PER_SECOND, OUTBOUND_BYTES_PER_SECOND, REMOTE_FEATURE, RENEWAL_FEATURE, ROUTE_FEATURE, iceWithinClientLimits,
   parseAuthenticatedFrame, parseJsonFrame, parseRegister, type ErrorCode, type IceServer, type PeerRole, type RegisterMessage,
 } from "./protocol";
-import { WindowCounter, addressKey, allow, withTimeout } from "./ratelimit";
+import { WindowCounter, addressKey, allowStrict, withTimeout } from "./ratelimit";
 import { turnProviderFromEnv, type TurnProvider } from "./turn";
 import { randomHex, secureEqual, sha256Hex } from "./util";
 
@@ -566,8 +566,8 @@ export class RoomDO extends DurableObject<Env> {
     const servers: IceServer[] = this.config.stunUrls.length ? [{ urls: [...this.config.stunUrls] }] : [];
     if (!this.provider) return servers;
     const now = Date.now();
-    if (!this.issueCounter.hit(now) || !(await allow(this.env.RL_TURN, "turn", "RL_TURN"))) throw new IssuanceRateLimited();
-    if (entitlementId && !(await allow(this.env.RL_TURN_ENTITLEMENT, entitlementId, "RL_TURN_ENTITLEMENT"))) throw new IssuanceRateLimited();
+    if (!this.issueCounter.hit(now) || !(await allowStrict(this.env.RL_TURN, "turn", "RL_TURN"))) throw new IssuanceRateLimited();
+    if (entitlementId && !(await allowStrict(this.env.RL_TURN_ENTITLEMENT, entitlementId, "RL_TURN_ENTITLEMENT"))) throw new IssuanceRateLimited();
     const issued = await this.provider.issue();
     const combined = [...servers, ...issued];
     if (!iceWithinClientLimits(combined)) {
@@ -866,7 +866,7 @@ export class RoomDO extends DurableObject<Env> {
       if (!this.takeSlot("host", ws, now)) { this.error(ws, "already_connected"); return; }
       if (!state.room) {
         // A brand-new room: bound how many rooms one address can create, closing bare so the app simply retries later.
-        if (!(await allow(this.env.RL_ROOM_CREATE, addressKey(attachment.ip), "RL_ROOM_CREATE"))) {
+        if (!(await allowStrict(this.env.RL_ROOM_CREATE, addressKey(attachment.ip), "RL_ROOM_CREATE"))) {
           log("room_create_rate_limited", { room: fingerprint(room) });
           this.close(ws, 1013, "rate_limited");
           return;
@@ -880,6 +880,8 @@ export class RoomDO extends DurableObject<Env> {
           }
         } catch (error) {
           logError("room_status_lookup_failed", error, { room: fingerprint(room) });
+          this.close(ws, 1013, "room_status_unavailable");
+          return;
         }
       }
       if (ws.readyState !== WebSocket.OPEN) return;

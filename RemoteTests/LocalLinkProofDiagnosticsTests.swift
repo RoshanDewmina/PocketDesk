@@ -5,6 +5,14 @@ import Darwin
 import Network
 
 final class LocalLinkProofDiagnosticsTests: XCTestCase {
+    func testPublicPairDiagnosticsContainOnlyKnownTypes() {
+        XCTAssertEqual(MediaRoute.publicPairSummary(local: "host", remote: "relay", adapter: "wifi", network: "vpn"),
+                       "host/relay adapter=wifi network=vpn")
+        let summary = MediaRoute.publicPairSummary(local: "192.168.1.10", remote: "2607:fea8::1234",
+                                                  adapter: "pairing-key-fixture", network: "token-fixture")
+        XCTAssertEqual(summary, "unknown/unknown adapter=unknown network=unknown")
+    }
+
     /// Captured from recvmsg on macOS 27 for a TTL-1 datagram received on en0 (index 11).
     private let capturedEn0Control: [UInt8] = [
         0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00,

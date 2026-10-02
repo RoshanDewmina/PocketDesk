@@ -12,6 +12,8 @@ protocol OwnerLocalSignalingTransport: SignalingTransport {
 
 @MainActor
 final class LocalSignalingTransport: OwnerLocalSignalingTransport {
+    /// Internal rollback of the shorter deadline only; admission/recovery still fail closed.
+    static let legacyAuthenticationTimeoutKey = "FarsideLocalSignalingLegacyAuthenticationTimeout"
     var onMessage: ((RelayMessage) -> Void)?
     var onClose: (() -> Void)?
     /// Host/owner/session binding authenticated; NOT a free-route grant. Root-owned coordinator
@@ -20,6 +22,7 @@ final class LocalSignalingTransport: OwnerLocalSignalingTransport {
     private(set) var lastCloseReason: String?
     private let queue = DispatchQueue(label: "farside.local-signaling")
     private var generation = UUID()
+    private var connectionGeneration = UUID()
     private var listener: NWListener?
     private var connection: NWConnection?
     private var invitation: PairInvitation?
@@ -34,6 +37,24 @@ final class LocalSignalingTransport: OwnerLocalSignalingTransport {
     private var pendingBytes = 0
     private var sending = false
     private var timeout: Task<Void, Never>?
+    private let hostAuthenticationTimeoutNanoseconds: UInt64
+    private let parametersOverride: NWParameters?
+
+    init(defaults: UserDefaults = .standard) {
+        hostAuthenticationTimeoutNanoseconds = defaults.bool(forKey: Self.legacyAuthenticationTimeoutKey)
+            ? 20_000_000_000 : 3_000_000_000
+        parametersOverride = nil
+    }
+
+    #if DEBUG
+    init(defaults: UserDefaults, hostAuthenticationTimeoutNanoseconds: UInt64,
+         parameters: NWParameters? = nil) {
+        self.hostAuthenticationTimeoutNanoseconds = defaults.bool(forKey: Self.legacyAuthenticationTimeoutKey)
+            ? 20_000_000_000 : hostAuthenticationTimeoutNanoseconds
+        parametersOverride = parameters
+    }
+    var listeningPortForTesting: NWEndpoint.Port? { listener?.port }
+    #endif
 
     func connect(invitation: PairInvitation, hostToken: String?, features: [String]) throws {
         close()
@@ -43,17 +64,21 @@ final class LocalSignalingTransport: OwnerLocalSignalingTransport {
         self.invitation = invitation; isHost = hostToken != nil
         cipher = try SignalCipher(key: invitation.key, room: invitation.room)
         let run = generation
-        let parameters = NWParameters.tcp
-        parameters.includePeerToPeer = false
-        // No routed/cellular signaling can earn free media. The actual link proof remains mandatory.
-        parameters.prohibitedInterfaceTypes = [.cellular, .loopback, .other]
+        let parameters = parametersOverride ?? NWParameters.tcp
+        if parametersOverride == nil {
+            parameters.includePeerToPeer = false
+            // No routed/cellular signaling can earn free media. The actual link proof remains mandatory.
+            parameters.prohibitedInterfaceTypes = [.cellular, .loopback, .other]
+        }
         if isHost {
             let listener = try NWListener(using: parameters)
             self.listener = listener
             listener.service = NWListener.Service(name: serviceName, type: LocalMacDiscovery.serviceType, domain: "local.")
             listener.newConnectionHandler = { [weak self] incoming in
                 Task { @MainActor in
-                    guard let self, self.generation == run, self.connection == nil else { incoming.cancel(); return }
+                    guard let self, self.generation == run, !self.authenticated else { incoming.cancel(); return }
+                    // A pending TCP connection has no authority to reserve the owner's only slot.
+                    self.resetConnection()
                     self.attach(incoming, run: run)
                 }
             }
@@ -76,26 +101,31 @@ final class LocalSignalingTransport: OwnerLocalSignalingTransport {
 
     private func attach(_ connection: NWConnection, run: UUID) {
         self.connection = connection
+        let connectionRun = connectionGeneration
         timeout = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 20_000_000_000)
-            guard !Task.isCancelled, let self, self.generation == run, !self.authenticated else { return }
-            self.lost("Local authentication timed out")
+            guard let self else { return }
+            let deadline = self.isHost ? self.hostAuthenticationTimeoutNanoseconds : 20_000_000_000
+            try? await Task.sleep(nanoseconds: deadline)
+            guard !Task.isCancelled, self.generation == run,
+                  self.isCurrentConnection(connectionRun), !self.authenticated else { return }
+            self.lostConnection("Local authentication timed out")
         }
         connection.stateUpdateHandler = { [weak self, weak connection] state in
             Task { @MainActor in
-                guard let self, self.generation == run, let connection, self.connection === connection else { return }
+                guard let self, self.generation == run, self.isCurrentConnection(connectionRun),
+                      let connection, self.connection === connection else { return }
                 switch state {
                 case .ready:
-                    self.receiveHeader(run: run)
+                    self.receiveHeader(run: connectionRun)
                     if self.isHost {
                         do {
                             guard let invitation = self.invitation else { throw RemoteError.invalidPairing }
                             let challenge = try LocalOwnerChallenge.make(invitation: invitation)
                             self.admission = LocalOwnerAdmission(challenge: challenge)
                             try self.write(kind: "localChallenge", body: JSONEncoder().encode(challenge), challenge: challenge, sequence: 0)
-                        } catch { self.lost("Local challenge failed") }
+                        } catch { self.lostConnection("Local challenge failed") }
                     }
-                case .failed, .cancelled: self.lost("Local connection closed")
+                case .failed, .cancelled: self.lostConnection("Local connection closed")
                 default: break
                 }
             }
@@ -104,10 +134,11 @@ final class LocalSignalingTransport: OwnerLocalSignalingTransport {
         // exact physical interface/address and stops media on any change of that admitted route.
         connection.pathUpdateHandler = { [weak self, weak connection] path in
             Task { @MainActor in
-                guard let self, self.generation == run, let connection, self.connection === connection else { return }
+                guard let self, self.generation == run, self.isCurrentConnection(connectionRun),
+                      let connection, self.connection === connection else { return }
                 if self.authenticated && (path.status != .satisfied || path.usesInterfaceType(.other)
                     || path.usesInterfaceType(.cellular) || path.usesInterfaceType(.loopback)) {
-                    self.lost("Local route changed")
+                    self.lostConnection("Local route changed")
                 }
             }
         }
@@ -132,7 +163,7 @@ final class LocalSignalingTransport: OwnerLocalSignalingTransport {
         let frame = try LocalSignalFraming.header(length: payload.count) + payload
         guard pending.count < 64, pendingBytes + frame.count <= 1024 * 1024 else { throw RemoteError.backpressure }
         pending.append(frame); pendingBytes += frame.count
-        flush(run: generation)
+        flush(run: connectionGeneration)
     }
 
     private func flush(run: UUID) {
@@ -140,9 +171,9 @@ final class LocalSignalingTransport: OwnerLocalSignalingTransport {
         sending = true
         connection.send(content: next, completion: .contentProcessed { [weak self] error in
             Task { @MainActor in
-                guard let self, self.generation == run else { return }
+                guard let self, self.isCurrentConnection(run) else { return }
                 self.sending = false
-                guard error == nil else { self.lost("Local signaling write failed"); return }
+                guard error == nil else { self.lostConnection("Local signaling write failed"); return }
                 self.pending.removeFirst(); self.pendingBytes -= next.count
                 self.flush(run: run)
             }
@@ -156,19 +187,19 @@ final class LocalSignalingTransport: OwnerLocalSignalingTransport {
                 let length = try LocalSignalFraming.length(header)
                 self.readExactly(length, run: run) { [weak self] data in
                     guard let self else { return }
-                    do { try self.receive(data); if self.generation == run { self.receiveHeader(run: run) } }
-                    catch { self.lost("Local signaling authentication failed") }
+                    do { try self.receive(data); if self.isCurrentConnection(run) { self.receiveHeader(run: run) } }
+                    catch { self.lostConnection("Local signaling authentication failed") }
                 }
-            } catch { self.lost("Invalid local signaling frame") }
+            } catch { self.lostConnection("Invalid local signaling frame") }
         }
     }
 
     private func readExactly(_ count: Int, run: UUID, done: @escaping (Data) -> Void) {
         connection?.receive(minimumIncompleteLength: count, maximumLength: count) { [weak self] data, _, complete, error in
             Task { @MainActor in
-                guard let self, self.generation == run else { return }
+                guard let self, self.isCurrentConnection(run) else { return }
                 guard error == nil, !complete, let data, data.count == count else {
-                    self.lost("Local signaling read failed"); return
+                    self.lostConnection("Local signaling read failed"); return
                 }
                 done(data)
             }
@@ -227,10 +258,28 @@ final class LocalSignalingTransport: OwnerLocalSignalingTransport {
     private func lost(_ reason: String) {
         lastCloseReason = reason; close(); onClose?()
     }
-    func close() {
-        generation = UUID(); timeout?.cancel(); timeout = nil
-        listener?.cancel(); listener = nil; connection?.cancel(); connection = nil
-        cipher = nil; invitation = nil; admission = nil; response = nil; authenticated = false
+    private func isCurrentConnection(_ run: UUID) -> Bool {
+        connectionGeneration == run && connection != nil
+    }
+    private func lostConnection(_ reason: String) {
+        if isHost && !authenticated && listener != nil {
+            lastCloseReason = reason
+            resetConnection()
+        } else {
+            lost(reason)
+        }
+    }
+    private func resetConnection() {
+        // Retire callbacks before cancellation can enqueue a final read/write/state completion.
+        connectionGeneration = UUID(); timeout?.cancel(); timeout = nil
+        connection?.cancel(); connection = nil
+        admission = nil; response = nil; authenticated = false
         receivedSequence = 0; sentSequence = 0; pending.removeAll(); pendingBytes = 0; sending = false
+    }
+    func close() {
+        generation = UUID()
+        listener?.cancel(); listener = nil
+        resetConnection()
+        cipher = nil; invitation = nil
     }
 }

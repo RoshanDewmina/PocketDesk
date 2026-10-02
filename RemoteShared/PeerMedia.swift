@@ -63,6 +63,17 @@ enum NativeRelayPolicy {
 }
 
 enum MediaRoute {
+    /// Public diagnostics accept only known types, never candidate addresses or arbitrary labels.
+    static func publicPairSummary(local: String?, remote: String?, adapter: String?, network: String?) -> String {
+        let candidates: Set<String> = ["host", "srflx", "prflx", "relay"]
+        let interfaces: Set<String> = ["wifi", "ethernet", "cellular", "vpn", "loopback", "unknown"]
+        func label(_ value: String?, in allowed: Set<String>) -> String {
+            guard let value, allowed.contains(value) else { return "unknown" }
+            return value
+        }
+        return "\(label(local, in: candidates))/\(label(remote, in: candidates)) adapter=\(label(adapter, in: interfaces)) network=\(label(network, in: interfaces))"
+    }
+
     static func classify(selected: Bool, local: String?, remote: String?) -> String {
         guard selected else { return "Route pending" }
         if local == "relay" || remote == "relay" { return "Relay" }
@@ -200,6 +211,16 @@ final class PeerMedia: NSObject {
     }
     /// `file` channel messages, delivered on WebRTC's thread; the receiver hops to its own queue.
     var onFileMessage: ((Data) -> Void)?
+    private let fileReceiveLease = TransferEffectLease()
+    /// Ingress must finish before close returns and a replacement session can admit bytes.
+    /// This callback only snapshots the engine's IO admission and enqueues work; it never waits on main.
+    private func deliverFileMessage(_ data: Data) {
+        _ = fileReceiveLease.performIfActive { onFileMessage?(data) }
+    }
+    #if DEBUG && AUDIO_LIFETIME_TESTS
+    func deliverFileMessageForTesting(_ data: Data) { deliverFileMessage(data) }
+    func retireFileReceiveForTesting() { fileReceiveLease.retire() }
+    #endif
     var onFileBufferedAmountChange: (() -> Void)?
     let counters = StreamCounters()
     private let resourceBudget = MediaResourceBudget()
@@ -1218,7 +1239,8 @@ final class PeerMedia: NSObject {
                 let networkType = local?.values["networkType"] as? String
                 let vpn = (local?.values["vpn"] as? NSNumber)?.boolValue
                 if pair != nil {
-                    let pairLog = "\(localType ?? "?")/\(remoteType ?? "?") \(localAddress ?? "?")->\(remoteAddress ?? "?") adapter=\(adapterType ?? "nil") network=\(networkType ?? "nil") vpn=\(vpn.map(String.init) ?? "nil")"
+                    let pairLog = MediaRoute.publicPairSummary(local: localType, remote: remoteType,
+                                                              adapter: adapterType, network: networkType)
                     if pairLog != self.lastPairLog {
                         self.lastPairLog = pairLog
                         SessionLog.log.info("\(self.role, privacy: .public) selected pair \(pairLog, privacy: .public)")
@@ -1229,7 +1251,7 @@ final class PeerMedia: NSObject {
                                                            localAddress: localAddress, remoteAddress: remoteAddress,
                                                            adapterType: adapterType, networkType: networkType, vpn: vpn)
                     if pair != nil && !matches {
-                        SessionLog.log.error("\(self.role, privacy: .public) media failed: selected pair is not the proven local link (\(self.lastPairLog ?? "?", privacy: .public); proven \(link.localAddress, privacy: .public)->\(link.peerAddress, privacy: .public))")
+                        SessionLog.log.error("\(self.role, privacy: .public) media failed: selected pair is not the proven local link (\(self.lastPairLog ?? "?", privacy: .public))")
                         self.onState?("failed"); return
                     }
                     if matches {
@@ -1377,6 +1399,7 @@ final class PeerMedia: NSObject {
     }
 
     func close() {
+        fileReceiveLease.retire()
         if let hevcRun { NativeHEVCCapability.ended(hevcRun) }
         videoFeedback.end()
         let retireRefinement = { () -> RTCDataChannel? in
@@ -1621,7 +1644,7 @@ extension PeerMedia: RTCDataChannelDelegate {
         }
         if isFileChannel(dataChannel) {
             guard buffer.isBinary, buffer.data.count <= FileTransferLimits.maximumMessageBytes, localGateOpen() else { return }
-            onFileMessage?(buffer.data)
+            deliverFileMessage(buffer.data)
             return
         }
         let arrivedFrames = counters.arrivedTotal

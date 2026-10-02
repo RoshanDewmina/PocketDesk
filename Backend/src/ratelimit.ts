@@ -13,7 +13,7 @@ export async function allow(limiter: Limiter | undefined, key: string, name: str
   }
 }
 
-/** New push-address writes fail closed when their quota binding is absent or unavailable. */
+/** Security-sensitive admission, issuance and writes fail closed when their quota binding is absent or unavailable. */
 export async function allowStrict(limiter: Limiter | undefined, key: string, name: string): Promise<boolean> {
   if (!limiter) return false;
   try {
