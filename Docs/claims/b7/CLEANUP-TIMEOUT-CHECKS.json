@@ -1,0 +1,40 @@
+{
+  "scope": "Synthetic wrapper subprocess checks only; no actual native launch/device action or app acceptance.",
+  "cases": [
+    {
+      "case": "normal",
+      "exit": 0,
+      "expected": 0,
+      "passed": true,
+      "stdout": ""
+    },
+    {
+      "case": "already-shutdown",
+      "exit": 0,
+      "expected": 0,
+      "passed": true,
+      "stdout": "Owned simulator cleanup exit=149; state=Shutdown."
+    },
+    {
+      "case": "still-shutting-down",
+      "exit": 81,
+      "expected": 81,
+      "passed": true,
+      "stdout": "Owned simulator cleanup exit=149; state=Shutting Down."
+    },
+    {
+      "case": "cleanup-timeout",
+      "exit": 81,
+      "expected": 81,
+      "passed": true,
+      "stdout": "Owned simulator shutdown timed out after45s; no global service reset or other-device action."
+    },
+    {
+      "case": "native-failure-preserved",
+      "exit": 65,
+      "expected": 65,
+      "passed": true,
+      "stdout": "Owned simulator shutdown timed out after45s; no global service reset or other-device action."
+    }
+  ]
+}

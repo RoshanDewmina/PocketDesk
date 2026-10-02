@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Check gates and binary/source identity under lock; cleanup stays under that lock."""
-import os,pathlib,shutil,subprocess,sys
+import json,os,pathlib,shutil,subprocess,sys
 from identity import verify
 from simulators import active_conflicts,native_exit_code
 p=pathlib.Path('/Users/roshansilva/Documents/Codex/2026-10-01/testing')
@@ -37,5 +37,17 @@ finally:
         if conflicts:
             print('Late destination conflict: '+','.join(map(str,conflicts))+'; receipt invalidated, no simulator shutdown.',flush=True)
             code=79
-        else: subprocess.run(['xcrun','simctl','shutdown',shutdown],check=False)
+        else:
+            try:
+                cleanup=subprocess.run(['xcrun','simctl','shutdown',shutdown],check=False,timeout=45)
+                if cleanup.returncode:
+                    try:
+                        devices=json.loads(subprocess.check_output(['xcrun','simctl','list','devices','-j'],text=True,timeout=10))['devices']
+                        state=next((device.get('state') for group in devices.values() for device in group if device['udid']==shutdown),None)
+                    except (subprocess.SubprocessError,ValueError,KeyError): state=None
+                    print(f'Owned simulator cleanup exit={cleanup.returncode}; state={state}.',flush=True)
+                    if state!='Shutdown' and code==0: code=81
+            except subprocess.TimeoutExpired:
+                print('Owned simulator shutdown timed out after45s; no global service reset or other-device action.',flush=True)
+                if code==0: code=81
 sys.exit(code)
