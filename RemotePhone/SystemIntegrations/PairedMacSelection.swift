@@ -5,6 +5,12 @@ extension PhoneRemoteModel {
     /// A failed write leaves the old pair safe and stopped; it never starts a replacement implicitly.
     @discardableResult
     func selectPairedMac(id: String, trust: PhoneTrustStore = .shared) -> Bool {
+        #if DEBUG
+        // The UI-test seed lives only in memory (DebugLaunchSeeds), never in the trust store.
+        if let seed = DebugLaunchSeeds.invitation, id == PairedMacs.opaqueID(room: seed.room) {
+            return connection.invitation == seed
+        }
+        #endif
         do {
             let snapshot = try trust.snapshot()
             guard let host = snapshot.hosts.first(where: { "m_" + $0.id == id || $0.legacyAliases.contains(id) }) else {
