@@ -82,7 +82,7 @@ export const config = {
    * null renders a "coming soon" placeholder and is left out of the structured data.
    */
   social: {
-    x: null as string | null,
+    x: "https://x.com/getfarside" as string | null,
     instagram: null as string | null,
     threads: null as string | null,
     tiktok: null as string | null,
@@ -155,7 +155,7 @@ export const config = {
    * date in the commit that goes live. `bun run build:prod` (the production build, DEPLOY.md) refuses to build while it is
    * null; preview builds show the build date in its place.
    */
-  privacyEffective: null as string | null,
+  privacyEffective: "2 October 2026" as string | null,
 };
 
 export const isPlaceholderSiteUrl = () => config.SITE_URL === PLACEHOLDER_SITE_URL;
