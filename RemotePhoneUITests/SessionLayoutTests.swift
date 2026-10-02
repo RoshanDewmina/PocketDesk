@@ -2,6 +2,16 @@ import XCTest
 
 final class SessionLayoutTests: XCTestCase {
     @MainActor
+    func testRegularInputSettingsHaveNoPencilOptIn() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-controls-settings", "--ui-controls-page=keyboard"]
+        app.launch()
+        XCTAssertTrue(app.buttons["remote.mouse.lock"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.switches["remote.pencil.enabled"].exists)
+        XCTAssertTrue(app.switches["remote.hardware.remap"].exists)
+        attachScreenshot("Pencil always available with explicit mouse lock and shortcut remap")
+    }
+    @MainActor
     func testRegularPortraitPictureStacksOverPadAndSurvivesKeyboard() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-software-keyboard"]

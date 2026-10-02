@@ -5,6 +5,36 @@ import XCTest
 final class PhoneFileTransferTests: XCTestCase {
     private var folder: URL!
 
+    private func droppedFile(_ name: String) throws -> PickedMediaFile {
+        let directory = folder.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent(name)
+        try Data("harmless drop fixture".utf8).write(to: url)
+        return PickedMediaFile(url: url)
+    }
+
+    func testDropWithoutAConnectionRefusesAndDiscardsTemporaryCopy() throws {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        let picked = try droppedFile("example.txt")
+        XCTAssertFalse(model.sendDroppedFiles([picked], regularWidth: true))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: picked.url.path))
+        XCTAssertFalse(model.files.isBusy)
+        XCTAssertEqual(model.files.notice?.message, model.fileTransferUnavailableMessage)
+    }
+
+    func testDropAcceptsOnlyOneFileInARegularWindow() throws {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        let first = try droppedFile("first.txt"), second = try droppedFile("second.txt")
+        XCTAssertFalse(model.sendDroppedFiles([first, second], regularWidth: true))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first.url.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: second.url.path))
+        XCTAssertFalse(model.files.isBusy)
+        let narrow = try droppedFile("narrow.txt")
+        XCTAssertFalse(model.sendDroppedFiles([narrow], regularWidth: false))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: narrow.url.path))
+        XCTAssertFalse(model.sendDroppedFiles([], regularWidth: true))
+    }
+
     override func setUpWithError() throws {
         folder = FileManager.default.temporaryDirectory.appendingPathComponent("PhoneFileTransferTests-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

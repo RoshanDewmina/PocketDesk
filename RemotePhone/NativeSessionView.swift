@@ -90,8 +90,9 @@ struct NativeSessionView: View {
             LockedMousePresenter(requested: $lockedMouseRequested,
                 eligible: model.canControl && scenePhase == .active && !showControls && !showVoiceInput && !keyboardOpen && !panMode,
                 revision: model.inputRevision &+ revision, gain: Double(sensitivity), remapShortcuts: remapShortcuts,
-                send: { model.gesture($0) }, key: { model.hardwareKey($0, modifiers: $1) },
-                modifiers: { model.hardwareModifiers = $0 }, cleanup: { model.cancelInput() }, ended: { message in
+                send: { command in noteSessionPillActivity(); return model.gesture(command) },
+                key: { key, modifiers in noteSessionPillActivity(); return model.hardwareKey(key, modifiers: modifiers) },
+                modifiers: { noteSessionPillActivity(); model.hardwareModifiers = $0 }, cleanup: { model.cancelInput() }, ended: { message in
                     lockedMouseNotice = message
                 }).frame(width: 0, height: 0)
 
@@ -451,6 +452,7 @@ struct NativeSessionView: View {
         .onReceive(model.pointerLocator.followUpdates, perform: follow)
         .onReceive(model.pointerOverlay.followUpdates, perform: follow)
         .task(id: model.dragging) { await runDragAutoPan() }
+        .modifier(SessionFileDrop(model: model, regularWidth: regularSessionLayout))
         .privacySensitive()
     }
 
@@ -471,6 +473,7 @@ struct NativeSessionView: View {
                                     && !controlsBlockInput && !showVoiceInput,
                                   pencilEnabled: !couch && model.pencilEnabled && model.pencilSupported,
                                   onPencil: { point, frame in
+                                      noteSessionPillActivity()
                                       guard let source = DirectTouchMapping.sourcePoint(for: point, in: viewport) else {
                                           guard frame.phase == .ended || frame.phase == .cancelled else { return false }
                                           // A lift outside the picture still releases its exact contact; never warp there.
@@ -483,8 +486,8 @@ struct NativeSessionView: View {
                                   remapShortcuts: remapShortcuts,
                                   onCommand: handle,
                                   onPointerMotionEnded: { model.pointerLocator.stopFollowing() },
-                                  onHardwareKey: { key, modifiers in model.hardwareKey(key, modifiers: modifiers) },
-                                  onHardwareModifiers: { model.hardwareModifiers = $0 },
+                                  onHardwareKey: { key, modifiers in noteSessionPillActivity(); return model.hardwareKey(key, modifiers: modifiers) },
+                                  onHardwareModifiers: { noteSessionPillActivity(); model.hardwareModifiers = $0 },
                                   onKeyDiagnostic: keyDiagnostic)
                 .accessibilityIdentifier("remote.canvas")
                 .allowsHitTesting(!controlsBlockInput && !showVoiceInput && !model.privacyShield && !model.contentConcealed)
@@ -2535,9 +2538,6 @@ struct NativeSessionView: View {
                     .disabled(!peripherals.mouseConnected || !model.canControl)
                     .accessibilityIdentifier("remote.mouse.lock")
                 if !lockedMouseNotice.isEmpty { Text(lockedMouseNotice).font(.footnote) }
-                Toggle("Apple Pencil input", isOn: $model.pencilEnabled)
-                    .disabled(!model.pencilSupported)
-                    .accessibilityIdentifier("remote.pencil.enabled")
                 Text(model.pencilSupported ? "Pencil places the pointer, presses with pressure and ignores resting fingers during contact. Drawing support depends on the Mac app." : "Pencil input needs a compatible Mac and a live picture session.")
                     .font(.footnote)
             }
