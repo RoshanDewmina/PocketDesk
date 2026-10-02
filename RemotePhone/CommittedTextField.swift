@@ -108,7 +108,9 @@ struct KeyboardLayoutDock<Content: View>: UIViewControllerRepresentable {
         }
 
         func setContainerOnlySafeArea(_ enabled: Bool) {
-            host.safeAreaRegions = enabled ? .container : .all
+            let regions: SafeAreaRegions = enabled ? .container : .all
+            guard host.safeAreaRegions != regions else { return }
+            host.safeAreaRegions = regions
         }
     }
 }
