@@ -47,7 +47,19 @@ final class AgentAlertPushUITests: XCTestCase {
             let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
             let notificationCopy = system.alerts.firstMatch.descendants(matching: .any)
                 .matching(NSPredicate(format: "label CONTAINS[c] %@", "notifications")).firstMatch
-            if notificationCopy.exists { attach("System notification permission") }
+            if notificationCopy.exists {
+                for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+                    XCUIDevice.shared.orientation = orientation
+                    Thread.sleep(forTimeInterval: 0.5)
+                    let label = orientation == .portrait ? "portrait" : "landscape"
+                    let frame = app.frame
+                    let matchesOrientation = orientation == .portrait ? frame.height > frame.width : frame.width > frame.height
+                    if notificationCopy.exists && matchesOrientation {
+                        attach(label + "-system-notification-permission")
+                    }
+                }
+                XCUIDevice.shared.orientation = .portrait
+            }
             allow.tap()
         }
         Thread.sleep(forTimeInterval: 1.0)
