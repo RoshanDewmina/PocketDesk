@@ -2,6 +2,7 @@ import { appleApiConfigFromEnv, getTransactionInfo } from "../apple/server-api";
 import { decodeJwsUnverified, JwsVerificationError, verifyAppleJws } from "../apple/jws";
 import type { Config } from "../config";
 import { fingerprint, log, logError } from "../log";
+import { incrementDaily } from "../metrics";
 import { addressKey, allow } from "../ratelimit";
 import type { RoomDO } from "../room";
 import { BodyTooLarge, HEX64, isoFromMs, isRecord, json, readJsonBody } from "../util";
@@ -139,6 +140,7 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
 
   const verified = await verifyTransactionJws(body.signedTransaction, config, now);
   if (!verified.ok) {
+    ctx.waitUntil(incrementDaily(env, "entitlement_verify_rejected", now));
     // A seat that is not the caller's own purchase is logged by kind only: no device, no transaction.
     log("verify_rejected", verified.reason === "not_purchased"
       ? { reason: verified.reason, ownership: verified.ownership }
@@ -158,6 +160,7 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
       const current = await verifyTransactionJws(response.body.signedTransactionInfo, config, now);
       if (!current.ok || current.tx.originalTransactionId !== tx.originalTransactionId || current.tx.transactionId !== tx.transactionId ||
           current.tx.productId !== tx.productId || current.tx.environment !== tx.environment || current.tx.bundleId !== tx.bundleId) {
+        ctx.waitUntil(incrementDaily(env, "entitlement_verify_rejected", now));
         return json({ error: "invalid_transaction", reason: "signature" }, 401);
       }
       tx = current.tx;
@@ -172,6 +175,7 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
   try {
     const appTransactionHash = tx.appTransactionId ? await appTransactionHashFor(env.ENTITLEMENT_HASH_KEY, tx.appTransactionId) : undefined;
     if (appTransactionHash && (await consentStopped(env.DB, appTransactionHash))) {
+      ctx.waitUntil(incrementDaily(env, "entitlement_verify_rejected", now));
       ctx.waitUntil(audit(env.DB, "verify_consent_stopped", { entitlementId: id }, now));
       return json({ entitled: false, reason: "consent_revoked", environment });
     }
@@ -193,6 +197,7 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
     const row = await getEntitlement(env.DB, id);
     if (!row) throw new Error("entitlement missing after upsert");
     if (!hasAccess(row, now, config.oneTimeProducts)) {
+      ctx.waitUntil(incrementDaily(env, "entitlement_verify_rejected", now));
       ctx.waitUntil(audit(env.DB, "verify_no_access", { entitlementId: id, detail: row.status }, now));
       const reason = row.consent_stopped_at ? "consent_revoked" : row.status === "revoked" ? "revoked" : "expired";
       return json({ entitled: false, reason, expiresAt: row.kind === "subscription" ? isoFromMs(row.expires_at) : undefined, environment: row.environment });
@@ -200,6 +205,7 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
     // Sandbox purchases are free (D5): one device each keeps App Review and TestFlight working without opening a relay pool.
     const link = await linkDevice(env.DB, id, deviceId, now, row.environment === "Sandbox" ? 1 : config.maxDevices);
     if (link === "device_limit") {
+      ctx.waitUntil(incrementDaily(env, "entitlement_verify_rejected", now));
       ctx.waitUntil(audit(env.DB, "verify_device_limit", { entitlementId: id }, now));
       return json({ entitled: false, reason: "device_limit", expiresAt: row.kind === "subscription" ? isoFromMs(row.expires_at) : undefined, environment: row.environment });
     }
@@ -210,6 +216,7 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
     });
     ctx.waitUntil(audit(env.DB, "verify_ok", { entitlementId: id, detail: environment }, now));
     log("verify_ok", { environment: row.environment, status: row.status, device: fingerprint(deviceId), entitlement: fingerprint(id) });
+    ctx.waitUntil(incrementDaily(env, "entitlement_verify_ok", now));
     return json({
       entitled: true,
       expiresAt: row.kind === "subscription" ? isoFromMs(row.expires_at) : undefined,

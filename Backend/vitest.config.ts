@@ -18,6 +18,7 @@ export default defineConfig({
             TEST_APPLE_CHAIN: serializeChain(chain),
             APPLE_ROOT_CERTS: base64Encode(chain.rootDer),
             ENVIRONMENT_NAME: "test",
+            MEASUREMENT_ENABLED: "1",
             // Fabricated notification app ID; do not inherit the live app ID from wrangler.
             APP_APPLE_ID: "1234567890",
             ALLOW_XCODE_TRANSACTIONS: "0",

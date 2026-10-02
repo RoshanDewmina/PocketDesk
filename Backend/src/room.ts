@@ -5,6 +5,7 @@ import { isPublicEnvironment, loadConfig, type Config } from "./config";
 import { accessEndMs, claimDeviceRoom, entitlementForDevice, hasAccess, restoreDeviceRoom, roomStatus, touchRoom } from "./entitlement/store";
 import { environmentLetter, verifyEntitlementToken } from "./entitlement/token";
 import { fingerprint, log, logError } from "./log";
+import { incrementDaily } from "./metrics";
 import { forgetPushRoom } from "./push";
 import {
   AUTH_TIMEOUT_MS, DEVICES_FEATURE, MESSAGES_PER_SECOND, OUTBOUND_BYTES_PER_SECOND, REMOTE_FEATURE, RENEWAL_FEATURE, ROUTE_FEATURE, iceWithinClientLimits,
@@ -927,6 +928,7 @@ export class RoomDO extends DurableObject<Env> {
       this.sendIce(ws, "host", []);
       this.ctx.waitUntil(touchRoom(this.env.DB, room, now).catch(error => logError("room_touch_failed", error, { room: fingerprint(room) })));
       log("host_registered", { room: fingerprint(room), renewable });
+      this.ctx.waitUntil(incrementDaily(this.env, "host_registered", now));
       await this.scheduleAlarm();
       return;
     }
@@ -1065,6 +1067,7 @@ export class RoomDO extends DurableObject<Env> {
     this.send(host, { type: "peer", online: true });
     this.send(ws, { type: "peer", online: true });
     log("client_registered", { room: fingerprint(room), entitled: entitlement.entitled, renewable });
+    this.ctx.waitUntil(incrementDaily(this.env, entitlement.entitled ? "signaling_ready_anywhere" : "signaling_ready_free", issuedAt));
     await this.scheduleAlarm();
   }
 
