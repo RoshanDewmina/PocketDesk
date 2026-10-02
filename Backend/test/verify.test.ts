@@ -148,27 +148,27 @@ describe("POST /v1/entitlements/verify", () => {
     expect((await SELF.fetch("https://farside.test/v1/entitlements/verify")).status).toBe(404);
   });
 
-  it("caps devices per subscription at three and frees a slot on forget", async () => {
+  it("caps devices per subscription at five and frees a slot on forget", async () => {
     const otid = `cap-${randomHex(6)}`;
-    const devices = [randomHex(), randomHex(), randomHex(), randomHex()];
+    const devices = Array.from({ length: 6 }, () => randomHex());
     const results = [];
     for (const device of devices) results.push(await verify({ originalTransactionId: otid }, device));
-    expect(results.slice(0, 3).every(result => result.body.entitled === true)).toBe(true);
-    expect(results[3]!.body).toMatchObject({ entitled: false, reason: "device_limit" });
+    expect(results.slice(0, 5).every(result => result.body.entitled === true)).toBe(true);
+    expect(results[5]!.body).toMatchObject({ entitled: false, reason: "device_limit" });
 
     const again = await verify({ originalTransactionId: otid }, devices[0]!);
     expect(again.body.entitled).toBe(true);
 
     const forget = await postJson("/v1/entitlements/forget", { deviceId: devices[0], entitlementToken: results[0]!.body.entitlementToken }, freshIp());
     expect(forget.status).toBe(204);
-    const fourth = await verify({ originalTransactionId: otid }, devices[3]!);
-    expect(fourth.body.entitled).toBe(true);
+    const sixth = await verify({ originalTransactionId: otid }, devices[5]!);
+    expect(sixth.body.entitled).toBe(true);
   });
 
   it("holds the device cap under parallel verification and allows one device per sandbox purchase", async () => {
     const otid = `par-${randomHex(6)}`;
-    const results = await Promise.all(Array.from({ length: 6 }, () => verify({ originalTransactionId: otid })));
-    expect(results.filter(result => result.body.entitled === true)).toHaveLength(3);
+    const results = await Promise.all(Array.from({ length: 8 }, () => verify({ originalTransactionId: otid })));
+    expect(results.filter(result => result.body.entitled === true)).toHaveLength(5);
     expect(results.filter(result => result.body.reason === "device_limit")).toHaveLength(3);
 
     const sandbox = `sbx-${randomHex(6)}`;

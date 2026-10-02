@@ -8,7 +8,7 @@ import { fingerprint, log, logError } from "./log";
 import { incrementDaily } from "./metrics";
 import { forgetPushRoom } from "./push";
 import {
-  AUTH_TIMEOUT_MS, MESSAGES_PER_SECOND, OUTBOUND_BYTES_PER_SECOND, REMOTE_FEATURE, RENEWAL_FEATURE, ROUTE_FEATURE, iceWithinClientLimits,
+  AUTH_TIMEOUT_MS, DEVICES_FEATURE, MESSAGES_PER_SECOND, OUTBOUND_BYTES_PER_SECOND, REMOTE_FEATURE, RENEWAL_FEATURE, ROUTE_FEATURE, iceWithinClientLimits,
   parseAuthenticatedFrame, parseJsonFrame, parseRegister, type ErrorCode, type IceServer, type PeerRole, type RegisterMessage,
 } from "./protocol";
 import { WindowCounter, addressKey, allowStrict, withTimeout } from "./ratelimit";
@@ -36,6 +36,10 @@ type Attachment = {
   issuedAt?: number;
   /** Last frame from this authenticated peer (registration counts). */
   lastSeenAt?: number;
+  /** Host-authorized admission hashes, persisted by WebSocket hibernation; never sent to a client. */
+  clientTokenHashes?: string[];
+  /** The admitted client's individual token hash, so stale reconnect cannot evict another device. */
+  clientTokenHash?: string;
 };
 
 type RoomState = {
@@ -909,12 +913,15 @@ export class RoomDO extends DurableObject<Env> {
       const leaseEndsAt = now + this.config.leaseMs;
       this.update({ room, client_token_hash: msg.clientTokenHash, lease_ends_at: leaseEndsAt, entitlement_id: null, entitled_device: null, recheck_at: null, last_activity: now,
         route_epoch: randomHex(16), route_revision: 0, route_expires_at: null });
-      const next: Attachment = { ...attachment, role: "host", authenticated: true, pending: false, renewable, remoteAware, routeAware, guestAware: msg.features.has(GUEST_FEATURE), entitled: false, servedRelay: false, lastSeenAt: now };
+      const next: Attachment = { ...attachment, role: "host", authenticated: true, pending: false, renewable, remoteAware, routeAware, guestAware: msg.features.has(GUEST_FEATURE), entitled: false, servedRelay: false, lastSeenAt: now,
+        clientTokenHashes: msg.clientTokenHashes ?? [msg.clientTokenHash] };
       this.save(ws, next);
       this.send(ws, {
         type: "registered",
         role: "host",
-        ...(msg.features.has(GUEST_FEATURE) ? { features: [GUEST_FEATURE] } : {}),
+        ...(msg.features.has(GUEST_FEATURE) || msg.features.has(DEVICES_FEATURE) ? {
+          features: [GUEST_FEATURE, DEVICES_FEATURE].filter(feature => msg.features.has(feature)),
+        } : {}),
         ...(renewable ? { renew: this.renewalOffer(next, leaseEndsAt, now) } : {}),
         ...(remoteAware ? { access: "local" } : {}),
       });
@@ -928,7 +935,10 @@ export class RoomDO extends DurableObject<Env> {
 
     const host = this.peer("host");
     const clientTokenHash = state.client_token_hash;
-    if (!host || !clientTokenHash || !(await secureEqual(await sha256Hex(msg.token), clientTokenHash))) {
+    const presentedHash = await sha256Hex(msg.token);
+    const trustedHashes = host ? this.attachment(host).clientTokenHashes ?? (clientTokenHash ? [clientTokenHash] : []) : [];
+    const matches = await Promise.all(trustedHashes.map(hash => secureEqual(presentedHash, hash)));
+    if (!host || !clientTokenHash || !matches.some(Boolean)) {
       this.error(ws, "host_unavailable_or_unauthorized");
       return;
     }
@@ -937,6 +947,12 @@ export class RoomDO extends DurableObject<Env> {
     }
     if (this.peer("host") !== host || this.state().client_token_hash !== clientTokenHash) {
       this.error(ws, "host_unavailable_or_unauthorized"); return;
+    }
+    const incumbent = this.peer("client");
+    // A different trusted device never takes over an active controller, even if its socket is quiet.
+    // Same-device recovery keeps the existing opt-in stale-socket policy.
+    if (incumbent && (this.attachment(incumbent).clientTokenHash ?? clientTokenHash) !== presentedHash) {
+      this.error(ws, "already_connected"); return;
     }
     if (!this.takeSlot("client", ws, now)) { this.error(ws, "already_connected"); return; }
 
@@ -1016,6 +1032,7 @@ export class RoomDO extends DurableObject<Env> {
     const leaseEndsAt = this.state().lease_ends_at ?? issuedAt + this.config.leaseMs;
     const next: Attachment = {
       ...attachment, role: "client", authenticated: true, pending: false, renewable, remoteAware, routeAware,
+      clientTokenHash: presentedHash,
       entitled: entitlement.entitled, entitlementId: entitlement.entitlementId, deviceId: entitlement.deviceId,
       entitlementUntil: entitlement.until, issuedAt: entitlement.entitled ? issuedAt : undefined, lastSeenAt: issuedAt,
     };

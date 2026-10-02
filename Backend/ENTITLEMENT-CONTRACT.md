@@ -33,7 +33,7 @@ Server checks, in order:
 6. The signed purchase transaction identifies the app through `bundleId`; Apple's `JWSTransactionDecodedPayload` has no `appAppleId` field. The numeric app-ID check applies to the outer production notification (§6), not this transaction. The verified Farside App Store Connect ID is `6817532560`.
 6a. Not under a parental consent withdrawal: if the transaction's `appTransactionId` was named by a `RESCIND_CONSENT` notification (§6), the answer is `entitled: false, reason: "consent_revoked"`.
 7. `revocationDate` absent; `expiresDate` (plus billing-grace allowance already known from notifications) in the future.
-8. Device cap: at most 3 distinct `deviceId`s per subscription (per `originalTransactionId`); sandbox purchases get 1. A further device is refused with `device_limit`; unlinking (§5) frees a slot, and a slot whose device has not verified for 30 days is reclaimed automatically.
+8. Device cap: at most 5 distinct `deviceId`s per subscription (per `originalTransactionId`); sandbox purchases get 1. A further device is refused with `device_limit`; unlinking (§5) frees a slot, and a slot whose device has not verified for 30 days is reclaimed automatically.
 
 Responses:
 
