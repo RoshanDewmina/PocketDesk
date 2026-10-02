@@ -26,11 +26,16 @@ struct VideoFrameTag: Codable, Equatable {
     let ltrToken: Int64?
     var refinement: VideoRefinementIdentity? = nil
     var timing: ExactVideoTiming? = nil
+    /// The capture region this frame was captured under (b7-scroll, 2 Oct): the phone places the frame
+    /// by it instead of by the `capture` status echo, which travels apart from the video. Nil from an
+    /// older Mac; an older phone ignores it.
+    var region: CaptureRegion? = nil
     func validate() throws {
         guard version == 1, InputCausalEnvelope.validID(generation), InputCausalEnvelope.validID(nonce),
               geometryEpoch > 0, scopeEpoch > 0 else { throw RemoteError.invalidMessage }
         try timing?.validate()
         try refinement?.validate()
+        try region?.validate()
         if let refinement { guard refinement.generation == generation, refinement.geometryEpoch == geometryEpoch, refinement.scopeEpoch == scopeEpoch else { throw RemoteError.invalidMessage } }
     }
 }
@@ -42,6 +47,7 @@ final class VideoFeedbackContext: @unchecked Sendable {
     private var refinementAllowed = false
     private var timingAllowed = false
     private let timingPushes = HostExactVideoTimingLog()
+    private let regionPushes = HostFrameRegionLog()
     private let timingReceiver = ExactVideoTimingReceiver()
     private let producer = VideoRefinementProducer()
     private var refinementImage: ((VideoRefinementImage) -> Void)?
@@ -86,7 +92,7 @@ final class VideoFeedbackContext: @unchecked Sendable {
     }
     private func clear() {
         overlay = nil
-        timingPushes.reset(); timingReceiver.reset()
+        timingPushes.reset(); regionPushes.reset(); timingReceiver.reset()
         producer.reset(terminal: ended)
         generation = Self.id(); tokens.removeAll(); acknowledged.removeAll(); refresh = false
         pending.removeAll(); retired.removeAll(); decoded.removeAll(); decoderGeneration = UUID(); lastRefresh = -.infinity
@@ -113,6 +119,7 @@ final class VideoFeedbackContext: @unchecked Sendable {
         var tag = VideoFrameTag(generation: generation, nonce: expected?.nonce ?? Self.id(), geometryEpoch: geometry, scopeEpoch: scope, ltrToken: token)
         tag.refinement = expected?.refinement
         tag.timing = timingAllowed ? expected?.timing : nil
+        tag.region = expected?.region
         if token != nil, tokens.count < 32 { tokens[tag.nonce] = (tag, now) }
         return tag
     }
@@ -229,6 +236,19 @@ final class VideoFeedbackContext: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard allowed, timingAllowed, !ended else { return nil }
         return timingPushes.submitted(buffer: buffer, atMs: atMs)
+    }
+    /// The capture region a pushed buffer was captured under, found again by the encoder at submission.
+    func pushedRegion(_ region: CaptureRegion?, buffer: CVPixelBuffer) {
+        lock.lock(); defer { lock.unlock() }
+        guard allowed, !ended, let region else { return }
+        regionPushes.pushed(region, buffer: buffer)
+    }
+    /// Nil for a region that would not validate: it must never cost the frame its whole tag.
+    func submittedRegion(buffer: CVPixelBuffer) -> CaptureRegion? {
+        lock.lock(); defer { lock.unlock() }
+        guard allowed, !ended, let region = regionPushes.submitted(buffer: buffer),
+              (try? region.validate()) != nil else { return nil }
+        return region
     }
     /// Caller must hold its actual public presentation fence; interpolated/redrawn outputs never enter here.
     func presentedTiming(_ tag: VideoFrameTag?, originalSource: Bool, newSubmission: Bool, presentedTime: Double, clock: ClockSyncEstimate?, observedAtMs: Double?, nowMs: Double = MachClock.nowMs()) {

@@ -331,6 +331,22 @@ final class PhoneRemoteModel: ObservableObject {
     // Not a presentation boundary: every viewport echo and ladder step changes it while the display,
     // geometry epoch and owner stay the same. Retiring here blanked the picture several times a second.
     @Published private(set) var captureRegion: CaptureRegion?
+    /// The region the picture is placed by (b7-scroll, 2 Oct). Frames carry their own capture region in
+    /// the access unit (`VideoFrameTag.region`), so the placement switches with the first frame of a new
+    /// crop instead of with the `capture` status, which used to arrive 1-10 frames apart from the video
+    /// and showed old-crop frames stretched into the new rect. Fallbacks, for frames without a region:
+    /// the last echoed region of the frame's pixel size, then the echo itself.
+    @Published private(set) var placementRegion: CaptureRegion?
+    private var regionHistory: [CaptureRegion] = []
+    static let regionHistoryLimit = 16
+    /// While frames carry regions, a frame without one (a Smooth Motion midpoint, or one encoded before
+    /// the Mac learned its region) keeps the placement; after `untaggedRunLimit` such frames in a row
+    /// the Mac has stopped tagging and the fallbacks apply again.
+    private var taggedRegionFrames = 0
+    private var untaggedRun = 0
+    private var placedOutput: PixelSize?
+    static let untaggedRunLimit = 30
+    var regionByFrame = RegionByFrameSwitch.isOn
     /// G12: the Mac's own account of its load, for the pill; nil from a Mac without the ladder.
     @Published private(set) var busy: BusyState?
     /// The Mac's battery, temperature and load as last received; read through `currentMacVitals(now:)`.
@@ -1632,6 +1648,44 @@ final class PhoneRemoteModel: ObservableObject {
         return PixelSize(width: Int(width), height: Int(height))
     }
 
+    /// Called on the main thread for every frame the Metal view draws.
+    func frameDrawn(_ envelope: VideoFrameEnvelope) {
+        framePlacement(tag: envelope.videoTag, width: Int(envelope.frame.width), height: Int(envelope.frame.height))
+    }
+
+    func framePlacement(tag: VideoFrameTag?, width: Int, height: Int) {
+        guard regionByFrame else { return }
+        if let region = tag?.region, tag?.geometryEpoch == geometryEpoch {
+            taggedRegionFrames += 1
+            untaggedRun = 0
+            placedOutput = PixelSize(width: region.outputWidth, height: region.outputHeight)
+        } else {
+            untaggedRun += 1
+            // A midpoint of the same size keeps its sources' placement; another size is another stream.
+            if taggedRegionFrames > 0, untaggedRun < Self.untaggedRunLimit,
+               placedOutput == PixelSize(width: width, height: height) { return }
+        }
+        let placed = FramePlacementPolicy.region(tag: tag, geometryEpoch: geometryEpoch, frameWidth: width,
+                                                 frameHeight: height, history: regionHistory, echo: captureRegion)
+        if Self.regionCoverageChanged(placementRegion, placed) { placementRegion = placed }
+    }
+
+    private func observeEchoedRegion(_ region: CaptureRegion?, statusEpoch: UInt64) {
+        guard let region, statusEpoch == geometryEpoch, (try? region.validate()) != nil else { return }
+        if let last = regionHistory.last, !Self.regionCoverageChanged(last, region) { return }
+        regionHistory.append(region)
+        if regionHistory.count > Self.regionHistoryLimit { regionHistory.removeFirst(regionHistory.count - Self.regionHistoryLimit) }
+    }
+
+    private func resetRegions() {
+        captureRegion = nil
+        regionHistory.removeAll()
+        taggedRegionFrames = 0
+        untaggedRun = 0
+        placedOutput = nil
+        if placementRegion != nil { placementRegion = nil }
+    }
+
     /// The region the frames cover after a `capture` status: nil, the whole display, for whole-display
     /// capture, a status about another geometry or a malformed region.
     static func croppedRegion(_ region: CaptureRegion?, statusEpoch: UInt64, geometryEpoch: UInt64) -> CaptureRegion? {
@@ -2778,7 +2832,9 @@ let now = ProcessInfo.processInfo.systemUptime
             if displaySelectionSupported && !displaysRequested { requestDisplays() }
             let region = Self.croppedRegion(action.captureRegion, statusEpoch: action.epoch,
                                             geometryEpoch: geometryEpoch)
+            observeEchoedRegion(action.captureRegion, statusEpoch: action.epoch)
             if Self.regionCoverageChanged(captureRegion, region) { captureRegion = region }
+            if !regionByFrame, Self.regionCoverageChanged(placementRegion, region) { placementRegion = region }
             if action.busy != busy { busy = action.busy }
             let now = ProcessInfo.processInfo.systemUptime
             let vitals = hostFeatures.contains(SessionFeature.macVitals) ? action.macVitals : nil
@@ -2805,7 +2861,7 @@ let now = ProcessInfo.processInfo.systemUptime
             geometryEpoch = action.epoch
             couchAck.reset()
             couchStalled = false
-            captureRegion = nil
+            resetRegions()
             busy = nil
             ladder = nil
             connection.media?.observeLadder(nil)
@@ -3102,7 +3158,7 @@ let now = ProcessInfo.processInfo.systemUptime
         streamSummaryLines = []
         resetQuality()
         link = nil
-        captureRegion = nil
+        resetRegions()
         busy = nil
         macVitals = nil
         macVitalsReceivedAt = 0
@@ -3183,6 +3239,28 @@ let now = ProcessInfo.processInfo.systemUptime
         couchAck.reset()
         lastModeReason = nil
     }
+}
+
+/// Which region a drawn frame is placed by (see `PhoneRemoteModel.placementRegion`).
+enum FramePlacementPolicy {
+    static func region(tag: VideoFrameTag?, geometryEpoch: UInt64, frameWidth: Int, frameHeight: Int,
+                       history: [CaptureRegion], echo: CaptureRegion?) -> CaptureRegion? {
+        if let tag, let region = tag.region, tag.geometryEpoch == geometryEpoch, (try? region.validate()) != nil {
+            return region.isWholeDisplay ? nil : region
+        }
+        if let match = history.last(where: { $0.outputWidth == frameWidth && $0.outputHeight == frameHeight }) {
+            return match.isWholeDisplay ? nil : match
+        }
+        return echo
+    }
+}
+
+/// Kill switch for placing frames by their own region (`defaults write <phone bundle id>
+/// PocketDeskRegionByFrame -bool NO`, then relaunch the app). Off places the picture by the `capture`
+/// status echo, as build 20261002.2 did.
+enum RegionByFrameSwitch {
+    static let defaultsKey = "PocketDeskRegionByFrame"
+    static let isOn = ScrollFixesSwitch.isOn && (UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true)
 }
 
 /// A cropped capture for the dock caption and the statistics overlay, e.g. "crop 1280×720 · 2.0×":
@@ -3300,6 +3378,8 @@ struct RemoteVideoSurface: UIViewRepresentable {
     /// Raw decoded source callback; must be thread-safe (LivePiPController.offer is thread-safe).
     var onSourceFrame: ((VideoFrameEnvelope) -> Void)?
     var onOriginalSourcePresented: ((VideoPresentationIdentity, UUID) -> Void)?
+    /// Main thread, once per drawn frame, outside the presentation fence.
+    var onFrameDrawn: ((VideoFrameEnvelope) -> Void)?
     var videoFeedback: VideoFeedbackContext?
     var frameTiming: PhoneFrameTimingLog?
     var sourceCrop: CGRect?
@@ -3334,6 +3414,7 @@ struct RemoteVideoSurface: UIViewRepresentable {
                 view.topAnchor.constraint(equalTo: container.topAnchor), view.bottomAnchor.constraint(equalTo: container.bottomAnchor)])
         }
         context.coordinator.session?.onOriginalSourcePresented = onOriginalSourcePresented
+        context.coordinator.session?.onFrameDrawn = onFrameDrawn
         context.coordinator.session?.configure(admission: admission, counters: counters, statistics: statistics,
             sourceSize: sourceSize, displayedPixelWidth: displayedPixelWidth, fillsFrame: fillsFrame,
             mode: smoothMotion, upscale: smoothMotionUpscale, onSourceFrame: onSourceFrame, videoFeedback: videoFeedback, sourceCrop: sourceCrop, frameTiming: frameTiming)

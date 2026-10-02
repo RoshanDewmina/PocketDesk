@@ -58,6 +58,48 @@ final class NativeGestureEngineTests: XCTestCase {
         XCTAssertTrue(log.clicks.isEmpty)
     }
 
+    func testAPureViewTwoFingerPanStillEndsWithZoomEnded() {
+        let log = CommandLog()
+        let input = engine(log, enabled: false, panMode: true)
+        input.update([touch(1, 0), touch(2, 100)], at: 1)
+        input.update([touch(1, 0, 30), touch(2, 101, 30)], at: 1.05)
+        input.update([touch(1, 0, 60), touch(2, 100, 60)], at: 1.1)
+        input.update([], at: 1.2)
+        XCTAssertEqual(log.navigation.map(\.factor), [1, 1])
+        XCTAssertEqual(log.zoomEnds, 1, "the viewport settles after a pure pan as it did before the dead band")
+        input.update([touch(1, 0), touch(2, 100)], at: 2)
+        input.update([], at: 2.1)
+        XCTAssertEqual(log.zoomEnds, 1, "a touch that never moved is not a navigation")
+    }
+
+    /// A two-finger scroll in View mode: the fingers drift apart and together by a few percent on the way.
+    func testViewTwoFingerScrollWobbleDoesNotZoomUntilTheDeadBandIsCrossed() {
+        for deadband in [true, false] {
+            let log = CommandLog()
+            let input = engine(log, enabled: false, panMode: true, zoomDeadband: deadband)
+            input.update([touch(1, 0), touch(2, 100)], at: 1)
+            input.update([touch(1, 0, 20), touch(2, 103, 20)], at: 1.05)
+            input.update([touch(1, 0, 40), touch(2, 98, 40)], at: 1.1)
+            input.update([touch(1, 0, 60), touch(2, 102, 60)], at: 1.15)
+            input.update([touch(1, 0, 80), touch(2, 112, 80)], at: 1.2)
+            input.update([touch(1, 0, 90), touch(2, 116, 90)], at: 1.25)
+            input.update([], at: 1.3)
+            XCTAssertEqual(log.navigation.count, 5, "deadband \(deadband)")
+            XCTAssertEqual(log.navigation.map(\.translation.height), [20, 20, 20, 20, 10], "the pan is never held back")
+            let factors = log.navigation.map(\.factor)
+            if deadband {
+                XCTAssertEqual(Array(factors[0..<3]), [1, 1, 1], "under 5.5 % the span is ignored")
+                XCTAssertEqual(factors[3], 112.0 / 102.0, accuracy: 0.001, "the crossing zooms from the last span, no jump")
+                XCTAssertEqual(factors[4], 116.0 / 112.0, accuracy: 0.001)
+            } else {
+                XCTAssertEqual(factors[0], 1.03, accuracy: 0.001, "the switch restores a zoom on every wobble")
+                XCTAssertEqual(factors[1], 98.0 / 103.0, accuracy: 0.001)
+            }
+            XCTAssertEqual(log.zoomEnds, 1)
+            XCTAssertTrue(log.scrollPhases.isEmpty)
+        }
+    }
+
     func testAsymmetricPinchKeepsOriginalSourceUnderMovingMidpointInControlAndView() {
         for panMode in [false, true] {
             for reversed in [false, true] {
@@ -655,10 +697,10 @@ final class NativeGestureEngineTests: XCTestCase {
     }
 
     private func engine(_ commands: CommandLog, enabled: Bool = true,
-                        panMode: Bool = false, scale: CGFloat = 1) -> NativeGestureEngine {
+                        panMode: Bool = false, scale: CGFloat = 1, zoomDeadband: Bool = true) -> NativeGestureEngine {
         let input = NativeGestureEngine(enabled: enabled, panMode: panMode, revision: 1,
                             sensitivity: 1, pointerScale: scale,
-                            doubleClickInterval: 0.5,
+                            doubleClickInterval: 0.5, zoomDeadband: zoomDeadband,
                             onCommand: { commands.record($0) })
         input.clipboardGesturesEnabled = { true }
         return input
