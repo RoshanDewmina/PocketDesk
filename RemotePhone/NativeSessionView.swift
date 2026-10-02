@@ -2336,6 +2336,7 @@ struct NativeSessionView: View {
             .farsidePlate(Farside.Radius.sheet, fill: Farside.Palette.void2.opacity(0.97), stroke: Farside.Palette.line2)
             .padding(.horizontal, 8)
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { panelFrame = $0 }
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("remote.controls.content")
         } else {
             compactOverlayControls
