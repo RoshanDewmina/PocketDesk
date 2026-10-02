@@ -271,6 +271,14 @@ final class SessionLayoutTests: XCTestCase {
                     XCTAssertGreaterThanOrEqual(desktop.frame.height, 44)
                     XCTAssertGreaterThanOrEqual(desktop.frame.width, 44)
                     XCTAssertFalse(app.descendants(matching: .any)["remote.keys.fixed"].firstMatch.exists)
+                    if orientation == .landscapeLeft {
+                        // Both overlay variants must present Settings; the accessible list used to
+                        // set the state without owning any sheet presenter.
+                        let settings = app.buttons["remote.controls.settings"].firstMatch
+                        XCTAssertTrue(settings.isHittable)
+                        settings.tap()
+                        XCTAssertTrue(app.buttons["remote.settings.picture"].firstMatch.waitForExistence(timeout: 5))
+                    }
                 } else {
                     XCTAssertFalse(app.descendants(matching: .any)["remote.keys.accessible"].firstMatch.exists)
                 }

@@ -2364,31 +2364,44 @@ struct NativeSessionView: View {
     }
 
     /// Landscape and iPad: one row of keys over the picture, with Settings and Done at the end.
-    @ViewBuilder private var overlayControls: some View {
-        if accessibleCommands {
-            VStack(spacing: 10) {
-                HStack {
-                    Text("Controls").font(.headline).accessibilityAddTraits(.isHeader)
-                    Spacer(minLength: 8)
-                    Button { showOverlaySettings = true } label: { Image(systemName: "gearshape") }
-                        .buttonStyle(FarsideRoundButtonStyle(diameter: 44))
-                        .accessibilityLabel("Settings")
-                        .accessibilityIdentifier("remote.controls.settings")
-                    controlsDoneButton
+    private var overlayControls: some View {
+        Group {
+            if accessibleCommands {
+                VStack(spacing: 10) {
+                    HStack {
+                        Text("Controls").font(.headline).accessibilityAddTraits(.isHeader)
+                        Spacer(minLength: 8)
+                        Button { showOverlaySettings = true } label: { Image(systemName: "gearshape") }
+                            .buttonStyle(FarsideRoundButtonStyle(diameter: 44))
+                            .accessibilityLabel("Settings")
+                            .accessibilityIdentifier("remote.controls.settings")
+                        controlsDoneButton
+                    }
+                    ScrollView { macKeys(compact: false) }
+                        .accessibilityIdentifier("remote.controls.scroll")
                 }
-                ScrollView { macKeys(compact: false) }
-                    .accessibilityIdentifier("remote.controls.scroll")
+                .padding(12)
+                .frame(maxWidth: 860)
+                .frame(maxHeight: max(180, min(620, canvasFrame.height * 0.8)))
+                .farsidePlate(Farside.Radius.sheet, fill: Farside.Palette.void2.opacity(0.97), stroke: Farside.Palette.line2)
+                .padding(.horizontal, 8)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { panelFrame = $0 }
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("remote.controls.content")
+            } else {
+                compactOverlayControls
             }
-            .padding(12)
-            .frame(maxWidth: 860)
-            .frame(maxHeight: max(180, min(620, canvasFrame.height * 0.8)))
-            .farsidePlate(Farside.Radius.sheet, fill: Farside.Palette.void2.opacity(0.97), stroke: Farside.Palette.line2)
-            .padding(.horizontal, 8)
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { panelFrame = $0 }
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("remote.controls.content")
-        } else {
-            compactOverlayControls
+        }
+        // Under the Settings sheet the keys are covered; VoiceOver should not reach them either.
+        .accessibilityHidden(showOverlaySettings)
+        .sheet(isPresented: $showOverlaySettings, onDismiss: { controlsPath = [] }) {
+            NavigationStack(path: $controlsPath) {
+                settingsPage(session: true)
+                    .navigationDestination(for: ControlsPage.self) { controlsPage($0) }
+            }
+            .tint(Farside.Palette.bone)
+            .presentationDetents([.large])
+            .farsideSheet()
         }
     }
 
@@ -2416,17 +2429,6 @@ struct NativeSessionView: View {
         .onAppear { if model.displays.isEmpty { model.requestDisplays() } }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("remote.controls.content")
-        // Under the Settings sheet the keys are covered; VoiceOver should not reach them either.
-        .accessibilityHidden(showOverlaySettings)
-        .sheet(isPresented: $showOverlaySettings, onDismiss: { controlsPath = [] }) {
-            NavigationStack(path: $controlsPath) {
-                settingsPage(session: true)
-                    .navigationDestination(for: ControlsPage.self) { controlsPage($0) }
-            }
-            .tint(Farside.Palette.bone)
-            .presentationDetents([.large])
-            .farsideSheet()
-        }
     }
 
     @ViewBuilder private func controlsPage(_ page: ControlsPage) -> some View {
@@ -2475,6 +2477,9 @@ struct NativeSessionView: View {
     /// One row per setting with its current value; each opens its own page.
     private func settingsPage(session: Bool) -> some View {
         settingsForm("Settings") {
+            if session && showsCouchRow {
+                Section { couchPanelRow }
+            }
             if session && model.awaySupported {
                 Section {
                     Button("End and lock Mac") { _ = model.endAndLockMac() }
