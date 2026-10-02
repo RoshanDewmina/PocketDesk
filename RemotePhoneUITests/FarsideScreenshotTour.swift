@@ -213,9 +213,21 @@ final class FarsideScreenshotTour: XCTestCase {
             let choices = ["home-connection-details": "Connection Details", "home-legal": "Third-Party Notices",
                            "home-security": "Settings", "home-server-data": "Server Data", "home-server-data-confirm": "Server Data",
                            "home-forget-confirm": "Forget This Mac", "home-paired-macs": "Your Macs"]
+            let choice = choices[shot.name]!
+            let captureOrientation = XCUIDevice.shared.orientation
+            let portraitNavigation = ["Settings", "Forget This Mac"].contains(choice)
+                && (captureOrientation == .landscapeLeft || captureOrientation == .landscapeRight)
+            // Native menus clip these bottom rows in short landscape. Open the destination in
+            // portrait, then verify and capture its actual landscape layout. The menu shot itself
+            // still opens in the requested orientation and preserves the clipped-menu evidence.
+            if portraitNavigation { XCUIDevice.shared.orientation = .portrait }
+            defer {
+                if portraitNavigation && XCUIDevice.shared.orientation != captureOrientation {
+                    XCUIDevice.shared.orientation = captureOrientation
+                }
+            }
             let help = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Help and more")).firstMatch
             guard tap(help, in: app) else { return false }
-            let choice = choices[shot.name]!
             let target = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", choice))
             // SwiftUI menu rows may be Button or PopUpButton. Short landscape menus scroll;
             // drag a visible menu row rather than the Home scroll view behind the popover.
@@ -234,6 +246,7 @@ final class FarsideScreenshotTour: XCTestCase {
                 visibleRow.swipeUp()
             }
             guard opened else { return missing("Home menu item unavailable or covered: \(choice)") }
+            if portraitNavigation { XCUIDevice.shared.orientation = captureOrientation }
             if shot.name == "home-server-data-confirm" {
                 return tap(app.buttons["privacy.removeDevice"], in: app)
                     && require(app.buttons["Remove Device Link"], "Server removal confirmation")
@@ -246,8 +259,17 @@ final class FarsideScreenshotTour: XCTestCase {
             }
             return require(app.navigationBars[choices[shot.name]!], choices[shot.name]!)
         case "home-session-check", "home-session-support":
-            guard tap(app.buttons["Session check"], in: app),
-                  require(app.navigationBars["Session check"], "Useful-session progress") else { return false }
+            let captureOrientation = XCUIDevice.shared.orientation
+            let portraitNavigation = captureOrientation == .landscapeLeft || captureOrientation == .landscapeRight
+            if portraitNavigation { XCUIDevice.shared.orientation = .portrait }
+            defer {
+                if portraitNavigation && XCUIDevice.shared.orientation != captureOrientation {
+                    XCUIDevice.shared.orientation = captureOrientation
+                }
+            }
+            guard tap(app.buttons["Session check"], in: app) else { return false }
+            if portraitNavigation { XCUIDevice.shared.orientation = captureOrientation }
+            guard require(app.navigationBars["Session check"], "Useful-session progress") else { return false }
             return shot.name == "home-session-check" || reveal(app.buttons["Copy a safe support summary"], in: app)
         case "pairing-malformed-code":
             let field = app.textViews["Pairing code"].exists ? app.textViews["Pairing code"] : app.textFields["Pairing code"]

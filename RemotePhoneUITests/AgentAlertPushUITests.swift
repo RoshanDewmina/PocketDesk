@@ -26,6 +26,9 @@ final class AgentAlertPushUITests: XCTestCase {
     /// which is why the switch is not driven here.
     @MainActor
     private func launchWithAlertsOnAndSignalReady() throws -> XCUIApplication {
+        if environment["FARSIDE_PUSH_INJECTED"] == "1" {
+            XCUIDevice.shared.orientation = .portrait
+        }
         let app = XCUIApplication()
         app.launchArguments = ["--ui-seed-pairing=Studio Mac", "--ui-x", "--ui-request-notifications",
                                 "-agentAlerts.enabled", "YES", "-agentAlerts.declinedIDs", "()", "-agentAlerts.snoozedIDs", "()"]
