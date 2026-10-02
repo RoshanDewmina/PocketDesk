@@ -265,8 +265,13 @@ final class SessionLayoutTests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5), "The system keyboard must dismiss before the dock is used")
         let landscapeHandle = app.buttons["Show controls"]
         XCTAssertTrue(landscapeHandle.waitForExistence(timeout: 5))
+        let handleReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: landscapeHandle)
+        XCTAssertEqual(XCTWaiter().wait(for: [handleReady], timeout: 5), .completed)
         attachScreenshot("Immersive landscape after keyboard dismissal - offline layout")
-        landscapeHandle.swipeUp()
+        // Use a definite vertical drag after the keyboard transition. A synthesized
+        // swipe on the 44-point handle can be too short to cross its drag threshold.
+        let start = landscapeHandle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -100)))
         let controls = app.buttons["Controls"].firstMatch
         XCTAssertTrue(controls.waitForExistence(timeout: 5))
         controls.tap()

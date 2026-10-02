@@ -69,13 +69,18 @@ struct DuoSessionProbe: UIViewRepresentable {
         view.enabled = enabled && !UserDefaults.standard.bool(forKey: DuoSessionLayout.disabledKey)
         view.refresh()
     }
-    static func dismantleUIView(_ view: ProbeView, coordinator: ()) { view.onUpdate = nil }
+    static func dismantleUIView(_ view: ProbeView, coordinator: ()) {
+        view.onUpdate = nil
+        view.stopObservingScene()
+    }
 
     final class ProbeView: UIView {
         var onUpdate: ((DuoSessionLayout) -> Void)?
         var enabled = true
         private var last: DuoSessionLayout?
         private var pending = false
+        private weak var observedScene: UIWindowScene?
+        private var geometryObservation: NSKeyValueObservation?
         #if FARSIDE_DUO_SDK
         private var hingeInteraction: UIInteraction?
         private var posture: DuoSessionLayout.Posture = .unavailable
@@ -106,7 +111,26 @@ struct DuoSessionProbe: UIViewRepresentable {
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
         override func layoutSubviews() { super.layoutSubviews(); refresh() }
         override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); refresh() }
-        override func didMoveToWindow() { super.didMoveToWindow(); refresh() }
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            let scene = window?.windowScene
+            if scene !== observedScene {
+                stopObservingScene()
+                observedScene = scene
+                // A flip between landscape sides can keep bounds and safe-area insets
+                // unchanged. Observe the authoritative scene geometry as well as layout.
+                geometryObservation = scene?.observe(\.effectiveGeometry) { [weak self] _, _ in
+                    DispatchQueue.main.async { [weak self] in self?.refresh() }
+                }
+            }
+            refresh()
+        }
+
+        func stopObservingScene() {
+            geometryObservation?.invalidate()
+            geometryObservation = nil
+            observedScene = nil
+        }
 
         func refresh() {
             guard !pending else { return }
@@ -115,7 +139,7 @@ struct DuoSessionProbe: UIViewRepresentable {
                 guard let self else { return }
                 self.pending = false
                 var state = DuoSessionLayout(bounds: self.bounds)
-                switch self.window?.windowScene?.interfaceOrientation {
+                switch self.window?.windowScene?.effectiveGeometry.interfaceOrientation {
                 case .portrait: state.orientation = "portrait"
                 case .portraitUpsideDown: state.orientation = "portraitUpsideDown"
                 case .landscapeLeft: state.orientation = "landscapeLeft"
