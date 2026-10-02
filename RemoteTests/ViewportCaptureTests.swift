@@ -495,6 +495,65 @@ final class ViewportCaptureTests: XCTestCase {
                                size(3008, 1392), size(3008, 1392), size(2032, 944)])
     }
 
+    /// Defensive host gate for accepted heartbeat requests. The phone normally suppresses this
+    /// covered trace while fingers move; this does not establish end-to-end physical smoothness.
+    /// A 5 % pinch with a 12 pt pan remains inside the initial padded crop. Output hysteresis alone
+    /// is insufficient: changing the source rectangle also makes status/video races visible.
+    func testSmallPinchAndPanReplayKeepsCoveredRegionAndEncoderSizeStable() throws {
+        let whole = try output(moreSpace, fps: 60)
+        let first = region(iPhone17(zoom: 2.5, portrait: false, on: moreSpace),
+                           on: moreSpace, output: whole)
+        XCTAssertFalse(first.isWholeDisplay)
+        var previous = first
+        var regionChanges = 0, encoderChanges = 0
+        for step in 1...24 {
+            var viewport = iPhone17(zoom: 2.5 + Double(step) / 192, portrait: false,
+                                    on: moreSpace, epoch: UInt64(step + 1))
+            viewport.x += Double(step) / 2
+            XCTAssertTrue(first.rect.contains(viewport.rect), "fixture must stay inside the original safety margin")
+            let next = region(viewport, on: moreSpace, output: whole, previous: previous)
+            if previous.rect != next.rect { regionChanges += 1 }
+            if previous.outputWidth != next.outputWidth || previous.outputHeight != next.outputHeight {
+                encoderChanges += 1
+            }
+            XCTAssertTrue(next.rect.contains(viewport.rect), "holding a region must preserve visible coverage")
+            previous = next
+        }
+        XCTAssertLessThanOrEqual(encoderChanges, 1, "one settled encoder change at most for this small gesture")
+        XCTAssertLessThanOrEqual(regionChanges, 1,
+                                 "covered pinch/pan must not repeatedly reconfigure and race region status against video")
+    }
+
+    /// Replay actual builder/cache admission, including size changes and a return to an earlier crop.
+    /// This checks host region/frame consistency; RTP frames already in flight remain a DEVICE gate.
+    func testReplayConfigurationMatchesEveryEchoedRegion() throws {
+        let whole = try output(moreSpace, fps: 60)
+        var previous = Policy.wholeDisplay(moreSpace, output: whole)
+        for (index, zoom) in [2.5, 2.625, 2.5, 3.5, 2.5].enumerated() {
+            var viewport = iPhone17(zoom: zoom, portrait: false, on: moreSpace, epoch: UInt64(index + 1))
+            viewport.x += index == 3 ? 100 : 0
+            let next = region(viewport, on: moreSpace, output: whole, previous: previous)
+            let config = RemoteCaptureConfiguration.streamConfiguration(
+                output: whole, region: next, showsCursor: false, fps: 60,
+                displayRefreshHz: 60, tuning: .tuned)
+            XCTAssertEqual(config.sourceRect, next.rect)
+            XCTAssertEqual(config.width, next.outputWidth)
+            XCTAssertEqual(config.height, next.outputHeight)
+            XCTAssertTrue(next.rect.contains(viewport.rect))
+            if previous.rect != next.rect {
+                // Neither matching dimensions nor a post-request callback proves which source
+                // rectangle these pixels show. A delayed old frame must not be refreshed as next.
+                for duringUpdate in [false, true] {
+                    XCTAssertTrue(CaptureFrameCachePolicy.shouldDiscard(
+                        cachedDimensions: size(next.outputWidth, next.outputHeight),
+                        frameArrivedDuringUpdate: duringUpdate, cachedDisplayTime: UInt64(index + 101),
+                        updateRequestedAt: UInt64(index + 100), previous: previous, next: next))
+                }
+            }
+            previous = next
+        }
+    }
+
     func testPhoneNativeGeometryOnTheASUS() throws {
         let whole = try output(asus, fps: 120)
         let first = region(centered(zoom: 2, on: asus, epoch: 1), output: whole)
