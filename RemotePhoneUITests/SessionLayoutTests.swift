@@ -29,11 +29,12 @@ final class SessionLayoutTests: XCTestCase {
         XCTAssertLessThanOrEqual(picture.frame.maxY, pad.frame.minY + 14)
         let before = picture.frame
         app.buttons["Show controls"].doubleTap()
-        XCTAssertTrue(app.buttons["Hide keyboard"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["remote.keyboard.hide"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         XCTAssertEqual(picture.frame.minY, before.minY, accuracy: 1)
         XCTAssertEqual(picture.frame.height, before.height, accuracy: 1)
         attachScreenshot("iPad stack with soft keyboard in pad")
-        app.buttons["Hide keyboard"].tap()
+        app.buttons["remote.keyboard.hide"].tap()
         rotate(app, to: .landscapeLeft)
         XCTAssertTrue(pad.waitForNonExistence(timeout: 5))
         XCTAssertGreaterThan(picture.frame.width, picture.frame.height)
@@ -491,7 +492,7 @@ final class SessionLayoutTests: XCTestCase {
     @MainActor
     func testRegularConnectedPillCollapsesAndDoubleTapOpensKeyboard() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-software-keyboard"]
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-software-keyboard", "--ui-input-probe"]
         launchOfflineFixture(app)
         try requireRegularPill(app)
         let pill = app.descendants(matching: .any)["remote.session.pill"].firstMatch
@@ -500,7 +501,10 @@ final class SessionLayoutTests: XCTestCase {
         app.buttons["Show controls"].doubleTap()
         XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Command"].exists)
-        XCTAssertTrue(app.buttons["Return"].isHittable, "The regular keyboard row must expose its final key without scrolling")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let returnKey = app.buttons.matching(NSPredicate(format: "identifier == 'remote.keys' AND label == 'Return'")).firstMatch
+        XCTAssertTrue(returnKey.isEnabled)
+        XCTAssertTrue(returnKey.isHittable, "The regular keyboard row must expose its final key without scrolling")
         XCTAssertFalse(app.descendants(matching: .any)["remote.keys"].firstMatch.scrollViews.firstMatch.exists)
         XCTAssertFalse(app.descendants(matching: .any)["remote.dock"].firstMatch.exists)
     }
@@ -515,7 +519,7 @@ final class SessionLayoutTests: XCTestCase {
         XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 5))
         XCTAssertFalse(app.descendants(matching: .any)["remote.keys"].firstMatch.exists)
         XCTAssertFalse(app.buttons["Command"].exists)
-        XCTAssertTrue(app.buttons["Hide keyboard"].isHittable)
+        XCTAssertTrue(app.buttons["remote.keyboard.hide"].isHittable)
         XCTAssertFalse(app.buttons["Send text"].isEnabled)
     }
 

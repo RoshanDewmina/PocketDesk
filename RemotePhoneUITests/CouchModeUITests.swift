@@ -12,7 +12,15 @@ final class CouchModeUITests: XCTestCase {
             XCTAssertTrue(app.buttons[id].exists, id)
         }
         XCTAssertFalse(app.buttons["Fit whole display"].exists, "Couch has no picture to fit")
-        XCTAssertTrue(app.buttons["End session"].exists)
+        if app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists {
+            // Regular Couch uses the same top anchor as a picture session.
+            app.buttons["Show controls"].tap()
+            XCTAssertTrue(app.buttons["End session"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["End session"].isHittable)
+            app.buttons["Hide controls"].tap()
+        } else {
+            XCTAssertTrue(app.buttons["End session"].exists)
+        }
         app.buttons["remote.couch.controls"].tap()
         XCTAssertTrue(app.buttons["Double-click"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["remote.displayRow"].exists)

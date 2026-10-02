@@ -30,10 +30,12 @@ struct SimulatedSessionWindow: ViewModifier {
         if let width = LaunchOptions.value("--ui-window-width=").flatMap(Double.init), width.isFinite, width > 0 {
             GeometryReader { proxy in
                 let height = LaunchOptions.value("--ui-window-height=").flatMap(Double.init)
-                content
+                ZStack { content }
                     .frame(width: min(CGFloat(width), proxy.size.width),
                            height: height.map { $0.isFinite && $0 > 0 ? min(CGFloat($0), proxy.size.height) : proxy.size.height }
                             ?? proxy.size.height)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("ui.simulated.window")
                     .environment(\.horizontalSizeClass, LaunchOptions.value("--ui-width-class=") == "compact" ? .compact : .regular)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
