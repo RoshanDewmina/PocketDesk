@@ -26,6 +26,8 @@ final class HostInputExecutor: @unchecked Sendable {
     private var causalContext: InputCausalEnvelope?
     private var ledger = InputAppliedLedger()
     private var pointerAnchor: CGPoint?
+    static let couchBurstDisabledDefaultsKey = "couchInputBurstCoalescingDisabled"
+    private let coalesceCouchMotion: () -> Bool
     func beginCausalContext(_ context: InputCausalEnvelope) {
         withAuthority {
             if causalContext != nil { invalidateLocked() }
@@ -78,14 +80,32 @@ final class HostInputExecutor: @unchecked Sendable {
                 } else {
                     do {
                         let missing = try ledger.missing(from: context)
-                        for segment in missing {
+                        let missingSteps = try missing.map { segment -> Admitted in
                             guard let index = context.segments.firstIndex(where: { $0.ordinal == segment.ordinal }), steps.indices.contains(index) else { throw RemoteError.stale }
-                            let admitted = steps[index]
-                            let result = post(admitted, ticket: ticket, routeAuthority: routeAuthority)
-                            results.append((segment.action, result))
+                            let step = steps[index]
+                            // Coalescing must use the admitted segment's same motion and hold.
+                            guard step.action.action == segment.action.action, step.action.x == segment.action.x,
+                                  step.action.y == segment.action.y, step.action.interaction == segment.action.interaction,
+                                  step.action.modifiers == segment.action.modifiers, step.action.pencil == segment.action.pencil else { throw RemoteError.stale }
+                            return step
+                        }
+                        if semantic == nil, coalesceCouchMotion(), missingSteps.allSatisfy(\.upgraded),
+                           let merged = driver.coalescedCouchMotion(missingSteps.map(\.action), now: clock()),
+                           let expires = missingSteps.map(\.expires).min() {
+                            let result = post(Admitted(action: merged.action, upgraded: true, expires: expires), ticket: ticket,
+                                              routeAuthority: routeAuthority, pointerSnapshot: merged.base)
+                            results.append((merged.action, result))
                             guard result.outcome.accepted else { throw RemoteError.stale }
-                            try ledger.recordPosted(segment.ordinal)
+                            for segment in missing { try ledger.recordPosted(segment.ordinal) }
                             pointerAnchor = driver.lastPoint
+                        } else {
+                            for (segment, admitted) in zip(missing, missingSteps) {
+                                let result = post(admitted, ticket: ticket, routeAuthority: routeAuthority)
+                                results.append((segment.action, result))
+                                guard result.outcome.accepted else { throw RemoteError.stale }
+                                try ledger.recordPosted(segment.ordinal)
+                                pointerAnchor = driver.lastPoint
+                            }
                         }
                         if let semantic {
                             let result = post(semantic, ticket: ticket, routeAuthority: routeAuthority)
@@ -101,11 +121,12 @@ final class HostInputExecutor: @unchecked Sendable {
         return true
     }
     private func post(_ admitted: Admitted, ticket: UInt64,
-                      routeAuthority: @escaping (@escaping () -> RemoteInputOutcome) -> RemoteInputOutcome) -> Receipt {
+                      routeAuthority: @escaping (@escaping () -> RemoteInputOutcome) -> RemoteInputOutcome,
+                      pointerSnapshot: CGPoint? = nil) -> Receipt {
         let start = MachClock.nowMs(), now = clock()
         var outcome = RemoteInputOutcome(textRequestID: admitted.action.action == "text" ? admitted.action.key : nil)
         if ticket == generation, now < admitted.expires, driver.enabled, !lease.isExpired(at: now) {
-            outcome = routeAuthority { [self] in driver.handle(admitted.action, upgraded: admitted.upgraded, now: now) }
+            outcome = routeAuthority { [self] in driver.handle(admitted.action, upgraded: admitted.upgraded, now: now, pointerSnapshot: pointerSnapshot) }
             lease.record(action: admitted.action.action, accepted: outcome.accepted, at: now)
             if outcome.holdEvent == .ended { lease.cancel() }
             coastIfStarted(routeAuthority)
@@ -195,8 +216,9 @@ final class HostInputExecutor: @unchecked Sendable {
 
     init(driver: RemoteInputDriver = RemoteInputDriver(),
          queue: DispatchQueue = DispatchQueue(label: "farside.input.post", qos: .userInteractive),
-         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
-        self.driver = driver; self.queue = queue; self.clock = clock
+         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         coalesceCouchMotion: @escaping () -> Bool = { !UserDefaults.standard.bool(forKey: HostInputExecutor.couchBurstDisabledDefaultsKey) }) {
+        self.driver = driver; self.queue = queue; self.clock = clock; self.coalesceCouchMotion = coalesceCouchMotion
     }
     @discardableResult
     func withAuthority<T>(_ body: () -> T) -> T { lock.lock(); defer { lock.unlock() }; return body() }

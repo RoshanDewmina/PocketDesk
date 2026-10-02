@@ -48,10 +48,29 @@ final class InputCausalityTests: XCTestCase {
     func testOldControlPacketAndNewOptionalEnvelopeRoundTrip() throws {
         let old = ControlPacket(session: "session", sequence: 1, action: RemoteAction(action: "key", key: "a", epoch: 7))
         XCTAssertNil(try JSONDecoder().decode(ControlPacket.self, from: JSONEncoder().encode(old)).input)
+        XCTAssertNil(try JSONDecoder().decode(ControlPacket.self, from: JSONEncoder().encode(old)).inputTiming)
         let new = ControlPacket(session: "session", sequence: 2, action: RemoteAction(action: "click", epoch: 7), input: envelope([RemoteAction(action: "move", x: 2, epoch: 7)]))
         let decoded = try JSONDecoder().decode(ControlPacket.self, from: JSONEncoder().encode(new))
         XCTAssertEqual(decoded.input?.segments.first?.action.x, 2)
         XCTAssertTrue(SessionFeature.host.contains("input.causal.1"))
+    }
+    func testOptionalTimingIsCompatibleAndMalformedMetadataCannotRejectInput() throws {
+        struct LegacyPacket: Decodable {
+            var version: Int
+            var session: String
+            var sequence: UInt64
+            var action: RemoteAction
+        }
+        let packet = ControlPacket(session: "session", sequence: 1, action: RemoteAction(action: "key", key: "a"),
+                                   inputTiming: InputSendTiming(sendHostMs: 1_000, uncertaintyMs: 3))
+        let data = try JSONEncoder().encode(packet)
+        XCTAssertEqual(try JSONDecoder().decode(ControlPacket.self, from: data).inputTiming, packet.inputTiming)
+        XCTAssertEqual(try JSONDecoder().decode(LegacyPacket.self, from: data).action.key, "a")
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object["inputTiming"] = ["sendHostMs": "bad", "uncertaintyMs": 3]
+        let decoded = try JSONDecoder().decode(ControlPacket.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertNil(decoded.inputTiming)
+        XCTAssertNoThrow(try decoded.action.validate())
     }
     func testPostingDeadlineRemainsHostClockBoundAfterAdmission() {
         var freshness = NativeInputFreshness()
@@ -66,6 +85,24 @@ final class InputCausalityTests: XCTestCase {
 
 @MainActor
 final class PointerChannelLoopbackTests: XCTestCase {
+    func testNewestPointerMailboxKeepsItsPairedArrivalInsteadOfItsSibling() async throws {
+        let host = PeerMedia(isHost: true, servers: [])
+        defer { host.close() }
+        var delivered: [(Data, Double?)] = []
+        host.onPointerMessage = { delivered.append(($0, host.pointerArrivalMs)) }
+        host.receivePointerFixtureForTesting(Data([1]), arrivedMs: 100)
+        host.receivePointerFixtureForTesting(Data([2]), arrivedMs: 200)
+        try await wait { delivered.count == 1 }
+        XCTAssertEqual(delivered[0].0, Data([2]))
+        XCTAssertEqual(delivered[0].1, 200)
+        XCTAssertNil(host.pointerArrivalMs)
+        host.receivePointerFixtureForTesting(Data([3]), arrivedMs: 300)
+        try await wait { delivered.count == 2 }
+        XCTAssertEqual(delivered[1].0, Data([3]))
+        XCTAssertEqual(delivered[1].1, 300)
+        XCTAssertNil(host.pointerArrivalMs)
+    }
+
     private func wait(_ condition: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(10)
         while !condition(), Date() < deadline { try await Task.sleep(nanoseconds: 20_000_000) }
@@ -85,8 +122,16 @@ final class PointerChannelLoopbackTests: XCTestCase {
         let (host, phone) = try await pair(phoneAccepts: true)
         defer { host.close(); phone.close() }
         var pointer: Data?, control: Data?
-        host.onPointerMessage = { pointer = $0 }
-        host.onControl = { control = $0 }
+        host.onPointerMessage = {
+            pointer = $0
+            XCTAssertNotNil(host.pointerArrivalMs)
+            XCTAssertNil(host.controlArrivalMs, "pointer delivery cannot inherit a reliable sibling's stamp")
+        }
+        host.onControl = {
+            control = $0
+            XCTAssertNotNil(host.controlArrivalMs)
+            XCTAssertNil(host.pointerArrivalMs)
+        }
         let payload = Data("checkpoint".utf8)
         let deadline = Date().addingTimeInterval(10)
         var sent = false
@@ -96,8 +141,10 @@ final class PointerChannelLoopbackTests: XCTestCase {
         }
         XCTAssertTrue(sent)
         try await wait { pointer != nil }; XCTAssertEqual(pointer, payload)
+        XCTAssertNil(host.pointerArrivalMs, "timestamp exists only alongside its delivered packet")
         XCTAssertTrue(phone.sendControl(Data("semantic".utf8)))
         try await wait { control != nil }; XCTAssertEqual(control, Data("semantic".utf8))
+        XCTAssertNil(host.controlArrivalMs, "timestamp exists only alongside its delivered packet")
         XCTAssertNotNil(host.withInputPostingAuthority { true })
         host.close()
         XCTAssertNil(host.withInputPostingAuthority { true }, "closed lifetime cannot authorize posting")

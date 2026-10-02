@@ -182,6 +182,21 @@ struct ControlPacket: Codable {
     var sequence: UInt64
     var action: RemoteAction
     var input: InputCausalEnvelope? = nil
+    /// Optional performance metadata; older peers ignore it and invalid values are not evidence.
+    var inputTiming: InputSendTiming? = nil
+}
+
+extension ControlPacket {
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        version = try values.decode(Int.self, forKey: .version)
+        session = try values.decode(String.self, forKey: .session)
+        sequence = try values.decode(UInt64.self, forKey: .sequence)
+        action = try values.decode(RemoteAction.self, forKey: .action)
+        input = try values.decodeIfPresent(InputCausalEnvelope.self, forKey: .input)
+        // Malformed diagnostic metadata must not change otherwise valid input admission.
+        inputTiming = try? values.decodeIfPresent(InputSendTiming.self, forKey: .inputTiming)
+    }
 }
 
 /// Perf pack item 1a (Moonlight's move accumulator): while the control channel is backed up, pointer

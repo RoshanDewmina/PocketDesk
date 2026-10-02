@@ -754,6 +754,37 @@ final class RemoteInputDriver {
         return resolvedBase(now: now, in: bounds).point
     }
 
+    /// Couch catch-up: preserve every relative segment's display-edge clamp, but emit only
+    /// the final point. Drawing/Pencil paths and changes of modifiers or hold stay ordered.
+    func coalescedCouchMotion(_ actions: [RemoteAction], now: TimeInterval) -> (action: RemoteAction, base: CGPoint)? {
+        guard !displayRects.isEmpty, actions.count > 1, let first = actions.first,
+              let bounds = validBounds else { return nil }
+        var interaction = first.interaction; interaction?.token = nil
+        guard actions.allSatisfy({ action in
+            var candidate = action.interaction; candidate?.token = nil
+            // Token rotation changes freshness, not motion semantics. The executor still
+            // checks each original token's deadline and uses the earliest one for the post.
+            return action.action == "move" && action.pencil == nil && action.x.isFinite && action.y.isFinite
+                && action.modifiers == first.modifiers && candidate == interaction
+        }) else { return nil }
+        let base = resolvedBase(now: now, in: bounds).point
+        var point = base
+        var leftClickPoint = false
+        for action in actions {
+            point = clamped(CGPoint(x: point.x + action.x, y: point.y + action.y), to: bounds)
+            if !held, let clickPoint = lastSemanticPoint, hypot(point.x - clickPoint.x, point.y - clickPoint.y) > 5 {
+                leftClickPoint = true
+            }
+        }
+        // An out-and-back excursion resets multi-click state even when the final point is
+        // back beside the first click. Keep that path ordered instead of hiding the reset.
+        if leftClickPoint, let clickPoint = lastSemanticPoint,
+           hypot(point.x - clickPoint.x, point.y - clickPoint.y) <= 5 { return nil }
+        var merged = actions.last!
+        merged.x = point.x - base.x; merged.y = point.y - base.y
+        return (merged, base)
+    }
+
     /// A physical pointer intervention invalidates a causal anchor. Recently posted points
     /// may still be reported by WindowServer, so the existing chain window is respected.
     func pointerMatchesCausalAnchor(_ anchor: CGPoint?, now: TimeInterval) -> Bool {

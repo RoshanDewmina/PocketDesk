@@ -25,6 +25,39 @@ struct ClockSyncEstimate: Equatable {
     var samples: Int
 }
 
+/// Diagnostic only: the phone's serialization/send time in the calibrated host clock domain.
+/// Never used for input freshness, admission, ordering or posting authority.
+struct InputSendTiming: Codable, Equatable {
+    var sendHostMs: Double
+    var uncertaintyMs: Double
+    static let maximumClockAgeMs = 30_000.0
+    static let maximumUncertaintyMs = 1_000.0
+    static let maximumLatencyMs = 30_000.0
+    static let disabledDefaultsKey = "PocketDeskInputSendTimingDisabled"
+
+    static func calibrated(phoneMs: Double, estimate: ClockSyncEstimate?, observedAtMs: Double?) -> Self? {
+        guard let estimate, let observedAtMs,
+              phoneMs.isFinite, observedAtMs.isFinite, (0...1e13).contains(phoneMs), (0...1e13).contains(observedAtMs),
+              phoneMs >= observedAtMs, phoneMs - observedAtMs <= maximumClockAgeMs,
+              estimate.samples > 0, estimate.offsetMs.isFinite, abs(estimate.offsetMs) <= 1e13 else { return nil }
+        let result = Self(sendHostMs: phoneMs + estimate.offsetMs, uncertaintyMs: estimate.uncertaintyMs)
+        return result.isValid ? result : nil
+    }
+
+    var isValid: Bool {
+        sendHostMs.isFinite && (0...1e13).contains(sendHostMs) &&
+        uncertaintyMs.isFinite && (0...Self.maximumUncertaintyMs).contains(uncertaintyMs)
+    }
+
+    func latency(arrivedHostMs: Double) -> Double? {
+        guard isValid, arrivedHostMs.isFinite, (0...1e13).contains(arrivedHostMs) else { return nil }
+        let duration = arrivedHostMs - sendHostMs
+        // Even negatives within the uncertainty are omitted, rather than counted as synthetic zeros.
+        guard (0...Self.maximumLatencyMs).contains(duration) else { return nil }
+        return duration
+    }
+}
+
 /// Keeps the lowest-round-trip probe of a sliding window; its offset is the estimate and half its
 /// round trip the uncertainty (the asymmetry of the path is unknown but bounded by it).
 struct ClockSyncEstimator {

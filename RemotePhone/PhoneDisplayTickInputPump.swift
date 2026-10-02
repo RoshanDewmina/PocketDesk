@@ -83,7 +83,7 @@ final class PhoneDisplayTickInputPump: NSObject {
         guard automaticTicks, displayLink == nil, injectedLink == nil else { return }
         let maximum = Float(max(60, configuration.maximumFramesPerSecond()))
         let range: CAFrameRateRange? = optimizedCadenceEnabled
-            ? CAFrameRateRange(minimum: 60, maximum: maximum, preferred: maximum) : nil
+            ? CAFrameRateRange(minimum: 60, maximum: maximum, preferred: 60) : nil
         linkGeneration += 1
         let generation = linkGeneration
         let tick: () -> Void = { [weak self] in

@@ -488,8 +488,9 @@ final class RemoteCoordinator: ObservableObject {
         }
         motionSequence &+= 1
         let packet = ControlPacket(session: session, sequence: motionSequence,
-                                   action: RemoteAction(action: "heartbeat", epoch: envelope.epoch), input: envelope)
-        guard let data = try? JSONEncoder().encode(packet), data.count <= 16384 else { return false }
+                                   action: RemoteAction(action: "heartbeat", epoch: envelope.epoch), input: envelope,
+                                   inputTiming: phoneInputSendTiming())
+        guard let data = try? encodeControlPacket(packet), data.count <= 16384 else { return false }
         if media?.sendPointer(data) == true { return true }
         // Opening/congestion/channel loss falls back to the same checkpoint on reliable control.
         return sendMotionPrefix(reliable: true)
@@ -546,6 +547,7 @@ final class RemoteCoordinator: ObservableObject {
                   let current = causalContext, input.nonce == current.nonce,
                   input.anchor == current.anchor, input.epoch == current.epoch else { return }
             guard motionReplay.accepts(packet.sequence) else { return }
+            recordPhoneInputArrival(packet)
             onCausalInput?(input, nil)
             return
         }
@@ -609,6 +611,7 @@ final class RemoteCoordinator: ObservableObject {
                 _ = transmit(RemoteAction(action: "heartbeat", epoch: anchor.epoch), input: anchor)
                 return
             }
+            recordPhoneInputArrival(packet)
             onCausalInput?(input, packet.action.action == "heartbeat" ? nil : packet.action)
         default: throw RemoteError.invalidMessage
         }
@@ -622,6 +625,7 @@ final class RemoteCoordinator: ObservableObject {
         else {
             if isHost, causalContext != nil,
                Self.causalSemantics.contains(packet.action.action) || ["move", "moveTo"].contains(packet.action.action) { throw RemoteError.stale }
+            recordPhoneInputArrival(packet)
             onControl?(try JSONEncoder().encode(packet.action))
         }
     }
@@ -668,15 +672,43 @@ final class RemoteCoordinator: ObservableObject {
         (media?.controlBufferedAmount ?? 0) >= PointerMoveCoalescer.backlogBytes
     }
 
+    private func phoneInputSendTiming() -> InputSendTiming? {
+        guard !isHost, !UserDefaults.standard.bool(forKey: InputSendTiming.disabledDefaultsKey),
+              let observation = media?.counters.clockObservation else { return nil }
+        return InputSendTiming.calibrated(phoneMs: MachClock.nowMs(), estimate: observation.estimate,
+                                          observedAtMs: observation.atMs)
+    }
+
+    private static func isTimingInput(_ packet: ControlPacket) -> Bool {
+        causalSemantics.contains(packet.action.action) || ["move", "moveTo"].contains(packet.action.action) ||
+        !(packet.input?.segments.isEmpty ?? true)
+    }
+
+    private func recordPhoneInputArrival(_ packet: ControlPacket) {
+        guard isHost, Self.isTimingInput(packet), let timing = packet.inputTiming,
+              let arrivedMs = currentControlArrivalMs else { return }
+        media?.counters.phoneInputArrived(timing: timing, arrivedHostMs: arrivedMs)
+    }
+
+    private func encodeControlPacket(_ packet: ControlPacket) throws -> Data {
+        let data = try JSONEncoder().encode(packet)
+        guard data.count > 16384, packet.inputTiming != nil else { return data }
+        // Optional metadata cannot consume the input packet's byte allowance.
+        var withoutTiming = packet; withoutTiming.inputTiming = nil
+        return try JSONEncoder().encode(withoutTiming)
+    }
+
     private func transmit(_ action: RemoteAction, input: InputCausalEnvelope? = nil) -> Bool {
         do {
             sentControl += 1
+            var packet = ControlPacket(session: session, sequence: sentControl, action: action, input: input)
+            if Self.isTimingInput(packet) { packet.inputTiming = phoneInputSendTiming() }
             #if DEBUG
             if let sender = inputPacketSenderForTesting {
-                return sender(ControlPacket(session: session, sequence: sentControl, action: action, input: input))
+                return sender(packet)
             }
             #endif
-            let data = try JSONEncoder().encode(ControlPacket(session: session, sequence: sentControl, action: action, input: input))
+            let data = try encodeControlPacket(packet)
             guard media?.sendControl(data) == true else {
                 InputLog.log.error("\(self.isHost ? "host" : "phone", privacy: .public) control send failed (\(action.action, privacy: .public)); ending session")
                 peerDisconnected(); return false
@@ -1281,6 +1313,8 @@ final class RemoteCoordinator: ObservableObject {
         peer.onPointerMessage = { [weak self, weak peer] data in
             MainActor.assumeIsolated {
                 guard let self, let peer, self.media === peer else { return }
+                self.currentControlArrivalMs = peer.pointerArrivalMs
+                defer { self.currentControlArrivalMs = nil }
                 do {
                     let packet = try JSONDecoder().decode(ControlPacket.self, from: data)
                     guard packet.version == 1, packet.session == self.session else { return }
@@ -1290,7 +1324,7 @@ final class RemoteCoordinator: ObservableObject {
             }
         }
         peer.onControl = { [weak self, weak peer] data in
-            let arrivedMs = MachClock.nowMs()
+            let arrivedMs = peer?.controlArrivalMs
             let arrivedFrames = peer?.lastControlArrivedFrames
             let arrivedAt = peer?.lastControlArrivedAt
             MainActor.assumeIsolated {

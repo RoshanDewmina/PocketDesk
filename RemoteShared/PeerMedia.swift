@@ -473,9 +473,11 @@ final class PeerMedia: NSObject {
     private var pointerChannel: RTCDataChannel?
     private var pointerAllowed = false
     private var pointerEnded = false
-    private var pendingPointer: Data?
+    private var pendingPointer: (data: Data, arrivedMs: Double)?
     private var pointerDeliveryScheduled = false
     var onPointerMessage: ((Data) -> Void)?
+    /// Paired with the pointer packet currently delivered; nil outside its callback.
+    private(set) var pointerArrivalMs: Double?
     static let pointerChannelLabel = "pointer-causal-1"
 
     func allowPointerChannel() { pointerLock.lock(); if !pointerEnded { pointerAllowed = true }; pointerLock.unlock() }
@@ -508,11 +510,16 @@ final class PeerMedia: NSObject {
               pointerChannel.bufferedAmount + UInt64(data.count) <= 32 * 1024 else { return false }
         return pointerChannel.sendData(RTCDataBuffer(data: data, isBinary: true))
     }
-    private func receivePointer(_ data: Data) {
+    #if DEBUG
+    func receivePointerFixtureForTesting(_ data: Data, arrivedMs: Double) {
+        receivePointer(data, arrivedMs: arrivedMs)
+    }
+    #endif
+    private func receivePointer(_ data: Data, arrivedMs: Double) {
         guard data.count <= 16384, localGateOpen() else { return }
         pointerLock.lock()
         guard !pointerEnded else { pointerLock.unlock(); return }
-        pendingPointer = data // The newest full prefix recovers motion omitted from this mailbox.
+        pendingPointer = (data, arrivedMs) // The newest full prefix recovers motion omitted from this mailbox.
         if pointerDeliveryScheduled { pointerLock.unlock(); return }
         pointerDeliveryScheduled = true
         pointerLock.unlock()
@@ -522,7 +529,11 @@ final class PeerMedia: NSObject {
             let value = self.pendingPointer; self.pendingPointer = nil; self.pointerDeliveryScheduled = false
             let ended = self.pointerEnded
             self.pointerLock.unlock()
-            if !ended, self.localGateOpen(), let value { self.onPointerMessage?(value) }
+            if !ended, self.localGateOpen(), let value {
+                self.pointerArrivalMs = value.arrivedMs
+                defer { self.pointerArrivalMs = nil }
+                self.onPointerMessage?(value.data)
+            }
         }
     }
     private var channel: RTCDataChannel?
@@ -616,7 +627,7 @@ final class PeerMedia: NSObject {
     /// Control messages that arrive before this side's first local-path authorization. The peer's
     /// gate can open first and it sends one-time state (geometry, viewing) immediately; dropping it
     /// left the phone without a geometry epoch, so input never enabled. Released only on authorization.
-    private var preGateControl: [(data: Data, arrivedFrames: Int, arrivedAt: TimeInterval)] = []
+    private var preGateControl: [(data: Data, arrivedFrames: Int, arrivedAt: TimeInterval, arrivedMs: Double)] = []
     private var preGateBytes = 0
     private var lastPairLog: String?
     private var role: String { isHost ? "host" : "phone" }
@@ -643,8 +654,8 @@ final class PeerMedia: NSObject {
     private let arrivalLock = NSLock()
     private var lastControlArrivalMs: Double?
 
-    /// Mach ms when the newest control message reached the data channel, before its main-queue hop
-    /// and decoding; the clock probes stamp with this so thread hops do not count as network time.
+    /// Mach ms when the packet currently delivered reached the data channel, before its main-queue
+    /// hop and decoding. Nil outside delivery; a later sibling can never overwrite this stamp.
     var controlArrivalMs: Double? {
         arrivalLock.lock(); defer { arrivalLock.unlock() }
         return lastControlArrivalMs
@@ -1379,7 +1390,9 @@ final class PeerMedia: NSObject {
             guard !closed, localGateOpen() else { return }
             lastControlArrivedFrames = message.arrivedFrames
             lastControlArrivedAt = message.arrivedAt
+            arrivalLock.lock(); lastControlArrivalMs = message.arrivedMs; arrivalLock.unlock()
             onControl?(message.data)
+            arrivalLock.lock(); lastControlArrivalMs = nil; arrivalLock.unlock()
         }
     }
 
@@ -1629,6 +1642,7 @@ extension PeerMedia: RTCDataChannelDelegate {
         }
     }
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
+        let arrivedMs = MachClock.nowMs()
         if isRefinementChannel(dataChannel) {
             guard buffer.isBinary, buffer.data.count <= BulkAdmissionPolicy.maximumMessageBytes, localGateOpen(),
                   let packet = try? JSONDecoder().decode(VideoRefinementChunk.self, from: buffer.data), packet.ack == isHost else { return }
@@ -1639,7 +1653,7 @@ extension PeerMedia: RTCDataChannelDelegate {
             return
         }
         if isPointerChannel(dataChannel) {
-            if buffer.isBinary { receivePointer(buffer.data) }
+            if buffer.isBinary { receivePointer(buffer.data, arrivedMs: arrivedMs) }
             return
         }
         if isFileChannel(dataChannel) {
@@ -1649,7 +1663,6 @@ extension PeerMedia: RTCDataChannelDelegate {
         }
         let arrivedFrames = counters.arrivedTotal
         let arrivedAt = ProcessInfo.processInfo.systemUptime
-        arrivalLock.lock(); lastControlArrivalMs = MachClock.nowMs(); arrivalLock.unlock()
         guard buffer.isBinary, buffer.data.count <= 16384 else {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.channel === dataChannel else { return }
@@ -1663,7 +1676,7 @@ extension PeerMedia: RTCDataChannelDelegate {
             guard self.localGateOpen() else {
                 if self.localLink != nil, self.localPathNeverAuthorized, self.preGateControl.count < 64,
                    self.preGateBytes + buffer.data.count <= 256 * 1024 {
-                    self.preGateControl.append((buffer.data, arrivedFrames, arrivedAt)); self.preGateBytes += buffer.data.count
+                    self.preGateControl.append((buffer.data, arrivedFrames, arrivedAt, arrivedMs)); self.preGateBytes += buffer.data.count
                     self.controlCounters.heldBeforeGate += 1
                     InputLog.log.info("\(self.role, privacy: .public) control held until local path authorization (\(self.preGateControl.count, privacy: .public) held)")
                 } else {
@@ -1679,6 +1692,8 @@ extension PeerMedia: RTCDataChannelDelegate {
             }
             self.lastControlArrivedFrames = arrivedFrames
             self.lastControlArrivedAt = arrivedAt
+            self.arrivalLock.lock(); self.lastControlArrivalMs = arrivedMs; self.arrivalLock.unlock()
+            defer { self.arrivalLock.lock(); self.lastControlArrivalMs = nil; self.arrivalLock.unlock() }
             self.onControl?(buffer.data)
         }
     }

@@ -1,6 +1,35 @@
 import XCTest
 
 final class ClockSyncTests: XCTestCase {
+    func testInputSendTimingRequiresFreshFiniteCalibration() {
+        let estimate = ClockSyncEstimate(offsetMs: 500, uncertaintyMs: 3, samples: 2)
+        let timing = InputSendTiming.calibrated(phoneMs: 1_000, estimate: estimate, observedAtMs: 990)
+        XCTAssertEqual(timing, InputSendTiming(sendHostMs: 1_500, uncertaintyMs: 3))
+        XCTAssertNotNil(InputSendTiming.calibrated(phoneMs: 31_000, estimate: estimate, observedAtMs: 1_000))
+        XCTAssertNil(InputSendTiming.calibrated(phoneMs: 31_000.1, estimate: estimate, observedAtMs: 1_000))
+        XCTAssertNil(InputSendTiming.calibrated(phoneMs: 1_000, estimate: nil, observedAtMs: 990))
+        XCTAssertNil(InputSendTiming.calibrated(phoneMs: 1_000, estimate: estimate, observedAtMs: nil))
+        XCTAssertNil(InputSendTiming.calibrated(phoneMs: 1_000, estimate: estimate, observedAtMs: 1_001))
+        for invalid in [ClockSyncEstimate(offsetMs: .nan, uncertaintyMs: 3, samples: 1),
+                        ClockSyncEstimate(offsetMs: 500, uncertaintyMs: .infinity, samples: 1),
+                        ClockSyncEstimate(offsetMs: 500, uncertaintyMs: -1, samples: 1),
+                        ClockSyncEstimate(offsetMs: 500, uncertaintyMs: 1_001, samples: 1),
+                        ClockSyncEstimate(offsetMs: 500, uncertaintyMs: 3, samples: 0)] {
+            XCTAssertNil(InputSendTiming.calibrated(phoneMs: 1_000, estimate: invalid, observedAtMs: 990))
+        }
+    }
+
+    func testInputArrivalOmitsNegativeImpossibleAndUnboundedSamples() {
+        let timing = InputSendTiming(sendHostMs: 1_500, uncertaintyMs: 3)
+        XCTAssertEqual(timing.latency(arrivedHostMs: 1_512), 12)
+        XCTAssertEqual(timing.latency(arrivedHostMs: 1_500), 0)
+        XCTAssertNil(timing.latency(arrivedHostMs: 1_499), "negative within uncertainty stays absent")
+        XCTAssertNil(timing.latency(arrivedHostMs: 1_490), "negative beyond uncertainty stays absent")
+        XCTAssertNil(timing.latency(arrivedHostMs: .nan))
+        XCTAssertNil(timing.latency(arrivedHostMs: 31_501))
+        XCTAssertNil(InputSendTiming(sendHostMs: .infinity, uncertaintyMs: 3).latency(arrivedHostMs: 1_512))
+    }
+
     func testProbeValidation() {
         XCTAssertNoThrow(try ClockProbe(phoneMs: 1_000).validate())
         XCTAssertNoThrow(try ClockProbe(phoneMs: 1_000, hostReceivedMs: 5_000, hostSentMs: 5_000.2).validate())

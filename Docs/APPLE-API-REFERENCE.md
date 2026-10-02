@@ -1,6 +1,14 @@
 # Apple API reference and freshness record
 
-Latest focused refresh **29 September 2026**; original capture/transport snapshot **12 September 2026**. This is a focused engineering reference, subordinate to [PRODUCT.md](../PRODUCT.md). It records the relevant material actually inspected, not a claim to have read all Apple documentation or demonstrated runtime compatibility.
+Latest focused refresh **1 October 2026**; original capture/transport snapshot **12 September 2026**. This is a focused engineering reference, subordinate to [PRODUCT.md](../PRODUCT.md). It records the relevant material actually inspected, not a claim to have read all Apple documentation or demonstrated runtime compatibility.
+
+## Couch input cadence and session freshness — 1 October 2026
+
+Re-fetched the live [iOS 27 release notes](https://developer.apple.com/documentation/ios-ipados-release-notes/ios-ipados-27-release-notes), [macOS 27 release notes](https://developer.apple.com/documentation/macos-release-notes/macos-27-release-notes) and [CADisplayLink.preferredFrameRateRange](https://developer.apple.com/documentation/quartzcore/cadisplaylink/preferredframeraterange) Markdown pages. The range API is iOS 15+, hence supported by iOS 26 deployment; it is a best-effort scheduling hint, affected by system policy. The phone requests preferred/minimum 60 Hz and retains its input link for 150 ms after the last offered motion. This does not establish actual cadence on a static Couch card. No greater-than-60-Hz claim or platform-wide ProMotion plist change is made.
+
+The live [session dictionary API](https://developer.apple.com/documentation/coregraphics/cgsessioncopycurrentdictionary()) may return nil outside a GUI session. [Session resignation](https://developer.apple.com/documentation/appkit/nsworkspace/sessiondidresignactivenotification) precedes switching out. Couch shares one lock/console snapshot for strictly less than 100 ms, fails closed on unavailable console state, and latches notification denial separately from query freshness. Lock/session/sleep callbacks revoke input synchronously; physical notification delivery remains a separate acceptance check.
+
+Local environment refreshed: Xcode 27.0 / 27A266a, macOS 27.0.1 / 26A434; native deployment targets remain 26. Source receipts and verification belong to the codex-couch lane notes; no candidate installation is implied.
 
 ## Tap-triggered keyboard refresh — 1 October 2026
 
