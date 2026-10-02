@@ -531,7 +531,7 @@ final class ViewportCaptureTests: XCTestCase {
     func testScrollFixesDefaultOffSupportsTemporaryBooleanLaunchOverrides() throws {
         let name = "ScrollFixesTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name); defaults.removeVolatileDomain(forName: UserDefaults.argumentDomain) }
+        defer { defaults.removePersistentDomain(forName: name); defaults.setVolatileDomain([:], forName: UserDefaults.argumentDomain) }
         XCTAssertFalse(ScrollFixesSwitch.enabled(defaults: defaults))
         defaults.set(true, forKey: ScrollFixesSwitch.defaultsKey)
         XCTAssertTrue(ScrollFixesSwitch.enabled(defaults: defaults))
@@ -539,7 +539,9 @@ final class ViewportCaptureTests: XCTestCase {
         XCTAssertFalse(ScrollFixesSwitch.enabled(defaults: defaults))
         defaults.setVolatileDomain([ScrollFixesSwitch.defaultsKey: "YES"], forName: UserDefaults.argumentDomain)
         XCTAssertTrue(ScrollFixesSwitch.enabled(defaults: defaults))
-        defaults.removeVolatileDomain(forName: UserDefaults.argumentDomain)
+        // On the tested Foundation runtime, removeVolatileDomain leaves this
+        // argument dictionary visible; replacing it models a launch without it.
+        defaults.setVolatileDomain([:], forName: UserDefaults.argumentDomain)
         defaults.removeObject(forKey: ScrollFixesSwitch.defaultsKey)
         XCTAssertFalse(ScrollFixesSwitch.enabled(defaults: defaults), "Ordinary launch returns to the stored default")
     }
