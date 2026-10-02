@@ -35,6 +35,8 @@ final class SessionLayoutTests: XCTestCase {
         XCTAssertEqual(picture.frame.height, before.height, accuracy: 1)
         attachScreenshot("iPad stack with soft keyboard in pad")
         app.buttons["remote.keyboard.hide"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.textViews.firstMatch.waitForNonExistence(timeout: 5))
         rotate(app, to: .landscapeLeft)
         XCTAssertTrue(pad.waitForNonExistence(timeout: 5))
         XCTAssertGreaterThan(picture.frame.width, picture.frame.height)
@@ -492,7 +494,7 @@ final class SessionLayoutTests: XCTestCase {
     @MainActor
     func testRegularConnectedPillCollapsesAndDoubleTapOpensKeyboard() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-software-keyboard", "--ui-input-probe"]
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-software-keyboard", "--ui-input-probe", "--ui-keyboard-hit-probe"]
         launchOfflineFixture(app)
         try requireRegularPill(app)
         let pill = app.descendants(matching: .any)["remote.session.pill"].firstMatch
@@ -503,6 +505,7 @@ final class SessionLayoutTests: XCTestCase {
         XCTAssertTrue(app.buttons["Command"].exists)
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         let returnKey = app.buttons.matching(NSPredicate(format: "identifier == 'remote.keys' AND label == 'Return'")).firstMatch
+        attachKeyboardHitDiagnostics(app, name: "Regular software keyboard hit testing")
         XCTAssertTrue(returnKey.isEnabled)
         XCTAssertTrue(returnKey.isHittable, "The regular keyboard row must expose its final key without scrolling")
         XCTAssertFalse(app.descendants(matching: .any)["remote.keys"].firstMatch.scrollViews.firstMatch.exists)
@@ -512,15 +515,25 @@ final class SessionLayoutTests: XCTestCase {
     @MainActor
     func testRegularHardwareKeyboardShowsTextFieldWithoutKeyBar() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-hardware-keyboard"]
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-hardware-keyboard", "--ui-keyboard-hit-probe"]
         launchOfflineFixture(app)
         try requireRegularPill(app)
         app.buttons["Show controls"].doubleTap()
         XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 5))
         XCTAssertFalse(app.descendants(matching: .any)["remote.keys"].firstMatch.exists)
         XCTAssertFalse(app.buttons["Command"].exists)
+        attachKeyboardHitDiagnostics(app, name: "Regular hardware-field dismissal hit testing")
         XCTAssertTrue(app.buttons["remote.keyboard.hide"].isHittable)
         XCTAssertFalse(app.buttons["Send text"].isEnabled)
+    }
+
+    @MainActor
+    private func attachKeyboardHitDiagnostics(_ app: XCUIApplication, name: String) {
+        attachScreenshot(name)
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = name + " hierarchy"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
     }
 
     @MainActor

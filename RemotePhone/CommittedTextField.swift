@@ -30,6 +30,9 @@ struct KeyboardLayoutDock<Content: View>: UIViewControllerRepresentable {
         private let host: UIHostingController<Content>
         var onFrame: ((CGRect) -> Void)?
         private var reportedFrame: CGRect?
+        #if DEBUG
+        private var probedFrame: CGRect?
+        #endif
 
         init(content: Content) {
             host = UIHostingController(rootView: content)
@@ -65,12 +68,34 @@ struct KeyboardLayoutDock<Content: View>: UIViewControllerRepresentable {
 
         override func viewDidLayoutSubviews() {
             super.viewDidLayoutSubviews()
+            #if DEBUG
+            recordHitTestProbe()
+            #endif
             guard let onFrame, view.window != nil else { return }
             let frame = host.view.convert(host.view.bounds, to: nil)
             guard frame != reportedFrame else { return }
             reportedFrame = frame
             DispatchQueue.main.async { onFrame(frame) }
         }
+
+        #if DEBUG
+        /// Opt-in fixture diagnostics; no contents, input or real-device state is recorded.
+        private func recordHitTestProbe() {
+            guard LaunchOptions.has("--ui-keyboard-hit-probe"), let window = view.window else { return }
+            let frame = host.view.convert(host.view.bounds, to: window)
+            guard frame != probedFrame else { return }
+            probedFrame = frame
+            print("[B7 keyboardHit] parent=\(view.bounds) host=\(host.view.bounds) frame=\(frame) enabled=\(host.view.isUserInteractionEnabled) alpha=\(host.view.alpha)")
+            for fraction in [CGFloat(0.5), 0.7, 0.83, 0.96] {
+                let local = CGPoint(x: host.view.bounds.width * fraction, y: min(24, host.view.bounds.height / 2))
+                let parent = host.view.convert(local, to: view)
+                let global = host.view.convert(local, to: window)
+                let target = window.hitTest(global, with: nil)
+                let targetClass = target.map { String(describing: type(of: $0)) } ?? "nil"
+                print("[B7 keyboardHit] point=\(global) hostInside=\(host.view.point(inside: local, with: nil)) parentInside=\(view.point(inside: parent, with: nil)) target=\(targetClass.prefix(100))")
+            }
+        }
+        #endif
 
         func update(_ content: Content) {
             host.rootView = content

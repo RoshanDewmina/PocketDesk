@@ -18,6 +18,8 @@ final class CouchModeUITests: XCTestCase {
             XCTAssertTrue(app.buttons["End session"].waitForExistence(timeout: 5))
             XCTAssertTrue(app.buttons["End session"].isHittable)
             app.buttons["Hide controls"].tap()
+            XCTAssertTrue(app.buttons["Show controls"].waitForExistence(timeout: 5),
+                          "Wait for the exclusive single-tap action before opening another panel")
         } else {
             XCTAssertTrue(app.buttons["End session"].exists)
         }
