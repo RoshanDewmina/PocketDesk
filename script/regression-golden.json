@@ -311,6 +311,11 @@
       "checks": [
         {
           "suite": "phone",
+          "class": "SessionLifecycleTests",
+          "method": "testEditableFocusReplyOpensOnlyForNewestFreshClickOnce"
+        },
+        {
+          "suite": "phone",
           "method": "testEditableFocusReplyRejectsLateWrongEpochNoneditableAndDismissed",
           "class": "SessionLifecycleTests"
         }
@@ -482,20 +487,14 @@
       "build": "20261001.4",
       "quote": "7. yea session check works, it opens",
       "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:2641; prompt L2582 item 7",
-      "checks": [
-        {
-          "suite": "phone",
-          "method": "testActualControllerCancelsQueuedProbeAndRetainsDeletableReportWithoutSend",
-          "class": "PhoneDiagnosticsTests"
-        }
-      ],
+      "checks": [],
       "test": "From Home open Session check; dismiss it and Connect remains reachable.",
-      "note": "Existing controller test covers report lifecycle, not Home navigation: missing focused UI assertion.",
+      "note": "Existing controller test covers report lifecycle, not Home navigation: missing focused UI assertion. Owner explicitly requested removal on 2 October; batch-7a removes UsefulSessionEntry. Historical confirmation is retained, but this row is RETIRED and has no current gate/smoke obligation.",
       "evidence_level": "primary",
       "modes": [
-        "AUTO",
         "DEVICE"
-      ]
+      ],
+      "retired": true
     },
     {
       "id": "G22",
@@ -525,6 +524,11 @@
       "quote": "manually hitting picture in picture works i see it when i go home",
       "evidence": "/Users/roshansilva/.claude/projects/-Users-roshansilva/346864f5-9f1a-4720-aafc-8047f5606b0c.jsonl:1902",
       "checks": [
+        {
+          "suite": "phone",
+          "class": "PhoneMediaSessionIntegrationTests",
+          "method": "testInjectedControllersMacMuteDoesNotDeactivatePreparedPiPAndTerminalStopReleasesLastOwner"
+        },
         {
           "suite": "phone",
           "method": "testInjectedPiPPreparesCategoryBeforePossibleAndReleasesRefusedStart",
