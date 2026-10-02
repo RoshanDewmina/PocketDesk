@@ -3,6 +3,23 @@ import UIKit
 
 final class SessionLayoutTests: XCTestCase {
     @MainActor
+    func testRegularUpsideDownPortraitKeepsThePicturePadAndTopPill() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires an iPad simulator")
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit"]
+        launchOfflineFixture(app)
+        rotate(app, to: .portraitUpsideDown)
+        try requireRegularPill(app)
+        let picture = app.descendants(matching: .any)["remote.picture"].firstMatch
+        let pad = app.descendants(matching: .any)["remote.stacked.pad"].firstMatch
+        XCTAssertTrue(pad.waitForExistence(timeout: 5))
+        XCTAssertEqual(picture.frame.height, picture.frame.width / 1.6, accuracy: 2)
+        XCTAssertLessThanOrEqual(picture.frame.maxY, pad.frame.minY + 14)
+        XCTAssertTrue(app.buttons["Show controls"].isHittable)
+        attachScreenshot("iPad upside-down portrait picture and top pill")
+    }
+
+    @MainActor
     func testRegularInputSettingsHaveNoPencilOptIn() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires an iPad simulator")
         let app = XCUIApplication()

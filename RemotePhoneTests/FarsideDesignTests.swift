@@ -4,6 +4,16 @@ import SwiftUI
 @testable import PocketDeskRemote
 
 final class FarsideDesignTests: XCTestCase {
+    func testBuiltBundleSupportsIPadMultitaskingWithoutChangingPhoneOrientations() throws {
+        let info = try XCTUnwrap(Bundle.main.infoDictionary)
+        let phone = try XCTUnwrap(info["UISupportedInterfaceOrientations"] as? [String])
+        XCTAssertEqual(Set(phone), ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationLandscapeLeft",
+                                    "UIInterfaceOrientationLandscapeRight"])
+        let pad = try XCTUnwrap(info["UISupportedInterfaceOrientations~ipad"] as? [String])
+        XCTAssertEqual(Set(pad), Set(phone).union(["UIInterfaceOrientationPortraitUpsideDown"]))
+        XCTAssertNotEqual(info["UIRequiresFullScreen"] as? Bool, true)
+    }
+
     @MainActor
     func testDeviceWordPreservesPhoneCopyAndNamesIPadInEveryWindowWidth() {
         XCTAssertEqual(DeviceWord.name(for: .phone), "iPhone")
