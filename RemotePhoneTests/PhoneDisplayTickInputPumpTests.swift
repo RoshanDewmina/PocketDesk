@@ -511,7 +511,11 @@ final class PhoneDisplayTickInputPumpTests: XCTestCase {
         model.key("a"); model.release(); XCTAssertEqual(outgoing.count, before)
         try deliver(RemoteAction(action: "geometry", x: 300, y: 300, epoch: 8))
         XCTAssertEqual(model.sourceSize, CGSize(width: 300, height: 300))
-        XCTAssertTrue(model.connection.connected); XCTAssertEqual(outgoing.count, before)
+        XCTAssertTrue(model.connection.connected)
+        // Fresh geometry can announce Listen consent, but cannot flush old input across the anchor.
+        XCTAssertTrue(outgoing.dropFirst(before).allSatisfy {
+            $0.action.action == "heartbeat" && $0.action.epoch == 8 && $0.input == nil
+        }, "Only current-epoch metadata may follow the new geometry; no old move, key or release")
     }
     func testSendRefusalClearsPendingAndReportsOnce() {
         let pump = PhoneDisplayTickInputPump(automaticTicks: false, configuration: configuration(leading: false))

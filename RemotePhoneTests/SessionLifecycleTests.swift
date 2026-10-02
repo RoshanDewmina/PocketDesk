@@ -536,13 +536,17 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertEqual(model.connection.status, statusBefore)
     }
 
-    func testInactiveConnectedWindowDoesNotStartAConnectionExpiryTimer() {
+    func testInactiveConnectedWindowDoesNotStartAConnectionExpiryTimer() throws {
         let background = FakeBackgroundExecution()
         let model = PhoneRemoteModel(background: background)
         defer { model.disconnect() }
         model.prepareConnection(mode: .picture)
         model.sceneChanged(.active)
         model.connection.startInputFixtureForTesting(session: "duo-focus")
+        model.connection.inputPacketSenderForTesting = { _ in true }
+        model.geometryEpoch = 1
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", x: 1, epoch: 1,
+            features: [SessionFeature.backgroundPause])))
         let revision = model.inputRevision
         model.sceneChanged(.inactive)
         XCTAssertEqual(background.begins, 0, "Split View focus loss must not expire a foreground session")
