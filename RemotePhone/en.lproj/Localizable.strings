@@ -13,7 +13,7 @@
 // Commerce and useful-session guidance
 "ANYWHERE_UNAVAILABLE" = "Anywhere isn’t available yet.";
 "APP_STORE_OFFLINE" = "Couldn’t reach the App Store. Check your connection, then try again.";
-"BENEFIT_ENCRYPTION" = "Encrypted between your iPhone and your Mac, even through our relay";
+"BENEFIT_ENCRYPTION" = "Encrypted between this device and your Mac, even through our connection service";
 "BENEFIT_ROUTE" = "On cellular or any Wi-Fi, away from home";
 "BENEFIT_SETUP" = "No VPN, no port forwarding, nothing to set up";
 "BILLING_RETRY" = "Apple couldn’t renew your plan, so Anywhere is paused. Update your payment method in Settings › Apple Account.";

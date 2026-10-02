@@ -141,6 +141,7 @@ struct HomeView: View {
     @State private var confirmForget = false
     @State private var friendlyError: FriendlyError?
     @State private var lastFailure: FriendlyError?
+    @State private var attemptRoute: PhoneRecovery.Route = .unknown
     /// The result of "Check again": a reachability check that opens no session.
     @State private var checkedHealth: ConnectionHealth?
     @State private var checking = false
@@ -238,7 +239,8 @@ struct HomeView: View {
             ConnectionDetailsSheet(model: model, connection: connection, health: health)
         }
         .sheet(isPresented: $showTroubleshoot) {
-            TroubleshootSheet(macName: macName ?? "Your Mac", retry: { connect(mode: model.attemptMode) })
+            TroubleshootSheet(macName: macName ?? "Your Mac", route: attemptRoute,
+                              failure: PhoneRecovery.Failure(lastFailure), retry: { connect(mode: model.attemptMode) })
         }
         .fullScreenCover(item: $friendlyError) { error in
             FriendlyErrorView(error: error, primaryTitle: primaryTitle(for: error), primary: { resolve(error, action: error.action) },
@@ -261,11 +263,20 @@ struct HomeView: View {
             Text("This removes local pairing only. Server Data removes your Anywhere device link. You’ll need to scan a new pairing code to connect again.")
         }
         .onChange(of: connection.status) { old, new in statusChanged(from: old, to: new) }
+        .onChange(of: connection.serviceAccess) { _, access in
+            // stop() clears access; preserve the failed attempt for recovery instead of replacing it.
+            if let access {
+                attemptRoute = PhoneRecovery.route(localOnly: connection.localOnly, couch: model.attemptMode == .couch,
+                                                   serviceAccess: access, hasPlan: anywhere.entitlement.hasAccess)
+            }
+        }
         .onChange(of: model.macNotice) { _, _ in showDepartureIfNeeded() }
         .onChange(of: model.couchRefusal) { _, _ in showCouchRefusalIfNeeded() }
         .onAppear {
             refreshSavedMacs()
             refreshLastReached()
+            attemptRoute = PhoneRecovery.route(localOnly: connection.localOnly, couch: model.attemptMode == .couch,
+                                               serviceAccess: connection.serviceAccess, hasPlan: anywhere.entitlement.hasAccess)
             showDepartureIfNeeded()
             showCouchRefusalIfNeeded()
             if macName != nil && connection.invitation != nil { onboarding.offerCoach() }
@@ -279,6 +290,7 @@ struct HomeView: View {
             refreshLastReached()
             checkedHealth = nil
             lastFailure = nil
+            attemptRoute = .unknown
             lastBattery = nil
             model.refreshSendToMac(force: true)
         }
@@ -646,6 +658,8 @@ struct HomeView: View {
 
     private func connect(mode: SessionMode = .picture) {
         guard !checking else { return }
+        attemptRoute = PhoneRecovery.route(localOnly: connection.localOnly, couch: mode == .couch,
+                                           serviceAccess: nil, hasPlan: anywhere.entitlement.hasAccess)
         let decision = ConnectGate.connect(model: model, onboarding: onboarding, restartsRunning: true, mode: mode) {
             showServerData = true
         }
@@ -695,7 +709,12 @@ struct HomeView: View {
     }
 
     private func statusChanged(from old: String, to new: String) {
-        if MacStatus(new).tone == .busy { lastFailure = nil; checkedHealth = nil }
+        if MacStatus(new).tone == .busy {
+            lastFailure = nil; checkedHealth = nil
+            // Siri, widgets and recovery can start through ConnectGate without Home.connect().
+            attemptRoute = PhoneRecovery.route(localOnly: connection.localOnly, couch: model.attemptMode == .couch,
+                                               serviceAccess: connection.serviceAccess, hasPlan: anywhere.entitlement.hasAccess)
+        }
         guard !connection.isRunning else { return }
         if let couch = FriendlyError.forCouch(status: new, requestedCouch: model.attemptMode == .couch) {
             lastFailure = couch
@@ -704,8 +723,9 @@ struct HomeView: View {
         }
         guard let name = macName,
               let error = FriendlyError.from(status: new, previous: old, macName: name) else { return }
-        let shown = FriendlyError.forLocalOnly(error, serviceAskedForAnywhere: connection.entitlementRequired,
+        let localError = FriendlyError.forLocalOnly(error, serviceAskedForAnywhere: connection.entitlementRequired,
                                                hasPlan: anywhere.entitlement.hasAccess)
+        let shown = PhoneRecovery.error(localError, route: attemptRoute, enabled: PhoneRecovery.enabled)
         lastFailure = shown
         checkedHealth = nil
         guard !covered || friendlyError != nil else { return }
@@ -765,6 +785,8 @@ struct HomeView: View {
         if LaunchOptions.has("--ui-pairing-scan") { model.pairingEntry = .scan }
         if LaunchOptions.has("--ui-pairing-paste") { model.pairingEntry = .paste }
         if LaunchOptions.has("--ui-troubleshoot") { showTroubleshoot = true }
+        if LaunchOptions.has("--ui-troubleshoot-anywhere") { attemptRoute = .anywhere; showTroubleshoot = true }
+        if LaunchOptions.has("--ui-troubleshoot-local") { attemptRoute = .localNetwork; showTroubleshoot = true }
         if LaunchOptions.has("--ui-paywall") { showPaywall = true }
         if let raw = LaunchOptions.value("--ui-status=") {
             connection.status = raw.replacingOccurrences(of: "_", with: " ")

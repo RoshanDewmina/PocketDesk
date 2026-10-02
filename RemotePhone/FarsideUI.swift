@@ -103,6 +103,7 @@ struct FarsideHeading: View {
     var size: CGFloat = 34
     var alignment: TextAlignment = .leading
     @ScaledMetric private var scaled: CGFloat
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     init(_ text: String, accent: String? = nil, size: CGFloat = 34, alignment: TextAlignment = .leading) {
         self.text = text
@@ -113,7 +114,8 @@ struct FarsideHeading: View {
     }
 
     var body: some View {
-        FarsideHeading.compose(text, accent: accent, size: min(scaled, size * 1.6))
+        FarsideHeading.compose(text, accent: accent, size: PhoneCommandAccessibility.headingSize(scaled: scaled, base: size,
+                                    accessible: PhoneCommandAccessibility.usesKeyList(typeSize: typeSize, enabled: PhoneCommandAccessibility.keyListEnabled)))
             .foregroundStyle(Farside.Palette.bone)
             .multilineTextAlignment(alignment)
             .lineSpacing(2)
@@ -418,6 +420,25 @@ struct LiveDot: View {
         withAnimation(.easeInOut(duration: state == .busy ? 0.7 : 1).repeatForever(autoreverses: true)) {
             dimmed = true
         }
+    }
+}
+
+/// Internal process-start controls; larger command layouts await device A/B.
+enum PhoneCommandAccessibility {
+    static let keyListKey = "PocketDeskAccessibleKeyList"
+    static let targetsKey = "PocketDeskSessionTouchTargets"
+    static let keyListEnabled = resolve(UserDefaults.standard, key: keyListKey, defaultValue: false)
+    static let targetsEnabled = resolve(UserDefaults.standard, key: targetsKey, defaultValue: true)
+    static func resolve(_ defaults: UserDefaults, key: String, defaultValue: Bool) -> Bool {
+        defaults.object(forKey: key) == nil ? defaultValue : defaults.bool(forKey: key)
+    }
+    static func usesKeyList(typeSize: DynamicTypeSize, enabled: Bool) -> Bool {
+        enabled && typeSize.isAccessibilitySize
+    }
+    static func columns(compact: Bool, accessible: Bool) -> Int { accessible ? 2 : compact ? 8 : 4 }
+    static func target(_ old: CGFloat, enabled: Bool) -> CGFloat { enabled ? max(44, old) : old }
+    static func headingSize(scaled: CGFloat, base: CGFloat, accessible: Bool) -> CGFloat {
+        accessible ? scaled : min(scaled, base * 1.6)
     }
 }
 

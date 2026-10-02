@@ -1,5 +1,48 @@
 import SwiftUI
 import AVFoundation
+import UIKit
+
+/// Process launch arguments can override registered defaults with
+/// `-PocketDeskPairingAnnouncements NO` for a before/after accessibility comparison.
+enum PairingAnnouncementSettings {
+    static let key = "PocketDeskPairingAnnouncements"
+    static let enabled = resolve(defaults: .standard)
+
+    static func resolve(defaults: UserDefaults) -> Bool {
+        defaults.register(defaults: [key: true])
+        return defaults.bool(forKey: key)
+    }
+}
+
+enum PairingAnnouncementOutcome: Hashable {
+    case failure(String)
+    case paired
+}
+
+/// A small value policy keeps duplicate outcome suppression deterministic and testable.
+struct PairingAnnouncementPolicy {
+    let enabled: Bool
+    private(set) var announced: Set<PairingAnnouncementOutcome> = []
+
+    mutating func announcement(for outcome: PairingAnnouncementOutcome) -> String? {
+        guard enabled, announced.insert(outcome).inserted else { return nil }
+        switch outcome {
+        case .failure(let message):
+            let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        case .paired:
+            return "Paired with your Mac."
+        }
+    }
+
+    mutating func beginAttempt() {
+        announced.removeAll()
+    }
+
+    func shouldDisplayFailure(status: String, coordinatorRunning: Bool) -> Bool {
+        enabled && !coordinatorRunning && !status.isEmpty && status != "Disconnected"
+    }
+}
 
 /// Pairing: camera first, steps beneath, and a paste alternative whose confirm button stays
 /// pinned above the keyboard at every text size. Wrong or expired codes say so right away.
@@ -22,6 +65,8 @@ struct PairingSheet: View {
     @State private var networkTask: Task<Void, Never>?
     @State private var networkGeneration = UUID()
 
+    @State private var enrollmentFailure: String?
+    @State private var announcementPolicy = PairingAnnouncementPolicy(enabled: PairingAnnouncementSettings.enabled)
     @State private var showsReplacementConfirmation = false
     @FocusState private var codeFocused: Bool
     @Environment(\.dismiss) private var dismiss
@@ -72,6 +117,8 @@ struct PairingSheet: View {
                                 .accessibilityIdentifier("pairing.feedback")
                         } else if !model.error.isEmpty {
                             FarsideNotice(message: model.error, tone: .caution)
+                        } else if let enrollmentFailure {
+                            FarsideNotice(message: enrollmentFailure, tone: .caution)
                         }
 
                         steps
@@ -122,7 +169,10 @@ struct PairingSheet: View {
         .interactiveDismissDisabled(burst || waitingForApproval || checkingNetwork)
         .confirmationDialog("Replace this Mac pairing?", isPresented: $showsReplacementConfirmation,
                             titleVisibility: .visible, presenting: model.pendingPairReplacement) { pending in
-            Button("Replace pairing") { if model.confirmPairReplacement(pending) { waitingForApproval = true } }
+            Button("Replace pairing") {
+                beginPairingAttempt()
+                if model.confirmPairReplacement(pending) { waitingForApproval = true }
+            }
             Button("Cancel", role: .cancel) { model.cancelPairReplacement(); entry = .paste }
         } message: { pending in
             Text("Replace the saved pairing for \(pending.oldName) with this QR for \(pending.approval.enrollment.name)? The current session ends first. Your Mac must still approve this \(DeviceWord.current).")
@@ -137,16 +187,18 @@ struct PairingSheet: View {
             if waitingForApproval, connection.enrollmentPending { connection.stop() }
         }
         .onChange(of: connection.enrollmentPending) { _, pending in
-            if waitingForApproval, !pending, connection.invitation?.version == 1, connection.isRunning,
-               !First60.isEnabled() {
-                waitingForApproval = false
-                celebrate()
-            }
+            if waitingForApproval, !pending { finishEnrollmentIfNeeded() }
+        }
+        .onChange(of: connection.status) { _, _ in
+            if waitingForApproval, !connection.enrollmentPending { finishEnrollmentIfNeeded() }
+        }
+        .onChange(of: model.error) { _, error in
+            guard !error.isEmpty else { return }
+            announce(.failure(problem?.message ?? error))
         }
         .onChange(of: connection.connected) { _, connected in
             if First60.isEnabled(), waitingForApproval, connected, !connection.enrollmentPending {
-                waitingForApproval = false
-                celebrate()
+                finishEnrollmentIfNeeded()
             }
         }
         .onChange(of: scenePhase) { _, phase in
@@ -237,6 +289,11 @@ struct PairingSheet: View {
         guard First60.isEnabled() else {
             let paired = model.enroll(code)
             if paired { waitingForApproval = true }
+            else if model.pendingPairReplacement == nil {
+                let submissionProblem = PairingCodeProblem(code: code)
+                problem = submissionProblem; problemSerial &+= 1
+                announce(.failure(submissionProblem.message))
+            }
             return paired
         }
         do {
@@ -249,7 +306,9 @@ struct PairingSheet: View {
             codeFocused = false
             return true
         } catch {
-            problem = PairingCodeProblem(code: code); problemSerial &+= 1
+            let submissionProblem = PairingCodeProblem(code: code)
+            problem = submissionProblem; problemSerial &+= 1
+            announce(.failure(submissionProblem.message))
             return false
         }
     }
@@ -259,6 +318,7 @@ struct PairingSheet: View {
         // A long Settings visit can outlive the invitation. No stale authorization is retained.
         guard (try? PairInvitation.parse(code)) != nil else {
             foundCode = nil; problem = .expired; problemSerial &+= 1
+            announce(.failure(PairingCodeProblem.expired.message))
             return
         }
         cancelNetworkCheck()
@@ -277,7 +337,9 @@ struct PairingSheet: View {
             } else if model.pendingPairReplacement == nil {
                 model.cancelPairingLocalAccess()
                 foundCode = nil
-                problem = PairingCodeProblem(code: code); problemSerial &+= 1
+                let submissionProblem = PairingCodeProblem(code: code)
+                problem = submissionProblem; problemSerial &+= 1
+                announce(.failure(submissionProblem.message))
             }
         }
     }
@@ -364,10 +426,12 @@ struct PairingSheet: View {
             ZStack {
                 ScannerView(onCode: { code in
                     if burst { return true }
+                    beginPairingAttempt()
                     return stageCode(code)
                 }, onRejected: { reason in
                     problem = reason
                     problemSerial &+= 1
+                    announce(.failure(reason.message))
                 }, onUnavailable: {
                     camera = PermissionPrimer.cameraDenied ? .denied : .unavailable
                 })
@@ -469,7 +533,34 @@ struct PairingSheet: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { dismiss() }
     }
 
+    private func beginPairingAttempt() {
+        announcementPolicy.beginAttempt()
+        problem = nil
+        enrollmentFailure = nil
+    }
+
+    private func announce(_ outcome: PairingAnnouncementOutcome) {
+        guard let message = announcementPolicy.announcement(for: outcome) else { return }
+        UIAccessibility.post(notification: .announcement, argument: message)
+    }
+
+    private func finishEnrollmentIfNeeded() {
+        guard waitingForApproval, !connection.enrollmentPending else { return }
+        if connection.invitation?.version == 1, connection.isRunning, connection.pairingComparisonCode == nil,
+           !First60.isEnabled() || connection.connected {
+            waitingForApproval = false
+            announce(.paired)
+            celebrate()
+        } else if announcementPolicy.shouldDisplayFailure(status: connection.status,
+                                                            coordinatorRunning: connection.isRunning) {
+            waitingForApproval = false
+            enrollmentFailure = connection.status
+            announce(.failure(connection.status))
+        }
+    }
+
     private func pair() {
+        beginPairingAttempt()
         let code = model.pairingCode
         _ = stageCode(code)
     }
