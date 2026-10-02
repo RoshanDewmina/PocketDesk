@@ -248,12 +248,12 @@ final class FarsideScreenshotTour: XCTestCase {
             var opened = false
             for attempt in 0..<5 {
                 _ = target.firstMatch.waitForExistence(timeout: attempt == 0 ? 1 : 0.3)
-                if let visibleTarget = target.allElementsBoundByIndex.last(where: { $0.exists && $0.isHittable }) {
+                if let visibleTarget = target.allElementsBoundByIndex.last(where: { visibleNavigationFrame($0, in: app) != nil && $0.isHittable }) {
                     visibleTarget.tap()
                     opened = true
                     break
                 }
-                guard let visibleRow = menuRows.allElementsBoundByIndex.last(where: { $0.exists && $0.isHittable }) else { break }
+                guard let visibleRow = menuRows.allElementsBoundByIndex.last(where: { visibleNavigationFrame($0, in: app) != nil && $0.isHittable }) else { break }
                 visibleRow.swipeUp()
             }
             guard opened else { return missing("Home menu item unavailable or covered: \(choice)") }
@@ -406,7 +406,7 @@ final class FarsideScreenshotTour: XCTestCase {
             if shot.name == "big-text-pending" {
                 // Show the canvas pill rather than a progress element hidden behind Settings.
                 let done = app.buttons.matching(NSPredicate(format: "label == %@", "Done"))
-                    .allElementsBoundByIndex.first(where: { $0.exists && $0.isHittable })
+                    .allElementsBoundByIndex.first(where: { visibleNavigationFrame($0, in: app) != nil && $0.isHittable })
                 guard let done else { return missing("Big Text settings dismissal is unavailable") }
                 done.tap()
                 return require(pill, "Big Text change in progress", timeout: 2)
@@ -497,7 +497,7 @@ final class FarsideScreenshotTour: XCTestCase {
         repeat {
             let allVisible = labels.allSatisfy { label in
                 app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label))
-                    .allElementsBoundByIndex.contains { $0.exists && $0.isHittable }
+                    .allElementsBoundByIndex.contains { visibleNavigationFrame($0, in: app) != nil && $0.isHittable }
             }
             if allVisible { return true }
             Thread.sleep(forTimeInterval: 0.1)
@@ -511,7 +511,7 @@ final class FarsideScreenshotTour: XCTestCase {
         guard require(page, "Local options settings scroll page") else { return false }
         // Short landscape forms can fling past a disclosure or picker on a full swipe.
         for _ in 0..<20 {
-            if target.exists && target.isHittable { return true }
+            if visibleNavigationFrame(target, in: app) != nil && target.isHittable { return true }
             let frame = page.frame
             guard frame.height > 0 else { return missing("Local options page has no usable scroll area") }
             let passedTarget = target.exists && target.frame.maxY <= frame.minY
@@ -519,7 +519,7 @@ final class FarsideScreenshotTour: XCTestCase {
             let start = page.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: passedTarget ? 0.32 : 0.72))
             start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: passedTarget ? distance : -distance)))
         }
-        return target.exists && target.isHittable || missing("Local option or expanded shortcut row unavailable after bounded short scrolling")
+        return (visibleNavigationFrame(target, in: app) != nil && target.isHittable) || missing("Local option or expanded shortcut row unavailable after bounded short scrolling")
     }
 
     @MainActor
@@ -527,7 +527,7 @@ final class FarsideScreenshotTour: XCTestCase {
         let page = element("remote.controls.page", in: app)
         guard require(page, "Big Text settings scroll page") else { return false }
         for _ in 0..<20 {
-            if target.exists && target.isHittable { return true }
+            if visibleNavigationFrame(target, in: app) != nil && target.isHittable { return true }
             let frame = page.frame
             guard frame.height > 0 else { return missing("Big Text settings page has no usable scroll area") }
             let passedTarget: Bool
@@ -535,7 +535,7 @@ final class FarsideScreenshotTour: XCTestCase {
                 passedTarget = target.frame.maxY <= frame.minY
             } else {
                 let laterSection = app.staticTexts["Smooth motion"].firstMatch
-                passedTarget = laterSection.exists && laterSection.isHittable
+                passedTarget = visibleNavigationFrame(laterSection, in: app) != nil && laterSection.isHittable
             }
             // A full swipe can fling the short landscape form past the whole Big Text section.
             // Short press-drags advance a small part of the viewport, checking after each move.
@@ -543,7 +543,7 @@ final class FarsideScreenshotTour: XCTestCase {
             let start = page.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: passedTarget ? 0.32 : 0.72))
             start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: passedTarget ? distance : -distance)))
         }
-        return target.exists && target.isHittable || missing("Big Text option unavailable after bounded short scrolling")
+        return (visibleNavigationFrame(target, in: app) != nil && target.isHittable) || missing("Big Text option unavailable after bounded short scrolling")
     }
 
     @MainActor
@@ -555,14 +555,14 @@ final class FarsideScreenshotTour: XCTestCase {
                appFrame.minX, appFrame.minY, appFrame.width, appFrame.height].allSatisfy({ $0.isFinite }),
               frame.width > 0, frame.height > 0, appFrame.width > 0, appFrame.height > 0,
               appFrame.contains(frame) else { return nil }
-        let home = app.scrollViews["phone.home"].firstMatch
-        if home.exists {
-            // The landscape right column clips below its own bounds, inside the app frame.
+        let scopes = [element("remote.controls.page", in: app), app.scrollViews["phone.home"].firstMatch]
+        for scope in scopes where scope.exists {
+            // Home's landscape column and settings Forms clip within the app frame.
             // Match the same framed descendant so unrelated sheet/menu controls stay independent.
-            let inHome = home.descendants(matching: .any)
+            let inScope = scope.descendants(matching: .any)
                 .matching(NSPredicate(format: "label == %@", target.label)).allElementsBoundByIndex
                 .contains { $0.exists && $0.frame == frame }
-            if inHome && !home.frame.intersection(appFrame).contains(frame) { return nil }
+            if inScope && !scope.frame.intersection(appFrame).contains(frame) { return nil }
         }
         return frame
     }
