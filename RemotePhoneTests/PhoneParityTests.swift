@@ -289,6 +289,16 @@ final class DirectTouchModelTests: XCTestCase {
 
 /// The actual chrome branches use this policy so narrow windows retain their phone behavior.
 final class SessionChromePolicyTests: XCTestCase {
+    @MainActor
+    func testLocalActivityExtendsTheExactIdleDeadline() {
+        let clock = SessionPillActivityClock()
+        clock.note(at: 10)
+        XCTAssertEqual(clock.remaining(at: 11), 1)
+        clock.note(at: 11.5)
+        XCTAssertEqual(clock.remaining(at: 12.2), 1.3, accuracy: 0.0001)
+        XCTAssertEqual(clock.remaining(at: 13.5), 0)
+        XCTAssertEqual(clock.remaining(at: 15), 0)
+    }
     func testFormsAndCameraCapRespectWidthAndRollback() {
         for regular in [false, true] {
             for enabled in [false, true] {

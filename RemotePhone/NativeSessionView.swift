@@ -31,7 +31,7 @@ struct NativeSessionView: View {
     @State private var primingMicrophone = false
     @State private var dockHintVisible = false
     @State private var sessionPillCollapsed = false
-    @State private var sessionPillActivity: UInt64 = 0
+    @State private var sessionPillActivity = SessionPillActivityClock()
     /// Internal rollback only; compact windows always retain their original chrome.
     @AppStorage("ipadSessionLayoutEnabled") private var ipadSessionLayoutEnabled = true
     @State private var lockVisible = false
@@ -315,9 +315,13 @@ struct NativeSessionView: View {
         .onChange(of: showControls) { _, _ in noteSessionPillActivity() }
         .task(id: sessionPillIdleKey) {
             guard SessionChromePolicy.mayCollapse(regular: regularSessionLayout, controlsCollapsed: controlsCollapsed,
-                                                 showControls: showControls, keyboardOpen: keyboardOpen, persistent: sessionPillPersistent) else { return }
-            sessionPillCollapsed = false
-            do { try await Task.sleep(for: .seconds(SessionChromePolicy.idleInterval)) } catch { return }
+                                                 showControls: showControls, keyboardOpen: keyboardOpen, persistent: sessionPillPersistent),
+                  !sessionPillCollapsed else { return }
+            while !Task.isCancelled {
+                let remaining = sessionPillActivity.remaining()
+                if remaining <= 0 { break }
+                do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
+            }
             guard !Task.isCancelled else { return }
             withAnimation(reduceMotion ? nil : Farside.Motion.easeOut()) { sessionPillCollapsed = true }
         }
@@ -888,7 +892,7 @@ struct NativeSessionView: View {
     }
 
     private var sessionPillIdleKey: String {
-        "\(regularSessionLayout)-\(sessionPillActivity)-\(sessionPillPersistent)-\(controlsCollapsed)-\(keyboardOpen)-\(showControls)"
+        "\(regularSessionLayout)-\(sessionPillCollapsed)-\(sessionPillPersistent)-\(controlsCollapsed)-\(keyboardOpen)-\(showControls)"
     }
 
     /// One semantic anchor. State rows belong to the same plate and retain their original IDs;
@@ -943,8 +947,8 @@ struct NativeSessionView: View {
 
     private func noteSessionPillActivity() {
         guard regularSessionLayout else { return }
-        sessionPillCollapsed = false
-        sessionPillActivity &+= 1
+        sessionPillActivity.note()
+        if sessionPillCollapsed { sessionPillCollapsed = false }
     }
 
     private var dataWarningContent: DataWarningContent? {

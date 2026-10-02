@@ -324,3 +324,15 @@ enum SessionChromePolicy {
         regular && controlsCollapsed && !showControls && !keyboardOpen && !persistent
     }
 }
+
+/// High-rate input renews a monotonic deadline without publishing a view-state change
+/// or spawning a task for each motion sample. Only showing/hiding the pill changes state.
+@MainActor
+final class SessionPillActivityClock {
+    private var lastActivity = ProcessInfo.processInfo.systemUptime
+
+    func note(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) { lastActivity = now }
+    func remaining(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> TimeInterval {
+        max(0, lastActivity + SessionChromePolicy.idleInterval - now)
+    }
+}
