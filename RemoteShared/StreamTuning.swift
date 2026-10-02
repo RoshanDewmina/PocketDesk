@@ -89,6 +89,15 @@ struct StreamTuning: Equatable {
     /// HEVC is offered whenever both ends' hardware probes pass. Off (internal A/B or kill switch only)
     /// makes this side offer H.264 alone, so the session negotiates H.264 with the owned encoder.
     var hevc = true
+    /// Owned encoder: ask VideoToolbox to favour encode speed over quality (an optional hint; a rejecting
+    /// encoder keeps its default). Not offered by the low-latency rate controller.
+    var encoderPrioritizeSpeed = false
+    /// Owned HEVC encoder: request VideoToolbox's low-latency rate control; creation falls back to the
+    /// standard hardware session if it is refused.
+    var hevcLowLatency = false
+    /// Owned encoder: leave key frame placement to VideoToolbox (today's behaviour). Off sets the maximum
+    /// key frame interval and duration so only requested key frames (start, PLI, restart) are emitted.
+    var encoderPeriodicKeyFrames = true
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
         encoderCeilingKbps.map { $0 * 1000 } ?? quality.maximumBitrateBps
@@ -118,6 +127,9 @@ struct StreamTuning: Equatable {
         tuning.mergePointerMoves = false
         tuning.frameTiming = false
         tuning.encoderMaximumQP = 30
+        tuning.encoderPrioritizeSpeed = false
+        tuning.hevcLowLatency = false
+        tuning.encoderPeriodicKeyFrames = true
         return tuning
     }()
 
@@ -143,12 +155,16 @@ struct StreamTuning: Equatable {
     static let frameTimingKey = "PocketDeskFrameTiming"
     static let encoderMaximumQPKey = "PocketDeskEncoderMaxQP"
     static let hevcKey = "PocketDeskHEVC"
+    static let encoderPrioritizeSpeedKey = "PocketDeskEncoderPrioritizeSpeed"
+    static let hevcLowLatencyKey = "PocketDeskHEVCLowLatency"
+    static let encoderPeriodicKeyFramesKey = "PocketDeskEncoderPeriodicKeyFrames"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
                                  highRefreshCaptureKey, targetFPSKey, highRefreshNoAdaptationKey, capToClientPixelsKey,
                                  viewportCaptureKey, ladderKey, encoderMaxInFlightKey, idleVideoRefreshKey, lanHeadroomKey,
-                                 mergePointerMovesKey, frameTimingKey, senderQueueGovernorKey, senderQueueGovernorApplyKey, encoderMaximumQPKey, hevcKey]
+                                 mergePointerMovesKey, frameTimingKey, senderQueueGovernorKey, senderQueueGovernorApplyKey, encoderMaximumQPKey, hevcKey,
+                                 encoderPrioritizeSpeedKey, hevcLowLatencyKey, encoderPeriodicKeyFramesKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -236,6 +252,15 @@ struct StreamTuning: Equatable {
         if defaults.object(forKey: hevcKey) != nil {
             tuning.hevc = defaults.bool(forKey: hevcKey)
         }
+        if defaults.object(forKey: encoderPrioritizeSpeedKey) != nil {
+            tuning.encoderPrioritizeSpeed = defaults.bool(forKey: encoderPrioritizeSpeedKey)
+        }
+        if defaults.object(forKey: hevcLowLatencyKey) != nil {
+            tuning.hevcLowLatency = defaults.bool(forKey: hevcLowLatencyKey)
+        }
+        if defaults.object(forKey: encoderPeriodicKeyFramesKey) != nil {
+            tuning.encoderPeriodicKeyFrames = defaults.bool(forKey: encoderPeriodicKeyFramesKey)
+        }
         return tuning
     }
 
@@ -285,6 +310,9 @@ struct StreamTuning: Equatable {
         if !frameTiming { parts.append("no frame timing") }
         if encoderMaximumQP != Self.tuned.encoderMaximumQP { parts.append("max QP \(encoderMaximumQP)") }
         if !hevc { parts.append("no HEVC") }
+        if encoderPrioritizeSpeed { parts.append("encode speed priority") }
+        if hevcLowLatency { parts.append("HEVC low-latency") }
+        if !encoderPeriodicKeyFrames { parts.append("requested keys only") }
         if ladder { parts.append("governor " + (!senderQueueGovernor ? "off" : senderQueueGovernorApply ? "apply" : "shadow")) }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }
