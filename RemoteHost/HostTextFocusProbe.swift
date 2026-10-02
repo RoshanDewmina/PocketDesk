@@ -181,7 +181,7 @@ final class HostTextFocusChanges: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard sessionActive, pid == newPID, generation == token, !budget.isCancelled else { return }
         observer = created
-        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(created), kCFRunLoopCommonModes)
+        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(created), CFRunLoopMode.commonModes)
     }
 
     func stop() {
@@ -192,7 +192,7 @@ final class HostTextFocusChanges: @unchecked Sendable {
 
     private func removeSource() {
         if let observer {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), kCFRunLoopCommonModes)
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), CFRunLoopMode.commonModes)
         }
         observer = nil
     }
