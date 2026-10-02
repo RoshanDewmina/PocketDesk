@@ -170,13 +170,16 @@ final class First60PhonePairingTests: XCTestCase {
         defer { model.disconnect() }
         let first = try TestPairing.invitation()
         let second = try TestPairing.invitation()
-        model.stagePairingLink(try XCTUnwrap(URL(string: first.cameraCode())))
+        let cameraCode = try first.cameraCode()
+        let expectedCode = try PairInvitation.normalizedCode(cameraCode)
+        model.stagePairingLink(try XCTUnwrap(URL(string: cameraCode)))
         XCTAssertEqual(model.pairingEntry, .paste)
-        XCTAssertEqual(model.pairingCode, try first.code())
+        XCTAssertEqual(model.pairingCode, expectedCode)
+        XCTAssertEqual(try PairInvitation.parse(model.pairingCode), first)
         XCTAssertFalse(model.connection.isRunning)
         model.stagePairingLink(try XCTUnwrap(URL(string: second.cameraCode())))
-        XCTAssertEqual(model.pairingCode, try first.code())
-        XCTAssertFalse(model.enroll(try first.code()))
+        XCTAssertEqual(model.pairingCode, expectedCode)
+        XCTAssertFalse(model.enroll(expectedCode))
         XCTAssertFalse(model.connection.isRunning)
     }
 
