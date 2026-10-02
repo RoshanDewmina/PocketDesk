@@ -547,33 +547,83 @@ final class FarsideScreenshotTour: XCTestCase {
     }
 
     @MainActor
+    private func visibleNavigationFrame(_ target: XCUIElement, in app: XCUIApplication) -> CGRect? {
+        guard target.exists else { return nil }
+        let frame = target.frame
+        let appFrame = app.frame
+        guard [frame.minX, frame.minY, frame.width, frame.height,
+               appFrame.minX, appFrame.minY, appFrame.width, appFrame.height].allSatisfy({ $0.isFinite }),
+              frame.width > 0, frame.height > 0, appFrame.width > 0, appFrame.height > 0,
+              appFrame.contains(frame) else { return nil }
+        let home = app.scrollViews["phone.home"].firstMatch
+        if home.exists {
+            // The landscape right column clips below its own bounds, inside the app frame.
+            // Match the same framed descendant so unrelated sheet/menu controls stay independent.
+            let inHome = home.descendants(matching: .any)
+                .matching(NSPredicate(format: "label == %@", target.label)).allElementsBoundByIndex
+                .contains { $0.exists && $0.frame == frame }
+            if inHome && !home.frame.intersection(appFrame).contains(frame) { return nil }
+        }
+        return frame
+    }
+
+    @MainActor
     private func reveal(_ target: XCUIElement, in app: XCUIApplication) -> Bool {
         for _ in 0..<6 {
-            if target.exists && target.isHittable { return true }
+            if visibleNavigationFrame(target, in: app) != nil { return true }
             let page = element("remote.controls.page", in: app)
-            if page.exists { page.swipeUp() }
-            else if app.tables.firstMatch.exists { app.tables.firstMatch.swipeUp() }
-            else if app.collectionViews.firstMatch.exists { app.collectionViews.firstMatch.swipeUp() }
-            else if app.scrollViews["phone.home"].firstMatch.exists && app.scrollViews["phone.home"].firstMatch.isHittable {
-                // Landscape Home scrolls only its right column; a centered app swipe hits art.
-                app.scrollViews["phone.home"].firstMatch.swipeUp()
+            let home = app.scrollViews["phone.home"].firstMatch
+            let scroll: XCUIElement?
+            let isHome: Bool
+            if page.exists { scroll = page; isHome = false }
+            else if app.tables.firstMatch.exists { scroll = app.tables.firstMatch; isHome = false }
+            else if app.collectionViews.firstMatch.exists { scroll = app.collectionViews.firstMatch; isHome = false }
+            else if home.exists { scroll = home; isHome = true }
+            else { scroll = nil; isHome = false }
+            let appFrame = app.frame
+            guard [appFrame.minX, appFrame.minY, appFrame.width, appFrame.height].allSatisfy({ $0.isFinite }),
+                  appFrame.width > 0, appFrame.height > 0 else {
+                return missing("Navigation app anchor has no finite visible frame")
             }
-            else { app.swipeUp() }
+            let viewport = scroll.map { $0.frame.intersection(appFrame) } ?? appFrame
+            guard [viewport.minX, viewport.minY, viewport.width, viewport.height].allSatisfy({ $0.isFinite }),
+                  viewport.width > 0, viewport.height > 0 else {
+                return missing("Navigation scroll viewport has no finite visible frame")
+            }
+            let scrollDown = target.exists && target.frame.minY < viewport.minY
+            // Full landscape Home swipes can fling Session check entirely above its column.
+            // Use short scoped drags there, and reverse when the target has passed the top.
+            let distance = isHome ? min(100, viewport.height * 0.22) : viewport.height * 0.6
+            let startPoint = CGPoint(x: viewport.midX, y: viewport.minY + viewport.height * (scrollDown ? 0.25 : 0.75))
+            let start = app.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: startPoint.x - appFrame.minX, dy: startPoint.y - appFrame.minY))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: scrollDown ? distance : -distance)))
         }
-        return target.exists && target.isHittable || missing("Cannot reveal requested navigation control")
+        return visibleNavigationFrame(target, in: app) != nil || missing("Cannot reveal requested navigation control inside its visible viewport")
     }
 
     @MainActor
     private func tap(_ target: XCUIElement, in app: XCUIApplication, scroll: Bool = true) -> Bool {
         if scroll {
-            if !target.waitForExistence(timeout: 1) || !target.isHittable {
+            if !target.waitForExistence(timeout: 1) || visibleNavigationFrame(target, in: app) == nil {
                 guard reveal(target, in: app) else { return false }
             }
         } else if !target.waitForExistence(timeout: 3) {
             return missing("Requested navigation control is unavailable")
         }
-        guard target.isHittable else { return missing("Navigation control is covered: \(target.identifier)") }
-        target.tap()
+        guard let frame = visibleNavigationFrame(target, in: app) else {
+            return missing("Requested navigation control is outside the visible viewport")
+        }
+        // isHittable can raise an XCTest exception for clipped SwiftUI activation points.
+        // Tap the verified visible rect through the app anchor; callers still require the exact
+        // destination root before accepting its screenshot, so a covered control is never proof.
+        let appFrame = app.frame
+        guard [appFrame.minX, appFrame.minY, appFrame.width, appFrame.height].allSatisfy({ $0.isFinite }),
+              appFrame.width > 0, appFrame.height > 0, appFrame.contains(frame) else {
+            return missing("Navigation app anchor changed before coordinate tap")
+        }
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: frame.midX - appFrame.minX, dy: frame.midY - appFrame.minY)).tap()
         return true
     }
 
