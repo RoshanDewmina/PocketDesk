@@ -14,6 +14,7 @@ struct RemoteHostApp: App {
         if CommandLine.arguments.contains(VirtualDisplaySpike.launchArgument) { VirtualDisplaySpike.run(); exit(0) }
         #endif
         HostFonts.registerBundledFonts()
+        CrashDiagnostics.shared.start()
         let model = RemoteHostModel()
         _model = StateObject(wrappedValue: model)
         appDelegate.configure(cleanup: { model.stopForTermination() }, prepare: model.prepareForTermination)

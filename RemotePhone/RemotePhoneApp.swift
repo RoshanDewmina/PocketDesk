@@ -950,6 +950,7 @@ final class PhoneRemoteModel: ObservableObject {
         connection = coordinator ?? RemoteCoordinator(isHost: false,
             sessionLossRetryLimit: 24, maximumRetryDelayNanoseconds: 4_000_000_000)
         #endif
+        diagnostics.bind(to: connection)
         self.preferences = preferences
         firstPictureReady = !First60.isEnabled(preferences) || preferences.bool(forKey: Self.firstPictureShownKey)
         first60HintStage = First60HintStage(rawValue: preferences.integer(forKey: Self.first60HintStageKey)) ?? .move
