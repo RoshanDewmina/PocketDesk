@@ -5,15 +5,26 @@ import XCTest
 @MainActor
 final class FarsideIntentsTests: XCTestCase {
     private var savedLoader: (() -> [PairedMac])!
+    private var savedControlSelection: (() -> String?)!
+    private var savedControlSwitch: Any?
 
     override func setUp() {
         super.setUp()
         savedLoader = PairedMacs.loader
+        savedControlSelection = ControlConnectRequest.selectedMacID
+        savedControlSwitch = UserDefaults.standard.object(forKey: FarsideControlConnect.defaultsKey)
+        UserDefaults.standard.removeObject(forKey: FarsideControlConnect.defaultsKey)
         _ = SystemRequestInbox.shared.drain()
     }
 
     override func tearDown() {
         PairedMacs.loader = savedLoader
+        ControlConnectRequest.selectedMacID = savedControlSelection
+        if let savedControlSwitch {
+            UserDefaults.standard.set(savedControlSwitch, forKey: FarsideControlConnect.defaultsKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: FarsideControlConnect.defaultsKey)
+        }
         SessionIntentBridge.shared.handler = nil
         MacStatusService.shared.currentSession = { (false, false) }
         _ = SystemRequestInbox.shared.drain()
@@ -21,6 +32,63 @@ final class FarsideIntentsTests: XCTestCase {
     }
 
     // MARK: Safety baseline
+
+    func testSystemExposesAnAuthenticatedForegroundControlConnectIntent() throws {
+        let metadata = try IntentMetadata.load()
+        let actions = try XCTUnwrap(metadata["actions"] as? [String: [String: Any]])
+        let control = try XCTUnwrap(actions["ControlConnectIntent"], "The system needs a Connect control intent")
+        XCTAssertEqual(control["authenticationPolicy"] as? Int, 1)
+        XCTAssertEqual(control["openAppWhenRun"] as? Bool, true)
+        XCTAssertEqual(control["supportedModes"] as? Int, ControlConnectIntent.supportedModes.rawValue)
+    }
+
+    func testControlOpensTheAppWithoutARequestWhenNoMacIsPaired() async throws {
+        PairedMacs.loader = { [] }
+        ControlConnectRequest.selectedMacID = { nil }
+        _ = try await ControlConnectIntent().perform()
+        XCTAssertTrue(SystemRequestInbox.shared.pending.isEmpty)
+    }
+
+    func testControlUsesTheLastSelectedPairedMacAndQueuesTheNormalConnect() async throws {
+        let first = try TestPairing.mac(name: "Studio")
+        let selected = try TestPairing.mac(name: "Air")
+        PairedMacs.loader = { [first, selected] }
+        ControlConnectRequest.selectedMacID = { selected.id }
+        _ = try await ControlConnectIntent().perform()
+        XCTAssertEqual(SystemRequestInbox.shared.pending, [.connect(macID: selected.id)])
+    }
+
+    func testControlKillSwitchOnlyOpensTheApp() async throws {
+        let selected = try TestPairing.mac()
+        PairedMacs.loader = { [selected] }
+        ControlConnectRequest.selectedMacID = { selected.id }
+        UserDefaults.standard.set(false, forKey: FarsideControlConnect.defaultsKey)
+        _ = try await ControlConnectIntent().perform()
+        XCTAssertTrue(SystemRequestInbox.shared.pending.isEmpty)
+    }
+
+    func testControlNeverFallsBackToAnotherMacAfterTheSelectionIsRemoved() async throws {
+        let other = try TestPairing.mac()
+        PairedMacs.loader = { [other] }
+        ControlConnectRequest.selectedMacID = { "m_removed" }
+        _ = try await ControlConnectIntent().perform()
+        XCTAssertTrue(SystemRequestInbox.shared.pending.isEmpty)
+    }
+
+    func testControlRequiresUnlockAndForegroundAndNeverClaimsConnected() {
+        XCTAssertEqual(ControlConnectIntent.authenticationPolicy, .requiresAuthentication)
+        XCTAssertEqual(ControlConnectIntent.supportedModes, .foreground(.immediate))
+        XCTAssertTrue(ControlConnectIntent.openAppWhenRun)
+        XCTAssertEqual(FarsideControlConnect.resultText, "Opening Farside.")
+        XCTAssertFalse(FarsideControlConnect.resultText.lowercased().contains("connected"))
+    }
+
+    func testControlTitleUsesTheSnapshotNameOrThePlainFallback() {
+        XCTAssertEqual(FarsideControlConnect.title(snapshot: nil), "Connect to Mac")
+        XCTAssertEqual(FarsideControlConnect.title(snapshot: .init(macName: "  \n")), "Connect to Mac")
+        XCTAssertEqual(FarsideControlConnect.title(snapshot: .init(macName: "Roshan's MacBook Air")),
+                       "Connect to Roshan's MacBook Air")
+    }
 
     func testOnlyEndSessionRunsFromALockedPhone() {
         XCTAssertEqual(ConnectToMacIntent.authenticationPolicy, .requiresAuthentication, "Opening control needs an unlock")

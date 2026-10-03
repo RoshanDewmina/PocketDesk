@@ -1,6 +1,26 @@
 import SwiftUI
 import WidgetKit
 
+/// The same one-tap action in Control Center, Lock Screen and the Action button.
+struct ConnectControl: ControlWidget {
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: FarsideControlConnect.kind, provider: ConnectControlProvider()) { title in
+            ControlWidgetButton(action: ControlConnectIntent()) {
+                Label(title, systemImage: "desktopcomputer")
+            }
+        }
+        .displayName("Connect to Mac")
+        .description("Opens Farside to connect to your paired Mac.")
+    }
+}
+
+struct ConnectControlProvider: ControlValueProvider {
+    var previewValue: String { FarsideControlConnect.title(snapshot: nil) }
+    func currentValue() async throws -> String {
+        FarsideControlConnect.title(snapshot: MacWidgetSnapshot.load())
+    }
+}
+
 /// Home Screen shortcut to the Connect prompt. It starts nothing: a tap opens Farside, which asks
 /// "Connect to …?" before anything reaches the Mac. It shows the Mac's name and the last presence the
 /// app observed, with its age, from the App Group snapshot; with no snapshot it says "Your Mac".

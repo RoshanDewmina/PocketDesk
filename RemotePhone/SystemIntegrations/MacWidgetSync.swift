@@ -11,7 +11,10 @@ final class MacWidgetSync {
     static let refreshInterval: TimeInterval = 5 * 60
 
     var defaults: UserDefaults? = MacWidgetSnapshot.sharedDefaults
-    var reload: () -> Void = { WidgetCenter.shared.reloadTimelines(ofKind: ConnectWidgetLink.kind) }
+    var reload: () -> Void = {
+        WidgetCenter.shared.reloadTimelines(ofKind: ConnectWidgetLink.kind)
+        ControlCenter.shared.reloadControls(ofKind: FarsideControlConnect.kind)
+    }
     var now: () -> Date = { Date() }
     var lastReached: (String?) -> Date? = { LastReached.date(room: $0) }
 
