@@ -102,7 +102,8 @@ final class CouchHandshakeTests: XCTestCase {
         rig.signaling.deliver(try rig.phone.seal("acceptedAck", request: request, session: session, sequence: 1,
                                                  body: SessionModeRequest.body(for: .couch)))
         XCTAssertEqual(rig.host.peerRequestedMode, .couch)
-        XCTAssertTrue(await mediaCreated(rig.host), "the Mac still prepares media exactly as before")
+        let created = await mediaCreated(rig.host)
+        XCTAssertTrue(created, "the Mac still prepares media exactly as before")
         rig.signaling.deliver(RelayMessage(type: "peer", online: false))
         XCTAssertEqual(rig.host.peerRequestedMode, .picture)
         rig.host.stop()
@@ -115,7 +116,8 @@ final class CouchHandshakeTests: XCTestCase {
             let (request, session) = try rig.authenticate()
             rig.signaling.deliver(try rig.phone.seal("acceptedAck", request: request, session: session, sequence: 1, body: body))
             XCTAssertEqual(rig.host.peerRequestedMode, .picture)
-            XCTAssertTrue(await mediaCreated(rig.host))
+            let created = await mediaCreated(rig.host)
+            XCTAssertTrue(created)
             XCTAssertTrue(rig.host.isRunning, "an unreadable body never ends the session")
             rig.host.stop()
         }
