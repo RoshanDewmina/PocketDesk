@@ -79,6 +79,7 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
     var pencilInputEnabled = false
     var coalescedFingerMotion = false
     static let coalescedFingerMotionDisabledKey = "couchCoalescedFingerMotionDisabled"
+    private static let coalescedFingerMotionEnabled = !UserDefaults.standard.bool(forKey: coalescedFingerMotionDisabledKey)
     var hardwareKeys = false {
         didSet {
             if !hardwareKeys { keyboard.releaseAll() }
@@ -465,7 +466,7 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
             pointer.moved(to: touch.location(in: self), time: touch.timestamp)
         }
         if coalescedFingerMotion,
-           !UserDefaults.standard.bool(forKey: Self.coalescedFingerMotionDisabledKey),
+           Self.coalescedFingerMotionEnabled,
            contacts.count == 1, touches.count == 1, let touch = touches.first, touch.type == .direct,
            let contact = contacts[ObjectIdentifier(touch)] {
             let final = NativeGestureEngine.MotionSample(point: touch.location(in: self), time: touch.timestamp)

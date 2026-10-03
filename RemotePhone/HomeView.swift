@@ -517,6 +517,10 @@ struct HomeView: View {
                     .farsidePlate(Farside.Radius.control, fill: Farside.Palette.panel2, stroke: Farside.Palette.line2)
             }
             if status.tone == .busy {
+                if !status.needsApproval, let hint = model.sessionRecoveryHint {
+                    Text(hint).font(.callout).foregroundStyle(Farside.Palette.ash)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Button(action: model.disconnect) {
                     Text("Cancel connection")
                 }
@@ -751,7 +755,7 @@ struct HomeView: View {
     }
 
     private func showDepartureIfNeeded() {
-        guard let notice = model.macNotice, notice != shownNotice, !connection.isRunning else { return }
+        guard let notice = model.recoveryMacNotice, notice != shownNotice, !connection.isRunning else { return }
         shownNotice = notice
         guard let presence = MacDeparture(notice: notice) else { return }
         let error = FriendlyError.from(presence: presence.kind, at: presence.time)
@@ -1199,8 +1203,8 @@ struct ConcealedRemoteView: View {
     private var message: String {
         switch presentation {
         case .hidden: "Farside hides your Mac’s screen while it’s in the background."
-        case .reconnecting: "Resuming your session with \(macName). Your pairing is kept."
-        case .reconnectFailed: model.macNotice ?? MacStatus(connection.status).text
+        case .reconnecting: model.recoveryMacNotice ?? model.sessionRecoveryHint ?? "Resuming your session with \(macName). Your pairing is kept."
+        case .reconnectFailed: model.recoveryMacNotice ?? MacStatus(connection.status).text
         case .ended: "Farside hid your Mac’s screen while it was in the background. Reconnect to continue."
         }
     }

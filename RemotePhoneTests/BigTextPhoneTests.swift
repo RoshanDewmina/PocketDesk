@@ -9,6 +9,129 @@ final class BigTextPhoneTests: XCTestCase {
     private let builtIn = DisplayDescriptor(id: 1, name: "Built-in Retina Display", width: 1470, height: 956)
     private let studio = DisplayDescriptor(id: 7, name: "Studio Display", width: 2560, height: 1440)
 
+    func testBackgroundRetiresPendingScaleWithoutTimeoutNotice() throws {
+        try connect(features: [SessionFeature.displayScale, SessionFeature.backgroundPause])
+        model.sceneChanged(.active)
+        var now: TimeInterval = 100
+        model.bigTextClock = { now }
+        model.chooseBigTextNow(1024)
+        model.sceneChanged(.background)
+        XCTAssertTrue(model.connection.connected, "Exercise the held authenticated peer, not an ordinary disconnect")
+        model.chooseBigTextNow(1280)
+        model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime) // Drive the existing timer seam.
+        now += 9
+        model.checkBigTextTimeout()
+        XCTAssertNil(model.bigText.pendingTarget)
+        XCTAssertNil(model.sessionNotice)
+    }
+
+    func testNewAuthenticatedPeerRetiresOldScaleRequest() throws {
+        try connect()
+        var now: TimeInterval = 100
+        model.bigTextClock = { now }
+        model.chooseBigTextNow(1024)
+        model.connection.startInputFixtureForTesting(session: "new-bigtext-peer")
+        model.connection.onAuthenticated?()
+        now += 9
+        model.checkBigTextTimeout()
+        XCTAssertNil(model.bigText.pendingTarget)
+        XCTAssertNil(model.sessionNotice)
+    }
+
+    func testConfirmedScaleReplyBeforeGeometryIsRetained() throws {
+        try connect()
+        try makeControllable()
+        var now: TimeInterval = 100
+        model.bigTextClock = { now }
+        model.chooseBigTextNow(1024)
+        try reply(RemoteAction(action: "displays", epoch: 2, displays: [described(current: 1024)], display: 1))
+        XCTAssertEqual(model.geometryEpoch, 1, "A catalog cannot advance input geometry")
+        XCTAssertFalse(model.canControl, "Confirmed text size cannot grant input on old geometry")
+        now += 9
+        model.checkBigTextTimeout()
+        XCTAssertNil(model.sessionNotice, "An authenticated size confirmation survives delayed geometry")
+        XCTAssertFalse(model.canControl)
+        try send(RemoteAction(action: "geometry", x: 1024, y: 665, epoch: 2))
+        model.checkBigTextTimeout()
+        XCTAssertNil(model.bigText.pendingTarget)
+        XCTAssertNil(model.sessionNotice)
+        XCTAssertFalse(model.canControl, "Geometry alone cannot renew capture readiness")
+        try makeControllable(epoch: 2)
+        XCTAssertTrue(model.canControl, "Only fresh new-epoch capture and a frame restore control")
+    }
+
+    func testLateFutureEpochConfirmationClearsOnlyItsTimeoutWithoutGrantingInput() throws {
+        try connect()
+        try makeControllable()
+        var now: TimeInterval = 100
+        model.bigTextClock = { now }
+        model.chooseBigTextNow(1024)
+        now += 9
+        model.checkBigTextTimeout()
+        XCTAssertEqual(model.sessionNotice, "Couldn't confirm text size")
+        try reply(RemoteAction(action: "displays", epoch: 2, displays: [described(current: 1024)], display: 1))
+        XCTAssertNil(model.sessionNotice)
+        XCTAssertEqual(model.geometryEpoch, 1)
+        XCTAssertFalse(model.canControl)
+    }
+
+    func testFutureErrorHonorsTheExistingStatusReliabilityRollback() throws {
+        defaults.set(true, forKey: PhoneRemoteModel.bigTextStatusDisabledKey)
+        try connect()
+        model.chooseBigTextNow(1024)
+        try reply(RemoteAction(action: "displays", epoch: 2, displays: [described(current: 1024)], display: 1, scaleError: "failed"))
+        XCTAssertEqual(model.bigText.pendingTarget, 1024)
+        try send(RemoteAction(action: "geometry", x: 1024, y: 665, epoch: 2))
+        XCTAssertEqual(model.sessionNotice, PhoneRemoteModel.bigTextMessage(.failed))
+    }
+
+    func testNewerGeometryDiscardsDeferredCatalogWithoutAdoptingItsMode() throws {
+        try connect()
+        model.chooseBigTextNow(1024)
+        try reply(RemoteAction(action: "displays", epoch: 2, displays: [described(current: 1024)], display: 1))
+        try send(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 3))
+        XCTAssertEqual(model.bigText.currentWidth, 1470, "An epoch-2 catalog cannot update epoch-3 display metadata")
+        XCTAssertEqual(model.geometryEpoch, 3)
+        XCTAssertFalse(model.canControl)
+    }
+
+    func testUnrelatedFutureCatalogCannotConfirmOrReplaceTheLatestScaleRequest() throws {
+        try connect()
+        var now: TimeInterval = 100
+        model.bigTextClock = { now }
+        model.chooseBigTextNow(1280)
+        let oldID = model.lastBigTextRequest!.requestID
+        model.chooseBigTextNow(1024)
+        try send(RemoteAction(action: "displays", epoch: 2, displays: [described(current: 1024)], display: 1))
+        try send(RemoteAction(action: "displays", epoch: 2, displays: [described(current: 1024)], display: 1, scaleRequestID: oldID))
+        try send(RemoteAction(action: "geometry", x: 1024, y: 665, epoch: 2))
+        XCTAssertEqual(model.bigText.pendingTarget, 1024)
+        now += 9
+        model.checkBigTextTimeout()
+        XCTAssertEqual(model.sessionNotice, "Couldn't confirm text size", "Silence from the current request remains a real failure")
+    }
+
+    func testSessionPolishNoRestoresLegacyFutureReplyAndBackgroundTimeout() throws {
+        model.disconnect()
+        defaults.set(false, forKey: PhoneRemoteModel.sessionPolishKey)
+        model = PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults,
+            coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()))
+        model.bigTextMemory = BigTextMemory(defaults: defaults)
+        model.bigTextRoomOverride = "room-a"
+        model.connection.inputPacketSenderForTesting = { _ in true }
+        try connect(features: [SessionFeature.displayScale, SessionFeature.backgroundPause])
+        model.sceneChanged(.active)
+        var now: TimeInterval = 100
+        model.bigTextClock = { now }
+        model.chooseBigTextNow(1024)
+        try reply(RemoteAction(action: "displays", epoch: 2, displays: [described(current: 1024)], display: 1))
+        model.sceneChanged(.background)
+        now += 9
+        model.checkBigTextTimeout()
+        XCTAssertEqual(model.sessionNotice, "Couldn't confirm text size")
+        XCTAssertNil(model.sessionRecoveryHint)
+    }
+
     func testConfirmedAppliedModeSuppressesCorrelatedFailure() throws {
         try connect()
         model.chooseBigTextNow(1024)
@@ -62,7 +185,7 @@ final class BigTextPhoneTests: XCTestCase {
     override func setUp() {
         super.setUp()
         defaults = makeTestDefaults("BigTextPhoneTests")
-        model = PhoneRemoteModel(background: FakeBackgroundExecution(),
+        model = PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults,
                                  coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()))
         model.bigTextMemory = BigTextMemory(defaults: defaults)
         model.bigTextRoomOverride = "room-a"
@@ -107,6 +230,14 @@ final class BigTextPhoneTests: XCTestCase {
         try reply(RemoteAction(action: "displays", epoch: 1, displays: [described(current: current)], display: 1))
     }
 
+    private func makeControllable(epoch: UInt64 = 1) throws {
+        model.sceneChanged(.active)
+        try send(RemoteAction(action: "capture", x: 1, epoch: epoch, features: [SessionFeature.displayScale], display: 1))
+        try send(RemoteAction(action: "viewing", x: 1, epoch: epoch))
+        model.frameReceived()
+        XCTAssertTrue(model.canControl, "The regression must begin with a genuinely admitted input path")
+    }
+
     private func recordPackets() -> () -> [ControlPacket] {
         model.connection.startInputFixtureForTesting(session: "bigtext")
         var packets: [ControlPacket] = []
@@ -126,7 +257,7 @@ final class BigTextPhoneTests: XCTestCase {
         model.disconnect()
         let trust = PhoneTrustStore(records: MemoryStore(), legacy: MemoryStore())
         try trust.saveApproved(invitation)
-        model = PhoneRemoteModel(background: FakeBackgroundExecution(),
+        model = PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults,
                                  coordinator: RemoteCoordinator(isHost: false, store: PhonePairPersistence(trust: trust)))
         model.bigTextMemory = BigTextMemory(defaults: defaults)
         model.connection.inputPacketSenderForTesting = { _ in true }
@@ -652,6 +783,69 @@ final class BigTextPhoneTests: XCTestCase {
         XCTAssertEqual(model.bigText, BigTextState())
         XCTAssertNil(model.lastBigTextRequest)
         XCTAssertFalse(model.bigTextSupported)
+    }
+}
+
+@MainActor
+final class SessionPreferencesReadTests: XCTestCase {
+    private final class CountingDefaults: UserDefaults, @unchecked Sendable {
+        var reads: [String: Int] = [:]
+        override func bool(forKey key: String) -> Bool {
+            reads[key, default: 0] += 1
+            return super.bool(forKey: key)
+        }
+        override func object(forKey key: String) -> Any? {
+            reads[key, default: 0] += 1
+            return super.object(forKey: key)
+        }
+    }
+
+    func testSelectingAnotherMacCannotInheritThePreviousMacLockReport() throws {
+        let defaults = makeTestDefaults("b13-lock-destination")
+        let trust = PhoneTrustStore(records: MemoryStore(), legacy: MemoryStore())
+        let first = try HostPair.create(server: "wss://offline.invalid/signal", name: "First Mac").rotated().invitation
+        let second = try HostPair.create(server: "wss://offline.invalid/signal", name: "Second Mac").rotated().invitation
+        try trust.saveApproved(first)
+        try trust.saveApproved(second)
+        let snapshot = try trust.snapshot()
+        let firstHost = try XCTUnwrap(snapshot.hosts.first { $0.invitation == first })
+        let secondHost = try XCTUnwrap(snapshot.hosts.first { $0.invitation == second })
+        try trust.select(hostID: firstHost.id)
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults,
+            coordinator: RemoteCoordinator(isHost: false, store: PhonePairPersistence(trust: trust)))
+        defer { model.disconnect() }
+        model.connection.startInputFixtureForTesting(session: "first-mac-lock")
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", x: 0, epoch: 1,
+            features: SessionFeature.host, hostState: HostPresence.locked.rawValue)))
+        model.connection.stop()
+        XCTAssertEqual(model.recoveryHostPresence, .locked)
+        XCTAssertNotNil(model.recoveryMacNotice)
+        XCTAssertTrue(model.selectPairedMac(id: "m_" + secondHost.id, trust: trust))
+        XCTAssertNil(model.recoveryHostPresence)
+        XCTAssertNil(model.recoveryMacNotice)
+        XCTAssertFalse(model.sessionRecoveryHint?.contains("last reported") == true)
+    }
+
+    func testFirst60SwitchDoesNotReadPreferencesDuringRepeatedPresentation() throws {
+        let suite = "b13-counting-" + UUID().uuidString
+        let defaults = try XCTUnwrap(CountingDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults,
+            coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()))
+        defer { model.disconnect() }
+        model.bigTextMemory = BigTextMemory(defaults: defaults)
+        _ = model.bigTextPillTarget // Sample the injected scale policy before measuring the hot path.
+        let initial = defaults.reads[First60.disabledDefaultsKey, default: 0]
+        let scaleInitial = defaults.reads[PhoneRemoteModel.bigTextStatusDisabledKey, default: 0]
+        for _ in 0..<1000 {
+            XCTAssertTrue(model.first60Enabled)
+            _ = model.first60InlineHint
+            _ = model.bigTextPillTarget
+        }
+        XCTAssertEqual(defaults.reads[First60.disabledDefaultsKey, default: 0], initial,
+                       "An internal rollback switch must be sampled once, not during each presentation")
+        XCTAssertEqual(defaults.reads[PhoneRemoteModel.bigTextStatusDisabledKey, default: 0], scaleInitial)
+        print("b13 1000 presentation cycles: First60 counted reads=\(defaults.reads[First60.disabledDefaultsKey, default: 0] - initial), BigText counted reads=\(defaults.reads[PhoneRemoteModel.bigTextStatusDisabledKey, default: 0] - scaleInitial)")
     }
 }
 

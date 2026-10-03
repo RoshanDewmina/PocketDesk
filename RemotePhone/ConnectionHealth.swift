@@ -160,9 +160,18 @@ struct ConnectionHealth: Equatable {
         var device = DeviceWord.current
     }
 
-    /// Nil while nothing is wrong. Order matters: a dropped connection explains a stalled picture,
-    /// and the Mac's own report explains a stopped capture better than a guess would.
-    static func session(_ evidence: SessionEvidence) -> ConnectionHealth? {
+    /// Nil while nothing is wrong. An explicit lock report explains the pause; once disconnected,
+    /// it describes the last report, never the Mac's current state. Other dropped connections explain
+    /// a stalled picture, and the Mac's own report explains a stopped capture better than a guess would.
+    static func session(_ evidence: SessionEvidence, lockedStatusEnabled: Bool = true) -> ConnectionHealth? {
+        if lockedStatusEnabled, evidence.hostPresence == .locked {
+            return ConnectionHealth(state: .macLocked,
+                                    title: evidence.connected ? "Mac locked" : "Mac last reported locked",
+                                    detail: evidence.connected
+                                        ? "Your Mac reported that it is locked. Controls are paused."
+                                        : "Your Mac last reported that it was locked. Its current state is unknown while disconnected.",
+                                    nextStep: "Unlock your Mac in person, then reconnect.")
+        }
         guard evidence.connected else {
             return ConnectionHealth(state: .reconnecting, title: "Reconnecting",
                                     detail: "The connection dropped. Farside is retrying by itself and resends nothing you typed or clicked.",
@@ -251,7 +260,7 @@ struct ConnectionHealth: Equatable {
     /// The dock's one-line summary.
     var sessionLine: String {
         switch state {
-        case .sharingStopped, .pictureStalled: "\(title) · controls paused"
+        case .macLocked, .sharingStopped, .pictureStalled: "\(title) · controls paused"
         case .macBatteryLow: "Mac battery low · plug it in"
         case .macUnderLoad: "Mac busy · other apps are using it"
         default: "\(title) · \(nextStep)"

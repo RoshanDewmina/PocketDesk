@@ -161,7 +161,26 @@ final class PhoneRemoteModel: ObservableObject {
     @Published private(set) var firstPictureReady = false
     @Published private(set) var firstPictureSettling = false
     @Published private(set) var first60HintStage = First60HintStage.move
-    var first60Enabled: Bool { First60.isEnabled(preferences) }
+    let first60Enabled: Bool
+    static let sessionPolishKey = "FarsideSessionPolish"
+    let sessionPolishEnabled: Bool
+    private var lastDepartureInvitation: PairInvitation?
+    private var macNoticeInvitation: PairInvitation?
+    var recoveryHostPresence: HostPresence? {
+        hostPresence ?? (sessionPolishEnabled && !connection.connected && lastDepartureInvitation == connection.invitation ? lastDeparture : nil)
+    }
+    var recoveryMacNotice: String? {
+        !sessionPolishEnabled || macNoticeInvitation == connection.invitation ? macNotice : nil
+    }
+    var sessionRecoveryHint: String? {
+        guard sessionPolishEnabled else { return nil }
+        if recoveryHostPresence == .locked {
+            return connection.connected
+                ? "Your Mac reported that it is locked. Unlock your Mac in person to connect."
+                : "Your Mac last reported that it was locked. Unlock it in person if needed, then try again."
+        }
+        return "Check that your Mac is awake and unlocked, with Farside in its menu bar."
+    }
     private var firstPictureSettlement = FirstPictureSettlement()
     private var firstPictureTask: Task<Void, Never>?
     private var firstPictureCaptureObserved = false
@@ -361,9 +380,9 @@ final class PhoneRemoteModel: ObservableObject {
     private var recoveryNoticeShown = false
     private var curtainNoticedStates: Set<PrivacyCurtainState> = []
     /// Why the last session ended, when the Mac itself said so.
-    @Published private(set) var macNotice: String?
+    @Published private(set) var macNotice: String? { didSet { macNoticeInvitation = connection.invitation } }
     /// What the Mac said as the last session ended (asleep, locked, another user), until the next session.
-    @Published private(set) var lastDeparture: HostPresence?
+    @Published private(set) var lastDeparture: HostPresence? { didSet { lastDepartureInvitation = connection.invitation } }
     private var departureReason: HostPresence?
     private var continuity = BackgroundContinuity()
     private let background: BackgroundExecution
@@ -954,7 +973,9 @@ final class PhoneRemoteModel: ObservableObject {
         #endif
         diagnostics.bind(to: connection)
         self.preferences = preferences
-        firstPictureReady = !First60.isEnabled(preferences) || preferences.bool(forKey: Self.firstPictureShownKey)
+        first60Enabled = First60.isEnabled(preferences)
+        sessionPolishEnabled = preferences.object(forKey: Self.sessionPolishKey) == nil || preferences.bool(forKey: Self.sessionPolishKey)
+        firstPictureReady = !first60Enabled || preferences.bool(forKey: Self.firstPictureShownKey)
         first60HintStage = First60HintStage(rawValue: preferences.integer(forKey: Self.first60HintStageKey)) ?? .move
         dataWarningGate = DataWarningGate(defaults: preferences)
         streamQuality = StreamQualityPreference.stored(in: preferences)
@@ -1065,6 +1086,12 @@ final class PhoneRemoteModel: ObservableObject {
         }
         connection.onAuthenticated = { [weak self] in
             guard let self else { return }
+            if self.sessionPolishEnabled {
+                self.retireBigTextRequest()
+                self.bigTextDisplayID = nil
+                self.displaysRequested = false
+                self.bigText.autoApplied = false
+            }
             self.beginFirstPicture()
             self.invalidatePresentation()
             self.cachePresentationHost()
@@ -1491,7 +1518,10 @@ final class PhoneRemoteModel: ObservableObject {
     @Published private(set) var bigText = BigTextState()
     var lastBigTextRequest: (display: UInt32, width: Double, requestID: String)?
     private(set) var bigTextRequestsSent = 0
-    var bigTextMemory = BigTextMemory()
+    var bigTextMemory = BigTextMemory() {
+        didSet { bigTextStatusSnapshot = nil }
+    }
+    private var bigTextStatusSnapshot: Bool?
     var bigTextRoomOverride: String?
     var bigTextClock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     private var bigTextSendTask: Task<Void, Never>?
@@ -1503,6 +1533,8 @@ final class PhoneRemoteModel: ObservableObject {
         let acceptedWidth: Double?
     }
     private var bigTextPendingRequest: BigTextRequest?
+    /// Capture restart can send the scale receipt before its new geometry preflight.
+    private var deferredBigTextReply: RemoteAction?
     private var bigTextTimedOut: (request: BigTextRequest, noticeGeneration: UInt64)?
     /// Advances on every notice shown; tests use it to prove a message produced no new notice.
     private(set) var sessionNoticeGeneration: UInt64 = 0
@@ -1511,7 +1543,45 @@ final class PhoneRemoteModel: ObservableObject {
     static let bigTextPillDuration: TimeInterval = 2
     static let bigTextStatusDisabledKey = "disableBigTextStatusReliability"
 
-    private var bigTextStatusReliabilityEnabled: Bool { !bigTextMemory.defaults.bool(forKey: Self.bigTextStatusDisabledKey) }
+    private var bigTextStatusReliabilityEnabled: Bool {
+        if let bigTextStatusSnapshot { return bigTextStatusSnapshot }
+        let enabled = !bigTextMemory.defaults.bool(forKey: Self.bigTextStatusDisabledKey)
+        bigTextStatusSnapshot = enabled
+        return enabled
+    }
+
+    private func retireBigTextRequest() {
+        bigTextSendTask?.cancel()
+        bigTextSendTask = nil
+        deferredSetupBigText = nil
+        deferredBigTextReply = nil
+        bigTextPendingRequest = nil
+        bigTextTimedOut = nil
+        bigText.pendingTarget = nil
+        bigText.pendingSince = nil
+        bigText.pendingPillExpired = false
+        initialBigTextRequestID = nil
+        stopFirstPictureSettling()
+    }
+
+    private func confirmDeferredBigTextReply(_ reply: RemoteAction) {
+        guard bigTextStatusReliabilityEnabled || reply.scaleError == nil,
+              let request = bigTextPendingRequest ?? bigTextTimedOut?.request,
+              reply.scaleRequestID == request.id, let accepted = request.acceptedWidth,
+              reply.displays?.first(where: { $0.id == request.display })?.scaleCurrentWidth == accepted else { return }
+        if let timedOut = bigTextTimedOut {
+            if sessionNoticeGeneration == timedOut.noticeGeneration {
+                sessionNoticeTask?.cancel()
+                sessionNotice = nil
+            }
+            bigTextTimedOut = nil
+        }
+        if request.id == initialBigTextRequestID { stopFirstPictureSettling() }
+        bigTextPendingRequest = nil
+        bigText.pendingTarget = nil
+        bigText.pendingSince = nil
+        refreshFirstPicture()
+    }
     var bigTextPillTarget: Double? {
         if first60Enabled, initialBigTextRequestID != nil,
            initialBigTextRequestID == bigTextPendingRequest?.id { return nil }
@@ -1596,6 +1666,7 @@ final class PhoneRemoteModel: ObservableObject {
 
     private func sendBigText(display: UInt32, width: Double, initialPresentation: Bool = false) {
         guard bigTextSupported, pendingModeSwitch == nil, currentDisplayID == display,
+              !sessionPolishEnabled || !sceneWasBackground,
               !viewOnlyConfirmed, !pendingViewOnlyStart, !awaitingViewOnlyExit, !pipBackground else { return }
         if first60Enabled, connection.setupInProgress == true {
             deferredSetupBigText = (display, width, initialPresentation)
@@ -1606,6 +1677,7 @@ final class PhoneRemoteModel: ObservableObject {
             sessionNotice = nil
         }
         bigTextTimedOut = nil
+        deferredBigTextReply = nil
         cancelInput()
         let id = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         let descriptor = displays.first { $0.id == display }
@@ -1676,6 +1748,7 @@ final class PhoneRemoteModel: ObservableObject {
 
     private func applySavedBigText() {
         guard bigTextSupported, !bigText.autoApplied, bigText.pendingTarget == nil, bigTextSendTask == nil,
+              !sessionPolishEnabled || !sceneWasBackground,
               !first60Enabled || connection.setupInProgress != true,
               captureHealthy, pendingModeSwitch == nil, pendingDisplayID == nil,
               !viewOnlyConfirmed, !pendingViewOnlyStart, !awaitingViewOnlyExit, !pipBackground,
@@ -2666,6 +2739,7 @@ let now = ProcessInfo.processInfo.systemUptime
     }
 
     func enterBackground() {
+        if sessionPolishEnabled { retireBigTextRequest() }
         PhoneIdleTimer.shared.setForeground(false)
         if pendingLockMac != nil {
             let notice = "Lock wasn’t confirmed. Unlock or check your Mac in person."
@@ -3127,12 +3201,29 @@ let now = ProcessInfo.processInfo.systemUptime
             captureHealthy = false
             lastFrame = 0
             lastCaptureHealth = 0
+            if let reply = deferredBigTextReply {
+                if reply.epoch == geometryEpoch {
+                    deferredBigTextReply = nil
+                    receiveDisplays(reply)
+                } else if reply.epoch < geometryEpoch {
+                    deferredBigTextReply = nil
+                }
+            }
         case "inputApplied":
             receiveAppliedInput(action)
         case "textResult":
             receiveTextResult(action)
         case "displays":
-            guard action.epoch == geometryEpoch else { return }
+            guard action.epoch == geometryEpoch else {
+                if sessionPolishEnabled, action.epoch > geometryEpoch,
+                   let id = action.scaleRequestID,
+                   id == bigTextPendingRequest?.id || id == bigTextTimedOut?.request.id {
+                    deferredBigTextReply = action
+                    suspendInputReadiness()
+                    confirmDeferredBigTextReply(action)
+                }
+                return
+            }
             receiveDisplays(action)
         case "clipboard":
             if let frame = action.clipboard {
@@ -3461,6 +3552,7 @@ let now = ProcessInfo.processInfo.systemUptime
         bigTextSendTask?.cancel()
         bigTextSendTask = nil
         bigTextDisplayID = nil
+        deferredBigTextReply = nil
         bigTextTimedOut = nil
         bigTextPendingRequest = nil
         bigText = BigTextState()

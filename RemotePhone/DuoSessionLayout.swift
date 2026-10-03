@@ -60,13 +60,14 @@ struct DuoSessionLayout: Equatable {
 /// Attach to the stable session stage, at its full bounds, before laying out picture and pad.
 /// Publishing is deferred/coalesced so UIKit callbacks never mutate SwiftUI during a layout pass.
 struct DuoSessionProbe: UIViewRepresentable {
+    private static let layoutEnabled = !UserDefaults.standard.bool(forKey: DuoSessionLayout.disabledKey)
     var enabled = true
     let update: (DuoSessionLayout) -> Void
 
     func makeUIView(context: Context) -> ProbeView { ProbeView() }
     func updateUIView(_ view: ProbeView, context: Context) {
         view.onUpdate = update
-        view.enabled = enabled && !UserDefaults.standard.bool(forKey: DuoSessionLayout.disabledKey)
+        view.enabled = enabled && Self.layoutEnabled
         view.refresh()
     }
     static func dismantleUIView(_ view: ProbeView, coordinator: ()) {
