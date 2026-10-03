@@ -1,3 +1,7 @@
+# Pipeline ladder stability — combined .7 lane, 3 October 2026
+
+Roshan authorizes the b13 encoding-load correction for the iPhone-only combined .7 test: the bounded pipeline judges sustained backlog/delivery or significant pre-encode drops, rather than callback-latency spikes alone. Existing internal `FarsideEncoderPipelining` is ON by default; explicit NO restores pre-lane encoding-load behavior. No new user-facing settings or protocol messages. Source/tests/builds only; the orchestrator integrates and installs, and physical scrolling acceptance remains a device gate.
+
 # Low Data Mode — combined .7 lane, 3 October 2026
 
 Roshan authorizes carrying the iPhone's Low Data Mode into a negotiated media policy for the combined .7 device test, ON by default behind internal `FarsideLowDataPolicy` (explicit NO restores legacy behavior). Reuse the existing relay tier for the video ceiling, suppress optional refinement and automatic clipboard sync, bound file bursts, and retain the essential picture keepalive. Expensive but unconstrained hotspots keep the normal policy. No new setting or banner; the existing Connection Health hint may report Low Data Mode. D62's iPhone-only scope remains authoritative. This lane prepares source/tests/builds only; the orchestrator integrates and installs. Physical data savings and responsiveness remain a device gate.

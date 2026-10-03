@@ -1555,6 +1555,119 @@ final class LadderPolicyTests: XCTestCase {
                       "the kill switch restores the old drop rule")
     }
 
+    // Encoding-signal excerpts from .7 device-stats-1407.jsonl, 1-based rows.
+    // Preserve offered/delivered rates; unrelated capture/network signals are normalized.
+    private func b13Sample(age: Double = 30, source: Double = 60, encoded: Double = 60,
+                           p90: Double = 9, cap: Double = 0.2, drops: Int = 0, inFlight: Int = 2) -> LadderInputs {
+        var sample = recorded(age: age, capture: source, captureP90: 1, encoded: encoded,
+                              encodeP90: p90, dropped: drops)
+        sample.sourceFPS = source
+        sample.encodeAtCapShare = cap
+        sample.encodeInFlightMax = inFlight
+        return sample
+    }
+
+    func testB13RecordedUnsaturatedSpikesDoNotFlapSixty() {
+        let rows: [(Int, LadderInputs)] = [
+            (10406, b13Sample(age: 3.4, source: 56, encoded: 52, p90: 38.2, cap: 0.5244884167, drops: 4)),
+            (10407, b13Sample(age: 4.4, source: 57, encoded: 51, p90: 36.5, cap: 0.3250988452, drops: 6)),
+            (10425, b13Sample(age: 13.9, source: 56.1, encoded: 53.1, p90: 36.4, cap: 0.2976640844, drops: 3)),
+            (10426, b13Sample(age: 14.9, source: 56.9, encoded: 54, p90: 34.4, cap: 0.2513654105, drops: 3)),
+            (10448, b13Sample(age: 36.9, source: 57, encoded: 56, p90: 10.7, cap: 0.0160697668, drops: 1)),
+            (10449, b13Sample(age: 37.9, source: 56, encoded: 54, p90: 11.2, cap: 0.0584432678, drops: 2)),
+            (10450, b13Sample(age: 38.9, source: 57, encoded: 58, p90: 19.6, cap: 0.0368824413)),
+            (10455, b13Sample(age: 3.7, source: 57.9, encoded: 53.9, p90: 32, cap: 0.1902451289, drops: 4)),
+            (10456, b13Sample(age: 4.7, source: 57.1, encoded: 55.1, p90: 35.6, cap: 0.2346713461, drops: 2)),
+            (10457, b13Sample(age: 5.7, source: 31, encoded: 29, p90: 62.4, cap: 0.1074004422, drops: 2)),
+            (10458, b13Sample(age: 6.7, source: 29, encoded: 30, p90: 22, cap: 0, inFlight: 1))
+        ]
+        // Independent contiguous excerpts, so gaps in the file are not invented as clean seconds.
+        for range in [0..<2, 2..<4, 4..<7, 7..<11] {
+            var policy = LadderPolicy(targetFPS: 60)
+            policy.encoderPipelining = true
+            for index in range {
+                XCTAssertNil(policy.evaluate(rows[index].1, at: Double(index - range.lowerBound)),
+                             "recorded row \(rows[index].0)")
+                XCTAssertEqual(policy.state.rung, 0)
+            }
+        }
+    }
+
+    func testB13SixtyWithNineMsEncodeIgnoresIsolatedAndRepeatedLatencySpikes() {
+        var policy = LadderPolicy(targetFPS: 60)
+        policy.encoderPipelining = true
+        for (second, latency) in [9.0, 36.4, 9, 62.4, 9, 36.4, 62.4, 9].enumerated() {
+            XCTAssertNil(policy.evaluate(b13Sample(p90: latency), at: Double(second)))
+        }
+        XCTAssertEqual(policy.state.fps, 60)
+        XCTAssertEqual(policy.climbWait, 10, "no false failed-climb penalty")
+    }
+
+    func testB13SaturationNeedsDeliveryShortfallAndTwoConsecutiveSeconds() {
+        var policy = LadderPolicy(targetFPS: 60)
+        policy.encoderPipelining = true
+        let fullButDelivering = b13Sample(p90: 36, cap: 0.95)
+        XCTAssertTrue(run(&policy, 0...5) { _ in fullButDelivering }.isEmpty)
+        let overloaded = b13Sample(encoded: 50, p90: 62, cap: 0.95)
+        XCTAssertNil(policy.evaluate(overloaded, at: 6))
+        XCTAssertNil(policy.evaluate(b13Sample(), at: 7), "one bad second clears")
+        XCTAssertNil(policy.evaluate(overloaded, at: 8))
+        XCTAssertEqual(policy.evaluate(overloaded, at: 9)?.rung, 1, "true overload steps within 2 s")
+    }
+
+    func testB13RecordedPersistentDropsStillStepWithinTwoSecondsEvenWithFastEncode() {
+        var policy = LadderPolicy(targetFPS: 60)
+        policy.encoderPipelining = true
+        // Rows 10499-10500: a genuine shortfall at a thinned 30 fps source, cap occupancy zero.
+        let first = b13Sample(age: 10.6, source: 29, encoded: 16, p90: 27.9, cap: 0, drops: 13)
+        let second = b13Sample(age: 11.6, source: 30, encoded: 24, p90: 10.6, cap: 0, drops: 6)
+        // Reach the recorded 30 fps rung with the unchanged immediate three-frame safety rule.
+        var backlog = b13Sample(); backlog.encodeInFlightMax = 3
+        XCTAssertEqual(policy.evaluate(backlog, at: 0)?.rung, 1)
+        XCTAssertNil(policy.evaluate(first, at: 1))
+        XCTAssertEqual(policy.evaluate(second, at: 2)?.rung, 2)
+        XCTAssertEqual(policy.state.reason, "encoding")
+    }
+
+    func testB13HostMonitorDoesNotShowBusyForHealthyPipelineLatency() {
+        var report = StreamStatsReport(role: "host", previous: nil, current: StreamStatsSample(entries: []), counters: nil)
+        report.captureFPS = 60; report.sourceFPS = 60; report.encodedFPS = 60; report.sentFPS = 60
+        report.captureLatencyP90Ms = 1; report.encodeLatencyP90Ms = 62
+        report.encodeAtCapShare = 0.2; report.encodeInFlightMax = 2; report.droppedBeforeEncode = 0
+        report.encoderSessionAgeS = 30; report.pacerDelayMs = 0
+        let host = HostLoadSample(report: report, targetFPS: 60, longEdge: 2560,
+                                  hostThermalState: "nominal", lowPowerMode: false)
+        var monitor = HostLoadMonitor(targetFPS: 60)
+        for second in 0...12 {
+            let tick = monitor.tick(sample: host, at: Double(second))
+            XCTAssertNil(tick.ladder)
+            XCTAssertNil(tick.busy, "healthy throughput must not signal encoding Busy")
+        }
+        XCTAssertEqual(monitor.ladder.state.fps, 60)
+        XCTAssertEqual(monitor.busy.state, .ok)
+    }
+
+    func testB13RestartSpikeAndMissingTelemetryRetainTheirBoundaries() {
+        var policy = LadderPolicy(targetFPS: 60)
+        policy.encoderPipelining = true
+        XCTAssertNil(policy.evaluate(b13Sample(age: 1, encoded: 40, p90: 62, cap: 0.95, drops: 20), at: 0))
+        XCTAssertTrue(run(&policy, 1...10) { _ in self.b13Sample(age: 4) }.isEmpty)
+        let overload = b13Sample(encoded: 50, cap: 0.95)
+        XCTAssertNil(policy.evaluate(overload, at: 11))
+        XCTAssertNil(policy.evaluate(b13Sample(age: 1, p90: 62), at: 12), "restart latency clears the prior strike")
+        XCTAssertNil(policy.evaluate(overload, at: 13))
+        XCTAssertEqual(policy.evaluate(overload, at: 14)?.rung, 1)
+        for pipeline in [true, false] {
+            var legacy = LadderPolicy(targetFPS: 60)
+            legacy.encoderPipelining = pipeline
+            var latency = b13Sample(p90: 62)
+            if pipeline { latency.encodeAtCapShare = nil }
+            XCTAssertNil(legacy.evaluate(latency, at: 0))
+            XCTAssertEqual(legacy.evaluate(latency, at: 1)?.rung, 1,
+                           "NO or unavailable local pipeline evidence uses the original latency rule")
+        }
+    }
+
     func testPipelinedSixtyKeepsUpDespiteNormalTwoFrameOverlap() {
         var policy = LadderPolicy(targetFPS: 60)
         policy.encoderPipelining = true
@@ -1581,16 +1694,16 @@ final class LadderPolicyTests: XCTestCase {
         XCTAssertEqual(policy.state.fps, 60)
     }
 
-    func testPipeliningStillStepsForSaturationDelayAndDeliveryShortfall() {
+    func testPipeliningStillStepsForSaturatedShortfallAndPersistentDrops() {
         let calm = recorded(age: 30, capture: 60, captureP90: 1, encoded: 60, encodeP90: 20, dropped: 0)
-        for cause in 0...2 {
+        for cause in 0...1 {
             var policy = LadderPolicy(targetFPS: 60)
             policy.encoderPipelining = true
             var sample = calm
             sample.encodeAtCapShare = cause == 0 ? 0.95 : 0.2
             sample.encodeInFlightMax = 2
-            if cause == 1 { sample.encodeLatencyP90Ms = 34 }
-            if cause == 2 { sample.encodedFPS = 50; sample.sourceFPS = 60 }
+            sample.encodedFPS = 50; sample.sourceFPS = 60
+            if cause == 1 { sample.droppedBeforeEncode = 10 }
             XCTAssertNil(policy.evaluate(sample, at: 0))
             XCTAssertEqual(policy.evaluate(sample, at: 1)?.rung, 1, "cause \(cause)")
             XCTAssertEqual(policy.state.reason, "encoding")
