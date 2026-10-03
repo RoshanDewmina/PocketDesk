@@ -129,6 +129,17 @@ struct NativeSessionView: View {
                     scheduleGeometry()
                 }
             centerNotices
+            if showsSessionRecoveryHint,
+               let hint = model.recoveryMacNotice ?? model.sessionRecoveryHint {
+                Text(hint)
+                    .font(.callout).foregroundStyle(Farside.Palette.bone)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(16).frame(maxWidth: 300)
+                    .farsidePlate(Farside.Radius.control, fill: Farside.Palette.panel, stroke: Farside.Palette.line2)
+                    .padding(20).allowsHitTesting(false)
+                    .accessibilityIdentifier("remote.recoveryHint")
+            }
         }
         .overlay {
             if !regularSessionLayout && !couch && !controlsCollapsed && !keyboardOpen && !showControls {
@@ -829,8 +840,14 @@ struct NativeSessionView: View {
         .allowsHitTesting(false)
     }
 
+    private var showsSessionRecoveryHint: Bool {
+        model.sessionPolishEnabled && ((!offlineLayoutCheck && !connection.connected) || LaunchOptions.has("--ui-reconnecting"))
+    }
+
     @ViewBuilder private var centerNotices: some View {
-        if !offlineLayoutCheck && model.hostPresence == .displayAsleep {
+        if showsSessionRecoveryHint {
+            EmptyView()
+        } else if !offlineLayoutCheck && model.hostPresence == .displayAsleep {
             VStack(spacing: Farside.Space.s) {
                 Label("Your Mac’s display is asleep", systemImage: "moon.zzz")
                     .font(.callout.weight(.medium))
@@ -1435,11 +1452,12 @@ struct NativeSessionView: View {
     private var sessionHealth: ConnectionHealth? {
         guard !offlineLayoutCheck else { return nil }
         return ConnectionHealth.session(.init(connected: connection.connected, fresh: model.fresh,
-                                              captureHealthy: model.captureHealthy, hostPresence: model.hostPresence,
+                                              captureHealthy: model.captureHealthy, hostPresence: model.recoveryHostPresence,
                                               canWakeDisplay: model.canWakeDisplay, route: model.link?.route,
                                               slowRoundTripMs: model.slowRoundTripMs, blocker: model.sessionBlocker,
                                               wifiStall: model.wifiStallTip, linkHint: model.linkHint, vitals: model.currentMacVitals(),
-                                              quality: model.qualityVerdict, device: UIDevice.current.model))
+                                              quality: model.qualityVerdict, device: UIDevice.current.model),
+                                        lockedStatusEnabled: model.sessionPolishEnabled)
     }
 
     private var status: String {
@@ -1454,6 +1472,8 @@ struct NativeSessionView: View {
             if model.canControl { return "Controlling your Mac · no picture" }
             return model.controlAllowed ? "Waiting for your Mac · controls paused" : "Mouse and keyboard are off on your Mac"
         }
+        if model.sessionPolishEnabled, model.recoveryHostPresence == .locked,
+           let health = sessionHealth { return health.sessionLine }
         if !model.fresh || !model.captureHealthy { return "Reconnecting the picture · controls paused" }
         if connection.inputRecovering { return "Input catching up…" }
         let health = sessionHealth

@@ -154,6 +154,57 @@ final class ConnectionHealthTests: XCTestCase {
                        "A stopped capture matters more than a slow route")
     }
 
+    func testLiveMacLockReportExplainsPausedCaptureBeforeGenericRecovery() throws {
+        for fresh in [false, true] {
+            let health = try XCTUnwrap(session(fresh: fresh, capture: false, presence: .locked))
+            XCTAssertEqual(health.state, .macLocked)
+            XCTAssertEqual(health.title, "Mac locked")
+            XCTAssertTrue(health.detail.contains("reported"), "Name the authenticated Mac report as the evidence")
+            XCTAssertTrue(health.nextStep.contains("Unlock your Mac in person"))
+            XCTAssertEqual(health.action, .none, "Farside cannot unlock the Mac")
+            XCTAssertEqual(health.sessionLine, "Mac locked · controls paused")
+        }
+    }
+
+    func testDisconnectedLockReportIsHistoricalAndDoesNotClaimCurrentLockState() throws {
+        let health = try XCTUnwrap(session(connected: false, fresh: false, capture: false, presence: .locked))
+        XCTAssertEqual(health.state, .macLocked)
+        XCTAssertEqual(health.title, "Mac last reported locked")
+        XCTAssertTrue(health.detail.contains("last reported"))
+        XCTAssertTrue(health.detail.contains("current state"), "Disconnection leaves the current Mac state unknown")
+        XCTAssertTrue(health.nextStep.contains("Unlock your Mac in person"))
+        XCTAssertFalse(health.detail.contains("Your Mac is locked"))
+        XCTAssertEqual(health.action, .none)
+        XCTAssertEqual(health.sessionLine, "Mac last reported locked · controls paused")
+    }
+
+    func testDisconnectedRecoveryWithoutMacReportNeverInventsALock() throws {
+        let health = try XCTUnwrap(session(connected: false, fresh: false, capture: false))
+        XCTAssertEqual(health.state, .reconnecting)
+        XCTAssertFalse(health.title.lowercased().contains("lock"))
+        XCTAssertFalse(health.detail.lowercased().contains("locked"))
+        XCTAssertFalse(health.nextStep.lowercased().contains("unlock"))
+    }
+
+    func testFreshHealthySessionDoesNotReuseAPreviousLockExplanation() {
+        XCTAssertNil(session(connected: true, fresh: true, capture: true, presence: nil))
+    }
+
+    func testLockStatusRollbackPreservesLegacyLiveAndDisconnectedRecovery() {
+        let live = ConnectionHealth.SessionEvidence(connected: true, fresh: true,
+                                                    captureHealthy: false, hostPresence: .locked)
+        XCTAssertEqual(ConnectionHealth.session(live, lockedStatusEnabled: false)?.state, .sharingStopped)
+        XCTAssertEqual(ConnectionHealth.session(live, lockedStatusEnabled: false)?.sessionLine,
+                       "Mac stopped sharing its screen · controls paused")
+        let stalled = ConnectionHealth.SessionEvidence(connected: true, fresh: false,
+                                                       captureHealthy: false, hostPresence: .locked)
+        XCTAssertEqual(ConnectionHealth.session(stalled, lockedStatusEnabled: false)?.state, .pictureStalled)
+        let disconnected = ConnectionHealth.SessionEvidence(connected: false, fresh: false,
+                                                            captureHealthy: false, hostPresence: .locked)
+        XCTAssertEqual(ConnectionHealth.session(disconnected, lockedStatusEnabled: false)?.state, .reconnecting)
+        XCTAssertEqual(ConnectionHealth.session(disconnected, lockedStatusEnabled: false)?.title, "Reconnecting")
+    }
+
     func testSlowRoutesNameTheRouteTheyMeasured() {
         let relay = session(route: "Relay", rtt: 240)
         XCTAssertEqual(relay?.state, .relaySlow)
