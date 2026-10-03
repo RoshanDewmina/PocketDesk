@@ -1,6 +1,26 @@
 import AppIntents
 import Foundation
 
+/// The saved selection is the last-used Home destination, never a name from the widget snapshot.
+@MainActor
+enum ControlConnectRequest {
+    static var selectedMacID: () -> String? = {
+        #if DEBUG
+        if let seed = DebugLaunchSeeds.invitation { return PairedMacs.opaqueID(room: seed.room) }
+        #endif
+        guard let selected = try? PhoneTrustStore.shared.snapshot().selectedHostID else { return nil }
+        return "m_" + selected
+    }
+
+    static func post(defaults: UserDefaults = .standard) {
+        // Unset is ON in the combined .7 device test; NO restores app-opening only.
+        guard defaults.object(forKey: FarsideControlConnect.defaultsKey) == nil
+                || defaults.bool(forKey: FarsideControlConnect.defaultsKey),
+              let id = selectedMacID(), let mac = PairedMacs.mac(withID: id), mac.invitation != nil else { return }
+        SystemRequestInbox.shared.post(.connect(macID: mac.id))
+    }
+}
+
 // Siri, Spotlight, Shortcuts and the Action button.
 //
 // Safety baseline (SYSTEM-INTEGRATIONS.md section 3.3):
