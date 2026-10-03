@@ -19,8 +19,18 @@ final class SystemAudioPCMConverter {
     private var lastPTS: Double?
     private var remainder = Data()
     private var packetPTS: Double?
+    private let sourceAgeEnabled: Bool
+    private let hostClockNow: () -> CMTime
     private let output = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: outputRate,
                                       channels: 2, interleaved: true)!
+
+    // Snapshot once per capture converter. Explicit NO keeps the legacy continuity-only path.
+    init(sourceAgeEnabled: Bool? = nil, defaults: UserDefaults = .standard,
+         hostClockNow: @escaping () -> CMTime = { CMClockGetTime(CMClockGetHostTimeClock()) }) {
+        self.sourceAgeEnabled = sourceAgeEnabled ?? (defaults.object(forKey: "PocketDeskAudioSourceAge") == nil
+            || defaults.bool(forKey: "PocketDeskAudioSourceAge"))
+        self.hostClockNow = hostClockNow
+    }
 
     func reset() { converter = nil; format = nil; nextPTS = nil; lastPTS = nil; packetPTS = nil; remainder.removeAll(keepingCapacity: false) }
 
@@ -28,10 +38,19 @@ final class SystemAudioPCMConverter {
         guard sample.isValid, let description = CMSampleBufferGetFormatDescription(sample) else { reset(); return [] }
         let source = AVAudioFormat(cmAudioFormatDescription: description)
         let frames = CMSampleBufferGetNumSamples(sample)
-        let pts = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample))
+        let sourcePTS = CMSampleBufferGetPresentationTimeStamp(sample)
+        let pts = CMTimeGetSeconds(sourcePTS)
         guard source.sampleRate.isFinite, (8_000...192_000).contains(source.sampleRate),
               (1...2).contains(source.channelCount), frames > 0,
               frames <= Int(source.sampleRate / 10), pts.isFinite, pts >= 0 else { reset(); return [] }
+        if sourceAgeEnabled {
+            // Preserve the producer's existing PTS→host timeline contract; do not re-age old PCM.
+            // Retire the remainder and resampler too, so stale partial PCM cannot join fresh sound.
+            let age = CMTimeSubtract(hostClockNow(), sourcePTS)
+            guard age.isNumeric, CMTimeCompare(age, CMTime(value: 120, timescale: 1_000)) <= 0 else {
+                reset(); return []
+            }
+        }
         // Never encode a duplicate/reversed source sample. Re-anchor when the cumulative source
         // clock differs from the produced PCM clock by 50 ms, so long sessions cannot build drift.
         if let lastPTS, pts <= lastPTS { return [] }

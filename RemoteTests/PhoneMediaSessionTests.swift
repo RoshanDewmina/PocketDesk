@@ -2,6 +2,64 @@ import XCTest
 
 @MainActor
 final class PhoneMediaSessionTests: XCTestCase {
+    func testBluetoothMicSwitchIsOptInAndCapturedPerRegistry() {
+        for flag in [nil, false, true] as [Bool?] {
+            let defaults = UserDefaults(suiteName: UUID().uuidString)!
+            if let flag { defaults.set(flag, forKey: "PocketDeskBluetoothMic") }
+            var enabled: [Bool] = [], probes = 0
+            let session = PhoneMediaSession(backend: .init(configure: { _ in XCTFail("Use the recording configuration seam") },
+                activate: {}, deactivate: {}, configureRecording: { enabled.append($0) },
+                recordingInputIsBluetooth: { probes += 1; return true }), defaults: defaults)
+            defaults.set(flag != true, forKey: "PocketDeskBluetoothMic")
+            let mic = UUID()
+            XCTAssertTrue(session.acquire(mic, kind: .recording, onRetired: {}))
+            XCTAssertEqual(enabled, [flag == true])
+            XCTAssertEqual(probes, flag == true ? 1 : 0)
+            XCTAssertEqual(session.recordingUsesBluetoothInput, flag == true)
+            session.release(mic)
+            XCTAssertFalse(session.recordingUsesBluetoothInput)
+        }
+    }
+
+    func testBluetoothInputProbeRunsAfterActivationAndClearsOnTerminalRecordingRetirement() {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        defaults.set(true, forKey: "PocketDeskBluetoothMic")
+        var active = false, probes = 0, retired = 0
+        let session = PhoneMediaSession(backend: .init(configure: { _ in }, activate: { active = true },
+            deactivate: { active = false }, configureRecording: { XCTAssertTrue($0); XCTAssertFalse(active) },
+            recordingInputIsBluetooth: { XCTAssertTrue(active); probes += 1; return true }), defaults: defaults)
+        let mic = UUID()
+        XCTAssertTrue(session.acquire(mic, kind: .recording, onRetired: {
+            retired += 1; XCTAssertFalse(session.recordingUsesBluetoothInput)
+        }))
+        XCTAssertTrue(session.recordingUsesBluetoothInput)
+        XCTAssertFalse(session.acquire(UUID(), kind: .macAudio, onRetired: {}))
+        XCTAssertEqual(probes, 1)
+        session.routeChanged(deviceRemoved: false)
+        XCTAssertEqual(retired, 1); XCTAssertFalse(session.recordingUsesBluetoothInput)
+        XCTAssertTrue(session.acquire(UUID(), kind: .recording, onRetired: {}))
+        session.beginInterruption()
+        XCTAssertFalse(session.recordingUsesBluetoothInput)
+        session.endInterruption(shouldResume: true)
+        XCTAssertEqual(probes, 2, "Dictation never resumes automatically")
+    }
+
+    func testFailedOrRetiredRecordingActivationDoesNotInspectBluetoothRoute() {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        defaults.set(true, forKey: "PocketDeskBluetoothMic")
+        for throwsOnActivate in [false, true] {
+            var session: PhoneMediaSession!
+            session = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {
+                if throwsOnActivate { throw Failure.injected }
+                session.retireAll()
+            }, deactivate: {}, configureRecording: { _ in }, recordingInputIsBluetooth: {
+                XCTFail("Retired/failed activation must not inspect a recording route"); return true
+            }), defaults: defaults)
+            XCTAssertFalse(session.acquire(UUID(), kind: .recording, onRetired: {}))
+            XCTAssertFalse(session.recordingUsesBluetoothInput)
+        }
+    }
+
     private enum Failure: Error { case injected }
     func testMacMuteCannotDeactivatePiPAndStaleReleaseCannotDropNewRun() {
         var configuration: [PhoneMediaSession.Configuration] = [], activations = 0, releases = 0

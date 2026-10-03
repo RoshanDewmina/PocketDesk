@@ -10,8 +10,26 @@
     BOOL _consent, _capture, _recording, _playing, _initialized;
     NSUInteger _pending, _delivered;
     double _sampleTime;
+    BOOL _sourceAgeEnabled;
+    double _hostSecondsPerTick;
 }
-- (instancetype)init { if ((self = [super init])) _lock = [NSRecursiveLock new]; return self; }
+- (instancetype)init {
+    if ((self = [super init])) {
+        _lock = [NSRecursiveLock new];
+        NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+        _sourceAgeEnabled = [defaults objectForKey:@"PocketDeskAudioSourceAge"] == nil || [defaults boolForKey:@"PocketDeskAudioSourceAge"];
+        mach_timebase_info_data_t timebase; mach_timebase_info(&timebase);
+        _hostSecondsPerTick = (double)timebase.numer / timebase.denom / 1e9;
+    }
+    return self;
+}
+// Private clock seam allows deterministic admission/delivery tests on the same mach timeline.
+- (uint64_t)sourceAgeHostTime { return mach_absolute_time(); }
+- (BOOL)sourceHostTimeExpired:(uint64_t)hostTime {
+    if (!_sourceAgeEnabled) return NO;
+    uint64_t now = [self sourceAgeHostTime];
+    return now > hostTime && (double)(now - hostTime) * _hostSecondsPerTick > .12;
+}
 - (BOOL)consentEnabled { [_lock lock]; BOOL v = _consent; [_lock unlock]; return v; }
 - (NSUInteger)pendingBytes { [_lock lock]; NSUInteger v = _pending; [_lock unlock]; return v; }
 - (NSUInteger)deliveredFrames { [_lock lock]; NSUInteger v = _delivered; [_lock unlock]; return v; }
@@ -23,7 +41,7 @@
     // 120 ms maximum queued, 20 ms per packet; stereo signed 16-bit 48 kHz.
     if (!pcm.length || pcm.length % 4 || pcm.length > 3840) return NO;
     [_lock lock];
-    if (!_capture || !_consent || !_recording || epoch != _epoch || !_delegate || _pending + pcm.length > 23040) { [_lock unlock]; return NO; }
+    if (!_capture || !_consent || !_recording || epoch != _epoch || !_delegate || _pending + pcm.length > 23040 || [self sourceHostTimeExpired:hostTime]) { [_lock unlock]; return NO; }
     _pending += pcm.length;
     id<RTCAudioDeviceDelegate> delegate = _delegate;
     NSData *owned = [pcm copy];
@@ -32,7 +50,7 @@
     [delegate dispatchAsync:^{
         [self->_lock lock];
         self->_pending -= owned.length;
-        if (self->_capture && self->_consent && self->_recording && self->_epoch == epoch && self->_delegate == delegate && NSProcessInfo.processInfo.systemUptime - admittedAt <= .12) {
+        if (self->_capture && self->_consent && self->_recording && self->_epoch == epoch && self->_delegate == delegate && NSProcessInfo.processInfo.systemUptime - admittedAt <= .12 && ![self sourceHostTimeExpired:hostTime]) {
             AudioUnitRenderActionFlags flags = 0;
             AudioTimeStamp stamp = {0}; stamp.mSampleTime = self->_sampleTime; stamp.mHostTime = hostTime; stamp.mFlags = kAudioTimeStampSampleTimeValid | kAudioTimeStampHostTimeValid;
             UInt32 frames = (UInt32)owned.length / 4;

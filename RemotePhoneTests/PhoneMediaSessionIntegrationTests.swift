@@ -1,5 +1,6 @@
 import XCTest
 import AVKit
+import AVFoundation
 @testable import PocketDeskRemote
 
 /// External platform operations are injected; no fixture manufactures or starts a native AVKit controller.
@@ -18,6 +19,16 @@ private final class FixturePiPPlatformController: LivePiPPlatformController {
 
 @MainActor
 final class PhoneMediaSessionIntegrationTests: XCTestCase {
+    func testBluetoothRecordingPolicyChangesOnlyExplicitEnabledOptionAndUsesInputPorts() {
+        XCTAssertEqual(PhoneMediaSession.recordingCategoryOptions(bluetoothMicEnabled: false), [])
+        XCTAssertEqual(PhoneMediaSession.recordingCategoryOptions(bluetoothMicEnabled: true), [.allowBluetoothHFP])
+        XCTAssertFalse(PhoneMediaSession.hasBluetoothInput(ports: [.builtInMic]))
+        XCTAssertFalse(PhoneMediaSession.hasBluetoothInput(ports: [.bluetoothA2DP, .builtInSpeaker]),
+            "An output route is not evidence of a Bluetooth microphone")
+        XCTAssertTrue(PhoneMediaSession.hasBluetoothInput(ports: [.builtInMic, .bluetoothHFP]))
+        XCTAssertTrue(PhoneMediaSession.hasBluetoothInput(ports: [.bluetoothLE]))
+    }
+
     private func fixtureController(mediaSession: PhoneMediaSession,
         possible: @escaping (any LivePiPPlatformController) -> Bool = { _ in true },
         startPlatform: @escaping (any LivePiPPlatformController) -> Void = { _ in }) -> LivePiPController {

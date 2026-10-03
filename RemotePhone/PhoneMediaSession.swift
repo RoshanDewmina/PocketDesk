@@ -12,6 +12,8 @@ final class PhoneMediaSession {
         let configure: (Configuration) throws -> Void
         let activate: () throws -> Void
         let deactivate: () throws -> Void
+        var configureRecording: ((Bool) throws -> Void)? = nil
+        var recordingInputIsBluetooth: (() -> Bool)? = nil
     }
     private struct Entry {
         let kind: Kind
@@ -26,8 +28,19 @@ final class PhoneMediaSession {
     private var generation: UInt64 = 0
     private(set) var isInterrupted = false
     private let backend: Backend
+    private let bluetoothMicEnabled: Bool
     private var observers: [NSObjectProtocol] = []
     private(set) var lastOperationFailed = false
+    private(set) var recordingUsesBluetoothInput = false
+
+    #if canImport(UIKit)
+    static func recordingCategoryOptions(bluetoothMicEnabled: Bool) -> AVAudioSession.CategoryOptions {
+        bluetoothMicEnabled ? [.allowBluetoothHFP] : []
+    }
+    static func hasBluetoothInput(ports: [AVAudioSession.Port]) -> Bool {
+        ports.contains { $0 == .bluetoothHFP || $0 == .bluetoothLE }
+    }
+    #endif
 
     #if canImport(UIKit)
     static let shared = PhoneMediaSession(backend: .init(configure: { configuration in
@@ -40,11 +53,18 @@ final class PhoneMediaSession {
         case .recording: try session.setCategory(.record, mode: .measurement)
         }
     }, activate: { try AVAudioSession.sharedInstance().setActive(true) },
-       deactivate: { try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }), observesPlatform: true)
+       deactivate: { try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) },
+       configureRecording: { enabled in
+           try AVAudioSession.sharedInstance().setCategory(.record, mode: .measurement,
+               options: recordingCategoryOptions(bluetoothMicEnabled: enabled))
+       }, recordingInputIsBluetooth: {
+           hasBluetoothInput(ports: AVAudioSession.sharedInstance().currentRoute.inputs.map(\.portType))
+       }), observesPlatform: true)
     #endif
 
-    init(backend: Backend, observesPlatform: Bool = false) {
+    init(backend: Backend, observesPlatform: Bool = false, defaults: UserDefaults = .standard) {
         self.backend = backend
+        bluetoothMicEnabled = defaults.bool(forKey: "PocketDeskBluetoothMic")
         #if canImport(UIKit)
         if observesPlatform {
             let center = NotificationCenter.default
@@ -96,13 +116,25 @@ final class PhoneMediaSession {
             defer { acquiring = false }
             let current = generation
             do {
-                try backend.configure(kind == .recording ? .recording : .playback)
+                if kind == .recording, let configureRecording = backend.configureRecording {
+                    try configureRecording(bluetoothMicEnabled)
+                } else {
+                    try backend.configure(kind == .recording ? .recording : .playback)
+                }
                 try backend.activate()
                 guard generation == current else {
                     deactivate()
                     lastOperationFailed = true
                     return false
                 }
+                let bluetoothInput = kind == .recording && bluetoothMicEnabled && backend.recordingInputIsBluetooth?() == true
+                // The injected route probe may reenter just like activation; it cannot revive a retired owner.
+                guard generation == current else {
+                    deactivate()
+                    lastOperationFailed = true
+                    return false
+                }
+                recordingUsesBluetoothInput = bluetoothInput
                 lastOperationFailed = false
             } catch {
                 // No sibling owner exists. Undo any partially activated configuration.
@@ -117,7 +149,8 @@ final class PhoneMediaSession {
 
     @discardableResult
     func release(_ owner: UUID) -> Bool {
-        guard owners.removeValue(forKey: owner) != nil else { return false }
+        guard let previous = owners.removeValue(forKey: owner) else { return false }
+        if previous.kind == .recording { recordingUsesBluetoothInput = false }
         if owners.isEmpty && !retiring && !acquiring { deactivate() }
         return true
     }
@@ -163,6 +196,7 @@ final class PhoneMediaSession {
         retiring = true
         let previous = Array(owners.values)
         owners.removeAll()
+        recordingUsesBluetoothInput = false
         previous.forEach { $0.retired() }
         deactivate()
         retiring = false
@@ -181,6 +215,7 @@ final class PhoneMediaSession {
         guard !matching.isEmpty else { return }
         retiring = true
         matching.keys.forEach { owners.removeValue(forKey: $0) }
+        if matching.values.contains(where: { $0.kind == .recording }) { recordingUsesBluetoothInput = false }
         matching.values.forEach { $0.retired() }
         retiring = false
         guard owners.isEmpty else { return }

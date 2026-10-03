@@ -5,6 +5,10 @@ import WebRTC
 
 private final class InlineAudioDeviceDelegate: NSObject, RTCAudioDeviceDelegate {
     private(set) var outputInterruptions = 0
+    private(set) var outputParameterChanges = 0
+    private(set) var isOnOwnerThread = false
+    var deferred = false
+    var pending: [() -> Void] = []
     var deliverRecordedData: RTCAudioDeviceDeliverRecordedDataBlock { { _, _, _, _, _, _, _ in noErr } }
     var preferredInputSampleRate: Double { 48_000 }
     var preferredInputIOBufferDuration: TimeInterval { 0.01 }
@@ -12,16 +16,103 @@ private final class InlineAudioDeviceDelegate: NSObject, RTCAudioDeviceDelegate 
     var preferredOutputIOBufferDuration: TimeInterval { 0.01 }
     var getPlayoutData: RTCAudioDeviceGetPlayoutDataBlock { { _, _, _, _, _ in noErr } }
     func notifyAudioInputParametersChange() {}
-    func notifyAudioOutputParametersChange() {}
+    func notifyAudioOutputParametersChange() {
+        XCTAssertTrue(isOnOwnerThread)
+        outputParameterChanges += 1
+    }
     func notifyAudioInputInterrupted() {}
     func notifyAudioOutputInterrupted() { outputInterruptions += 1 }
-    func dispatchAsync(_ block: @escaping () -> Void) { block() }
-    func dispatchSync(_ block: @escaping () -> Void) { block() }
+    func dispatchAsync(_ block: @escaping () -> Void) {
+        if deferred { pending.append(block) } else { dispatchSync(block) }
+    }
+    func dispatchSync(_ block: @escaping () -> Void) {
+        isOnOwnerThread = true; defer { isOnOwnerThread = false }; block()
+    }
+    func drain() {
+        let work = pending; pending.removeAll(); work.forEach { dispatchSync($0) }
+    }
 }
 
 private final class RouteProbe: @unchecked Sendable { var builtIn = false }
 
 final class PhoneSystemAudioDeviceTests: XCTestCase {
+    func testOutputTimingIsCachedOnOwnerDispatchAndRefreshesOnRouteChange() {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        defaults.set(true, forKey: "PocketDeskAVSyncGroup")
+        let delegate = InlineAudioDeviceDelegate(); delegate.deferred = true
+        var reads = 0, latency = 0.15, duration = 0.02
+        let device = PhoneSystemAudioDevice(defaults: defaults, outputTiming: {
+            XCTAssertTrue(delegate.isOnOwnerThread)
+            reads += 1; return (latency, duration)
+        })
+        XCTAssertTrue(device.initialize(with: delegate))
+        XCTAssertEqual(reads, 0)
+        delegate.drain()
+        XCTAssertEqual(device.outputLatency, 0.15)
+        XCTAssertEqual(device.outputIOBufferDuration, 0.02)
+        for _ in 0..<50 { _ = device.outputLatency; _ = device.outputIOBufferDuration }
+        XCTAssertEqual(reads, 1, "ADM getters never query AVAudioSession")
+        XCTAssertEqual(delegate.outputParameterChanges, 1)
+        latency = 0.23; duration = 0.03
+        NotificationCenter.default.post(name: AVAudioSession.routeChangeNotification, object: nil,
+            userInfo: [AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue])
+        XCTAssertEqual(device.outputLatency, 0.15)
+        delegate.drain()
+        XCTAssertEqual(device.outputLatency, 0.23)
+        XCTAssertEqual(device.outputIOBufferDuration, 0.03)
+        XCTAssertEqual(delegate.outputParameterChanges, 2)
+        XCTAssertFalse(device.startRecording())
+        XCTAssertTrue(device.terminateDevice())
+    }
+
+    func testAbsentAndDisabledTimingSwitchKeepLegacyConstantsAndAreSnapshots() {
+        for flag in [nil, false] as [Bool?] {
+            let defaults = UserDefaults(suiteName: UUID().uuidString)!
+            if let flag { defaults.set(flag, forKey: "PocketDeskAVSyncGroup") }
+            let device = PhoneSystemAudioDevice(defaults: defaults, outputTiming: {
+                XCTFail("Disabled timing must not read the platform session"); return (0.2, 0.02)
+            })
+            defaults.set(true, forKey: "PocketDeskAVSyncGroup")
+            let delegate = InlineAudioDeviceDelegate()
+            XCTAssertTrue(device.initialize(with: delegate))
+            NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: nil)
+            XCTAssertEqual(device.outputLatency, 0)
+            XCTAssertEqual(device.outputIOBufferDuration, 0.01)
+            XCTAssertEqual(delegate.outputParameterChanges, 0)
+            XCTAssertTrue(device.terminateDevice())
+        }
+    }
+
+    func testRemovedRouteRefreshesTimingWithoutRestartAndLateRefreshCannotReviveTerminatedDevice() {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        defaults.set(true, forKey: "PocketDeskAVSyncGroup")
+        let delegate = InlineAudioDeviceDelegate(); delegate.deferred = true
+        var reads = 0
+        let device = PhoneSystemAudioDevice(defaults: defaults, outputTiming: { reads += 1; return (0.1, 0.02) })
+        XCTAssertTrue(device.initialize(with: delegate)); delegate.drain()
+        defaults.set(false, forKey: "PocketDeskAVSyncGroup")
+        NotificationCenter.default.post(name: AVAudioSession.routeChangeNotification, object: nil,
+            userInfo: [AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue])
+        delegate.drain()
+        XCTAssertEqual(reads, 2, "Enabled state is captured when the device is created")
+        XCTAssertFalse(device.isRenderingForTesting)
+        NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: nil)
+        XCTAssertTrue(device.terminateDevice()); delegate.drain()
+        XCTAssertEqual(reads, 2, "Queued callbacks after termination cannot read or republish timing")
+        XCTAssertEqual(device.outputLatency, 0)
+        XCTAssertEqual(device.outputIOBufferDuration, 0.01)
+    }
+
+    func testInvalidOutputTimingFallsBackToFiniteLegacyValues() {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        defaults.set(true, forKey: "PocketDeskAVSyncGroup")
+        let device = PhoneSystemAudioDevice(defaults: defaults, outputTiming: { (.nan, -.infinity) })
+        XCTAssertTrue(device.initialize(with: InlineAudioDeviceDelegate()))
+        XCTAssertEqual(device.outputLatency, 0)
+        XCTAssertEqual(device.outputIOBufferDuration, 0.01)
+        XCTAssertTrue(device.terminateDevice())
+    }
+
     func testNativeRecordingRequestsAreRefusedAcrossLifecycle() {
         let device = PhoneSystemAudioDevice()
         XCTAssertFalse(device.isRecordingInitialized)
