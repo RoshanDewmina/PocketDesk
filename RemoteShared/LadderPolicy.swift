@@ -56,15 +56,25 @@ enum LadderTrigger: CaseIterable {
         case .encodeShortfall:
             guard let encoded = inputs.encodedFPS else { return false }
             let demand = LadderPolicy.demandFPS(inputs, at: rung, falseLoadRules: falseLoadRules)
-            return demand >= 0.5 * fps && (pipelined ? encoded + 1 < 0.95 * demand : encoded < 0.8 * demand)
+            if pipelined {
+                return demand >= 0.5 * fps && (inputs.encodeAtCapShare ?? 0) >= 0.9
+                    && encoded + 1 < 0.95 * demand
+            }
+            return demand >= 0.5 * fps && encoded < 0.8 * demand
         case .encodeLatency:
+            // Callback latency includes legitimate two-frame overlap and restart spikes.
+            // In the bounded pipeline, saturation/delivery and persistent drops prove load.
+            if pipelined { return false }
             return (inputs.encodeLatencyP90Ms ?? 0) > 2 * interval
         case .encodeBacklog:
             return (inputs.encodeInFlightMax ?? 0) >= 3
         case .encodeQueue:
             // Two frames can overlap normally. Sustained occupancy, not a window's maximum,
             // distinguishes a full pipeline from a queue; two bad windows still step down.
-            if pipelined { return (inputs.encodeAtCapShare ?? 0) >= 0.9 }
+            if pipelined {
+                return LadderTrigger.encodeShortfall.fires(inputs, at: rung, falseLoadRules: falseLoadRules,
+                                                          encoderPipelining: true)
+            }
             // Latency grows ~13 ms per frame in flight, so a sustained second frame is a queue forming,
             // but only while frames take longer than the rung's interval. At 30 fps a 17-19 ms 2560 px
             // encode overlaps the next frame now and then with no queue; on the M4 Air that failed every
@@ -72,7 +82,14 @@ enum LadderTrigger: CaseIterable {
             guard inputs.encodeInFlightMax == 2 else { return false }
             return inputs.encodeLatencyP90Ms.map { $0 > interval } ?? true
         case .droppedBeforeEncode:
-            if pipelined, LadderPolicy.keepsUp(inputs, at: rung, falseLoadRules: falseLoadRules) { return false }
+            if pipelined {
+                // .7 rows 10425-10426 lost ~5% without saturation. The drop count spans
+                // the whole stats window; normalized rates keep a delayed window from
+                // inflating its share. Real drops still count even at a fast p90.
+                let demand = LadderPolicy.demandFPS(inputs, at: rung, falseLoadRules: falseLoadRules)
+                guard demand >= 0.5 * fps, let encoded = inputs.encodedFPS, encoded >= 0 else { return false }
+                return (inputs.droppedBeforeEncode ?? 0) > 0 && encoded < 0.9 * demand
+            }
             // A frame that lands while the last one is still encoding is dropped (newest frame wins),
             // and the rate controller drops a few after a key frame. With the encoder well inside its
             // interval (1 Oct 2026: p90 12-18 ms at 30 fps) that is cadence jitter, not load: 17 % of
@@ -631,7 +648,8 @@ struct SenderQueueGovernor: Equatable {
 
 /// The honest load pill (BusyState.swift states the contract). `busy` only for persistent trouble:
 /// one cause firing at the floor for 5 s (a thermal one at once), or capture behind or encoder
-/// latency over two frame intervals for 5 s. It holds through 10 continuous seconds without its
+/// latency over two frame intervals for 5 s outside the measured bounded pipeline. It holds
+/// through 10 continuous seconds without its
 /// cause so intermittent samples do not flicker the warning. A step for load (encoding, capture,
 /// network, phone) shows nothing: the ladder heals it within seconds. `strained` is the bounded
 /// record of a step for a condition that does not heal by itself, a hot Mac or Low Power Mode.
@@ -675,7 +693,8 @@ struct BusyPolicy {
         floorSince = floorSince.filter { floorReasons.contains($0.key) }
         for reason in floorReasons where floorSince[reason] == nil { floorSince[reason] = time }
         let captureLate = LadderTrigger.captureBehind.fires(inputs, at: ladder)
-        let encodeSlow = LadderTrigger.encodeLatency.fires(inputs, at: ladder)
+        let encodeSlow = LadderTrigger.encodeLatency.fires(inputs, at: ladder,
+                                                          encoderPipelining: StreamTuning.current.encoderPipelining)
         captureBehindSince = captureLate ? captureBehindSince ?? time : nil
         encodeSlowSince = encodeSlow ? encodeSlowSince ?? time : nil
 
