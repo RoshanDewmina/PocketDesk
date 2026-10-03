@@ -72,8 +72,8 @@ final class HardwareKeyboardRouterTests: XCTestCase {
     private var sent: [String] = []
     private var modifiers: [[String]] = []
 
-    private func makeRouter(remap: Bool = true) -> HardwareKeyboardRouter {
-        let router = HardwareKeyboardRouter()
+    private func makeRouter(remap: Bool = true, rechord: Bool = true) -> HardwareKeyboardRouter {
+        let router = HardwareKeyboardRouter(repeatRechordEnabled: rechord)
         router.send = { [unowned self] key, mods in
             self.sent.append(([key] + mods).joined(separator: " "))
             return true
@@ -124,11 +124,12 @@ final class HardwareKeyboardRouterTests: XCTestCase {
     }
 
     func testARepeatStopsWhenTheModifiersChangeAndShortcutsNeverRepeat() {
-        let router = makeRouter()
-        _ = router.pressBegan(usage: 0xE1, flags: .shift, at: 1)
-        _ = router.pressBegan(usage: 0x4F, flags: .shift, at: 1)
+        // Legacy rule (PocketDeskRepeatRechord=NO): releasing Shift cancels the held-key repeat.
+        let legacy = makeRouter(rechord: false)
+        _ = legacy.pressBegan(usage: 0xE1, flags: .shift, at: 1)
+        _ = legacy.pressBegan(usage: 0x4F, flags: .shift, at: 1)
         XCTAssertEqual(sent, ["right shift"])
-        _ = router.pressEnded(usage: 0xE1, flags: [])
+        _ = legacy.pressEnded(usage: 0xE1, flags: [])
         let stopped = expectation(description: "no stale shift+right after shift is released")
         stopped.isInverted = true
         let watcher = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [unowned self] _ in
@@ -137,6 +138,25 @@ final class HardwareKeyboardRouterTests: XCTestCase {
         wait(for: [stopped], timeout: 0.8)
         watcher.invalidate()
         XCTAssertEqual(sent, ["right shift"])
+        _ = legacy.pressEnded(usage: 0x4F, flags: [])
+
+        // Default (rechording ON): the still-held Right keeps repeating as plain Right once Shift lifts.
+        sent = []
+        let router = makeRouter()
+        _ = router.pressBegan(usage: 0xE1, flags: .shift, at: ProcessInfo.processInfo.systemUptime)
+        _ = router.pressBegan(usage: 0x4F, flags: .shift, at: ProcessInfo.processInfo.systemUptime)
+        XCTAssertEqual(sent, ["right shift"])
+        _ = router.pressEnded(usage: 0xE1, flags: [])
+        let rechorded = expectation(description: "held Right continues as plain Right after Shift is released")
+        rechorded.assertForOverFulfill = false
+        let rechordWatcher = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [unowned self] _ in
+            MainActor.assumeIsolated { if self.sent.count > 1 { rechorded.fulfill() } }
+        }
+        wait(for: [rechorded], timeout: 2)
+        rechordWatcher.invalidate()
+        _ = router.pressEnded(usage: 0x4F, flags: [])
+        XCTAssertEqual(sent.first, "right shift")
+        XCTAssertEqual(sent.dropFirst().first, "right", "No stale shift+right; the repeat re-chords to the released modifiers")
 
         sent = []
         _ = router.pressBegan(usage: 0x14, flags: [.control, .alternate], at: ProcessInfo.processInfo.systemUptime)

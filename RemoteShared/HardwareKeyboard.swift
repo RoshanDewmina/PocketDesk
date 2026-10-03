@@ -153,7 +153,9 @@ struct HardwareKeyRepeat {
             held = nil
             return
         }
-        guard rechordEnabled || !Self.isShortcut(modifiers) else {
+        // A press that starts as a Command/Control shortcut acts once and is never kept: if UIKit
+        // drops its key-up, releasing Command must not turn it into a repeating plain key.
+        guard !Self.isShortcut(modifiers) else {
             held = nil
             return
         }
@@ -205,7 +207,18 @@ struct HardwareKeyRepeat {
 /// any reported modifier transition.
 enum PocketDeskRepeatRechordSwitch {
     static let defaultsKey = "PocketDeskRepeatRechord"
-    static let isOn = resolve(value: UserDefaults.standard.object(forKey: defaultsKey))
+    static let isOn = resolve(defaults: .standard)
 
-    static func resolve(value: Any?) -> Bool { value as? Bool ?? true }
+    static func resolve(defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: defaultsKey) == nil || defaults.bool(forKey: defaultsKey)
+    }
+    /// Raw-value form: a stored Bool/NSNumber, or a launch-argument string such as "NO".
+    static func resolve(value: Any?) -> Bool {
+        switch value {
+        case nil: return true
+        case let flag as Bool: return flag
+        case let text as String: return (text as NSString).boolValue
+        default: return true
+        }
+    }
 }

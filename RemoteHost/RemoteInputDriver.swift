@@ -160,7 +160,7 @@ struct RemoteInputEventSink {
             if phases.scroll != 0 { event.setIntegerValueField(.scrollWheelEventScrollPhase, value: phases.scroll) }
             if phases.momentum != 0 { event.setIntegerValueField(.scrollWheelEventMomentumPhase, value: phases.momentum) }
         }
-        if let flags { event.flags = flags }
+        if let flags { event.flags = event.flags.intersection(.maskNonCoalesced).union(flags) }
         RemoteInputTag.mark(event)
         return event
     }

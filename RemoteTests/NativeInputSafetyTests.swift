@@ -348,9 +348,15 @@ final class NativeInputSafetyTests: XCTestCase {
                 try wire.validate()
                 XCTAssertTrue(driver.handle(wire, now: 10).accepted)
                 let event = try XCTUnwrap(recorder.events.last)
-                XCTAssertEqual(event.getIntegerValueField(.scrollWheelEventDeltaAxis1), -3)
-                XCTAssertEqual(event.getIntegerValueField(.scrollWheelEventDeltaAxis2), 2)
+                // Pixel-unit wheel events report line deltas in DeltaAxis*; the posted event must equal
+                // the legacy event built from the same wire values, field for field.
                 let baseline = try XCTUnwrap(RemoteInputEventSink.makeScrollEvent(point: event.location, horizontal: 2.75, vertical: -3.5))
+                for field in [CGEventField.scrollWheelEventDeltaAxis1, .scrollWheelEventDeltaAxis2,
+                              .scrollWheelEventPointDeltaAxis1, .scrollWheelEventPointDeltaAxis2] {
+                    XCTAssertEqual(event.getIntegerValueField(field), baseline.getIntegerValueField(field), "\(field)")
+                }
+                XCTAssertNotEqual(event.getIntegerValueField(.scrollWheelEventDeltaAxis1), 0)
+                XCTAssertNotEqual(event.getIntegerValueField(.scrollWheelEventDeltaAxis2), 0)
                 XCTAssertEqual(event.getIntegerValueField(.scrollWheelEventIsContinuous),
                                baseline.getIntegerValueField(.scrollWheelEventIsContinuous))
                 XCTAssertEqual(event.getIntegerValueField(.scrollWheelEventScrollPhase), 0)
