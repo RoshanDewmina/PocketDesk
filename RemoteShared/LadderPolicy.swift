@@ -83,10 +83,12 @@ enum LadderTrigger: CaseIterable {
             return inputs.encodeLatencyP90Ms.map { $0 > interval } ?? true
         case .droppedBeforeEncode:
             if pipelined {
-                // .7 rows 10425-10426 lost ~5% without saturation; isolated >10% bursts
-                // also clear on the next good second. Real drops count even at a fast p90.
+                // .7 rows 10425-10426 lost ~5% without saturation. The drop count spans
+                // the whole stats window; normalized rates keep a delayed window from
+                // inflating its share. Real drops still count even at a fast p90.
                 let demand = LadderPolicy.demandFPS(inputs, at: rung, falseLoadRules: falseLoadRules)
-                return demand >= 0.5 * fps && Double(inputs.droppedBeforeEncode ?? 0) > 0.1 * demand
+                guard demand >= 0.5 * fps, let encoded = inputs.encodedFPS, encoded >= 0 else { return false }
+                return (inputs.droppedBeforeEncode ?? 0) > 0 && encoded < 0.9 * demand
             }
             // A frame that lands while the last one is still encoding is dropped (newest frame wins),
             // and the rate controller drops a few after a key frame. With the encoder well inside its

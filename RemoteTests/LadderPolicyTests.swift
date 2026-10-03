@@ -1603,6 +1603,17 @@ final class LadderPolicyTests: XCTestCase {
         XCTAssertEqual(policy.climbWait, 10, "no false failed-climb penalty")
     }
 
+    func testB13DropShareUsesRatesRatherThanCountsInDelayedStatsWindows() {
+        var policy = LadderPolicy(targetFPS: 60)
+        policy.encoderPipelining = true
+        // Two-second windows: 120 offered, 110 encoded, 10 dropped = 8.3%, not 16.7%.
+        // StreamStatistics computes droppedBeforeEncode from raw counter deltas but FPS as rates.
+        let window = b13Sample(encoded: 55, drops: 10)
+        XCTAssertNil(policy.evaluate(window, at: 0))
+        XCTAssertNil(policy.evaluate(window, at: 2))
+        XCTAssertEqual(policy.state.fps, 60)
+    }
+
     func testB13SaturationNeedsDeliveryShortfallAndTwoConsecutiveSeconds() {
         var policy = LadderPolicy(targetFPS: 60)
         policy.encoderPipelining = true
