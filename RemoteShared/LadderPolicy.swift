@@ -36,9 +36,10 @@ enum LadderTrigger: CaseIterable {
     var isNetwork: Bool { reason == .network }
 
     func fires(_ inputs: LadderInputs, at rung: LadderState, falseLoadRules: Bool = LadderFalseLoadSwitch.isOn,
-               lanTrustRules: Bool = LadderLANTrustSwitch.isOn) -> Bool {
+               lanTrustRules: Bool = LadderLANTrustSwitch.isOn, encoderPipelining: Bool = false) -> Bool {
         let fps = LadderPolicy.rungFPS(rung)
         let interval = LadderPolicy.frameIntervalMs(rung)
+        let pipelined = encoderPipelining && inputs.encodeAtCapShare != nil && fps <= 60
         // The bandwidth estimate is not evidence on a proven LAN with a clean round trip and no loss:
         // it collapses to the sent rate of a still screen (1 Oct 2026, .4: 25,000 -> 3,720 -> 2,395 kbps
         // at rtt 6-8 ms, loss 0, sent 1 Mbps), and the next key frame's pacer wait then stepped the size.
@@ -55,12 +56,15 @@ enum LadderTrigger: CaseIterable {
         case .encodeShortfall:
             guard let encoded = inputs.encodedFPS else { return false }
             let demand = LadderPolicy.demandFPS(inputs, at: rung, falseLoadRules: falseLoadRules)
-            return demand >= 0.5 * fps && encoded < 0.8 * demand
+            return demand >= 0.5 * fps && (pipelined ? encoded + 1 < 0.95 * demand : encoded < 0.8 * demand)
         case .encodeLatency:
             return (inputs.encodeLatencyP90Ms ?? 0) > 2 * interval
         case .encodeBacklog:
             return (inputs.encodeInFlightMax ?? 0) >= 3
         case .encodeQueue:
+            // Two frames can overlap normally. Sustained occupancy, not a window's maximum,
+            // distinguishes a full pipeline from a queue; two bad windows still step down.
+            if pipelined { return (inputs.encodeAtCapShare ?? 0) >= 0.9 }
             // Latency grows ~13 ms per frame in flight, so a sustained second frame is a queue forming,
             // but only while frames take longer than the rung's interval. At 30 fps a 17-19 ms 2560 px
             // encode overlaps the next frame now and then with no queue; on the M4 Air that failed every
@@ -68,6 +72,7 @@ enum LadderTrigger: CaseIterable {
             guard inputs.encodeInFlightMax == 2 else { return false }
             return inputs.encodeLatencyP90Ms.map { $0 > interval } ?? true
         case .droppedBeforeEncode:
+            if pipelined, LadderPolicy.keepsUp(inputs, at: rung, falseLoadRules: falseLoadRules) { return false }
             // A frame that lands while the last one is still encoding is dropped (newest frame wins),
             // and the rate controller drops a few after a key frame. With the encoder well inside its
             // interval (1 Oct 2026: p90 12-18 ms at 30 fps) that is cadence jitter, not load: 17 % of
@@ -109,8 +114,9 @@ enum LadderTrigger: CaseIterable {
 
     static func firing(_ inputs: LadderInputs, at rung: LadderState,
                        falseLoadRules: Bool = LadderFalseLoadSwitch.isOn,
-                       lanTrustRules: Bool = LadderLANTrustSwitch.isOn) -> [LadderTrigger] {
-        allCases.filter { $0.fires(inputs, at: rung, falseLoadRules: falseLoadRules, lanTrustRules: lanTrustRules) }
+                       lanTrustRules: Bool = LadderLANTrustSwitch.isOn, encoderPipelining: Bool = false) -> [LadderTrigger] {
+        allCases.filter { $0.fires(inputs, at: rung, falseLoadRules: falseLoadRules, lanTrustRules: lanTrustRules,
+                                 encoderPipelining: encoderPipelining) }
     }
 }
 
@@ -182,7 +188,8 @@ struct LANTrustTracker: Equatable {
 ///   climb waits. A warm-up sample neither counts nor clears load, so load on both sides of a
 ///   restart still steps; one that lasts past `maxWarmupSeconds` (restarts in a loop) counts again.
 /// - Up one rung after `climbWait` clean seconds since the last bad or neutral sample or move, and
-///   30 s after a thermal move; never to a rung whose frame interval the encoder's p90 does not fit. A climb that steps down again within 10 s, or within its first 10
+///   30 s after a thermal move. Pipelined same-size 30→60 recovery trials use delivery and two-frame
+///   delay headroom; other climbs require p90 to fit one frame interval. A climb that steps down again within 10 s, or within its first 10
 ///   samples of a moving picture (a climb made on a still screen), failed: the wait doubles
 ///   (10, 20, 40, 60 s); it returns to 10 s after 120 s on one rung or a down step with another reason.
 /// - Low Power Mode caps the top at the first rung of 60 fps or less (reason `power`), in one move.
@@ -221,6 +228,7 @@ struct LadderPolicy: LadderEngine {
     var falseLoadRules = LadderFalseLoadSwitch.isOn
     /// `LadderLANTrustSwitch`, likewise.
     var lanTrustRules = LadderLANTrustSwitch.isOn
+    var encoderPipelining = StreamTuning.current.encoderPipelining
 
     init(targetFPS: Int) {
         self.targetFPS = targetFPS
@@ -245,9 +253,9 @@ struct LadderPolicy: LadderEngine {
     mutating func evaluate(_ inputs: LadderInputs, at time: TimeInterval) -> LadderState? {
         let previous = state
         if inputs.targetFPS != targetFPS {
-            let rules = (falseLoadRules, lanTrustRules)
+            let rules = (falseLoadRules, lanTrustRules, encoderPipelining)
             self = LadderPolicy(targetFPS: inputs.targetFPS)
-            (falseLoadRules, lanTrustRules) = rules
+            (falseLoadRules, lanTrustRules, encoderPipelining) = rules
             calmSince = time
         }
         step(inputs, at: time)
@@ -264,7 +272,8 @@ struct LadderPolicy: LadderEngine {
         }
         if lastClimbAt != nil, !Self.isStill(inputs) { movingSinceClimb += 1 }
         let warming = warmingUp(inputs, at: time)
-        let raw = LadderTrigger.firing(inputs, at: state, falseLoadRules: falseLoadRules, lanTrustRules: lanTrustRules)
+        let raw = LadderTrigger.firing(inputs, at: state, falseLoadRules: falseLoadRules, lanTrustRules: lanTrustRules,
+                                      encoderPipelining: encoderPipelining)
         let firing = raw.filter { !warming || $0.isThermal || $0.isImmediate }
         let thermal = firing.first { $0.isThermal }
         let load = firing.first { !$0.isThermal }
@@ -283,11 +292,24 @@ struct LadderPolicy: LadderEngine {
             stepDown(because: load.reason, at: time)
             return
         }
-        // Headroom for a climb includes the rung above: 2560 px at a 17-19 ms p90 is clean at 30 fps but
-        // never holds 60, and climbing anyway flipped 30/60 fps about once a minute (1 Oct, .3).
-        let fitsAbove = !falseLoadRules || state.rung == 0
+        // The old one-frame gate prevented 2560 px streams with 17-19 ms p90 from trying 60.
+        // Preserve it outside the owned encoder's bounded pipeline and same-size rate recovery.
+        let pipelined = encoderPipelining && inputs.encodeAtCapShare != nil && state.fps <= 60
+        // A thinned 30 fps source cannot demonstrate 60 fps. Trial the same-size 60 rung after
+        // sustained delivery with 10% delay headroom; at 60 the measured delivery rate decides.
+        // Size and higher-rate climbs retain their conservative single-frame gate.
+        let rateTrial = pipelined && state.rung > 0 && state.fps == 30 && rungs[state.rung - 1].fps == 60
+            && state.sizeFraction == rungs[state.rung - 1].sizeFraction
+        let fitsAbove = rateTrial
+            ? inputs.encodeLatencyP90Ms.map {
+                let nextInterval = Self.frameIntervalMs(rungs[state.rung - 1])
+                let moving = Self.demandFPS(inputs, at: state, falseLoadRules: falseLoadRules) >= 0.9 * Self.rungFPS(state)
+                return $0.isFinite && $0 < (moving ? 1.8 : 1) * nextInterval
+            } ?? false
+            : !falseLoadRules || state.rung == 0
             || inputs.encodeLatencyP90Ms.map { $0 < Self.frameIntervalMs(rungs[state.rung - 1]) } ?? true
-        guard firing.isEmpty, !warming, fitsAbove, Self.isClean(inputs, at: state, falseLoadRules: falseLoadRules) else {
+        guard firing.isEmpty, !warming, fitsAbove,
+              Self.isClean(inputs, at: state, falseLoadRules: falseLoadRules, encoderPipelining: pipelined) else {
             calmSince = time
             return
         }
@@ -342,11 +364,17 @@ struct LadderPolicy: LadderEngine {
     /// one-second bucket jitter (28/29 frames at a 30 fps rung) from restarting recovery forever.
     /// An encoder without a latency trace (nil) does not block the climb.
     static func isClean(_ inputs: LadderInputs, at rung: LadderState,
-                        falseLoadRules: Bool = LadderFalseLoadSwitch.isOn) -> Bool {
+                        falseLoadRules: Bool = LadderFalseLoadSwitch.isOn, encoderPipelining: Bool = false) -> Bool {
+        guard keepsUp(inputs, at: rung, falseLoadRules: falseLoadRules) else { return false }
+        let budget = frameIntervalMs(rung) * (encoderPipelining ? 2 : 1)
+        if let latency = inputs.encodeLatencyP90Ms, latency >= budget { return false }
+        if isStill(inputs), (inputs.pacerDelayMs ?? 0) > 50 { return false }
+        return true
+    }
+
+    static func keepsUp(_ inputs: LadderInputs, at rung: LadderState, falseLoadRules: Bool) -> Bool {
         guard let encoded = inputs.encodedFPS, encoded >= 0,
               encoded + 1 >= 0.95 * demandFPS(inputs, at: rung, falseLoadRules: falseLoadRules) else { return false }
-        if let latency = inputs.encodeLatencyP90Ms, latency >= frameIntervalMs(rung) { return false }
-        if isStill(inputs), (inputs.pacerDelayMs ?? 0) > 50 { return false }
         return true
     }
 
@@ -641,7 +669,7 @@ struct BusyPolicy {
         if ladder.rung > lastRung { steppedDownAt = time }
         lastRung = ladder.rung
         let floor = LadderPolicy.ladder(targetFPS: inputs.targetFPS).count - 1
-        let firing = LadderTrigger.firing(inputs, at: ladder)
+        let firing = LadderTrigger.firing(inputs, at: ladder, encoderPipelining: StreamTuning.current.encoderPipelining)
         let atFloor = ladder.rung >= floor
         let floorReasons = atFloor ? Set(firing.map(\.reason)) : []
         floorSince = floorSince.filter { floorReasons.contains($0.key) }

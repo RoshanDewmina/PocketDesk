@@ -97,6 +97,8 @@ struct LadderInputs: Equatable {
     var sourceFPS: Double? = nil
     /// `LANTrustTracker`'s verdict on the link this second (`StreamStatsReport.lanTrusted`, the media layer).
     var lanTrusted = false
+    /// Local owned-encoder time at its admission cap / statistics window. No wire field.
+    var encodeAtCapShare: Double? = nil
 
     var frameIntervalMs: Double { 1000 / Double(max(1, targetFPS)) }
 }

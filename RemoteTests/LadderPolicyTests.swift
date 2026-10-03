@@ -1461,6 +1461,88 @@ final class LadderPolicyTests: XCTestCase {
                       "the kill switch restores the old drop rule")
     }
 
+    func testPipelinedSixtyKeepsUpDespiteNormalTwoFrameOverlap() {
+        var policy = LadderPolicy(targetFPS: 60)
+        policy.encoderPipelining = true
+        var sample = recorded(age: 30, capture: 60, captureP90: 1, encoded: 60, encodeP90: 20, dropped: 0)
+        sample.encodeAtCapShare = 0.2
+        sample.encodeInFlightMax = 2
+        sample.sourceFPS = 60
+        XCTAssertTrue(run(&policy, 0...20) { _ in sample }.isEmpty)
+        XCTAssertEqual(policy.state.rung, 0)
+    }
+
+    func testPipelinedRecoveryTrialsSixtyWithEighteenMsP90() {
+        var policy = LadderPolicy(targetFPS: 60)
+        policy.encoderPipelining = true
+        var sample = recorded(age: 30, capture: 60, captureP90: 1, encoded: 30, encodeP90: 18, dropped: 0)
+        sample.encodeInFlightMax = 3
+        _ = policy.evaluate(sample, at: 0)
+        XCTAssertEqual(policy.state.rung, 1)
+        sample.encodeAtCapShare = 0.2
+        sample.encodeInFlightMax = 1
+        XCTAssertEqual(run(&policy, 1...11) { _ in sample }.map(\.state.rung), [0])
+        sample.encodedFPS = 60
+        XCTAssertTrue(run(&policy, 12...22) { _ in sample }.isEmpty)
+        XCTAssertEqual(policy.state.fps, 60)
+    }
+
+    func testPipeliningStillStepsForSaturationDelayAndDeliveryShortfall() {
+        let calm = recorded(age: 30, capture: 60, captureP90: 1, encoded: 60, encodeP90: 20, dropped: 0)
+        for cause in 0...2 {
+            var policy = LadderPolicy(targetFPS: 60)
+            policy.encoderPipelining = true
+            var sample = calm
+            sample.encodeAtCapShare = cause == 0 ? 0.95 : 0.2
+            sample.encodeInFlightMax = 2
+            if cause == 1 { sample.encodeLatencyP90Ms = 34 }
+            if cause == 2 { sample.encodedFPS = 50; sample.sourceFPS = 60 }
+            XCTAssertNil(policy.evaluate(sample, at: 0))
+            XCTAssertEqual(policy.evaluate(sample, at: 1)?.rung, 1, "cause \(cause)")
+            XCTAssertEqual(policy.state.reason, "encoding")
+        }
+    }
+
+    func testPipeliningDoesNotInferSixtyCapacityFromLowActivityOrRelaxSizeClimbs() {
+        var policy = LadderPolicy(targetFPS: 60)
+        policy.encoderPipelining = true
+        var sample = recorded(age: 30, capture: 60, captureP90: 1, encoded: 10, encodeP90: 18, dropped: 0)
+        sample.encodeInFlightMax = 3
+        _ = policy.evaluate(sample, at: 0)
+        sample.encodeInFlightMax = 2; sample.sourceFPS = 10; sample.encodeAtCapShare = 0.2
+        XCTAssertTrue(run(&policy, 1...40) { _ in sample }.isEmpty)
+        sample.sourceFPS = 30; sample.encodedFPS = 30
+        XCTAssertEqual(run(&policy, 41...51) { _ in sample }.map(\.state.rung), [0])
+        var size = LadderPolicy(targetFPS: 60)
+        size.encoderPipelining = true
+        sample.encodeInFlightMax = 3
+        _ = size.evaluate(sample, at: 0); _ = size.evaluate(sample, at: 1)
+        XCTAssertEqual(size.state.rung, 2)
+        sample.encodeInFlightMax = 2; sample.encodeLatencyP90Ms = 40
+        XCTAssertTrue(run(&size, 2...40) { _ in sample }.isEmpty, "Size climbs retain the old one-interval guard")
+    }
+
+    func testPipeliningNORestoresTheExactOldClimbAndOverlapRules() throws {
+        let suite = "b12-ladder.\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: StreamTuning.encoderPipeliningKey)
+        let tuning = StreamTuning.resolve(defaults: defaults)
+        XCTAssertEqual(tuning.encoderMaxInFlight, 1)
+        var policy = LadderPolicy(targetFPS: 60)
+        policy.encoderPipelining = tuning.encoderPipelining
+        var sample = recorded(age: 30, capture: 60, captureP90: 1, encoded: 30, encodeP90: 18, dropped: 0)
+        sample.encodeAtCapShare = 0.2
+        sample.encodeInFlightMax = 3
+        _ = policy.evaluate(sample, at: 0)
+        sample.encodeInFlightMax = 1
+        XCTAssertTrue(run(&policy, 1...40) { _ in sample }.isEmpty)
+        var legacy = LadderPolicy(targetFPS: 60)
+        legacy.encoderPipelining = false
+        sample.encodedFPS = 60; sample.encodeInFlightMax = 2
+        XCTAssertNil(legacy.evaluate(sample, at: 0))
+        XCTAssertEqual(legacy.evaluate(sample, at: 1)?.rung, 1)
+    }
+
     func testAClimbToSixtyMustFitItsInterval() {
         var policy = LadderPolicy(targetFPS: 60)
         var slow = recorded(age: 30, capture: 57, captureP90: 4, encoded: 30, encodeP90: 18, dropped: 0)
