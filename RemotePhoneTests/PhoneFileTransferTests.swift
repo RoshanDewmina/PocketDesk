@@ -1,5 +1,21 @@
 import XCTest
+import CryptoKit
 @testable import PocketDeskRemote
+
+private final class PhoneSettlementSink: FileByteSink, @unchecked Sendable {
+    let writeStarted = DispatchSemaphore(value: 0), writeRelease = DispatchSemaphore(value: 0)
+    let blockWrite: Bool
+    private let lock = NSLock()
+    private var discards = 0
+    init(blockWrite: Bool = false) { self.blockWrite = blockWrite }
+    var discardCount: Int { lock.lock(); defer { lock.unlock() }; return discards }
+    func write(_ data: Data) throws {
+        writeStarted.signal()
+        if blockWrite { writeRelease.wait() }
+    }
+    func commit() throws -> URL { URL(fileURLWithPath: "/fixture/received.txt") }
+    func discard() { lock.lock(); discards += 1; lock.unlock() }
+}
 
 @MainActor
 final class PhoneFileTransferTests: XCTestCase {
@@ -91,8 +107,10 @@ final class PhoneFileTransferTests: XCTestCase {
         XCTAssertFalse(idle.isDisabled)
     }
 
-    func testLowSpaceRefusesWithOnlyAStatusCode() throws {
+    func testLowSpaceRefusesWithOnlyAStatusCode() async throws {
         let files = PhoneFileTransfer(destination: { self.folder }, staging: folder, availableSpace: { _ in 10_000_000 })
+        let settled = expectation(description: "Refusal settled")
+        files.receipts = { _, _, finish in if finish != nil { settled.fulfill() } }
         var sent: [FileFrame] = []
         files.engine.sendControl = { sent.append($0); return true }
         let transfer = try files.engine.request().get()
@@ -101,6 +119,7 @@ final class PhoneFileTransferTests: XCTestCase {
         XCTAssertEqual(result.op, "result")
         XCTAssertEqual(result.status, FileTransferStatus.diskFull.rawValue)
         XCTAssertNil(result.bytes, "the free-space value never leaves the phone")
+        await fulfillment(of: [settled], timeout: 2)
         XCTAssertEqual(files.notice?.message, PhoneFileTransfer.message(receiving: .diskFull))
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), [])
     }
@@ -153,9 +172,11 @@ final class PhoneFileTransferTests: XCTestCase {
         XCTAssertNil(PhoneFileTransfer.message(refusal: "paused", status: .busy))
     }
 
-    func testMidTransferStallSaysTheMacStoppedSending() throws {
+    func testMidTransferStallSaysTheMacStoppedSending() async throws {
         var now: TimeInterval = 1_000
         let files = PhoneFileTransfer(destination: { self.folder }, staging: folder, availableSpace: { _ in nil }, clock: { now })
+        let settled = expectation(description: "Timeout settled")
+        files.receipts = { _, _, finish in if finish != nil { settled.fulfill() } }
         files.engine.sendControl = { _ in true }
         let transfer = try files.engine.request().get()
         files.engine.receive(offer(transfer, bytes: 3))
@@ -163,7 +184,88 @@ final class PhoneFileTransferTests: XCTestCase {
         now += FileTransferLimits.acceptTimeout + 1
         files.engine.checkTimeouts()
         XCTAssertNil(files.snapshot)
+        await fulfillment(of: [settled], timeout: 2)
         XCTAssertEqual(files.notice?.message, "Your Mac stopped sending the file. Try again.")
+    }
+
+    func testDelayedIncomingCancellationKeepsLocalCancelledNoticeAfterDiskSettlement() async throws {
+        let files = PhoneFileTransfer(idleTimer: PhoneIdleTimer { _ in })
+        let sink = PhoneSettlementSink(blockWrite: true)
+        defer { sink.writeRelease.signal(); files.reset() }
+        files.engine.sendControl = { _ in true }
+        files.engine.admit = { _, answer in answer(.success(sink)) }
+        let settled = expectation(description: "Local cancellation settled")
+        var finishCount = 0
+        files.receipts = { _, _, finish in
+            guard let finish else { return }
+            XCTAssertEqual(finish.status, .cancelled)
+            XCTAssertEqual(sink.discardCount, 1)
+            finishCount += 1; settled.fulfill()
+        }
+        files.requestFromMac()
+        let transfer = try XCTUnwrap(files.engine.pendingRequest)
+        files.engine.receive(offer(transfer, bytes: 1))
+        files.engine.receiveChunk(try XCTUnwrap(FileChunk.encode(transfer: transfer, offset: 0, payload: Data([1]))))
+        XCTAssertEqual(sink.writeStarted.wait(timeout: .now() + 2), .success)
+        // Release on regression too, so a synchronous retirement reports failure without hanging.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) { sink.writeRelease.signal() }
+        files.cancel()
+        XCTAssertNil(files.snapshot); XCTAssertFalse(files.isBusy)
+        XCTAssertEqual(finishCount, 0, "Cancel closes UI immediately, but does not claim disk settlement")
+        sink.writeRelease.signal()
+        await fulfillment(of: [settled], timeout: 2)
+        XCTAssertEqual(finishCount, 1)
+        XCTAssertEqual(files.notice?.message, "Transfer cancelled.")
+        XCTAssertNil(files.received)
+    }
+
+    func testDelayedStoredFinishCannotResurrectPresentationAfterResetMacChangeOrNewIncoming() async throws {
+        for boundary in 0..<3 {
+            let files = PhoneFileTransfer(idleTimer: PhoneIdleTimer { _ in })
+            files.engine.sendControl = { _ in true }
+            files.engine.admit = { _, answer in answer(.success(PhoneSettlementSink())) }
+            files.requestFromMac()
+            let transfer = try XCTUnwrap(files.engine.pendingRequest)
+            let settled = expectation(description: "Old stored finish reached phone for boundary \(boundary)")
+            var finishes = 0
+            files.receipts = { id, _, finish in
+                guard id == transfer, let finish else { return }
+                XCTAssertEqual(finish.status, .stored)
+                XCTAssertNotNil(finish.savedURL)
+                finishes += 1; settled.fulfill()
+            }
+            let originalChange = files.engine.onChange
+            var changedAuthority = false
+            var replacement: String?
+            // This is the actual engine's interval between clearing incoming UI and delivering
+            // its settled terminal callback. Keep the Phone object's original observer active.
+            files.engine.onChange = {
+                originalChange?()
+                guard files.engine.incoming == nil, !changedAuthority else { return }
+                changedAuthority = true
+                switch boundary {
+                case 0: files.reset()
+                case 1: files.stopForMacChange()
+                default:
+                    files.requestFromMac()
+                    replacement = files.engine.pendingRequest
+                    if let replacement { files.engine.receive(self.offer(replacement, bytes: 1)) }
+                }
+                files.postUnavailable("Current presentation.")
+            }
+            defer { files.engine.onChange = originalChange; files.reset() }
+            files.engine.receive(offer(transfer, bytes: 1))
+            files.engine.receiveChunk(try XCTUnwrap(FileChunk.encode(transfer: transfer, offset: 0, payload: Data([1]))))
+            files.engine.receive(.complete(transfer, digest: FileDigest.hex(SHA256.hash(data: Data([1])))))
+            await fulfillment(of: [settled], timeout: 2)
+            XCTAssertTrue(changedAuthority); XCTAssertEqual(finishes, 1)
+            XCTAssertNil(files.received, "An old stored result cannot restore the received-file sheet")
+            XCTAssertEqual(files.notice?.message, "Current presentation.")
+            if boundary == 2 {
+                XCTAssertNotNil(replacement)
+                XCTAssertEqual(files.snapshot?.transfer, replacement, "Old finish cannot clear the replacement receive")
+            } else { XCTAssertNil(files.snapshot) }
+        }
     }
 
     func testUnansweredRequestSaysNothingWasChosen() throws {
