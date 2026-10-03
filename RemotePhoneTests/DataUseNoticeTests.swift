@@ -148,3 +148,41 @@ final class DataUseNoticeTests: XCTestCase {
         XCTAssertTrue(DataUseCopy.note(bundle: french, locale: canadian).contains("20\u{00A0}%"))
     }
 }
+
+
+@MainActor
+final class LowDataHeartbeatTests: XCTestCase {
+    func testLivePhonePathProducesGatedHeartbeatWithHysteresisAndKillSwitch() {
+        let name = UUID().uuidString; let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults)
+        model.linkHints.start()
+        defer { model.linkHints.stop() }
+        model.linkHints.observeForTesting(.init(constrained: true, wifi: true))
+        XCTAssertNil(model.heartbeatAction(at: 10).lowDataMode, "Old host never receives field")
+        model.setLowDataCapabilityForTesting(true)
+        XCTAssertEqual(model.heartbeatAction(at: 11).lowDataMode, false)
+        XCTAssertEqual(model.heartbeatAction(at: 12).lowDataMode, true)
+        model.linkHints.observeForTesting(.init(expensive: true, wifi: true))
+        XCTAssertEqual(model.heartbeatAction(at: 13).lowDataMode, true)
+        XCTAssertEqual(model.heartbeatAction(at: 17.9).lowDataMode, true)
+        XCTAssertEqual(model.heartbeatAction(at: 18).lowDataMode, false)
+        model.linkHints.observeForTesting(.init(constrained: true, wifi: true))
+        _ = model.heartbeatAction(at: 19)
+        XCTAssertEqual(model.heartbeatAction(at: 20).lowDataMode, true)
+        defaults.set(false, forKey: LowDataPolicy.defaultsKey)
+        XCTAssertNil(model.heartbeatAction(at: 20.1).lowDataMode)
+        defaults.set(true, forKey: LowDataPolicy.defaultsKey)
+        model.setLowDataCapabilityForTesting(false)
+        XCTAssertNil(model.heartbeatAction(at: 21).lowDataMode)
+    }
+    func testExpensiveUnconstrainedHotspotDoesNotForceLowerData() {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        model.linkHints.start(); defer { model.linkHints.stop() }
+        model.setLowDataCapabilityForTesting(true)
+        model.linkHints.observeForTesting(.init(expensive: true, wifi: true))
+        XCTAssertEqual(model.heartbeatAction(at: 10).lowDataMode, false)
+        XCTAssertEqual(model.heartbeatAction(at: 20).lowDataMode, false)
+        XCTAssertEqual(model.pictureMode, .quality)
+    }
+}

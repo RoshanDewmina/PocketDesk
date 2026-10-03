@@ -196,6 +196,7 @@ final class MediaResourceBudget: @unchecked Sendable {
     private var lastBuffered: UInt64?
     private let fastLaneEnabled: Bool
     private var ladderSteppedDown = false
+    private var lowDataActive = false
     private var peerTakesLargeMessages = false
 
     init(fastLane: Bool = !UserDefaults.standard.bool(forKey: BulkAdmissionPolicy.fastLaneDisabledKey)) {
@@ -264,6 +265,12 @@ final class MediaResourceBudget: @unchecked Sendable {
         ladderSteppedDown = steppedDown
     }
 
+    func observeLowData(active: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        guard lowDataActive != active else { return }
+        lowDataActive = active; tokens = 0; lastCredit = observation?.at
+    }
+
     func observePeerMaxMessageSize(_ bytes: Int?) {
         lock.lock(); defer { lock.unlock() }
         peerTakesLargeMessages = bytes.map { $0 == 0 || $0 >= BulkAdmissionPolicy.fastLaneMessageBytes } ?? false
@@ -286,7 +293,7 @@ final class MediaResourceBudget: @unchecked Sendable {
     }
 
     private func fastLane(at now: TimeInterval) -> Bool {
-        guard fastLaneEnabled, !ladderSteppedDown, replicatedGuests.count == 0, let observation,
+        guard fastLaneEnabled, !lowDataActive, !ladderSteppedDown, replicatedGuests.count == 0, let observation,
               admissionRate(at: now) != nil else { return false }
         return BulkAdmissionPolicy.qualifiesForFastLane(observation, baselineRTT: baselineRTT)
     }
@@ -302,7 +309,9 @@ final class MediaResourceBudget: @unchecked Sendable {
                   let kbps = replicatedGuests.kbps else { return nil }
             observation.videoKbps = total + kbps
         }
-        return BulkAdmissionPolicy.bytesPerSecond(observation, at: now, baselineRTT: baselineRTT)
+        let rate = BulkAdmissionPolicy.bytesPerSecond(observation, at: now, baselineRTT: baselineRTT)
+        // Deliberate file transfers continue under the existing relay allowance; no LAN bursts.
+        return lowDataActive ? rate.map { min($0, BulkAdmissionPolicy.relayCeilingKbps * 1000 / 8) } : rate
     }
 
     /// `inputBuffered` is every input channel's queue (control and pointer); any queued input pauses bulk.

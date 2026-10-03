@@ -274,6 +274,7 @@ struct HostStreamSummary: Codable, Equatable {
     /// The Mac's `ProcessInfo.thermalState` raw value, 0 (nominal) … 3 (critical).
     var thermalState: Int?
     var lowPowerMode: Bool?
+    var lowDataPolicyActive: Bool? = false
     var ladder: LadderState?
     var busy: BusyState?
     var captureRegion: CaptureRegion?
@@ -540,6 +541,7 @@ struct StreamStatsReport: Codable, Equatable {
     var captureGapMedianMs: Double?
     var thermalState: Int?
     var lowPowerMode: Bool?
+    var lowDataPolicyActive: Bool? = false
     var ladder: LadderState?
     var busy: BusyState?
     var captureRegion: CaptureRegion?
@@ -832,6 +834,7 @@ struct StreamStatsReport: Codable, Equatable {
                           captureGapMedianMs: captureGapMedianMs.map { min($0, 10_000_000) },
                           thermalState: thermalState.map { Self.clamp($0, HostStreamSummary.thermalRange) },
                           lowPowerMode: lowPowerMode,
+                          lowDataPolicyActive: lowDataPolicyActive,
                           ladder: ladder.flatMap { (try? $0.validate()) == nil ? nil : $0 },
                           busy: busy.flatMap { (try? $0.validate()) == nil ? nil : $0 },
                           captureRegion: captureRegion.flatMap { (try? $0.validate()) == nil ? nil : $0 },

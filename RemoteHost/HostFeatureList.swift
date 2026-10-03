@@ -9,7 +9,10 @@ enum HostFeatureList {
         guard let peerFeatures else { return Array(unique.prefix(32)) }
         if peerFeatures.contains(SessionFeature.extendedFeatureList) {
             let known = SessionFeature.host + [SessionFeature.couch, SessionFeature.displayScale]
-            let prioritized = known.filter { unique.contains($0) } + unique.filter { !known.contains($0) }
+            // Preserve every existing capability before this optional media preference if all 32 slots fill.
+            let prioritized = known.filter { $0 != SessionFeature.lowDataPolicy && unique.contains($0) }
+                + unique.filter { $0 != SessionFeature.lowDataPolicy && !known.contains($0) }
+                + unique.filter { $0 == SessionFeature.lowDataPolicy }
             return Array(prioritized.filter { $0 != SessionFeature.causalInput || peerFeatures.contains(SessionFeature.causalInput) }.prefix(32))
         }
         let legacy = SessionFeature.legacyHost.filter { unique.contains($0) }

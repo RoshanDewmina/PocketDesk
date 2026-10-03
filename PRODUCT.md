@@ -1,3 +1,7 @@
+# Low Data Mode — combined .7 lane, 3 October 2026
+
+Roshan authorizes carrying the iPhone's Low Data Mode into a negotiated media policy for the combined .7 device test, ON by default behind internal `FarsideLowDataPolicy` (explicit NO restores legacy behavior). Reuse the existing relay tier for the video ceiling, suppress optional refinement and automatic clipboard sync, bound file bursts, and retain the essential picture keepalive. Expensive but unconstrained hotspots keep the normal policy. No new setting or banner; the existing Connection Health hint may report Low Data Mode. D62's iPhone-only scope remains authoritative. This lane prepares source/tests/builds only; the orchestrator integrates and installs. Physical data savings and responsiveness remain a device gate.
+
 # Batch 7c 7 PM cut — 2 October 2026
 
 Roshan will manually test and submit the latest fully verified build finished for 7 PM. This lane integrates required release metadata/packaging fixes first, then first60, phone UX, connection recovery, design polish and host UX as time permits. Stop merging at 17:40 ET, drop unverified lanes, set build **20261002.5**, then complete automated suites, regression gate and signed Debug artifacts. Engineering-health/P34, input-parity, audio and host-capture are deferred. New optional feel/picture/audio paths retain owner-approved defaults. This worktree performs no installation, ASC/upload, deployment or main merge; Roshan owns manual testing/submission.

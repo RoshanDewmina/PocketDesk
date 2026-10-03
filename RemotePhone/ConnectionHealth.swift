@@ -234,7 +234,7 @@ struct ConnectionHealth: Equatable {
             switch hint.kind {
             case .weakWiFi:
                 return ConnectionHealth(state: .weakWiFi, title: hint.title, detail: hint.detail, nextStep: hint.nextStep)
-            case .veryConstrained:
+            case .veryConstrained, .lowData:
                 return ConnectionHealth(state: .constrainedLink, title: hint.title, detail: hint.detail, nextStep: hint.nextStep)
             case .cellularOrExpensive:
                 break

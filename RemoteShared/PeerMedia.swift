@@ -389,11 +389,11 @@ final class PeerMedia: NSObject {
     private var requestedRefinementCapture = false
     var refinementCaptureEnabled: Bool { refinementLock.lock(); defer { refinementLock.unlock() }; return !refinementEnded && !refinementUnavailable && requestedRefinementCapture }
     func requestRefinementCapture(_ enabled: Bool) {
-        let admitted = HEVC444Policy.permitsRefinement(requested: enabled, fullColor: fullColorCaptureEnabled)
+        let admitted = !lowDataPolicyActive && HEVC444Policy.permitsRefinement(requested: enabled, fullColor: fullColorCaptureEnabled)
         refinementLock.lock(); if !refinementEnded { requestedRefinementCapture = admitted && !refinementUnavailable && nativeDesktopCodecs }; refinementLock.unlock()
     }
     func configureVideoRefinement(enabled: Bool, geometry: UInt64, scope: UInt64) {
-        let requested = HEVC444Policy.permitsRefinement(requested: enabled, fullColor: fullColorCaptureEnabled)
+        let requested = !lowDataPolicyActive && HEVC444Policy.permitsRefinement(requested: enabled, fullColor: fullColorCaptureEnabled)
         refinementLock.lock(); let admitted = requested && !refinementEnded && !refinementUnavailable; refinementLock.unlock()
         if !admitted { videoFeedback.disableRefinement() }
         if admitted && isHost { openRefinementChannel() }
@@ -1055,15 +1055,35 @@ final class PeerMedia: NSObject {
         if connection.signalingState != .stable { repairOfferPending = true; return }
         repairOfferPending = false; offer() // Public codec preferences renegotiation; no ICE generation rewrite.
     }
+    private let lowDataLock = NSLock()
+    private var constrainedMedia = false
+    var lowDataPolicyActive: Bool {
+        lowDataLock.lock(); defer { lowDataLock.unlock() }; return constrainedMedia
+    }
+    /// Main queue, both sides. The sender ceiling and bulk budget restore without changing quality.
+    func applyLowDataPolicy(_ active: Bool) {
+        lowDataLock.lock()
+        let changed = constrainedMedia != active
+        constrainedMedia = active
+        lowDataLock.unlock()
+        guard changed else { return }
+        resourceBudget.observeLowData(active: active)
+        if active {
+            requestRefinementCapture(false)
+            configureVideoRefinement(enabled: false, geometry: 1, scope: 1)
+        }
+        if isHost, !closed, remoteDescriptionReady { configureNativeSender() }
+    }
+
     private func configureNativeSender() {
         guard isHost, nativeDesktopCodecs, let sender = connection?.senders.first(where: { $0.track?.kind == "video" }) else { return }
         let parameters = sender.parameters
-        let ceiling = tuning.maximumBitrateBps(for: streamQuality)
+        let ceiling = LowDataPolicy.ceiling(tuning.qualityBitrates ? tuning.maximumBitrateBps(for: streamQuality) : 12_000_000, active: lowDataPolicyActive)
         let rate = currentSenderRate
         for encoding in parameters.encodings {
             encoding.networkPriority = transportPriority.networkPriority
             encoding.maxFramerate = NSNumber(value: rate.maxFramerate)
-            encoding.maxBitrateBps = NSNumber(value: tuning.qualityBitrates ? ceiling : 12_000_000)
+            encoding.maxBitrateBps = NSNumber(value: ceiling)
         }
         if let preference = rate.degradationPreference {
             parameters.degradationPreference = NSNumber(value: preference.rawValue)
@@ -1082,13 +1102,15 @@ final class PeerMedia: NSObject {
 
     /// The estimate ceiling for the current picture mode and route class (`BandwidthCeilingPolicy`).
     private var bandwidthCeilingBps: Int {
-        BandwidthCeilingPolicy.maxBitrateBps(ceiling: tuning.maximumBitrateBps(for: streamQuality),
-                                             route: ceilingRoute.route, provenLocal: ceilingRoute.provenLocal, tuning: tuning)
+        let ceiling = tuning.maximumBitrateBps(for: streamQuality)
+        if lowDataPolicyActive { return LowDataPolicy.ceiling(ceiling, active: true) }
+        return BandwidthCeilingPolicy.maxBitrateBps(ceiling: ceiling,
+            route: ceilingRoute.route, provenLocal: ceilingRoute.provenLocal, tuning: tuning)
     }
 
     /// X05: whether the LAN ceiling multiplier is what the estimate ceiling carries right now.
     private var lanCeilingApplied: Bool {
-        BandwidthCeilingPolicy.lanMultiplier(route: ceilingRoute.route, provenLocal: ceilingRoute.provenLocal, tuning: tuning) > 1
+        !lowDataPolicyActive && BandwidthCeilingPolicy.lanMultiplier(route: ceilingRoute.route, provenLocal: ceilingRoute.provenLocal, tuning: tuning) > 1
             && appliedBweMaxBps == bandwidthCeilingBps
     }
 
@@ -1430,6 +1452,7 @@ final class PeerMedia: NSObject {
         stats.tuning = tuning.liveSummary
         stats.thermalState = ProcessInfo.processInfo.thermalState.rawValue
         stats.lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+        stats.lowDataPolicyActive = lowDataPolicyActive
         let transport = entries.first { $0.type == "transport" && $0.string("selectedCandidatePairId") == sample.pair?.id }
         let transportRate = guestTransportSampler.sample(identity: transport.flatMap { item in sample.pair.map { item.id + "/" + $0.id } },
             timestamp: transport?.timestamp, bytesSent: transport?.number("bytesSent"), rttMs: stats.rttMs)

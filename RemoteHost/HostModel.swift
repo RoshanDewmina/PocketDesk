@@ -2858,6 +2858,18 @@ final class RemoteHostModel: ObservableObject {
             return
         }
         if action.action == "heartbeat" {
+            if action.isRegularPhoneHeartbeat, connection.connected, action.epoch == inputEpoch.value,
+               active, !sessionRefused, let peer = connection.media {
+                let constrained = LowDataPolicy.isEnabled() && connection.peerFeatures.contains(SessionFeature.extendedFeatureList)
+                    && action.lowDataMode == true
+                let changed = peer.lowDataPolicyActive != constrained
+                peer.applyLowDataPolicy(constrained)
+                if changed {
+                    peer.requestRefinementCapture(refinementNegotiated && !away.isLocking)
+                    reconcileAutomaticClipboard()
+                    sendCaptureHealth(sessionHealthy)
+                }
+            }
             if usesPhoneAudioRequest, action.isRegularPhoneHeartbeat, action.epoch == inputEpoch.value, connection.connected, active, !sessionRefused {
                 phoneAudioRequested = action.macAudioRequested == true && sessionState == .picture &&
                     !captureScopeViewOnly && !liveViewOnly && !away.isLocking && !phonePause.isPaused
@@ -3130,7 +3142,7 @@ final class RemoteHostModel: ObservableObject {
                   (0..<CouchHealth.heartbeatLimit).contains(ProcessInfo.processInfo.systemUptime - heartbeat)
             else { return false }
         }
-        return active && !terminating && connection.connected && connection.media != nil &&
+        return connection.media?.lowDataPolicyActive != true && active && !terminating && connection.connected && connection.media != nil &&
             !sessionRefused && sessionHealthy && input.enabled &&
             controlPermission.isGranted && sessionControlAllowed && !screenLocked &&
             !phonePause.isPaused && !liveViewOnly && !captureScopeViewOnly &&
@@ -3372,7 +3384,7 @@ final class RemoteHostModel: ObservableObject {
 
     /// The phone asks for refinement only under its internal override; full color on this Mac still wins.
     private var refinementNegotiated: Bool {
-        HEVC444Policy.permitsRefinement(requested: connection.peerFeatures.contains(SessionFeature.videoRefinement),
+        connection.media?.lowDataPolicyActive != true && HEVC444Policy.permitsRefinement(requested: connection.peerFeatures.contains(SessionFeature.videoRefinement),
                                         fullColor: connection.media?.fullColorCaptureEnabled == true)
     }
 
@@ -3380,6 +3392,7 @@ final class RemoteHostModel: ObservableObject {
     private var advertisedFeatures: [String] {
         let tuning = StreamTuning.current
         let base = SessionFeature.host.filter {
+            if $0 == SessionFeature.lowDataPolicy && (!LowDataPolicy.isEnabled() || !connection.peerFeatures.contains(SessionFeature.extendedFeatureList)) { return false }
             if $0 == SessionFeature.phoneAudio && !usesPhoneAudioRequest { return false }
             if $0 == SessionFeature.clipboardSync && (!connection.peerFeatures.contains($0) || UserDefaults.standard.bool(forKey: "clipboardAutoSyncDisabled")) { return false }
             if ($0 == SessionFeature.videoLTR || $0 == SessionFeature.exactVideoTiming) && !connection.peerFeatures.contains($0) { return false }
