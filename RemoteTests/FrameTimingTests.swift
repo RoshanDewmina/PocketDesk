@@ -328,7 +328,9 @@ final class FrameTimingTests: XCTestCase {
             log.received(wireRtp: record.localRtp &+ offset, bytes: record.bytes, atMs: decodedOnPhone - 5)
             log.decoded(rtp: Int32(bitPattern: record.localRtp &+ offset), atMs: decodedOnPhone)
         }
-        XCTAssertNil(receiver.drain(), "no fields before the Mac sends records")
+        let local = try XCTUnwrap(receiver.drain())
+        XCTAssertNil(local.p50Ms, "host timing remains absent before the Mac sends records")
+        XCTAssertEqual(local.receiveToDecodedP95Ms, 5, "phone-local completion needs no host records or clock")
         receiver.receive(FrameTimingRecords(hosts), clock: clock)
         let drain = try XCTUnwrap(receiver.drain())
         XCTAssertTrue(drain.locked)
@@ -347,6 +349,47 @@ final class FrameTimingTests: XCTestCase {
         XCTAssertTrue(log.snapshot().isEmpty)
         receiver.receive(FrameTimingRecords([host(1, 1)]), clock: nil)
         XCTAssertTrue(log.isActive)
+    }
+
+    func testReceiveToDecodedCompletionIsBoundedExactLocalEvidenceAndRollback() throws {
+        for enabled in [true, false] {
+            let log = PhoneFrameTimingLog(detailedDiagnosticsEnabled: enabled)
+            let receiver = FrameTimingReceiver(log: log)
+            receiver.receive(nil, clock: nil)
+            for index in 0..<(LatencyWindow.capacity + 10) {
+                log.received(wireRtp: UInt32(index), bytes: 10, atMs: 100)
+                log.decoded(rtp: Int32(index), atMs: 107)
+            }
+            log.received(wireRtp: 50_000, bytes: 10, atMs: 100)
+            log.received(wireRtp: 50_000, bytes: 10, atMs: 101)
+            log.decoded(rtp: 50_000, atMs: 110) // Duplicate pending identity is ambiguous.
+            log.decoded(rtp: 50_001, atMs: 110) // No receive evidence.
+            for (rtp, arrival, completion) in [(50_002, 100.0, 99.0), (50_003, 100.0, Double.nan),
+                                               (50_004, 100.0, 100 + DetailedDiagnostics.maximumStageMs + 1)] {
+                log.received(wireRtp: UInt32(rtp), bytes: 10, atMs: arrival)
+                log.decoded(rtp: Int32(rtp), atMs: completion)
+            }
+            if enabled {
+                let drain = try XCTUnwrap(receiver.drain())
+                XCTAssertEqual(drain.receiveToDecodedP95Ms, 7)
+                XCTAssertEqual(drain.receiveToDecodedSamples, LatencyWindow.capacity)
+                XCTAssertNil(drain.p50Ms)
+                var report = StreamStatsReport(role: "phone", previous: nil, current: StreamStatsSample(entries: []), counters: nil)
+                report.applyPhoneFrameTiming(drain)
+                XCTAssertEqual(report.receiveToDecodedP95Ms, 7)
+                XCTAssertTrue(report.summaryLines.contains { $0.contains("receive → decoded completion") })
+                XCTAssertEqual(try JSONDecoder().decode(StreamStatsReport.self, from: JSONEncoder().encode(report)).receiveToDecodedSamples, LatencyWindow.capacity)
+            } else {
+                XCTAssertNil(receiver.drain(), "rollback restores host-only timing drain")
+            }
+            XCTAssertNil(receiver.drain(), "completion samples are drained once")
+            XCTAssertEqual(log.counts.received, LatencyWindow.capacity + 15)
+            XCTAssertEqual(log.counts.decoded, LatencyWindow.capacity + 15)
+        }
+        let log = PhoneFrameTimingLog(detailedDiagnosticsEnabled: true)
+        for index in 0...PhoneFrameTimingLog.capacity { log.received(wireRtp: UInt32(index), bytes: 1, atMs: 100) }
+        log.decoded(rtp: 0, atMs: 105)
+        XCTAssertNil(log.drainReceiveToDecoded().p95Ms, "evicted receive evidence cannot be reconstructed")
     }
 
     // MARK: Switch

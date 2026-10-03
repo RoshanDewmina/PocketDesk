@@ -11,7 +11,9 @@ struct DiagnosticFact: Codable, Equatable {
              inputPostingP95Ms, preEncodeWaitP95Ms, wifiBurstPossible, awdlCause, billableBytes,
              oneOffFileBytes, guestBytes, energyJoules, physicalGlassMs, mediaRTPBytes, otherTransportBytes,
              transportAverageGBPerHour, estimateLowGBPerHour, estimateHighGBPerHour, mediaAverageGBPerHour,
-             curtainOn, curtainCovered, curtainLiftedAtMac, curtainFailed
+             curtainOn, curtainCovered, curtainLiftedAtMac, curtainFailed,
+             encodePreparationP95Ms, encodePreparationSamples, encodeSubmitP95Ms, encodeSubmitSamples,
+             receiveToDecodeP95Ms, receiveToDecodeSamples
         var title: String {
             switch self {
             case .authenticatedEchoes: "Authenticated replies"
@@ -60,6 +62,12 @@ struct DiagnosticFact: Codable, Equatable {
             case .curtainCovered: "Mac screen was covered during the session"
             case .curtainLiftedAtMac: "Curtain lifted at the Mac with Esc"
             case .curtainFailed: "Curtain could not be confirmed hidden from the stream"
+            case .encodePreparationP95Ms: "Host encode preparation p95 ms"
+            case .encodePreparationSamples: "Host encode preparation samples"
+            case .encodeSubmitP95Ms: "Host synchronous VT submission p95 ms"
+            case .encodeSubmitSamples: "Host synchronous VT submission samples"
+            case .receiveToDecodeP95Ms: "Receive to decode completion p95 ms (includes decode, not queue wait alone)"
+            case .receiveToDecodeSamples: "Receive to decode completion samples"
             }
         }
     }
@@ -98,18 +106,56 @@ struct DiagnosticArtifact: Codable, Equatable {
     var line: String { "Artifact \(platform.rawValue) · version \(version ?? "unknown") build \(build ?? "unknown") · OS \(os.map(String.init).joined(separator: "."))" }
 }
 
+/// Only a fixed vocabulary and monotonic elapsed time enter the attempt journal.
+struct DiagnosticAttemptSummary: Codable, Equatable {
+    enum Stage: String, Codable { case requested, authenticating, awaitingApproval, mediaConnecting, connected, statistics, ended }
+    enum Reason: String, Codable { case connectionFailed, connectionEnded, cancelled, processInterrupted, unknown }
+    struct Event: Codable, Equatable {
+        let stage: Stage
+        let seconds: Double
+    }
+    static let maximumEvents = 24
+    var events: [Event]
+    var reason: Reason?
+    var valid: Bool {
+        guard !events.isEmpty, events.count <= Self.maximumEvents, events.first?.stage == .requested,
+              events.first?.seconds == 0, events.allSatisfy({ $0.seconds.isFinite && (0...86400).contains($0.seconds) }) else { return false }
+        return zip(events, events.dropFirst()).allSatisfy { $0.seconds <= $1.seconds } &&
+            (reason == nil || events.last?.stage == .ended)
+    }
+    var line: String {
+        "Attempt: " + events.map { "\($0.stage.rawValue)@\(String(format: "%.2f", $0.seconds))s" }.joined(separator: " → ") +
+            " · reason \(reason?.rawValue ?? "unfinished")"
+    }
+}
+
+struct DiagnosticTransportSummary: Codable, Equatable {
+    enum RelayProtocol: String, Codable { case udp, tcp, tls }
+    enum Feedback: String, Codable { case nack, nackPLI = "nack pli", ccmFIR = "ccm fir", googREMB = "goog-remb", transportCC = "transport-cc" }
+    enum Evidence: String, Codable { case thisPeerStats, freshHostStats }
+    var relayProtocol: RelayProtocol?
+    var negotiatedFeedback: [Feedback]?
+    var relayEvidence: Evidence? = nil
+    var line: String {
+        "Observed selected relay leg protocol: \(relayProtocol?.rawValue ?? "unknown") [\(relayEvidence?.rawValue ?? "unknown")] · negotiated feedback: \(negotiatedFeedback.map { $0.map(\.rawValue).joined(separator: ", ") } ?? "unknown")"
+    }
+}
+
 struct SessionDiagnosticReport: Codable, Equatable, Identifiable {
-    enum Kind: String, Codable { case lightPreflight, fullPreflight, session }
-    enum Outcome: String, Codable { case completed, cancelled, timedOut, sessionEnded }
+    enum Kind: String, Codable { case lightPreflight, fullPreflight, session, connectionAttempt, appleDiagnostic }
+    enum Outcome: String, Codable { case completed, cancelled, timedOut, sessionEnded, inProgress, failed, interrupted, collected }
     let version: Int
     let id: UUID
     let createdAt: Date
     let kind: Kind
-    let outcome: Outcome
+    var outcome: Outcome
     let seconds: Double
     let samples: Int
     let facts: [DiagnosticFact]
     let artifact: DiagnosticArtifact?
+    var attempt: DiagnosticAttemptSummary?
+    let transport: DiagnosticTransportSummary?
+    let crash: CrashDiagnosticReport?
     static let maximumFacts = 48
 
     /// A report written by a newer build may carry metrics this build does not know; those facts
@@ -124,6 +170,9 @@ struct SessionDiagnosticReport: Codable, Equatable, Identifiable {
         seconds = try container.decode(Double.self, forKey: .seconds)
         samples = try container.decode(Int.self, forKey: .samples)
         artifact = try container.decodeIfPresent(DiagnosticArtifact.self, forKey: .artifact)
+        attempt = try container.decodeIfPresent(DiagnosticAttemptSummary.self, forKey: .attempt)
+        transport = try container.decodeIfPresent(DiagnosticTransportSummary.self, forKey: .transport)
+        crash = try container.decodeIfPresent(CrashDiagnosticReport.self, forKey: .crash)
         var list = try container.nestedUnkeyedContainer(forKey: .facts)
         var known: [DiagnosticFact] = []
         while !list.isAtEnd {
@@ -150,10 +199,13 @@ struct SessionDiagnosticReport: Codable, Equatable, Identifiable {
         init(from decoder: Decoder) throws { _ = try decoder.container(keyedBy: Key.self) }
     }
 
-    init(kind: Kind, outcome: Outcome, seconds: Double, samples: Int, facts: [DiagnosticFact], at: Date = Date()) {
-        version = 1; id = UUID(); artifact = .current; createdAt = at; self.kind = kind; self.outcome = outcome
+    init(kind: Kind, outcome: Outcome, seconds: Double, samples: Int, facts: [DiagnosticFact], at: Date = Date(), attempt: DiagnosticAttemptSummary? = nil, transport: DiagnosticTransportSummary? = nil, crash: CrashDiagnosticReport? = nil, id: UUID = UUID(), artifact: DiagnosticArtifact? = .current) {
+        version = 1; self.id = id; self.artifact = artifact; createdAt = at; self.kind = kind; self.outcome = outcome
         self.seconds = seconds.isFinite ? min(86400, max(0, seconds)) : 0
         self.samples = min(1000000, max(0, samples)); self.facts = Array(facts.prefix(Self.maximumFacts))
+        self.attempt = attempt
+        self.transport = transport
+        self.crash = crash
     }
     var preview: String {
         (["Farside local diagnostics · \(kind.rawValue) · \(outcome.rawValue)",
@@ -162,7 +214,11 @@ struct SessionDiagnosticReport: Codable, Equatable, Identifiable {
           "Observed facts describe this artifact/session; inferred causes are suggestions. Unknown does not mean zero.",
           "Transport payload is not carrier billing or IP/wire overhead. Video RTP excludes other streams. GB is decimal.",
           "Preflight measures bounded authenticated app echoes and current health, not throughput or physical latency."]
-         + [dataUseSummary].compactMap { $0 } + facts.map(\.line)).joined(separator: "\n")
+         + [attempt?.line, transport?.line, dataUseSummary, crashPreview].compactMap { $0 } + facts.map(\.line)).joined(separator: "\n")
+    }
+    private var crashPreview: String? {
+        guard let crash, let data = try? JSONEncoder().encode(crash) else { return nil }
+        return "Apple diagnostic: sanitized local stack and numeric facts. Binary UUIDs select the originating dSYM; artifact identifies the collecting build.\n" + String(decoding: data, as: UTF8.self)
     }
     private func value(_ metric: DiagnosticFact.Metric) -> Double? { facts.first { $0.metric == metric }?.value }
     /// Measured session bytes beside the preset's modelled range, so the two can be compared.
@@ -186,9 +242,15 @@ struct SessionDiagnosticReport: Codable, Equatable, Identifiable {
     }
     func validate() throws {
         guard version == 1, createdAt.timeIntervalSince1970.isFinite, seconds.isFinite, (0...86400).contains(seconds),
-              (0...1000000).contains(samples), facts.count <= Self.maximumFacts, artifact?.valid ?? true,
+              (0...1000000).contains(samples), facts.count <= Self.maximumFacts, artifact?.valid ?? true, attempt?.valid ?? true,
+              (transport?.negotiatedFeedback?.count ?? 0) <= 5,
+              Set(transport?.negotiatedFeedback ?? []).count == (transport?.negotiatedFeedback?.count ?? 0),
               Set(facts.map(\.metric)).count == facts.count,
               facts.allSatisfy({ $0.value.map { $0.isFinite && $0 >= 0 } ?? ($0.source == .unknown) }) else { throw RemoteError.invalidMessage }
+        if let crash {
+            guard crash.createdAt.timeIntervalSince1970.isFinite, crash.artifact?.valid ?? true else { throw RemoteError.invalidMessage }
+            try crash.event.validate()
+        }
     }
 }
 
@@ -229,4 +291,3 @@ final class SessionDiagnosticStore {
     func delete(_ id: UUID) { try? FileManager.default.removeItem(at: directory.appendingPathComponent(id.uuidString + ".json")) }
     func deleteAll() { for report in load() { delete(report.id) } }
 }
-

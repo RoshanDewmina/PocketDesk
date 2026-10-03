@@ -456,6 +456,33 @@ final class OwnedVTEncoderTests: XCTestCase {
         }
     }
 
+    func testOwnedEncoderPreparationAndSynchronousSubmitInstrumentationRollback() throws {
+        let configuration = try XCTUnwrap(OwnedVTConfiguration(parameters: ["profile-level-id": "640034", "packetization-mode": "1"]))
+        for enabled in [true, false] {
+            let counters = StreamCounters(detailedDiagnosticsEnabled: enabled)
+            let encoder = OwnedVTEncoder(configuration: configuration, counters: counters, newestFrameWins: { false })
+            defer { _ = encoder.release() }
+            let settings = RTCVideoEncoderSettings()
+            settings.width = 256; settings.height = 128; settings.startBitrate = 4000
+            settings.maxBitrate = 4000; settings.maxFramerate = 60; settings.qpMax = 30
+            settings.name = "H264"; settings.mode = .screensharing
+            XCTAssertEqual(encoder.startEncode(with: settings, numberOfCores: 1), 0,
+                "VT stage=\(encoder.lastStage) status=\(encoder.lastStatus)")
+            let frame = try Self.frame(timeStampNs: 1_000_000_000)
+            XCTAssertEqual(encoder.encode(frame, codecSpecificInfo: nil, frameTypes: []), 0)
+            let snapshot = counters.drain(inputBufferedBytes: nil)
+            XCTAssertEqual(snapshot.encodePreparationSamples, enabled ? 1 : nil)
+            XCTAssertEqual(snapshot.encodeSubmitSamples, enabled ? 1 : nil)
+            if enabled {
+                XCTAssertNotNil(DetailedDiagnostics.stage(snapshot.encodePreparationP95Ms))
+                XCTAssertNotNil(DetailedDiagnostics.stage(snapshot.encodeSubmitP95Ms))
+            } else {
+                XCTAssertNil(snapshot.encodePreparationP95Ms); XCTAssertNil(snapshot.encodeSubmitP95Ms)
+            }
+            XCTAssertEqual(snapshot.encoderSubmitted, 1, "the diagnostics switch changes no frame submission behavior")
+        }
+    }
+
     private static func frame(timeStampNs: Int64) throws -> RTCVideoFrame {
         var pixel: CVPixelBuffer?
         XCTAssertEqual(CVPixelBufferCreate(nil, 256, 128, kCVPixelFormatType_32BGRA,

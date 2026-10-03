@@ -457,6 +457,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
                     forceIDR = true // A discarded late output would leave a gap in the reference chain.
                 }
             }
+            let preparationStartedMs = counters?.detailedDiagnosticsEnabled == true ? MachClock.nowMs() : nil
             guard let session, let buffer = frame.buffer as? RTCCVPixelBuffer,
                   let sourcePixels = adaptedPixels(buffer), nextID < UInt64.max else { return -1 }
             nextID += 1
@@ -499,12 +500,14 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
                 return encode(frame, codecSpecificInfo: info, frameTypes: [NSNumber(value: RTCFrameType.videoFrameKey.rawValue)])
             }
             let submittedMs = MachClock.nowMs()
+            if let preparationStartedMs { counters?.encoderPreparation(milliseconds: submittedMs - preparationStartedMs) }
             videoTag?.timing = videoFeedback?.submittedTiming(buffer: buffer.pixelBuffer, atMs: submittedMs)
             videoTag?.region = videoFeedback?.submittedRegion(buffer: buffer.pixelBuffer)
             let entry = Pending(epoch: currentEpoch, videoTag: videoTag, timestamp: UInt32(bitPattern: frame.timeStamp),
                 captureMs: frame.timeStampNs / 1_000_000, rotation: frame.rotation, submittedMs: submittedMs, width: width, height: height)
             gate.submitted(id, entry: entry, at: clock())
             frameTiming?.submitted(ObjectIdentifier(buffer.pixelBuffer), key: entry.captureMs)
+            let submitStartedMs = preparationStartedMs != nil ? MachClock.nowMs() : nil
             let result = VTCompressionSessionEncodeFrame(session, imageBuffer: pixels,
                 presentationTimeStamp: CMTime(value: frame.timeStampNs, timescale: 1_000_000_000),
                 duration: CMTime(value: 1, timescale: Int32(fps)), frameProperties: properties as CFDictionary, infoFlagsOut: nil) {
@@ -513,6 +516,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
                     guard let self else { return }
                     self.queue.async { [weak self] in self?.completed(id: id, epoch: currentEpoch, status: status, flags: flags, sample: sample, encodedAtMs: encodedAtMs) }
                 }
+            if let submitStartedMs { counters?.encoderSubmit(milliseconds: MachClock.nowMs() - submitStartedMs) }
             if result != noErr { gate.cancel(id); counters?.droppedBeforeEncode() }
             if result == noErr { counters?.encoderSubmitted(); acknowledgedLTRSubmission = submittedTokens; refreshSubmission = properties[kVTEncodeFrameOptionKey_ForceLTRRefresh] as? Bool == true; forceIDR = false }
             storedLastStatus = result

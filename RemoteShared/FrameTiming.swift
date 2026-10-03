@@ -214,6 +214,9 @@ final class PhoneFrameTimingLog: @unchecked Sendable {
     private var next = 0
     private var active = true
     let renderTimingEnabled: Bool
+    private let detailedDiagnosticsEnabled: Bool
+    private var pendingReceives: [(rtp: UInt32, atMs: Double?)] = []
+    private var receiveToDecoded = LatencyWindow()
     private struct DecodeEntry {
         let rtp: Int32
         let timeStampNs: Int64
@@ -221,8 +224,10 @@ final class PhoneFrameTimingLog: @unchecked Sendable {
     }
     private var decodeTraces: [DecodeEntry] = []
 
-    init(renderTimingEnabled: Bool = PhoneRenderTiming.enabled) {
+    init(renderTimingEnabled: Bool = PhoneRenderTiming.enabled,
+         detailedDiagnosticsEnabled: Bool = DetailedDiagnostics.enabled) {
         self.renderTimingEnabled = renderTimingEnabled
+        self.detailedDiagnosticsEnabled = detailedDiagnosticsEnabled
     }
 
     /// Stored immediately before the outward callback. Separate from heuristic host timing:
@@ -265,6 +270,13 @@ final class PhoneFrameTimingLog: @unchecked Sendable {
     func received(wireRtp: UInt32, bytes: Int, atMs: Double) {
         lock.lock(); defer { lock.unlock() }
         receivedFrames += 1
+        if detailedDiagnosticsEnabled {
+            // Repeated pending RTP has no unique receive witness: quarantine until its completion.
+            let ambiguous = pendingReceives.contains { $0.rtp == wireRtp }
+            pendingReceives.removeAll { $0.rtp == wireRtp }
+            pendingReceives.append((wireRtp, !ambiguous && atMs.isFinite && atMs >= 0 ? atMs : nil))
+            if pendingReceives.count > Self.capacity { pendingReceives.removeFirst() }
+        }
         guard active else { return }
         let record = PhoneFrameRecord(wireRtp: wireRtp, bytes: bytes, arrivalMs: atMs)
         if ring.count < Self.capacity { ring.append(record) } else { ring[next] = record }
@@ -275,6 +287,12 @@ final class PhoneFrameTimingLog: @unchecked Sendable {
         let wire = UInt32(bitPattern: rtp)
         lock.lock(); defer { lock.unlock() }
         decodedFrames += 1
+        if detailedDiagnosticsEnabled, let index = pendingReceives.firstIndex(where: { $0.rtp == wire }) {
+            let receive = pendingReceives.remove(at: index)
+            if let arrival = receive.atMs, let milliseconds = DetailedDiagnostics.stage(atMs - arrival) {
+                receiveToDecoded.record(milliseconds)
+            }
+        }
         guard active, !ring.isEmpty else { return }
         for step in 1...min(ring.count, Self.decodeSearchDepth) {
             let index = (next - step + ring.count) % ring.count
@@ -290,6 +308,18 @@ final class PhoneFrameTimingLog: @unchecked Sendable {
         guard ring.count == Self.capacity else { return ring }
         return Array(ring[next...] + ring[..<next])
     }
+
+    struct CompletionDrain {
+        var p95Ms: Double?
+        var samples: Int?
+    }
+
+    /// Independent of host timing and clock calibration, including while host records are absent.
+    func drainReceiveToDecoded() -> CompletionDrain {
+        lock.lock(); defer { lock.unlock() }
+        let value = receiveToDecoded.drainPercentiles()
+        return CompletionDrain(p95Ms: value.p95, samples: value.count > 0 ? value.count : nil)
+    }
 }
 
 /// Phone side: joins each batch of host records to the ring and keeps Mac display → decoded here.
@@ -300,6 +330,9 @@ final class FrameTimingReceiver {
         var maxMs: Double?
         var count: Int
         var locked: Bool
+        var hostRecordsObserved = true
+        var receiveToDecodedP95Ms: Double?
+        var receiveToDecodedSamples: Int?
     }
 
     let log: PhoneFrameTimingLog
@@ -331,11 +364,14 @@ final class FrameTimingReceiver {
         }
     }
 
-    /// Nil until the host has sent records, so an older Mac adds no fields.
+    /// Host join fields stay absent until records arrive. Phone-local completions need no host clock.
     func drain() -> Drain? {
-        guard sawRecords else { return nil }
+        let completion = log.drainReceiveToDecoded()
+        guard sawRecords || completion.samples != nil else { return nil }
         let window = window.drainPercentiles()
-        return Drain(p50Ms: window.p50, p95Ms: window.p95, maxMs: window.max, count: window.count, locked: isLocked)
+        return Drain(p50Ms: window.p50, p95Ms: window.p95, maxMs: window.max, count: window.count, locked: isLocked,
+            hostRecordsObserved: sawRecords,
+            receiveToDecodedP95Ms: completion.p95Ms, receiveToDecodedSamples: completion.samples)
     }
 }
 
@@ -411,8 +447,15 @@ extension StreamStatsReport {
         frameToPhoneP50Ms = FrameTimingFormat.round(drain.p50Ms)
         frameToPhoneP95Ms = FrameTimingFormat.round(drain.p95Ms)
         frameToPhoneMaxMs = FrameTimingFormat.round(drain.maxMs)
-        frameTimedCount = drain.count
-        frameJoinLocked = drain.locked
+        // A local completion drain before any host records must not manufacture host-join evidence.
+        if drain.hostRecordsObserved {
+            frameTimedCount = drain.count
+            frameJoinLocked = drain.locked
+        }
+        if detailedDiagnosticsEnabled == true {
+            receiveToDecodedP95Ms = FrameTimingFormat.round(drain.receiveToDecodedP95Ms)
+            receiveToDecodedSamples = drain.receiveToDecodedSamples
+        }
     }
 
     /// `frame host p50/p95 · to phone p50/p95 (n, ±clock)`; nil when neither side has frame timing.

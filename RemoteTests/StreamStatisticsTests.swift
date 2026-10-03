@@ -323,6 +323,99 @@ final class StreamStatisticsTests: XCTestCase {
 }
 
 final class StreamStageStatisticsTests: XCTestCase {
+    func testDetailedDiagnosticsDefaultAndExplicitRollback() {
+        let suite = "farside.detailed-diagnostics.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertTrue(DetailedDiagnostics.isEnabled(defaults: defaults))
+        defaults.set("NO", forKey: DetailedDiagnostics.defaultsKey)
+        XCTAssertFalse(DetailedDiagnostics.isEnabled(defaults: defaults))
+        defaults.set(true, forKey: DetailedDiagnostics.defaultsKey)
+        XCTAssertTrue(DetailedDiagnostics.isEnabled(defaults: defaults))
+    }
+
+    func testRelayProtocolUsesOnlySelectedRelayEvidenceAndNeverAddressesOrSDP() throws {
+        func entries(localType: String = "relay", localProtocol: String? = "UDP", remoteProtocol: String? = nil,
+                     selected: Bool = true) -> [StreamStatsEntry] {
+            var local: [String: Any] = ["candidateType": localType, "address": "private.example", "url": "turn:private.example"]
+            if let localProtocol { local["relayProtocol"] = localProtocol }
+            var remote: [String: Any] = ["candidateType": "relay", "protocol": "udp"]
+            if let remoteProtocol { remote["relayProtocol"] = remoteProtocol }
+            return [
+                StreamStatsEntry(id: "transport", type: "transport", values: selected ? ["selectedCandidatePairId": "pair"] : [:]),
+                StreamStatsEntry(id: "pair", type: "candidate-pair", values: ["localCandidateId": "local", "remoteCandidateId": "remote"]),
+                StreamStatsEntry(id: "local", type: "local-candidate", values: local),
+                StreamStatsEntry(id: "remote", type: "remote-candidate", values: remote),
+                StreamStatsEntry(id: "unused", type: "local-candidate", values: ["candidateType": "relay", "relayProtocol": "tls"]),
+                StreamStatsEntry(id: "video", type: "outbound-rtp", values: ["kind": "video", "codecId": "codec", "nackCount": 5]),
+                StreamStatsEntry(id: "codec", type: "codec", values: ["sdpFmtpLine": "private SDP", "rtcpFeedback": ["nack"]])
+            ]
+        }
+        func report(_ entries: [StreamStatsEntry], enabled: Bool = true) -> StreamStatsReport {
+            StreamStatsReport(role: "host", previous: nil,
+                current: StreamStatsSample(entries: entries, detailedDiagnosticsEnabled: enabled), counters: nil,
+                detailedDiagnosticsEnabled: enabled)
+        }
+        let on = report(entries())
+        XCTAssertEqual(on.relayProtocol, "udp")
+        XCTAssertNil(on.negotiatedFeedback, "feedback traffic or nonstandard codec fields are not negotiation evidence")
+        XCTAssertEqual(report(entries(localType: "host", localProtocol: "tcp", remoteProtocol: "TLS")).relayProtocol, "tls")
+        XCTAssertNil(report(entries(localProtocol: "turn:private.example")).relayProtocol)
+        XCTAssertNil(report(entries(localProtocol: nil)).relayProtocol, "candidate protocol does not describe its TURN leg")
+        XCTAssertNil(report(entries(selected: false)).relayProtocol)
+        var previousEntries = entries()
+        previousEntries[5] = StreamStatsEntry(id: "video", type: "outbound-rtp", values: ["kind": "video", "bytesSent": 1000], timestamp: 1)
+        var resetEntries = entries(localProtocol: nil)
+        resetEntries[5] = StreamStatsEntry(id: "video", type: "outbound-rtp", values: ["kind": "video", "bytesSent": 10], timestamp: 2)
+        let reset = StreamStatsReport(role: "host", previous: StreamStatsSample(entries: previousEntries),
+            current: StreamStatsSample(entries: resetEntries), counters: nil, detailedDiagnosticsEnabled: true)
+        XCTAssertNil(reset.sentKbps)
+        XCTAssertNil(reset.relayProtocol, "missing current evidence cannot retain the previous selected transport")
+        XCTAssertNil(report(entries(), enabled: false).relayProtocol)
+        XCTAssertFalse(on.logLine.contains("private.example")); XCTAssertFalse(on.logLine.contains("private SDP"))
+        XCTAssertEqual(try JSONDecoder().decode(StreamStatsReport.self, from: JSONEncoder().encode(on)).relayProtocol, "udp")
+        XCTAssertNil(try JSONDecoder().decode(HostStreamSummary.self, from: Data("{}".utf8)).relayProtocol)
+        XCTAssertEqual(on.hostSummary.relayProtocol, "udp")
+        XCTAssertNoThrow(try on.hostSummary.validate())
+        var invalid = on.hostSummary; invalid.relayProtocol = "https://private.example"
+        XCTAssertThrowsError(try invalid.validate())
+        invalid = on.hostSummary; invalid.negotiatedFeedback = ["private SDP"]
+        XCTAssertThrowsError(try invalid.validate())
+    }
+
+    func testDetailedEncoderStagesBoundDrainAndRollbackWithoutChangingEarlierCounters() throws {
+        for enabled in [true, false] {
+            let counters = StreamCounters(detailedDiagnosticsEnabled: enabled)
+            for _ in 0..<(LatencyWindow.capacity + 10) {
+                counters.encoderPreparation(milliseconds: 2)
+                counters.encoderSubmit(milliseconds: 0.5)
+            }
+            for value in [Double.nan, -Double.infinity, -1, DetailedDiagnostics.maximumStageMs + 1] {
+                counters.encoderPreparation(milliseconds: value); counters.encoderSubmit(milliseconds: value)
+            }
+            counters.encoded(latencyMs: 5, vtLatencyMs: 4, bytes: 100, isKeyFrame: true, inFlight: 1)
+            var snapshot = counters.drain(inputBufferedBytes: nil); snapshot.interval = 1
+            XCTAssertEqual(snapshot.encodeLatencyP50Ms, 5, "rollback preserves existing instrumentation")
+            XCTAssertEqual(snapshot.encodePreparationP95Ms, enabled ? 2 : nil)
+            XCTAssertEqual(snapshot.encodePreparationSamples, enabled ? LatencyWindow.capacity : nil)
+            XCTAssertEqual(snapshot.encodeSubmitP95Ms, enabled ? 0.5 : nil)
+            XCTAssertEqual(snapshot.encodeSubmitSamples, enabled ? LatencyWindow.capacity : nil)
+            var report = StreamStatsReport(role: "host", previous: nil, current: StreamStatsSample(entries: []),
+                counters: snapshot, detailedDiagnosticsEnabled: enabled)
+            XCTAssertEqual(report.hostSummary.encodePreparationP95Ms, enabled ? 2 : nil)
+            XCTAssertNoThrow(try report.hostSummary.validate())
+            XCTAssertEqual(try JSONDecoder().decode(HostStreamSummary.self, from: JSONEncoder().encode(report.hostSummary)), report.hostSummary)
+            let next = counters.drain(inputBufferedBytes: nil)
+            XCTAssertNil(next.encodePreparationSamples); XCTAssertNil(next.encodeSubmitP95Ms)
+            if !enabled {
+                report.host = HostStreamSummary(relayProtocol: "tls", negotiatedFeedback: ["nack"],
+                    encodePreparationP95Ms: 2, encodePreparationSamples: 1, encodeSubmitP95Ms: 1, encodeSubmitSamples: 1)
+                XCTAssertFalse(report.logLine.contains("encodePreparation")); XCTAssertFalse(report.logLine.contains("relayProtocol"))
+                XCTAssertFalse(report.summaryLines.contains { $0.contains("encode preparation") })
+            }
+        }
+    }
+
     func testSenderStagesComeFromPacerAndSourceCounters() {
         func entries(at seconds: Double, source: Double, encoded: Double, packets: Double,
                      sendDelay: Double, retransmitted: Double) -> [StreamStatsEntry] {

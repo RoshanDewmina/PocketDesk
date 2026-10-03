@@ -1,6 +1,59 @@
 import XCTest
 
 final class SessionDiagnosticsTests: XCTestCase {
+    func testAttemptJournalBoundsAndLegacyReportDecoding() throws {
+        var attempt = DiagnosticAttempt(started: 10)
+        attempt.record(.authenticating, at: .nan)
+        attempt.record(.authenticating, at: 9)
+        for index in 1...100 { attempt.record(index.isMultiple(of: 2) ? .mediaConnecting : .authenticating, at: 10 + Double(index)) }
+        attempt.finish(.connectionFailed, at: 120)
+        XCTAssertEqual(attempt.summary.events.count, DiagnosticAttemptSummary.maximumEvents)
+        XCTAssertEqual(attempt.summary.events.first?.stage, .requested)
+        XCTAssertEqual(attempt.summary.events.last?.stage, .ended)
+        let report = SessionDiagnosticReport(kind: .session, outcome: .sessionEnded, seconds: 110, samples: 0, facts: [], attempt: attempt.summary)
+        XCTAssertNoThrow(try report.validate())
+        let decoded = try JSONDecoder().decode(SessionDiagnosticReport.self, from: JSONEncoder().encode(report))
+        XCTAssertEqual(decoded.attempt, attempt.summary)
+        let legacy = SessionDiagnosticReport(kind: .session, outcome: .sessionEnded, seconds: 0, samples: 0, facts: [])
+        XCTAssertNil(try JSONDecoder().decode(SessionDiagnosticReport.self, from: JSONEncoder().encode(legacy)).attempt)
+    }
+    func testDetailedReportRetainsTypedTransportAndMeasuredStagesOnlyWhenEnabled() throws {
+        for enabled in [true, false] {
+            var sample = StreamStatsSample(entries: [], detailedDiagnosticsEnabled: enabled)
+            sample.relayProtocol = "tls"
+            var counters = StreamCounterSnapshot(interval: 1)
+            counters.encodePreparationP95Ms = 3; counters.encodePreparationSamples = 2
+            counters.encodeSubmitP95Ms = 1; counters.encodeSubmitSamples = 2
+            let stats = StreamStatsReport(role: "host", previous: nil, current: sample, counters: counters, detailedDiagnosticsEnabled: enabled)
+            var recorder = DiagnosticSessionRecorder(); recorder.observe(stats, at: 10)
+            let report = recorder.finish(at: 11)
+            XCTAssertNoThrow(try report.validate())
+            if enabled {
+                XCTAssertEqual(report.transport?.relayProtocol, .tls)
+                XCTAssertNil(report.transport?.negotiatedFeedback)
+                XCTAssertEqual(report.facts.first { $0.metric == .encodePreparationP95Ms }?.value, 3)
+                XCTAssertTrue(report.preview.contains("negotiated feedback: unknown"))
+            } else {
+                XCTAssertNil(report.transport)
+                XCTAssertNil(report.facts.first { $0.metric == .encodePreparationP95Ms })
+            }
+            XCTAssertEqual(try JSONDecoder().decode(SessionDiagnosticReport.self, from: JSONEncoder().encode(report)), report)
+        }
+    }
+    func testPhoneExportUsesOnlyFreshHostRelayEvidenceAndSharedFeedbackVocabulary() throws {
+        var stats = try JSONDecoder().decode(StreamStatsReport.self, from: Data(#"{"role":"phone","route":"Relay","detailedDiagnosticsEnabled":true,"hostSummaryAgeMs":100,"host":{"relayProtocol":"tcp","negotiatedFeedback":["nack pli","ccm fir","goog-remb"],"encodePreparationP95Ms":4}}"#.utf8))
+        var recorder = DiagnosticSessionRecorder(); recorder.observe(stats, at: 10)
+        var report = recorder.finish(at: 11)
+        XCTAssertEqual(report.transport?.relayProtocol, .tcp)
+        XCTAssertEqual(report.transport?.relayEvidence, .freshHostStats)
+        XCTAssertEqual(report.transport?.negotiatedFeedback, [.nackPLI, .ccmFIR, .googREMB])
+        stats.hostSummaryAgeMs = 3000; recorder.observe(stats, at: 12); report = recorder.finish(at: 13)
+        XCTAssertNil(report.transport?.relayProtocol)
+        XCTAssertNil(report.transport?.negotiatedFeedback)
+        XCTAssertNil(report.facts.first { $0.metric == .encodePreparationP95Ms }?.value)
+        stats.hostSummaryAgeMs = 100; stats.route = "Direct"; recorder.observe(stats, at: 14)
+        XCTAssertNil(recorder.finish(at: 15).transport?.relayProtocol, "A prior host relay summary cannot reclassify the current selected route")
+    }
     func testAReportWithMetricsFromANewerBuildLoadsWithoutThem() throws {
         let report = SessionDiagnosticReport(kind: .session, outcome: .sessionEnded, seconds: 12, samples: 3,
                                              facts: [DiagnosticFact(.videoKbps, 200), DiagnosticFact(.curtainCovered, 1)])

@@ -7,6 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		43C288C5EEADD7CDCCB52E82 /* PhoneCrashDiagnosticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D587169FC9E75588084D169 /* PhoneCrashDiagnosticsTests.swift */; };
+		5A92B916AC8C7E5CCE51AE49 /* CrashDiagnosticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E8D099EC8AA1FB36A39DAF0 /* CrashDiagnosticsTests.swift */; };
+		B8201F5B3782BEC88A0868F0 /* CrashDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9286C430F01B02310D45F5B5 /* CrashDiagnostics.swift */; };
+		8978896173AB46022B131B51 /* CrashDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9286C430F01B02310D45F5B5 /* CrashDiagnostics.swift */; };
+		F106A6D872DA8629C8118769 /* CrashDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9286C430F01B02310D45F5B5 /* CrashDiagnostics.swift */; };
+		DA36DAA3E0D130856575487A /* CrashDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9286C430F01B02310D45F5B5 /* CrashDiagnostics.swift */; };
+		F8E5256ED6193F6C19D2A066 /* CrashDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9286C430F01B02310D45F5B5 /* CrashDiagnostics.swift */; };
+		3B09D4A6F7854BC8DF28074E /* CrashDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9286C430F01B02310D45F5B5 /* CrashDiagnostics.swift */; };
 		B8C000000000000000000001 /* OwnedVideo.metal in Sources */ = {isa = PBXBuildFile; fileRef = B8C000000000000000000002 /* OwnedVideo.metal */; };
 		005F0E21A9B5F115D059E52E /* HostViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F688011A8DDECAEAAE11132 /* HostViewState.swift */; };
 		006A8061FB0C8D061C4CCC71 /* LegalNoticesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AE917A2022CA1A828BFA243 /* LegalNoticesView.swift */; };
@@ -1330,6 +1338,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		5D587169FC9E75588084D169 /* PhoneCrashDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneCrashDiagnosticsTests.swift; sourceTree = "<group>"; };
+		0E8D099EC8AA1FB36A39DAF0 /* CrashDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrashDiagnosticsTests.swift; sourceTree = "<group>"; };
+		9286C430F01B02310D45F5B5 /* CrashDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrashDiagnostics.swift; sourceTree = "<group>"; };
 		B8C000000000000000000002 /* OwnedVideo.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = OwnedVideo.metal; sourceTree = "<group>"; };
 		003A7C0A4B2EA370009A1BAE /* PhoneDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneDiagnostics.swift; sourceTree = "<group>"; };
 		00F0DF441D246AB09E49CA88 /* AwayModeProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AwayModeProtocol.swift; sourceTree = "<group>"; };
@@ -1999,6 +2010,7 @@
 		0266A8A075903E706580E246 /* RemoteShared */ = {
 			isa = PBXGroup;
 			children = (
+				9286C430F01B02310D45F5B5 /* CrashDiagnostics.swift */,
 				0675CE1974FD239B86F4A520 /* AgentAlert.swift */,
 				4310863DCC8E9065BFE24212 /* AgentAlertFrame.swift */,
 				18D631997D92BBA2122A86CE /* AuxiliaryMouseButton.swift */,
@@ -2344,6 +2356,7 @@
 		6DEB5BEA9B8F3872FB151859 /* RemoteTests */ = {
 			isa = PBXGroup;
 			children = (
+				0E8D099EC8AA1FB36A39DAF0 /* CrashDiagnosticsTests.swift */,
 				28234C5686033270C8CD8B69 /* AbsolutePointerTests.swift */,
 				2CEACADE18D34ACAE6984D81 /* AgentAlertBridgeTests.swift */,
 				14CB53B333C6698EA49C8FB7 /* AgentAlertFrameTests.swift */,
@@ -2662,6 +2675,7 @@
 		B8985D87473FF48C32360DA5 /* RemotePhoneTests */ = {
 			isa = PBXGroup;
 			children = (
+				5D587169FC9E75588084D169 /* PhoneCrashDiagnosticsTests.swift */,
 				D5F06AA8473A3A424B3CB6BB /* AgentAlertCenterTests.swift */,
 				86ADDCC3BEF7DBD0E06583C0 /* AgentAlertFromMacTests.swift */,
 				C3FA5957A16826DD4FD27D9F /* AgentAlertPayloadTests.swift */,
@@ -3473,6 +3487,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				DA36DAA3E0D130856575487A /* CrashDiagnostics.swift in Sources */,
 				3900EE3ED690A541C6547421 /* AgentAlert.swift in Sources */,
 				CFCCF23F8B9D59BA81F0ABE5 /* AgentAlertFrame.swift in Sources */,
 				6D94933443313262E1EE90E3 /* AuxiliaryMouseButton.swift in Sources */,
@@ -3605,6 +3620,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3B09D4A6F7854BC8DF28074E /* CrashDiagnostics.swift in Sources */,
 				9C72A20D2E654F598DF7F682 /* AwayModeMachine.swift in Sources */,
 				3BCEA343C965464365B058C9 /* AwayModeProtocol.swift in Sources */,
 				755422EA7087679E642BFB4D /* ConnectMotionModel.swift in Sources */,
@@ -3668,6 +3684,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F8E5256ED6193F6C19D2A066 /* CrashDiagnostics.swift in Sources */,
 				0140D326F99F7EF39CACF262 /* AgentAlert.swift in Sources */,
 				00E6E38B6002A06395899D57 /* AgentAlertFrame.swift in Sources */,
 				CD898FDF385635EA2436F077 /* AuxiliaryMouseButton.swift in Sources */,
@@ -3806,6 +3823,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8978896173AB46022B131B51 /* CrashDiagnostics.swift in Sources */,
 				D8C8B8DAD1B3AAB0914B62E3 /* AgentAlert.swift in Sources */,
 				EC66FAADE4D856C8B4FDE162 /* AgentAlertBridge.swift in Sources */,
 				EBFE7851CC6CD3F5D3276B03 /* AgentAlertFrame.swift in Sources */,
@@ -4012,6 +4030,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				43C288C5EEADD7CDCCB52E82 /* PhoneCrashDiagnosticsTests.swift in Sources */,
 				0EE20B6CFCA4B886E69B0A52 /* AgentAlertCenterTests.swift in Sources */,
 				30F9C09B907C226F03B435E8 /* AgentAlertFromMacTests.swift in Sources */,
 				E6870E4BE8CE3759FD3D9901 /* AgentAlertPayloadTests.swift in Sources */,
@@ -4079,6 +4098,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B8201F5B3782BEC88A0868F0 /* CrashDiagnostics.swift in Sources */,
+				5A92B916AC8C7E5CCE51AE49 /* CrashDiagnosticsTests.swift in Sources */,
 				9FD441791AC4999482C8C3AE /* AbsolutePointerTests.swift in Sources */,
 				384DE0D344103F95B0ECC714 /* AgentAlert.swift in Sources */,
 				FA435134821786DF5462A249 /* AgentAlertBridge.swift in Sources */,
@@ -4419,6 +4440,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F106A6D872DA8629C8118769 /* CrashDiagnostics.swift in Sources */,
 				B44A0938166D83F6A7991B33 /* AgentAlert.swift in Sources */,
 				6A5D072570A9B83695FB57FB /* AgentAlertCenter.swift in Sources */,
 				83A0C29582D1F90CCF466456 /* AgentAlertFrame.swift in Sources */,
