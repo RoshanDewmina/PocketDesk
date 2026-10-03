@@ -217,9 +217,11 @@ final class PhoneMediaSessionTests: XCTestCase {
     }
     func testAnyDeviceChangeEndsDictationAndDeactivatesWhenItWasTheLastOwner() {
         var retired = 0, releases = 0
-        let session = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: { releases += 1 }))
+        var now: TimeInterval = 50
+        let session = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: { releases += 1 }), now: { now })
         let mic = UUID()
         XCTAssertTrue(session.acquire(mic, kind: .recording, onRetired: { retired += 1 }))
+        now += 2 // beyond the one-second Bluetooth HFP switch grace that follows a recording start
         session.routeChanged(deviceRemoved: false)
         XCTAssertFalse(session.contains(mic), "AirPods connecting would leave dictation stalled on the old route")
         XCTAssertEqual(retired, 1); XCTAssertEqual(releases, 1)
