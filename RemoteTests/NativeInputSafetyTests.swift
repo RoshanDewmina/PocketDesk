@@ -305,6 +305,188 @@ final class NativeInputSafetyTests: XCTestCase {
         XCTAssertTrue(driver.handle(action("dragUp", count: 1, hold: "hold-1026"), upgraded: true).accepted)
     }
 
+    func testScrollModifierDefaultsAreOnAndBothRollbackKeysRestoreBaseline() {
+        let suiteName = "scroll-modifier-test-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        XCTAssertTrue(ScrollModifierPolicy.phoneEnabled(defaults: defaults))
+        XCTAssertTrue(ScrollModifierPolicy.hostEnabled(defaults: defaults))
+        defaults.set(false, forKey: ScrollModifierPolicy.phoneDefaultsKey)
+        defaults.set(true, forKey: ScrollModifierPolicy.hostDefaultsKey)
+        XCTAssertFalse(ScrollModifierPolicy.phoneEnabled(defaults: defaults))
+        XCTAssertFalse(ScrollModifierPolicy.hostEnabled(defaults: defaults))
+        defaults.set(true, forKey: ScrollModifierPolicy.phoneDefaultsKey)
+        defaults.set(false, forKey: ScrollModifierPolicy.hostDefaultsKey)
+        XCTAssertTrue(ScrollModifierPolicy.phoneEnabled(defaults: defaults))
+        XCTAssertTrue(ScrollModifierPolicy.hostEnabled(defaults: defaults))
+    }
+
+    func testTestPadConfinementKeepsBaselineScrollEvenWhenTheNewSwitchIsOn() {
+        let suiteName = "scroll-confinement-test-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        for disabled in [false, true] {
+            defaults.set(disabled, forKey: ScrollModifierPolicy.hostDefaultsKey)
+            XCTAssertFalse(ScrollModifierPolicy.hostEnabled(defaults: defaults, testPadConfinement: true))
+            XCTAssertEqual(ScrollModifierPolicy.hostEnabled(defaults: defaults, testPadConfinement: false), !disabled)
+        }
+        #if DEBUG
+        XCTAssertEqual(ScrollModifierPolicy.hostProcessEnabled,
+                       ScrollModifierPolicy.hostEnabled(testPadConfinement: E2ELaunchOptions.current.requested))
+        XCTAssertEqual(RemoteInputDriver(eventSink: ScrollModifierEventRecorder().sink, isTrusted: { true }).scrollModifiers,
+                       ScrollModifierPolicy.hostProcessEnabled)
+        #endif
+    }
+
+    func testLegacyScrollPostsEachHardwareModifierAndRollbackUsesOriginalSink() throws {
+        for enabled in [true, false] {
+            let recorder = ScrollModifierEventRecorder()
+            let driver = scrollModifierDriver(recorder, enabled: enabled)
+            for modifier in ["control", "shift", "option"] {
+                let wire = try JSONDecoder().decode(RemoteAction.self, from: JSONEncoder().encode(
+                    RemoteAction(action: "scroll", x: 2.75, y: -3.5, modifiers: [modifier])))
+                try wire.validate()
+                XCTAssertTrue(driver.handle(wire, now: 10).accepted)
+                let event = try XCTUnwrap(recorder.events.last)
+                XCTAssertEqual(event.getIntegerValueField(.scrollWheelEventDeltaAxis1), -3)
+                XCTAssertEqual(event.getIntegerValueField(.scrollWheelEventDeltaAxis2), 2)
+                let baseline = try XCTUnwrap(RemoteInputEventSink.makeScrollEvent(point: event.location, horizontal: 2.75, vertical: -3.5))
+                XCTAssertEqual(event.getIntegerValueField(.scrollWheelEventIsContinuous),
+                               baseline.getIntegerValueField(.scrollWheelEventIsContinuous))
+                XCTAssertEqual(event.getIntegerValueField(.scrollWheelEventScrollPhase), 0)
+                XCTAssertEqual(event.getIntegerValueField(.scrollWheelEventMomentumPhase), 0)
+                XCTAssertEqual(event.flags.intersection([.maskControl, .maskShift, .maskAlternate]),
+                               enabled ? RemoteInputDriver.flags(for: [modifier]) : [])
+            }
+            XCTAssertEqual(recorder.flaggedCalls, enabled ? 3 : 0)
+            XCTAssertEqual(recorder.baselineCalls, enabled ? 0 : 3)
+        }
+    }
+
+    func testPhasedFractionalScrollRetainsAcceptedFlagsForEndCancelAndRejectsReplay() throws {
+        for enabled in [true, false] {
+            let recorder = ScrollModifierEventRecorder()
+            let driver = scrollModifierDriver(recorder, enabled: enabled)
+            var began = scroll("one", "began", x: 0.25, y: -0.125)
+            began.modifiers = ["control"]
+            XCTAssertTrue(driver.handle(began, upgraded: true, now: 0).accepted)
+            let first = try XCTUnwrap(recorder.events.last)
+            XCTAssertEqual(first.getIntegerValueField(.scrollWheelEventFixedPtDeltaAxis1), -8192)
+            XCTAssertEqual(first.getIntegerValueField(.scrollWheelEventFixedPtDeltaAxis2), 16384)
+            XCTAssertEqual(first.getIntegerValueField(.scrollWheelEventIsContinuous), 1)
+            XCTAssertEqual(first.flags.intersection([.maskControl, .maskShift, .maskAlternate]), enabled ? .maskControl : [])
+            var changed = scroll("one", "changed", x: 0.125, y: -0.25)
+            changed.modifiers = ["option"]
+            XCTAssertTrue(driver.handle(changed, upgraded: true, now: 0.1).accepted)
+            var replay = scroll("other", "changed", y: 1)
+            replay.modifiers = ["shift"]
+            XCTAssertFalse(driver.handle(replay, upgraded: true, now: 0.2).accepted)
+            XCTAssertTrue(driver.handle(scroll("one", "ended"), upgraded: true, now: 0.3).accepted)
+            XCTAssertEqual(recorder.events.last?.flags.intersection([.maskControl, .maskShift, .maskAlternate]), enabled ? .maskAlternate : [])
+            var next = scroll("two", "began", y: 1)
+            next.modifiers = ["shift"]
+            XCTAssertTrue(driver.handle(next, upgraded: true, now: 0.4).accepted)
+            XCTAssertTrue(driver.handle(scroll("two", "cancelled"), upgraded: true, now: 0.5).accepted)
+            let cancelled = try XCTUnwrap(recorder.events.last)
+            XCTAssertEqual(cancelled.flags.intersection([.maskControl, .maskShift, .maskAlternate]), enabled ? .maskShift : [])
+            XCTAssertEqual(cancelled.getIntegerValueField(.scrollWheelEventScrollPhase), Int64(CGScrollPhase.cancelled.rawValue))
+            XCTAssertEqual(cancelled.getIntegerValueField(.scrollWheelEventMomentumPhase), 0)
+            XCTAssertEqual(recorder.flaggedCalls, enabled ? 5 : 0)
+            XCTAssertEqual(recorder.baselineCalls, enabled ? 0 : 5)
+        }
+    }
+
+    func testRollbackPreservesSimpleSinkRefusalBehaviorWithoutADetailedCallback() {
+        for enabled in [true, false] {
+            var accepts = true
+            let sink = RemoteInputEventSink(pointerLocation: { CGPoint(x: 100, y: 100) },
+                mouseSequence: { _ in true }, scroll: { _, _, _ in accepts }, text: { _ in true }, key: { _, _ in true })
+            let driver = RemoteInputDriver(eventSink: sink, isTrusted: { true })
+            driver.enabled = true; driver.scrollModifiers = enabled
+            driver.configure(bounds: CGRect(x: 0, y: 0, width: 200, height: 200))
+            XCTAssertTrue(driver.handle(scroll("simple", "began", y: 1), upgraded: true, now: 0).accepted)
+            XCTAssertTrue(driver.handle(scroll("simple", "ended"), upgraded: true, now: 0.1).accepted)
+            accepts = false
+            XCTAssertFalse(driver.handle(scroll("simple", "momentumBegan", y: 500), upgraded: true, now: 0.2).accepted)
+            XCTAssertEqual(driver.isCoasting, !enabled, "Rollback retains the original simple-sink failure branch")
+            driver.abandonHostMomentum()
+        }
+    }
+
+    func testRefusedScrollCannotChangeTheFlagsRememberedForPhoneMomentum() throws {
+        for enabled in [true, false] {
+            let recorder = ScrollModifierEventRecorder()
+            let driver = scrollModifierDriver(recorder, enabled: enabled)
+            driver.hostMomentum = false
+            var began = scroll("phone", "began", y: 1)
+            began.modifiers = ["control"]
+            XCTAssertTrue(driver.handle(began, upgraded: true, now: 0).accepted)
+            var refused = scroll("phone", "changed", y: 1)
+            refused.modifiers = ["option"]
+            recorder.rejectNext = true
+            XCTAssertFalse(driver.handle(refused, upgraded: true, now: 0.05).accepted)
+            XCTAssertTrue(driver.handle(scroll("phone", "ended"), upgraded: true, now: 0.1).accepted)
+            XCTAssertTrue(driver.handle(scroll("phone", "momentumBegan", y: 0.25), upgraded: true, now: 0.2).accepted)
+            var changed = scroll("phone", "momentumChanged", y: 0.125)
+            changed.modifiers = ["shift"]
+            XCTAssertTrue(driver.handle(changed, upgraded: true, now: 0.3).accepted)
+            XCTAssertTrue(driver.handle(scroll("phone", "momentumEnded"), upgraded: true, now: 0.4).accepted)
+            XCTAssertEqual(recorder.events.count, 5)
+            for event in recorder.events {
+                XCTAssertEqual(event.flags.intersection([.maskControl, .maskShift, .maskAlternate]), enabled ? .maskControl : [])
+            }
+        }
+    }
+
+    func testHostMomentumCarriesInitiatingFlagsThroughEveryCleanupAndCannotLeakToNextStream() throws {
+        for enabled in [true, false] {
+            for cleanup in ["natural", "release", "expiry", "reset", "authority", "abandon", "explicit"] {
+                let recorder = ScrollModifierEventRecorder()
+                let driver = scrollModifierDriver(recorder, enabled: enabled)
+                var began = scroll("coast", "began", y: 1)
+                began.modifiers = ["control", "shift", "option"]
+                XCTAssertTrue(driver.handle(began, upgraded: true, now: 0).accepted)
+                XCTAssertTrue(driver.handle(scroll("coast", "ended"), upgraded: true, now: 0.1).accepted)
+                XCTAssertTrue(driver.handle(scroll("coast", "momentumBegan", y: 500), upgraded: true, now: 0.2).accepted)
+                XCTAssertTrue(driver.isCoasting)
+                XCTAssertTrue(driver.stepHostMomentum(now: 0.21))
+                let beforeCleanup = recorder.events.count
+                switch cleanup {
+                case "natural":
+                    var now = 0.21
+                    while driver.isCoasting, now < 4 { now += 0.1; _ = driver.stepHostMomentum(now: now) }
+                case "release": _ = driver.handle(RemoteAction(action: "release"), now: 0.22)
+                case "expiry": driver.expireMomentum(now: 0.8)
+                case "reset": driver.resetNativeSequence()
+                case "authority": driver.enabled = false; XCTAssertFalse(driver.stepHostMomentum(now: 0.22)); driver.enabled = true
+                case "abandon": driver.abandonHostMomentum()
+                default: XCTAssertTrue(driver.handle(scroll("coast", "momentumEnded"), upgraded: true, now: 0.22).accepted)
+                }
+                XCTAssertFalse(driver.isCoasting, cleanup)
+                if cleanup == "abandon" {
+                    XCTAssertEqual(recorder.events.count, beforeCleanup, "A gone route does not post cleanup")
+                } else {
+                    XCTAssertEqual(recorder.events.last?.getIntegerValueField(.scrollWheelEventMomentumPhase),
+                                   Int64(CGMomentumScrollPhase.end.rawValue), cleanup)
+                }
+                for event in recorder.events {
+                    XCTAssertEqual(event.flags.intersection([.maskControl, .maskShift, .maskAlternate]),
+                                   enabled ? [.maskControl, .maskShift, .maskAlternate] : [], cleanup)
+                }
+                XCTAssertTrue(driver.handle(scroll("new-\(cleanup)", "began", y: 1), upgraded: true, now: 5).accepted)
+                XCTAssertEqual(recorder.events.last?.flags.intersection([.maskControl, .maskShift, .maskAlternate]), [], cleanup)
+            }
+        }
+    }
+
+    private func scrollModifierDriver(_ recorder: ScrollModifierEventRecorder, enabled: Bool) -> RemoteInputDriver {
+        let driver = RemoteInputDriver(eventSink: recorder.sink, isTrusted: { true })
+        driver.scrollModifiers = enabled
+        driver.enabled = true
+        driver.configure(bounds: CGRect(x: 0, y: 0, width: 200, height: 200))
+        return driver
+    }
+
     private func configuredDriver(_ recorder: NativeInputRecorder) -> RemoteInputDriver {
         let driver = RemoteInputDriver(eventSink: recorder.sink, isTrusted: { true })
         driver.enabled = true
@@ -346,5 +528,31 @@ private final class NativeInputRecorder {
             text: { _ in true },
             key: { _, _ in true }
         )
+    }
+}
+
+/// Builds the exact CGEvent the live sink would post, without submitting it to the event stream.
+private final class ScrollModifierEventRecorder {
+    var events: [CGEvent] = []
+    var baselineCalls = 0
+    var flaggedCalls = 0
+    var rejectNext = false
+
+    private func record(_ point: CGPoint, _ x: Double, _ y: Double, _ phase: String?, _ flags: CGEventFlags?) -> Bool {
+        if rejectNext { rejectNext = false; return false }
+        guard let event = RemoteInputEventSink.makeScrollEvent(point: point, horizontal: x, vertical: y,
+                                                               phase: phase, flags: flags) else { return false }
+        events.append(event)
+        if flags == nil { baselineCalls += 1 } else { flaggedCalls += 1 }
+        return true
+    }
+
+    var sink: RemoteInputEventSink {
+        RemoteInputEventSink(pointerLocation: { CGPoint(x: 100, y: 100) }, mouseSequence: { _ in true },
+            scroll: { [unowned self] point, x, y in record(point, x, y, nil, nil) },
+            scrollDetailed: { [unowned self] point, x, y, phase in record(point, x, y, phase, nil) },
+            scrollWithFlags: { [unowned self] point, x, y, flags in record(point, x, y, nil, flags) },
+            scrollDetailedWithFlags: { [unowned self] point, x, y, phase, flags in record(point, x, y, phase, flags) },
+            text: { _ in true }, key: { _, _ in true })
     }
 }

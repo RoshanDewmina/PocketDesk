@@ -135,6 +135,62 @@ final class ShortcutRemapTests: XCTestCase {
 }
 
 final class HardwareKeyRepeatTests: XCTestCase {
+    func testRechordProcessStartSnapshotDefaultsOnAndAcceptsExplicitYesOrNo() {
+        XCTAssertTrue(PocketDeskRepeatRechordSwitch.resolve(value: nil), "Missing defaults preserves the new default-on behavior")
+        XCTAssertTrue(PocketDeskRepeatRechordSwitch.resolve(value: NSNumber(value: true)))
+        XCTAssertFalse(PocketDeskRepeatRechordSwitch.resolve(value: NSNumber(value: false)), "NO is the legacy-behavior kill switch")
+    }
+
+    func testRechordKeepsTheOriginalRepeatDeadlineWhenShiftAndOptionChange() {
+        var keyRepeat = HardwareKeyRepeat(rechordEnabled: true)
+        keyRepeat.pressed(usage: 0x4F, key: "right", modifiers: [], at: 10)
+
+        keyRepeat.updateModifiers(["shift"], at: 10.2)
+        XCTAssertEqual(keyRepeat.due(at: 10.5)?.modifiers, ["shift"], "Shift re-chords selection at the original deadline")
+
+        keyRepeat.updateModifiers(["shift", "option"], at: 10.55)
+        XCTAssertEqual(keyRepeat.due(at: 10.58)?.modifiers, ["shift", "option"], "Option changes the repeated word movement")
+
+        keyRepeat.updateModifiers(["option"], at: 10.60)
+        XCTAssertEqual(keyRepeat.due(at: 10.641)?.modifiers, ["option"], "Releasing Shift returns to word movement without restarting the delay")
+        keyRepeat.updateModifiers([], at: 10.68)
+        XCTAssertEqual(keyRepeat.due(at: 10.712)?.modifiers, [], "Releasing Option returns to ordinary movement")
+    }
+
+    func testCommandAndControlSuppressRepeatButReleasingThemResumesHeldKey() {
+        var keyRepeat = HardwareKeyRepeat(rechordEnabled: true)
+        keyRepeat.pressed(usage: 0x4F, key: "right", modifiers: [], at: 0)
+
+        keyRepeat.updateModifiers(["command"], at: 0.2)
+        XCTAssertNil(keyRepeat.due(at: 0.6), "Command chords must not repeat")
+
+        keyRepeat.updateModifiers(["control"], at: 0.7)
+        XCTAssertNil(keyRepeat.due(at: 0.8), "Control chords must not repeat")
+
+        keyRepeat.updateModifiers(["shift"], at: 0.9)
+        XCTAssertEqual(keyRepeat.due(at: 0.9)?.modifiers, ["shift"], "Removing Command and Control resumes the still-held key without a fresh delay")
+
+        keyRepeat.released(usage: 0x4F)
+        XCTAssertNil(keyRepeat.due(at: 2), "Physical release ends the repeat")
+    }
+
+    func testRechordSwitchOffPreservesModifierChangeCancellation() {
+        var keyRepeat = HardwareKeyRepeat(rechordEnabled: false)
+        keyRepeat.pressed(usage: 0x4F, key: "right", modifiers: [], at: 0)
+        keyRepeat.updateModifiers(["shift"], at: 0.2)
+
+        XCTAssertNil(keyRepeat.due(at: 1), "The NO kill switch restores the existing cancel-on-modifier-change behavior")
+    }
+
+    func testReleaseAllCleanupCancelsThePhysicalHeldKey() {
+        var keyRepeat = HardwareKeyRepeat(rechordEnabled: true)
+        keyRepeat.pressed(usage: 0x4F, key: "right", modifiers: [], at: 0)
+        keyRepeat.cancel()
+
+        keyRepeat.updateModifiers(["shift"], at: 1)
+        XCTAssertNil(keyRepeat.due(at: 2), "Modifier changes cannot resurrect a key after cleanup")
+    }
+
     func testShortcutChordsNeverRepeat() {
         var keyRepeat = HardwareKeyRepeat()
         for modifiers in [["command"], ["control"], ["command", "shift"], ["option", "control"]] {
