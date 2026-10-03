@@ -4,19 +4,17 @@ import SwiftUI
 @testable import PocketDeskRemote
 
 final class FarsideDesignTests: XCTestCase {
-    func testBuiltBundleSupportsIPadMultitaskingWithoutChangingPhoneOrientations() throws {
-        // The runtime bundle dictionary resolves device variants; inspect the raw built artifact
-        // so an iPhone test host still checks the universal app's iPad-qualified declarations.
+    func testBuiltBundleIsIPhoneOnlyWithPhoneOrientations() throws {
+        // The runtime bundle dictionary resolves device variants; inspect the raw built artifact. 1.0 is
+        // iPhone-only (D62): Apple does not allow dropping iPad after a release ships with it.
         let data = try Data(contentsOf: Bundle.main.bundleURL.appendingPathComponent("Info.plist"))
         let info = try XCTUnwrap(PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any])
         let families = try XCTUnwrap(info["UIDeviceFamily"] as? [Int])
-        XCTAssertEqual(Set(families), [1, 2])
+        XCTAssertEqual(families, [1])
         let phone = try XCTUnwrap(info["UISupportedInterfaceOrientations"] as? [String])
         XCTAssertEqual(Set(phone), ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationLandscapeLeft",
                                     "UIInterfaceOrientationLandscapeRight"])
-        let pad = try XCTUnwrap(info["UISupportedInterfaceOrientations~ipad"] as? [String])
-        XCTAssertEqual(Set(pad), Set(phone).union(["UIInterfaceOrientationPortraitUpsideDown"]))
-        XCTAssertNotEqual(info["UIRequiresFullScreen"] as? Bool, true)
+        XCTAssertNil(info["UISupportedInterfaceOrientations~ipad"])
     }
 
     func testPairingAnnouncementLaunchSwitchDefaultsOnAndHonorsBothOverrides() {

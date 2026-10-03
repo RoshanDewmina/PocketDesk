@@ -390,6 +390,7 @@ final class PushRegistrarTests: XCTestCase {
     @MainActor
     private final class RetrySink: PushRegistrationSink {
         var shouldConfirm = false
+        var rejects = false
         var registrations: [String] = []
         var disables = 0
         func submit(_ registration: PushRegistration) async -> PushSubmission {
@@ -398,6 +399,7 @@ final class PushRegistrarTests: XCTestCase {
         }
         func disableAlerts() async -> PushSubmission {
             disables += 1
+            if rejects { return .rejected }
             return shouldConfirm ? .sent : .notSent("offline")
         }
     }
@@ -522,6 +524,25 @@ final class PushRegistrarTests: XCTestCase {
         XCTAssertNil(relaunched.deviceToken, "The retry succeeds before APNs returns a new address")
         XCTAssertGreaterThan(nextSink.disables, 0)
         XCTAssertNil(try? store.read([PendingPushDisable].self))
+    }
+
+    func testOptOutTheServiceRejectsIsClearedAndNeverRetried() async {
+        let defaults = makeTestDefaults("PushRegistrarRejected")
+        AgentAlertPreferences(defaults: defaults).alertsEnabled = true
+        let store = PendingStore()
+        let registrar = PushRegistrar(defaults: defaults, environmentOverride: "sandbox", removalStore: store)
+        let sink = RetrySink()
+        sink.rejects = true
+        registrar.sinkForTarget = { _ in sink }
+        registrar.configure(invitation: invitation())
+        AgentAlertPreferences(defaults: defaults).alertsEnabled = false
+        registrar.forget()
+        await registrar.submit()
+        await registrar.submit()
+        await registrar.submit()
+        XCTAssertEqual(sink.disables, 1, "A pairing the service no longer recognises has nothing to opt out of")
+        XCTAssertNil(try? store.read([PendingPushDisable].self))
+        XCTAssertEqual(registrar.status, .idle)
     }
 
     func testReenableCancelsOldDisableBeforeNewRegistration() async {

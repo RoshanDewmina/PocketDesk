@@ -21,6 +21,9 @@ enum PushSubmission: Equatable {
     case sent
     /// Not sent, and why. Nothing is retried in the background: the next launch tries again.
     case notSent(String)
+    /// The service answered that this pairing is not its current phone (401/403). It never delivers
+    /// to such a pairing, so an opt-out is complete and retrying cannot change the answer.
+    case rejected
 }
 
 @MainActor
@@ -80,6 +83,7 @@ final class HTTPPushRegistrationSink: PushRegistrationSink {
                 return .notSent("Push service did not confirm the request.")
             }
             if http.statusCode == 200 { return .sent }
+            if http.statusCode == 401 || http.statusCode == 403 { return .rejected }
             return .notSent("Push service did not confirm the request.")
         } catch { return .notSent("Push service is unavailable. Try again later.") }
     }
@@ -261,7 +265,7 @@ final class PushRegistrar: ObservableObject {
         for pending in removals {
             let result = await sinkForTarget(pending.target).disableAlerts()
             lastSubmission = result
-            if result == .sent {
+            if result == .sent || result == .rejected {
                 do {
                     var current = try removalStore.read([PendingPushDisable].self) ?? []
                     current.removeAll { $0 == pending }
@@ -295,6 +299,7 @@ final class PushRegistrar: ObservableObject {
         switch result {
         case .sent: status = removalFailed ? .failed("An older pairing still needs alert opt-out.") : .registered
         case .notSent(let reason): status = .failed(reason)
+        case .rejected: status = .failed("Alerts aren’t available for this pairing right now.")
         }
     }
 }
