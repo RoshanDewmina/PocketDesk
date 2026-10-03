@@ -65,22 +65,31 @@ final class PhoneSystemAudioDeviceTests: XCTestCase {
         XCTAssertTrue(device.terminateDevice())
     }
 
-    func testAbsentAndDisabledTimingSwitchKeepLegacyConstantsAndAreSnapshots() {
-        for flag in [nil, false] as [Bool?] {
-            let defaults = UserDefaults(suiteName: UUID().uuidString)!
-            if let flag { defaults.set(flag, forKey: "PocketDeskAVSyncGroup") }
-            let device = PhoneSystemAudioDevice(defaults: defaults, outputTiming: {
-                XCTFail("Disabled timing must not read the platform session"); return (0.2, 0.02)
-            })
-            defaults.set(true, forKey: "PocketDeskAVSyncGroup")
-            let delegate = InlineAudioDeviceDelegate()
-            XCTAssertTrue(device.initialize(with: delegate))
-            NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: nil)
-            XCTAssertEqual(device.outputLatency, 0)
-            XCTAssertEqual(device.outputIOBufferDuration, 0.01)
-            XCTAssertEqual(delegate.outputParameterChanges, 0)
-            XCTAssertTrue(device.terminateDevice())
-        }
+    func testUnsetTimingSwitchReadsOnInTheTestBuild() {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let delegate = InlineAudioDeviceDelegate()
+        let device = PhoneSystemAudioDevice(defaults: defaults, outputTiming: { (0.2, 0.02) })
+        XCTAssertTrue(device.initialize(with: delegate))
+        XCTAssertEqual(device.outputLatency, 0.2, "missing PocketDeskAVSyncGroup reads ON in the .7 test build")
+        XCTAssertEqual(device.outputIOBufferDuration, 0.02)
+        XCTAssertEqual(delegate.outputParameterChanges, 1)
+        XCTAssertTrue(device.terminateDevice())
+    }
+
+    func testDisabledTimingSwitchKeepsLegacyConstantsAndIsASnapshot() {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        defaults.set(false, forKey: "PocketDeskAVSyncGroup")
+        let device = PhoneSystemAudioDevice(defaults: defaults, outputTiming: {
+            XCTFail("Disabled timing must not read the platform session"); return (0.2, 0.02)
+        })
+        defaults.set(true, forKey: "PocketDeskAVSyncGroup")
+        let delegate = InlineAudioDeviceDelegate()
+        XCTAssertTrue(device.initialize(with: delegate))
+        NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: nil)
+        XCTAssertEqual(device.outputLatency, 0)
+        XCTAssertEqual(device.outputIOBufferDuration, 0.01)
+        XCTAssertEqual(delegate.outputParameterChanges, 0)
+        XCTAssertTrue(device.terminateDevice())
     }
 
     func testRemovedRouteRefreshesTimingWithoutRestartAndLateRefreshCannotReviveTerminatedDevice() {

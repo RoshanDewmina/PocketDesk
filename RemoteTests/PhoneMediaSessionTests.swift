@@ -2,20 +2,21 @@ import XCTest
 
 @MainActor
 final class PhoneMediaSessionTests: XCTestCase {
-    func testBluetoothMicSwitchIsOptInAndCapturedPerRegistry() {
+    func testBluetoothMicSwitchReadsOnWhenUnsetAndIsCapturedPerRegistry() {
         for flag in [nil, false, true] as [Bool?] {
+            let expected = flag != false // unset reads ON in the .7 test build; explicit NO turns it off
             let defaults = UserDefaults(suiteName: UUID().uuidString)!
             if let flag { defaults.set(flag, forKey: "PocketDeskBluetoothMic") }
             var enabled: [Bool] = [], probes = 0
             let session = PhoneMediaSession(backend: .init(configure: { _ in XCTFail("Use the recording configuration seam") },
                 activate: {}, deactivate: {}, configureRecording: { enabled.append($0) },
                 recordingInputIsBluetooth: { probes += 1; return true }), defaults: defaults)
-            defaults.set(flag != true, forKey: "PocketDeskBluetoothMic")
+            defaults.set(!expected, forKey: "PocketDeskBluetoothMic")
             let mic = UUID()
             XCTAssertTrue(session.acquire(mic, kind: .recording, onRetired: {}))
-            XCTAssertEqual(enabled, [flag == true])
-            XCTAssertEqual(probes, flag == true ? 1 : 0)
-            XCTAssertEqual(session.recordingUsesBluetoothInput, flag == true)
+            XCTAssertEqual(enabled, [expected])
+            XCTAssertEqual(probes, expected ? 1 : 0)
+            XCTAssertEqual(session.recordingUsesBluetoothInput, expected)
             session.release(mic)
             XCTAssertFalse(session.recordingUsesBluetoothInput)
         }

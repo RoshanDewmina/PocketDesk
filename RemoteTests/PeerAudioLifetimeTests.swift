@@ -115,12 +115,12 @@ final class OpusAudioPolicyTests: XCTestCase {
         XCTAssertFalse(receiver.contains("sprop-stereo=1"))
         XCTAssertEqual(PeerMedia.opusSDP(sender, sender: true, enabled: true), sender)
     }
-    func testAudioExperimentsDefaultOffAndRequireExplicitOptIn() throws {
+    func testAudioExperimentsDefaultOnInTestBuildAndExplicitNoTurnsOff() throws {
         let suite = "OpusAudioPolicyTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         for key in ["PocketDeskOpusStereo", "PocketDeskAVSyncGroup"] {
-            XCTAssertFalse(PeerMedia.audioExperimentEnabled(key, defaults: defaults))
+            XCTAssertTrue(PeerMedia.audioExperimentEnabled(key, defaults: defaults), "missing \(key) reads ON in the .7 test build")
             defaults.set(false, forKey: key)
             XCTAssertFalse(PeerMedia.audioExperimentEnabled(key, defaults: defaults))
             defaults.set(true, forKey: key)

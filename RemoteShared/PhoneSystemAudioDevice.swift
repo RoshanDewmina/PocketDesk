@@ -31,7 +31,8 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
              let session = AVAudioSession.sharedInstance()
              return (session.outputLatency, session.ioBufferDuration)
          }) {
-        reportsOutputTiming = defaults.bool(forKey: "PocketDeskAVSyncGroup")
+        // On in the combined .7 device test; explicit NO keeps the legacy zero-latency constants.
+        reportsOutputTiming = defaults.object(forKey: "PocketDeskAVSyncGroup") == nil || defaults.bool(forKey: "PocketDeskAVSyncGroup")
         readOutputTiming = outputTiming
         super.init()
         let center = NotificationCenter.default

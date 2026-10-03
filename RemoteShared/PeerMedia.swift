@@ -868,11 +868,11 @@ final class PeerMedia: NSObject {
         return true
     }
 
-    // Picture/sound changes need a device A/B before becoming the default. Snapshot once per process.
+    // On in Roshan's combined .7 device test (3 Oct); explicit NO restores the legacy policy. Snapshot once per process.
     private static let opusStereoEnabled = audioExperimentEnabled("PocketDeskOpusStereo")
     private static let avSyncGroupEnabled = audioExperimentEnabled("PocketDeskAVSyncGroup")
     static func audioExperimentEnabled(_ key: String, defaults: UserDefaults = .standard) -> Bool {
-        defaults.bool(forKey: key)
+        defaults.object(forKey: key) == nil || defaults.bool(forKey: key)
     }
 
     @objc(opusSDP:sender:enabled:)

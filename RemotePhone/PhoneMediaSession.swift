@@ -64,7 +64,8 @@ final class PhoneMediaSession {
 
     init(backend: Backend, observesPlatform: Bool = false, defaults: UserDefaults = .standard) {
         self.backend = backend
-        bluetoothMicEnabled = defaults.bool(forKey: "PocketDeskBluetoothMic")
+        // On in the combined .7 device test; explicit NO keeps the built-in microphone only.
+        bluetoothMicEnabled = defaults.object(forKey: "PocketDeskBluetoothMic") == nil || defaults.bool(forKey: "PocketDeskBluetoothMic")
         #if canImport(UIKit)
         if observesPlatform {
             let center = NotificationCenter.default
