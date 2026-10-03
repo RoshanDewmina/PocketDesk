@@ -433,11 +433,121 @@ final class PhoneParityUITests: XCTestCase {
 
     // MARK: - Software keyboard recovery
 
+    /// The offline fixture simulates an editable-focus reply after an admitted canvas tap.
+    @MainActor
+    func testManualKeyboardDefaultAndExplicitNoAtLargestType() {
+        for (orientation, override, name) in [(UIDeviceOrientation.portrait, [String](), "portrait-unset"),
+                                              (.landscapeLeft, ["-FarsideAutoKeyboard", "NO"], "landscape-NO")] {
+            XCUIDevice.shared.orientation = orientation
+            let app = XCUIApplication()
+            app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-probe-quiet",
+                                   "--ui-viewport-fit", "--ui-software-keyboard", "--ui-manual-keyboard-check",
+                                   "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] + override
+            app.launch()
+            waitForLayout(app, orientation: orientation)
+            XCTAssertLessThanOrEqual(min(app.frame.width, app.frame.height), 375,
+                                     "Run this layout check on a small iPhone")
+            let canvas = app.descendants(matching: .any)["remote.canvas"].firstMatch
+            XCTAssertTrue(canvas.waitForExistence(timeout: 5))
+            let mark = probeMark(app)
+            canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
+            XCTAssertTrue(probeEntries(app, after: mark).contains("click 1"))
+            XCTAssertTrue(probeEntries(app, after: mark).contains("note editable focus"))
+            let automaticOpen = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true"),
+                                                         object: app.buttons["remote.keyboard.hide"])
+            automaticOpen.isInverted = true
+            XCTAssertEqual(XCTWaiter.wait(for: [automaticOpen], timeout: 1), .completed,
+                           "Mac editable focus must not open the phone keyboard")
+            let button = app.buttons["remote.keyboard.open"]
+            XCTAssertTrue(button.waitForExistence(timeout: 5))
+            XCTAssertTrue(button.isHittable)
+            XCTAssertEqual(button.label, "Keyboard")
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+            XCTAssertTrue(app.windows.firstMatch.frame.contains(button.frame))
+            XCTAssertFalse(button.frame.intersects(app.buttons["Show controls"].frame))
+            attachScreenshot("manual-keyboard-\(name)-largest-type-closed")
+            button.tap()
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+            XCTAssertFalse(button.exists, "Only Hide keyboard remains while typing")
+            let hide = app.buttons["remote.keyboard.hide"]
+            XCTAssertTrue(hide.waitForExistence(timeout: 5))
+            XCTAssertTrue(hide.isHittable)
+            let draft = app.textViews["remote.text"].firstMatch
+            XCTAssertTrue(draft.isHittable)
+            XCTAssertTrue(app.windows.firstMatch.frame.contains(draft.frame))
+            XCTAssertLessThanOrEqual(draft.frame.maxY, app.keyboards.firstMatch.frame.minY + 2)
+            XCTAssertLessThanOrEqual(hide.frame.maxY, app.keyboards.firstMatch.frame.minY + 2)
+            attachScreenshot("manual-keyboard-\(name)-largest-type-open")
+            hide.tap()
+            XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+            XCTAssertTrue(button.waitForExistence(timeout: 5))
+            XCTAssertTrue(button.isHittable)
+            revealDock(app)
+            let controls = app.buttons["Controls"].firstMatch
+            XCTAssertTrue(controls.isHittable)
+            XCTAssertFalse(button.frame.intersects(controls.frame), "Keyboard must not cover Controls in the expanded dock")
+            attachScreenshot("manual-keyboard-\(name)-largest-type-expanded-controls")
+            controls.tap()
+            XCTAssertTrue(button.waitForNonExistence(timeout: 5))
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testMacTextFocusOpensKeyboardOnlyWithExplicitYes() {
+        for setting in ["NO", "YES"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-probe-quiet", "--ui-viewport-fit",
+                                   "--ui-software-keyboard", "--ui-manual-keyboard-check", "-FarsideAutoKeyboard", setting]
+            launchOffline(app)
+            let mark = probeMark(app)
+            app.descendants(matching: .any)["remote.canvas"].firstMatch
+                .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
+            XCTAssertTrue(probeEntries(app, after: mark).contains("note editable focus"))
+            if setting == "YES" {
+                XCTAssertTrue(app.textViews["remote.text"].firstMatch.waitForExistence(timeout: 5))
+                XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+                app.buttons["remote.keyboard.hide"].tap()
+                XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+            } else {
+                let opened = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true"),
+                                                      object: app.buttons["remote.keyboard.hide"])
+                opened.isInverted = true
+                XCTAssertEqual(XCTWaiter.wait(for: [opened], timeout: 1), .completed)
+                XCTAssertTrue(app.buttons["remote.keyboard.open"].exists)
+            }
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testManualKeyboardButtonIsHiddenWithoutControlInCouchAndViewMode() {
+        for arguments in [["--ui-layout-check"], ["--ui-layout-check", "--ui-input-probe", "--ui-couch"]] {
+            let app = XCUIApplication()
+            app.launchArguments = arguments
+            app.launch()
+            XCTAssertTrue(app.descendants(matching: .any)["remote.layout.state"].firstMatch.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["remote.keyboard.open"].exists)
+            app.terminate()
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-probe-quiet"]
+        launchOffline(app)
+        let button = app.buttons["remote.keyboard.open"]
+        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        revealDock(app)
+        app.buttons["Move view"].firstMatch.tap()
+        XCTAssertTrue(button.waitForNonExistence(timeout: 5))
+        app.buttons["Control desktop"].firstMatch.tap()
+        XCTAssertTrue(button.waitForExistence(timeout: 5))
+    }
+
     @MainActor
     func testAutomaticKeyboardFirstOpenAndReopenKeepChromeVisibleInPortrait() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-probe-quiet",
-                               "--ui-viewport-fit", "--ui-auto-keyboard-preview-check"]
+                               "--ui-viewport-fit", "--ui-auto-keyboard-preview-check", "-FarsideAutoKeyboard", "YES"]
         app.launch()
 
         assertKeyboardChromeAndCanvasAreUsable(app, context: "first portrait automatic open")
@@ -460,7 +570,7 @@ final class PhoneParityUITests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
         app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-probe-quiet",
-                               "--ui-viewport-fit", "--ui-auto-keyboard-preview-check"]
+                               "--ui-viewport-fit", "--ui-auto-keyboard-preview-check", "-FarsideAutoKeyboard", "YES"]
         app.launch()
 
         waitForLayout(app, orientation: .landscapeLeft)

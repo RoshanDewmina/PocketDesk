@@ -21,6 +21,8 @@ struct NativeSessionView: View {
     @State private var duoLayout = DuoSessionLayout()
     @State private var controlsCollapsed = true
     @State private var keyboardOpen = false
+    /// Internal opt-in: Mac text focus leaves the keyboard closed unless explicitly enabled.
+    @AppStorage("FarsideAutoKeyboard") private var autoKeyboardEnabled = false
     @State private var dismissedAutoKeyboardRevision: UInt64 = 0
     @State private var autoKeyboardPreviewEmitted = false
     @State private var showControls = false
@@ -166,6 +168,23 @@ struct NativeSessionView: View {
         .overlay(alignment: .bottomTrailing) {
             if regularSessionLayout && couchSideTiles && !keyboardOpen && !showControls { couchTileColumn }
         }
+        .overlay(alignment: .trailing) {
+            if !keyboardOpen && !couch && !panMode && model.canControl && scenePhase == .active &&
+               !showControls && !showOverlaySettings && !showVoiceInput {
+                Button(action: openKeyboard) {
+                    Image(systemName: "keyboard")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(Farside.Palette.bone)
+                        .frame(width: 46, height: 46)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.97), stroke: Farside.Palette.line2)
+                .accessibilityLabel("Keyboard")
+                .accessibilityIdentifier("remote.keyboard.open")
+                .padding(.trailing, 8)
+            }
+        }
         .overlay(alignment: .bottomTrailing) {
             if miniMap.shown && miniMapEligible {
                 sessionMiniMap
@@ -247,7 +266,7 @@ struct NativeSessionView: View {
             if !allowed && voiceInput.phase == .listening { voiceInput.pauseForInterruption() }
         }
         .onChange(of: model.autoKeyboardRevision) { _, value in
-            guard value > dismissedAutoKeyboardRevision, !keyboardOpen, !panMode,
+            guard autoKeyboardEnabled, value > dismissedAutoKeyboardRevision, !keyboardOpen, !panMode,
                   !showControls, !showVoiceInput, scenePhase == .active,
                   (model.canControl || autoKeyboardPreview), model.textEditable, !model.isComposingText,
                   !model.dragging, !model.privacyShield, !model.contentConcealed else { return }
