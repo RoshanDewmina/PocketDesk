@@ -69,9 +69,11 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         self.fence = fence; identity = admission.identity
         unfencedPreparation = !defaults.bool(forKey: "phoneUnfencedDrawableDisabled")
         immediateSourceDraw = !defaults.bool(forKey: "phoneImmediateSourceDrawDisabled")
-        // Picture/feel candidates remain opt-in until Roshan's exact-device A/B.
-        backingPolicy = OwnedVideoBackingPolicy(enabled: defaults.bool(forKey: "PocketDeskSingleResample"))
-        precompiledShaders = defaults.bool(forKey: "PocketDeskPrecompiledShaders")
+        // On in Roshan's combined .7 device test (3 Oct); NO turns each off. Release defaults follow that test.
+        backingPolicy = OwnedVideoBackingPolicy(enabled: defaults.object(forKey: "PocketDeskSingleResample") == nil
+            || defaults.bool(forKey: "PocketDeskSingleResample"))
+        precompiledShaders = defaults.object(forKey: "PocketDeskPrecompiledShaders") == nil
+            || defaults.bool(forKey: "PocketDeskPrecompiledShaders")
         let device = MTLCreateSystemDefaultDevice()
         metal = MTKView(frame: .zero, device: device)
         commandQueue = device?.makeCommandQueue()

@@ -92,7 +92,7 @@ enum InterpolationColorTagsSwitch {
     static let isOn = read(defaults: .standard)
 
     static func read(defaults: UserDefaults) -> Bool {
-        defaults.object(forKey: defaultsKey) == nil ? false : defaults.bool(forKey: defaultsKey)
+        defaults.object(forKey: defaultsKey) == nil ? true : defaults.bool(forKey: defaultsKey)
     }
 }
 

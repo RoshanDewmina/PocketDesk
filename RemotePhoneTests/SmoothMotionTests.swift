@@ -800,7 +800,7 @@ final class SmoothMotionDisplayCadenceTests: XCTestCase {
             }
             // Isolate from the test process's own A/B launch arguments.
             defaults.setVolatileDomain([:], forName: UserDefaults.argumentDomain)
-            XCTAssertFalse(read(defaults), "missing \(key) defaults OFF until Roshan A/Bs it")
+            XCTAssertTrue(read(defaults), "missing \(key) defaults ON in the .7 test build")
             defaults.set(true, forKey: key)
             XCTAssertTrue(read(defaults))
             defaults.set(false, forKey: key)
