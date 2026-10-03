@@ -61,13 +61,14 @@ final class PhoneDiagnostics: ObservableObject {
         coordinator.$status.sink { [weak self, weak coordinator] status in
             guard let self, let coordinator else { return }
             switch status {
-            case "Connecting securely…": self.beginAttempt()
+            case "Connecting securely…": self.beginAttempt(continuingOutage: coordinator.reconnecting)
             case "Authenticating your Mac…": self.recordAttemptStage(.authenticating)
             case "Approve this phone on your Mac", "Compare this code with your Mac, then choose Allow there": self.recordAttemptStage(.awaitingApproval)
             case "Connecting live desktop…": self.recordAttemptStage(.mediaConnecting)
             default:
                 if !coordinator.isRunning {
-                    self.finishAttempt(reason: status == "Disconnected" ? .cancelled : .connectionFailed)
+                    let wasConnected = self.attemptWasConnected
+                    self.finishAttempt(reason: status == "Disconnected" ? .cancelled : (wasConnected ? .connectionEnded : .connectionFailed))
                 }
             }
         }.store(in: &connectionObservers)
@@ -76,13 +77,21 @@ final class PhoneDiagnostics: ObservableObject {
         }.store(in: &connectionObservers)
         coordinator.$reconnecting.sink { [weak self] reconnecting in
             guard reconnecting, let self else { return }
-            let wasConnected = self.attempt?.summary.events.contains { $0.stage == .connected } == true
-            self.finishAttempt(reason: wasConnected ? .connectionEnded : .connectionFailed)
+            if self.attemptWasConnected { self.finishAttempt(reason: .connectionEnded); return }
+            // Retries inside one outage stay in one record (the store keeps ten reports), so a long
+            // outage cannot push out the session and Test My Mac reports that explain it.
+            self.recordAttemptStage(.retrying)
         }.store(in: &connectionObservers)
     }
-    func beginAttempt() {
+    private var attemptWasConnected: Bool { attempt?.summary.events.contains { $0.stage == .connected } == true }
+    /// `continuingOutage`: the coordinator is still reconnecting, so this connect is a retry of the
+    /// open attempt (one record per outage); an attempt that already connected always closes first.
+    func beginAttempt(continuingOutage: Bool = false) {
         guard attemptDiagnosticsEnabled else { return }
-        if attempt != nil { finishAttempt(reason: .connectionEnded) }
+        if attempt != nil {
+            if continuingOutage, !attemptWasConnected { return }
+            finishAttempt(reason: .connectionEnded)
+        }
         attempt = DiagnosticAttempt(started: uptime()); attemptRecorder = DiagnosticSessionRecorder()
         persistAttempt()
     }

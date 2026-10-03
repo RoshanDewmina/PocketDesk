@@ -122,13 +122,80 @@ final class PhoneDiagnosticsTests: XCTestCase {
                 if enabled {
                     let report = try XCTUnwrap(diagnostics.reports.first)
                     XCTAssertEqual(report.samples, 0)
-                    XCTAssertEqual(report.attempt?.reason, wasConnected ? .connectionEnded : .connectionFailed)
-                    XCTAssertEqual(report.outcome, wasConnected ? .sessionEnded : .failed)
+                    if wasConnected {
+                        XCTAssertEqual(report.attempt?.reason, .connectionEnded)
+                        XCTAssertEqual(report.outcome, .sessionEnded)
+                    } else {
+                        // A loss before connecting is a retry inside the same attempt, not a new report.
+                        XCTAssertNil(report.attempt?.reason)
+                        XCTAssertEqual(report.outcome, .inProgress)
+                        XCTAssertEqual(report.attempt?.events.last?.stage, .retrying)
+                    }
                     XCTAssertEqual(report.seconds, 2)
                 } else { XCTAssertTrue(diagnostics.reports.isEmpty) }
             }
         }
     }
+    func testRetriesWithinOneOutageShareOneAttemptReportAndKeepEarlierReports() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = SessionDiagnosticStore(directory: directory)
+        let session = SessionDiagnosticReport(kind: .session, outcome: .sessionEnded, seconds: 30, samples: 30, facts: [],
+                                              at: Date().addingTimeInterval(-120))
+        let testMyMac = SessionDiagnosticReport(kind: .fullPreflight, outcome: .completed, seconds: 10, samples: 10, facts: [],
+                                                at: Date().addingTimeInterval(-60))
+        try store.save(session); try store.save(testMyMac)
+        var now = 10.0
+        let diagnostics = PhoneDiagnostics(store: store, uptime: { now }, attemptDiagnosticsEnabled: true, crashes: isolatedCrashes(directory))
+        let trust = MemoryStore()
+        try trust.save(TestPairing.invitation())
+        let signaling = FakeSignalingTransport()
+        let coordinator = RemoteCoordinator(isHost: false, store: trust, signaling: signaling, sessionLossRetryLimit: 24)
+        defer { coordinator.stop() }
+        coordinator.restore()
+        diagnostics.bind(to: coordinator)
+        coordinator.start()
+        for retry in 1...24 {
+            now += 1; coordinator.status = "Connecting securely…"
+            now += 1; coordinator.status = "Authenticating your Mac…"
+            now += 1; signaling.onClose?()
+            XCTAssertTrue(coordinator.isRunning, "retry \(retry) stays within the retry budget")
+        }
+        let attempts = diagnostics.reports.filter { $0.kind == .connectionAttempt }
+        XCTAssertEqual(attempts.count, 1, "One outage is one attempt record, however many retries it took")
+        XCTAssertEqual(attempts.first?.outcome, .inProgress)
+        XCTAssertTrue(attempts.first?.attempt?.events.contains { $0.stage == .retrying } == true)
+        XCTAssertLessThanOrEqual(attempts.first?.attempt?.events.count ?? 0, DiagnosticAttemptSummary.maximumEvents)
+        XCTAssertTrue(diagnostics.reports.contains { $0.id == session.id }, "The session report survives a 24-retry outage")
+        XCTAssertTrue(diagnostics.reports.contains { $0.id == testMyMac.id }, "So does the Test My Mac report")
+        XCTAssertEqual(store.load().count, 3)
+    }
+
+    func testTerminalFailureAfterConnectingIsRecordedAsASessionThatEnded() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var now = 10.0
+        let diagnostics = PhoneDiagnostics(store: SessionDiagnosticStore(directory: directory), uptime: { now },
+            attemptDiagnosticsEnabled: true, crashes: isolatedCrashes(directory))
+        let trust = MemoryStore()
+        try trust.save(TestPairing.invitation())
+        let signaling = FakeSignalingTransport()
+        let coordinator = RemoteCoordinator(isHost: false, store: trust, signaling: signaling)
+        defer { coordinator.stop() }
+        coordinator.restore()
+        diagnostics.bind(to: coordinator)
+        coordinator.start()
+        now = 11; coordinator.status = "Connecting securely…"
+        now = 12; coordinator.connected = true
+        now = 14; signaling.onMessage?(RelayMessage(type: "route")) // unverifiable route: terminal on the phone
+        XCTAssertFalse(coordinator.isRunning)
+        XCTAssertNotEqual(coordinator.status, "Disconnected")
+        let report = try XCTUnwrap(diagnostics.reports.first)
+        XCTAssertEqual(report.attempt?.reason, .connectionEnded, "A session that connected and then failed terminally ended; it did not fail to connect")
+        XCTAssertEqual(report.outcome, .sessionEnded)
+        XCTAssertEqual(report.seconds, 4)
+    }
+
     func testPreflightUsesOnlyItsOwnCounterBaselineAndSamples() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

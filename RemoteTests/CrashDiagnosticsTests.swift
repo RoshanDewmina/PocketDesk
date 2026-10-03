@@ -4,6 +4,15 @@ import MetricKit
 final class CrashDiagnosticsTests: XCTestCase {
     private func directory() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) }
 
+    func testDefaultStoreDirectoryIsScopedToTheBundleIdentifier() {
+        XCTAssertEqual(CrashDiagnosticStore.directoryName(bundleIdentifier: "com.roshan.PocketDesk.RemoteHost"),
+                       "FarsideMetricKitDiagnostics-com.roshan.PocketDesk.RemoteHost")
+        XCTAssertEqual(CrashDiagnosticStore.directoryName(bundleIdentifier: nil), "FarsideMetricKitDiagnostics-default")
+        XCTAssertNotEqual(CrashDiagnosticStore.directoryName(bundleIdentifier: "com.roshan.PocketDesk.Remote"),
+                          CrashDiagnosticStore.directoryName(bundleIdentifier: "com.roshan.PocketDesk.RemoteHost"),
+                          "Host and phone reports never share a folder")
+    }
+
     func testDefaultOnAndExplicitNoAreSnapshottedBeforeAnySubscriberStarts() throws {
         let suite = "MetricKitTests-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

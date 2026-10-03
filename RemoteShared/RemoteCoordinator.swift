@@ -1153,6 +1153,10 @@ final class RemoteCoordinator: ObservableObject {
     }
     /// Connected, connecting, or waiting to retry.
     var isRunning: Bool { !stopped }
+    #if DEBUG
+    /// Test seam: Connect is awaiting the codec capability snapshot, so `media` is legitimately still nil.
+    var mediaPreparationPending: Bool { mediaCapabilityPreparationID != nil }
+    #endif
     /// Retries attempted since the last stable registration or connection.
     var retryAttempt: Int { retryCount }
 
@@ -1480,8 +1484,10 @@ final class RemoteCoordinator: ObservableObject {
             guard let body = message.body else { throw RemoteError.invalidMessage }
             let signal = try JSONDecoder().decode(MediaSignal.self, from: body)
             if let media { media.receive(signal); return }
+            // A warm Mac can trickle many candidates while this phone still awaits its capability
+            // snapshot; that wait admits more than the local-proof queue before failing closed.
             guard localLinkProof != nil || mediaCapabilityPreparationID != nil,
-                  pendingMediaSignals.count < 64 else { throw RemoteError.invalidMessage }
+                  pendingMediaSignals.count < (mediaCapabilityPreparationID != nil ? 256 : 64) else { throw RemoteError.invalidMessage }
             SessionLog.log.info("media \(signal.kind, privacy: .public) held until media preparation finishes")
             pendingMediaSignals.append(signal)
         default: throw RemoteError.invalidMessage

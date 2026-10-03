@@ -108,7 +108,7 @@ struct DiagnosticArtifact: Codable, Equatable {
 
 /// Only a fixed vocabulary and monotonic elapsed time enter the attempt journal.
 struct DiagnosticAttemptSummary: Codable, Equatable {
-    enum Stage: String, Codable { case requested, authenticating, awaitingApproval, mediaConnecting, connected, statistics, ended }
+    enum Stage: String, Codable { case requested, authenticating, awaitingApproval, mediaConnecting, connected, statistics, retrying, ended }
     enum Reason: String, Codable { case connectionFailed, connectionEnded, cancelled, processInterrupted, unknown }
     struct Event: Codable, Equatable {
         let stage: Stage

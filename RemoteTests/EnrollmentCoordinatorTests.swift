@@ -163,7 +163,12 @@ private final class ComparisonEnrollmentRig {
     let phone: RemoteCoordinator
     let invitation: PairInvitation
     private var hostQueue: [RelayMessage] = [], phoneQueue: [RelayMessage] = []
+    /// Connect awaits the codec capability snapshot; instant probes keep that wait well inside the
+    /// short handshake timeouts these fixtures use, independent of this Mac's cold VideoToolbox probes.
+    private let previousProbes: NativeVideoCapabilityProbes?
     init(handshakeTimeoutNanoseconds: UInt64 = 15_000_000_000) throws {
+        previousProbes = NativeVideoCapabilityProbes.installForTesting(
+            NativeVideoCapabilityProbes(level52: { true }, hevcDecode: { true }, hevcEncode: { true }))
         host = RemoteCoordinator(isHost: true, store: hostStore, signaling: hostSignal, handshakeTimeoutNanoseconds: handshakeTimeoutNanoseconds)
         phone = RemoteCoordinator(isHost: false, store: phoneStore, signaling: phoneSignal, handshakeTimeoutNanoseconds: handshakeTimeoutNanoseconds)
         host.allowLegacyPrivateRoute = true; phone.allowLegacyPrivateRoute = true
@@ -200,7 +205,7 @@ private final class ComparisonEnrollmentRig {
         }
         return condition()
     }
-    func stop() { host.stop(); phone.stop() }
+    func stop() { host.stop(); phone.stop(); _ = NativeVideoCapabilityProbes.installForTesting(previousProbes) }
 }
 
 @MainActor
@@ -245,11 +250,13 @@ final class ComparisonEnrollmentCoordinatorTests: XCTestCase {
         XCTAssertEqual(rig.phone.permissionWait?.stage, .screenRecording)
         XCTAssertEqual(rig.phone.setupInProgress, true)
         XCTAssertNil(rig.host.media); XCTAssertNil(rig.phone.media)
+        XCTAssertFalse(rig.host.mediaPreparationPending, "No media preparation may start before the Mac's permission wait ends")
         // The ordinary media/handshake deadline cannot race a human permission wait.
         try await Task.sleep(nanoseconds: 90_000_000)
         for _ in 0..<3 { rig.host.refreshFirst60SetupStatus(); rig.pump() }
         XCTAssertTrue(rig.phone.isRunning); XCTAssertTrue(rig.host.isRunning)
         XCTAssertNil(rig.host.media); XCTAssertNil(rig.phone.media)
+        XCTAssertFalse(rig.host.mediaPreparationPending)
         ready = true
         rig.host.refreshFirst60SetupStatus(); rig.pump()
         XCTAssertNil(rig.phone.permissionWait)
@@ -269,9 +276,10 @@ final class ComparisonEnrollmentCoordinatorTests: XCTestCase {
         XCTAssertEqual(rig.phone.permissionWait?.stage, .screenRecording)
         _ = rig.host.revoke()
         XCTAssertNil(rig.host.permissionWait)
-        XCTAssertNil(rig.host.media)
+        XCTAssertNil(rig.host.media); XCTAssertFalse(rig.host.mediaPreparationPending)
         rig.host.refreshFirst60SetupStatus()
         XCTAssertNil(rig.host.media, "A stale grant after revoke cannot start a peer")
+        XCTAssertFalse(rig.host.mediaPreparationPending, "nor schedule one")
     }
 
     func testNewPhoneAndOldHostDoNotWaitForAnUnsupportedSetupMessage() async throws {

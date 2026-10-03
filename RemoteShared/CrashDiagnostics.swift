@@ -119,9 +119,13 @@ final class CrashDiagnosticStore {
     private let now: () -> Date
     private let lock = NSRecursiveLock()
 
+    /// Host and phone share Application Support only by accident of path; keep each bundle's reports apart.
+    static func directoryName(bundleIdentifier: String? = Bundle.main.bundleIdentifier) -> String {
+        "FarsideMetricKitDiagnostics-" + (bundleIdentifier ?? "default")
+    }
     init(directory: URL? = nil, now: @escaping () -> Date = Date.init) {
         self.directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("FarsideMetricKitDiagnostics", isDirectory: true)
+            .appendingPathComponent(Self.directoryName(), isDirectory: true)
         self.now = now
     }
     private func safeDirectory() -> Bool {
