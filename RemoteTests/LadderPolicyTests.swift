@@ -3,6 +3,100 @@ import XCTest
 /// G12 (Docs/perf/PLAN-120FPS-AND-LOAD.md §4): the ladder engine, the busy state and the host monitor
 /// that feeds them. Time is injected; one sample per second.
 final class LadderPolicyTests: XCTestCase {
+    func testCriticalThermalPausesImmediatelyAndResumesOnlyAfterTenCoolSeconds() {
+        var policy = CriticalThermalPausePolicy(enabled: true)
+        XCTAssertNil(policy.evaluate(thermalState: .serious, at: 0))
+        XCTAssertFalse(policy.isPaused)
+        XCTAssertEqual(policy.evaluate(thermalState: .critical, at: 0.4), .pause)
+        XCTAssertTrue(policy.isPaused)
+        XCTAssertNil(policy.evaluate(thermalState: .critical, at: 0.8), "pause is emitted once")
+        XCTAssertNil(policy.evaluate(thermalState: .nominal, at: 1.2))
+        for tick in 1..<25 {
+            XCTAssertNil(policy.evaluate(thermalState: tick.isMultiple(of: 2) ? .nominal : .fair,
+                                         at: 1.2 + Double(tick) * 0.4))
+            XCTAssertTrue(policy.isPaused)
+        }
+        XCTAssertEqual(policy.evaluate(thermalState: .fair, at: 11.2), .resume)
+        XCTAssertFalse(policy.isPaused)
+        XCTAssertNil(policy.evaluate(thermalState: .nominal, at: 11.6))
+        XCTAssertEqual(policy.evaluate(thermalState: .critical, at: 12), .pause,
+                       "a new critical episode must pause the fresh capture generation")
+    }
+
+    func testSeriousOrCriticalBreaksContinuousThermalRecovery() {
+        for hotState: ProcessInfo.ThermalState in [.serious, .critical] {
+            var policy = CriticalThermalPausePolicy(enabled: true)
+            XCTAssertEqual(policy.evaluate(thermalState: .critical, at: 0), .pause)
+            XCTAssertNil(policy.evaluate(thermalState: .nominal, at: 1))
+            XCTAssertNil(policy.evaluate(thermalState: hotState, at: 10.6))
+            XCTAssertNil(policy.evaluate(thermalState: .fair, at: 11))
+            XCTAssertNil(policy.evaluate(thermalState: .nominal, at: 20.6))
+            XCTAssertTrue(policy.isPaused)
+            XCTAssertEqual(policy.evaluate(thermalState: .nominal, at: 21), .resume)
+        }
+    }
+
+    func testThermalRecoveryRestartsAfterClockRegressionOrInvalidSampleTime() {
+        var policy = CriticalThermalPausePolicy(enabled: true)
+        XCTAssertEqual(policy.evaluate(thermalState: .critical, at: 0), .pause)
+        XCTAssertNil(policy.evaluate(thermalState: .fair, at: 10))
+        XCTAssertNil(policy.evaluate(thermalState: .nominal, at: 5))
+        XCTAssertNil(policy.evaluate(thermalState: .nominal, at: 14.6))
+        XCTAssertNil(policy.evaluate(thermalState: .nominal, at: .nan))
+        XCTAssertNil(policy.evaluate(thermalState: .nominal, at: 15))
+        XCTAssertNil(policy.evaluate(thermalState: .nominal, at: 24.6))
+        XCTAssertEqual(policy.evaluate(thermalState: .nominal, at: 25), .resume)
+    }
+
+    func testThermalPauseKillSwitchRestoresNoPauseBaseline() {
+        var policy = CriticalThermalPausePolicy(enabled: false)
+        for (time, state): (Double, ProcessInfo.ThermalState) in [(0, .critical), (0.4, .serious),
+                                                               (0.8, .nominal), (11, .fair)] {
+            XCTAssertNil(policy.evaluate(thermalState: state, at: time))
+            XCTAssertFalse(policy.isPaused)
+        }
+    }
+
+    func testTeardownGenerationFencesPermutedRecoverAndTeardownCompletions() {
+        var generation = AvailabilityTeardownGeneration(enabled: true)
+        let first = generation.beginTeardown()
+        XCTAssertTrue(generation.owns(first))
+        generation.recover()
+        XCTAssertFalse(generation.owns(first), "sleep completion cannot fence a recovered host")
+        let second = generation.beginTeardown()
+        XCTAssertFalse(generation.owns(first))
+        XCTAssertTrue(generation.owns(second), "the later sleep owns its completion")
+        let third = generation.beginTeardown()
+        XCTAssertFalse(generation.owns(second), "a repeated loss supersedes the older completion")
+        XCTAssertTrue(generation.owns(third))
+        generation.recover()
+        generation.recover()
+        XCTAssertFalse(generation.owns(third))
+    }
+
+    func testTeardownGenerationKillSwitchRestoresUnfencedBaseline() {
+        var generation = AvailabilityTeardownGeneration(enabled: false)
+        let first = generation.beginTeardown()
+        generation.recover()
+        let second = generation.beginTeardown()
+        XCTAssertTrue(generation.owns(first))
+        XCTAssertTrue(generation.owns(second))
+    }
+
+    func testHostCaptureSafetySwitchesDefaultOnAndResolveRollback() throws {
+        let suite = "HostCaptureSafetySwitchTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertTrue(CriticalThermalPausePolicy.resolveEnabled(defaults: defaults))
+        XCTAssertTrue(AvailabilityTeardownGeneration.resolveEnabled(defaults: defaults))
+        for disabled in [true, false] {
+            defaults.set(disabled, forKey: CriticalThermalPausePolicy.disabledDefaultsKey)
+            defaults.set(disabled, forKey: AvailabilityTeardownGeneration.disabledDefaultsKey)
+            XCTAssertEqual(CriticalThermalPausePolicy.resolveEnabled(defaults: defaults), !disabled)
+            XCTAssertEqual(AvailabilityTeardownGeneration.resolveEnabled(defaults: defaults), !disabled)
+        }
+    }
+
     /// Clean at every rung of a 120 fps ladder: the encoder keeps up, 3 ms latency, capture on time.
     private func calm(targetFPS: Int = 120) -> LadderInputs {
         LadderInputs(targetFPS: targetFPS, captureFPS: Double(targetFPS), captureLatencyP90Ms: 1,

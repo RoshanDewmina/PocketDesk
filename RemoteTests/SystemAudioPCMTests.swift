@@ -3,6 +3,71 @@ import AVFoundation
 import CoreMedia
 
 final class SystemAudioPCMTests: XCTestCase {
+    func testAudioQueueSplitAndRollbackSelectExpectedQueue() {
+        let capture = DispatchQueue(label: "audio-test.capture-owner")
+        let split = CaptureAudioQueue(captureQueue: capture, splitEnabled: true)
+        let rollback = CaptureAudioQueue(captureQueue: capture, splitEnabled: false)
+        XCTAssertFalse(split.queue === capture)
+        XCTAssertTrue(rollback.queue === capture, "Rollback uses the original screen callback queue")
+        for owner in [split, rollback] {
+            owner.sync { owner.sync {} } // Fencing on the owner queue must not deadlock.
+        }
+    }
+
+    func testSplitAudioWorkDoesNotWaitForCaptureQueue() {
+        let capture = DispatchQueue(label: "audio-test.blocked-capture")
+        let owner = CaptureAudioQueue(captureQueue: capture, splitEnabled: true)
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        capture.async { entered.signal(); release.wait() }
+        XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+        defer { release.signal(); capture.sync {} }
+        let audio = expectation(description: "Audio remains independent of picture work")
+        owner.queue.async { audio.fulfill() }
+        wait(for: [audio], timeout: 2)
+    }
+
+    func testAudioFenceRejectsLatePCMInBothQueueModes() {
+        for splitEnabled in [true, false] {
+            let owner = CaptureAudioQueue(captureQueue: DispatchQueue(label: "audio-test.fence"), splitEnabled: splitEnabled)
+            var admission = CaptureAudioAdmission()
+            var ended: [UInt64] = []
+            owner.sync {
+                admission.configure(capturesAudio: true, allowed: true, begin: { 7 }, end: { ended.append($0) })
+                XCTAssertEqual(admission.admittedEpoch(consent: true), 7)
+            }
+            owner.sync { admission.retire(end: { ended.append($0) }) }
+            owner.sync {
+                XCTAssertNil(admission.admittedEpoch(consent: true), "Queued PCM cannot reuse the retired epoch")
+                XCTAssertEqual(ended, [7])
+                admission.configure(capturesAudio: true, allowed: false, begin: { XCTFail("Stale completion cannot arm after Listen-off"); return 8 }, end: { ended.append($0) })
+                XCTAssertNil(admission.admittedEpoch(consent: false))
+                admission.configure(capturesAudio: true, allowed: true, begin: { 9 }, end: { ended.append($0) })
+                XCTAssertEqual(admission.admittedEpoch(consent: true), 9)
+                XCTAssertNil(admission.admittedEpoch(consent: false), "Live peer consent is checked for every callback")
+                admission.configure(capturesAudio: false, allowed: true, begin: { 10 }, end: { ended.append($0) })
+                XCTAssertNil(admission.admittedEpoch(consent: true))
+                XCTAssertEqual(ended, [7, 9])
+                admission.retire(terminal: true, end: { ended.append($0) })
+                admission.configure(capturesAudio: true, allowed: true, begin: { XCTFail("Stop/scope fence cannot be rearmed by a late completion"); return 11 }, end: { ended.append($0) })
+                XCTAssertNil(admission.admittedEpoch(consent: true))
+            }
+        }
+    }
+
+    func testAudioFenceWaitsForAnInProgressCallbackInBothQueueModes() {
+        for splitEnabled in [true, false] {
+            let owner = CaptureAudioQueue(captureQueue: DispatchQueue(label: "audio-test.in-progress"), splitEnabled: splitEnabled)
+            let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+            let fenced = DispatchSemaphore(value: 0)
+            owner.queue.async { entered.signal(); release.wait() }
+            XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+            DispatchQueue.global().async { owner.sync {}; fenced.signal() }
+            XCTAssertEqual(fenced.wait(timeout: .now()), .timedOut, "Fence cannot return while an audio callback is running")
+            release.signal()
+            XCTAssertEqual(fenced.wait(timeout: .now() + 2), .success)
+        }
+    }
+
     private func sample(rate: Double, frames: Int, pts: Double, value: Float = 0.25) throws -> CMSampleBuffer {
         let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: 2, interleaved: true))
         let pcm = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)))

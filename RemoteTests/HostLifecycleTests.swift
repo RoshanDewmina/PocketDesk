@@ -1,8 +1,102 @@
 import XCTest
 import AppKit
 import ScreenCaptureKit
+import CoreVideo
 
 final class HostLifecycleTests: XCTestCase {
+    func testMac26StillWitnessLeaseAndRollback() {
+        var health = CaptureHealthState()
+        health.observe(.idle, at: 0)
+        for tick in 1...75 {
+            let now = Double(tick) * 0.4
+            XCTAssertTrue(health.isHealthy(at: now, streamCapturing: nil, stillWitnessAt: now - 0.1),
+                          "A fresh independent screenshot keeps a 30 s still source live on macOS 26")
+        }
+        XCTAssertFalse(health.isHealthy(at: 30, streamCapturing: nil, stillWitnessAt: 29.9, stillWitnessEnabled: false))
+        XCTAssertFalse(health.isHealthy(at: 31.5, streamCapturing: nil, stillWitnessAt: 30), "A stalled witness expires")
+        XCTAssertFalse(health.isHealthy(at: 30, streamCapturing: false, stillWitnessAt: 29.9))
+        health.observe(.stopped, at: 30)
+        XCTAssertFalse(health.isHealthy(at: 30.1, streamCapturing: nil, stillWitnessAt: 30))
+    }
+
+    func testStillWitnessBoundsPendingWorkAndRejectsOldGeometryOrLateCompletion() {
+        var witness = CaptureStillWitness()
+        let first = witness.begin(at: 0)!
+        XCTAssertNil(witness.begin(at: 10), "A stuck screenshot never accumulates more calls")
+        witness.invalidate()
+        XCTAssertFalse(witness.finish(first, requestedAt: 0, at: 10, succeeded: true))
+        XCTAssertNil(witness.completedAt)
+        let next = witness.begin(at: 10)!
+        XCTAssertTrue(witness.finish(next, requestedAt: 10, at: 10.1, succeeded: true))
+        XCTAssertEqual(witness.completedAt, 10, "Callback latency spends the source freshness lease")
+        XCTAssertNil(witness.begin(at: 10.5))
+        let late = witness.begin(at: 11)!
+        XCTAssertFalse(witness.finish(late, requestedAt: 11, at: 13, succeeded: true))
+        XCTAssertNil(witness.completedAt)
+        let failed = witness.begin(at: 14)!
+        XCTAssertFalse(witness.finish(failed, requestedAt: 14, at: 14.1, succeeded: false))
+    }
+
+    func testStillContentWitnessNeedsLiveBaselineAndDetectsTypingInAnUnmovedWindow() {
+        var content = CaptureStillContentWitness()
+        let still = Data([1, 2, 3]), typed = Data([1, 2, 4])
+        XCTAssertFalse(content.observe(still, sourceFresh: false), "A first silent screenshot is not proof of the old picture")
+        XCTAssertFalse(content.observe(still, sourceFresh: true, sourceTicks: 100), "A screenshot must await later real idle source time")
+        content.confirmIdle(sourceTicks: 0)
+        content.confirmIdle(sourceTicks: 99)
+        XCTAssertFalse(content.observe(still, sourceFresh: false))
+        content.confirmIdle(sourceTicks: 101)
+        for _ in 0..<40 { XCTAssertTrue(content.observe(still, sourceFresh: false)) }
+        XCTAssertFalse(content.observe(typed, sourceFresh: false), "Typing changes content without moving a window")
+        XCTAssertFalse(content.observe(nil, sourceFresh: false))
+        XCTAssertFalse(content.observe(typed, sourceFresh: true, sourceTicks: 200))
+        content.confirmIdle(sourceTicks: 201)
+        XCTAssertTrue(content.observe(typed, sourceFresh: false))
+        var health = CaptureHealthState()
+        health.observe(.idle, at: 0)
+        health.witnessContentChanged()
+        XCTAssertFalse(health.isHealthy(at: 2, streamCapturing: nil, stillWitnessAt: 1.9))
+        health.observe(.complete, at: 2.1)
+        XCTAssertTrue(health.isHealthy(at: 2.1, streamCapturing: nil))
+    }
+
+    func testStillWitnessCandidateDefaultsOffAndBothExplicitSwitchStates() throws {
+        let name = "still-witness.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        XCTAssertFalse(CaptureStillWitness.resolveEnabled(defaults: defaults))
+        for disabled in [false, true] {
+            defaults.set(disabled, forKey: CaptureStillWitness.disabledDefaultsKey)
+            XCTAssertEqual(CaptureStillWitness.resolveEnabled(defaults: defaults), !disabled)
+        }
+    }
+
+    func testStillContentSignatureDetectsOnePixelAndChromaChanges() throws {
+        for format in [kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange] {
+            var result: CVPixelBuffer?
+            XCTAssertEqual(CVPixelBufferCreate(nil, 32, 32, format, nil, &result), kCVReturnSuccess)
+            let buffer = try XCTUnwrap(result)
+            CVPixelBufferLockBaseAddress(buffer, [])
+            let planes = CVPixelBufferGetPlaneCount(buffer)
+            if planes == 0 {
+                memset(CVPixelBufferGetBaseAddress(buffer), 80, CVPixelBufferGetBytesPerRow(buffer) * 32)
+            } else {
+                for plane in 0..<planes {
+                    memset(CVPixelBufferGetBaseAddressOfPlane(buffer, plane), 80,
+                           CVPixelBufferGetBytesPerRowOfPlane(buffer, plane) * CVPixelBufferGetHeightOfPlane(buffer, plane))
+                }
+            }
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            let before = try XCTUnwrap(CaptureStillContentWitness.signature(buffer))
+            CVPixelBufferLockBaseAddress(buffer, [])
+            let base = try XCTUnwrap(planes == 0 ? CVPixelBufferGetBaseAddress(buffer) : CVPixelBufferGetBaseAddressOfPlane(buffer, 1))
+            base.assumingMemoryBound(to: UInt8.self)[7] = 81
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            XCTAssertNotEqual(CaptureStillContentWitness.signature(buffer), before,
+                              "All color channels count, even a single chroma byte or glyph pixel")
+        }
+    }
+
     func testFirstNewResolutionFrameBeforeCompletionCanRefreshAnIdleDesktop() {
         let before = region(width: 2560, height: 1656)
         let after = region(width: 1920, height: 1232)
