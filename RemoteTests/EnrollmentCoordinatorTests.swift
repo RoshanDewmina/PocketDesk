@@ -435,6 +435,7 @@ final class ComparisonEnrollmentCoordinatorTests: XCTestCase {
         let accepted = ProtectedMessage(kind: "accepted", request: requestMessage.request, session: session, sequence: 1, body: nil)
         return (phone, store, signal, derived, accepted, saved)
     }
+
     func testNewEnrollmentNegotiatesShortcutIdentityOnlyAfterConfirmedProof() throws {
         let rig = try ComparisonEnrollmentRig(); defer { rig.stop() }
         try rig.beginRequestOnly()
