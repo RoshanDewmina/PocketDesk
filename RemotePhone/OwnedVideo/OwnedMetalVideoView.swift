@@ -1,5 +1,6 @@
 import MetalKit
 import WebRTC
+import os
 
 /// Public drawable ownership. The fallback is public WebRTC rendering with timing unavailable.
 final class OwnedMetalVideoView: UIView, MTKViewDelegate {
@@ -25,6 +26,20 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     private let commandQueue: MTLCommandQueue?
     private var cache: CVMetalTextureCache?
     private var pipelines: [Bool: MTLRenderPipelineState] = [:]
+    private let precompiledShaders: Bool
+    private var backingPolicy: OwnedVideoBackingPolicy
+    weak var renderDiagnostics: SmoothMotionDiagnostics? {
+        didSet {
+            guard let renderDiagnostics, renderDiagnostics !== oldValue else { return }
+            // First direct-source prompt draws precede the scheduled motion tick that attaches
+            // diagnostics. Preserve their waits/fallbacks rather than hiding first-picture work.
+            renderDiagnostics.adoptDrawableWaits(drawableWaits, fallbackCreations: fallbackCreationCount)
+        }
+    }
+    private var drawableWaits = SampleRing(capacity: 1024)
+    private var lastDrawableLog: TimeInterval = 0
+    private(set) var fallbackCreationCount = 0
+    private static let renderLogger = Logger(subsystem: "com.roshan.PocketDesk", category: "phone-render")
     private var fallback: RTCMTLVideoView?
     private let wakeLock = NSLock()
     private var wakeScheduled = false
@@ -43,14 +58,20 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     private var drawingPromptSource = false // Main-thread coalesced wake only.
     private var stamp: Int64 = 0
     private(set) var timingAvailable = false
-    var renderOptimizations: (unfencedDrawable: Bool, promptSourceDraw: Bool) {
-        (unfencedPreparation, immediateSourceDraw)
+    var renderOptimizations: (unfencedDrawable: Bool, promptSourceDraw: Bool, singleResample: Bool, precompiledShaders: Bool) {
+        (unfencedPreparation, immediateSourceDraw, backingPolicy.enabled, precompiledShaders)
+    }
+    func observesPresentation(isNew: Bool) -> Bool {
+        isNew || unfencedPreparation || backingPolicy.enabled
     }
 
     init(admission: VideoPresentationAdmission, fence: VideoPresentationFence, defaults: UserDefaults = .standard) {
         self.fence = fence; identity = admission.identity
         unfencedPreparation = !defaults.bool(forKey: "phoneUnfencedDrawableDisabled")
         immediateSourceDraw = !defaults.bool(forKey: "phoneImmediateSourceDrawDisabled")
+        // Picture/feel candidates remain opt-in until Roshan's exact-device A/B.
+        backingPolicy = OwnedVideoBackingPolicy(enabled: defaults.bool(forKey: "PocketDeskSingleResample"))
+        precompiledShaders = defaults.bool(forKey: "PocketDeskPrecompiledShaders")
         let device = MTLCreateSystemDefaultDevice()
         metal = MTKView(frame: .zero, device: device)
         commandQueue = device?.makeCommandQueue()
@@ -75,16 +96,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         addSubview(metal); metal.delegate = self
         if let device {
             CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache)
-            do {
-                let library = try device.makeLibrary(source: Self.shader, options: nil)
-                for bgra in [false, true] {
-                    let descriptor = MTLRenderPipelineDescriptor()
-                    descriptor.vertexFunction = library.makeFunction(name: "vertexPicture")
-                    descriptor.fragmentFunction = library.makeFunction(name: bgra ? "fragmentBGRA" : "fragmentNV12")
-                    descriptor.colorAttachments[0].pixelFormat = metal.colorPixelFormat
-                    pipelines[bgra] = try device.makeRenderPipelineState(descriptor: descriptor)
-                }
-            } catch { pipelines.removeAll() }
+            pipelines = Self.makePipelines(device: device, format: metal.colorPixelFormat, precompiled: precompiledShaders)
         }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -188,12 +200,17 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     }
     private func drawAdmitted(in view: MTKView) {
         guard let submission = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, {
-            mailbox.take(redraw: redraw, holdUntilPresented: unfencedPreparation)
+            mailbox.take(redraw: redraw, holdUntilPresented: unfencedPreparation || backingPolicy.enabled)
         }) ?? nil else { return }
         let envelope = submission.frame
         guard let geometry = envelope.geometry else { mailbox.completed(submission.id); invalidate(); return }
-        let backing = Self.backingSize(picture: geometry.displaySize,
-                                       current: view.drawableSize == CGSize(width: 1, height: 1) ? nil : view.drawableSize)
+        guard let backing = backingPolicy.target(picture: geometry.displaySize,
+                current: view.drawableSize == CGSize(width: 1, height: 1) ? nil : view.drawableSize,
+                at: ProcessInfo.processInfo.systemUptime, drained: mailbox.isOnlyFlight(submission.id)) else {
+            mailbox.requeue(submission.id, frame: envelope, wasNew: submission.isNew)
+            redraw = true
+            return
+        }
         if view.drawableSize != backing { view.drawableSize = backing }
         guard let pixels = envelope.pixels, let pipeline = pipelines[pixels.bgra], let cache,
               let command = commandQueue?.makeCommandBuffer() else {
@@ -204,7 +221,17 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         }
         let acquisitionStartMs = MachClock.nowMs()
         let acquired = drawableAcquirer(view)
-        counters?.phoneRenderTiming(.drawableAcquire, milliseconds: MachClock.nowMs() - acquisitionStartMs)
+        let acquireMs = MachClock.nowMs() - acquisitionStartMs
+        counters?.phoneRenderTiming(.drawableAcquire, milliseconds: acquireMs)
+        drawableWaits.record(acquireMs)
+        renderDiagnostics?.drawableAcquisition(ms: acquireMs)
+        let logAt = ProcessInfo.processInfo.systemUptime
+        if logAt - lastDrawableLog >= 10 {
+            lastDrawableLog = logAt
+            let p50 = drawableWaits.percentile(0.5) ?? 0, p95 = drawableWaits.percentile(0.95) ?? 0
+            let maximum = drawableWaits.percentile(1) ?? 0
+            Self.renderLogger.notice("drawable wait p50 \(p50, privacy: .public) p95 \(p95, privacy: .public) max \(maximum, privacy: .public) ms n \(self.drawableWaits.count, privacy: .public) · fallback creations \(self.fallbackCreationCount, privacy: .public)")
+        }
         guard let (descriptor, drawable) = acquired else {
             // Both drawables in flight, or a resize in progress: keep the last picture on screen and
             // retry the same frame next tick rather than covering it with the black fallback view.
@@ -274,7 +301,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4); encoder.endEncoding()
         // Capture this drawable's exact envelope, not whichever frame is newest at callback time.
         #if !targetEnvironment(simulator)
-        if submission.isNew || unfencedPreparation {
+        if observesPresentation(isNew: submission.isNew) {
             let callback = onOriginalSourcePresented // Short admission snapshot, no layer access under it.
             let receipt = submission.isNew ? presentedReceipt(envelope, callback: callback) : nil
             let mailbox = mailbox, id = submission.id
@@ -285,7 +312,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             }
         }
         #endif
-        let holdUntilPresented = unfencedPreparation
+        let holdUntilPresented = unfencedPreparation || backingPolicy.enabled
         command.addCompletedHandler { [mailbox, wrappers, envelope, refinementPixels] completed in
             withExtendedLifetime((wrappers, envelope, refinementPixels)) {
                 #if targetEnvironment(simulator)
@@ -348,6 +375,8 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         }
         if fallback == nil {
             let view = RTCMTLVideoView(frame: bounds); addSubview(view); fallback = view
+            fallbackCreationCount += 1
+            renderDiagnostics?.rendererFallbackCreated()
         }
         fallback?.isHidden = false
         fallback?.videoContentMode = fillsFrame ? .scaleToFill : .scaleAspectFit
@@ -358,6 +387,33 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     private struct Uniforms {
         var extent: SIMD2<Float>; var rotation: Int32; var bgra: Int32
         var crop: SIMD4<Float>; var color: SIMD4<Float>; var range: SIMD4<Float>
+    }
+    private struct PipelineKey: Hashable { let device: UInt64; let format: UInt }
+    private static let pipelineLock = NSLock()
+    private static var pipelineCache: [PipelineKey: [Bool: MTLRenderPipelineState]] = [:]
+    private(set) static var precompiledPipelineBuilds = 0
+    private static func makePipelines(device: MTLDevice, format: MTLPixelFormat, precompiled: Bool) -> [Bool: MTLRenderPipelineState] {
+        let key = PipelineKey(device: device.registryID, format: format.rawValue)
+        // Cache only the opt-in path; NO retains the original per-renderer runtime compilation.
+        pipelineLock.lock(); defer { pipelineLock.unlock() }
+        if precompiled, let cached = pipelineCache[key] { return cached }
+        do {
+            let library: MTLLibrary
+            if precompiled {
+                guard let compiled = device.makeDefaultLibrary() else { return [:] }
+                library = compiled
+            } else { library = try device.makeLibrary(source: shader, options: nil) }
+            var made: [Bool: MTLRenderPipelineState] = [:]
+            for bgra in [false, true] {
+                let descriptor = MTLRenderPipelineDescriptor()
+                descriptor.vertexFunction = library.makeFunction(name: "vertexPicture")
+                descriptor.fragmentFunction = library.makeFunction(name: bgra ? "fragmentBGRA" : "fragmentNV12")
+                descriptor.colorAttachments[0].pixelFormat = format
+                made[bgra] = try device.makeRenderPipelineState(descriptor: descriptor)
+            }
+            if precompiled { pipelineCache[key] = made; precompiledPipelineBuilds += 1 }
+            return made
+        } catch { return [:] }
     }
     static let shader = """
     #include <metal_stdlib>
@@ -403,4 +459,30 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         return float4(refined(displayEncoded(image.sample(s,t).rgb,u),v.uv,r,refinement),1);
     }
     """
+}
+
+/// Preserve the legacy ratchet during transient rung/crop changes. An opt-in stable downshift
+/// removes the intermediate upscale only after previous GPU AND presentation owners drain.
+struct OwnedVideoBackingPolicy {
+    let enabled: Bool
+    private var candidate: CGSize?
+    private var candidateSince: TimeInterval = 0
+    static let settleSeconds: TimeInterval = 2
+
+    init(enabled: Bool) { self.enabled = enabled }
+
+    mutating func target(picture: CGSize, current: CGSize?, at now: TimeInterval, drained: Bool) -> CGSize? {
+        let legacy = OwnedMetalVideoView.backingSize(picture: picture, current: current)
+        guard enabled else { return legacy }
+        guard now.isFinite, picture.width > 0, picture.height > 0,
+              picture.width.isFinite, picture.height.isFinite else { return legacy }
+        if picture != candidate { candidate = picture; candidateSince = now }
+        var target = legacy
+        let exact = OwnedMetalVideoView.backingSize(picture: picture, current: nil)
+        if now - candidateSince >= Self.settleSeconds { target = exact }
+        // Pinch/placement never enters this decision. A geometry swap waits instead of replacing
+        // an occupied surface or drawing a new capture region into old geometry.
+        if let current, target != current, !drained { return nil }
+        return target
+    }
 }

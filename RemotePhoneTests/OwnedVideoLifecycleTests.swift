@@ -6,6 +6,229 @@ import XCTest
 @testable import PocketDeskRemote
 
 final class OwnedVideoLifecycleTests: XCTestCase {
+    func testSettledBackingPolicyHonorsRollbackAndBothOwnershipEdges() {
+        let big = CGSize(width: 2560, height: 1600), small = CGSize(width: 1920, height: 1200)
+        var enabled = OwnedVideoBackingPolicy(enabled: true)
+        XCTAssertEqual(enabled.target(picture: small, current: big, at: 10, drained: false), big)
+        XCTAssertEqual(enabled.target(picture: small, current: big, at: 11.99, drained: true), big)
+        XCTAssertNil(enabled.target(picture: small, current: big, at: 12, drained: false))
+        XCTAssertEqual(enabled.target(picture: small, current: big, at: 12, drained: true), small)
+        XCTAssertEqual(enabled.target(picture: small, current: small, at: 20, drained: false), small)
+        let grown = CGSize(width: 3000, height: 1875)
+        XCTAssertNil(enabled.target(picture: grown, current: small, at: 21, drained: false))
+        XCTAssertEqual(enabled.target(picture: grown, current: small, at: 21, drained: true), grown)
+        var disabled = OwnedVideoBackingPolicy(enabled: false)
+        for time in [0.0, 2.0, 30.0] {
+            XCTAssertEqual(disabled.target(picture: small, current: big, at: time, drained: false), big)
+        }
+        XCTAssertEqual(disabled.target(picture: grown, current: small, at: 30, drained: false), grown)
+    }
+
+    func testBackingWobbleRestartsSettleAndRotationsStillUseExactAspect() {
+        var policy = OwnedVideoBackingPolicy(enabled: true)
+        let big = CGSize(width: 2560, height: 1600), small = CGSize(width: 1920, height: 1200)
+        XCTAssertEqual(policy.target(picture: small, current: big, at: 10, drained: true), big)
+        _ = policy.target(picture: CGSize(width: 1920, height: 1202), current: big, at: 11.9, drained: true)
+        XCTAssertEqual(policy.target(picture: small, current: big, at: 12, drained: true), big)
+        XCTAssertEqual(policy.target(picture: small, current: big, at: 14, drained: true), small)
+        let rotated = CGSize(width: 1200, height: 1920)
+        XCTAssertNil(policy.target(picture: rotated, current: small, at: 15, drained: false))
+        XCTAssertEqual(policy.target(picture: rotated, current: small, at: 15, drained: true), rotated)
+    }
+
+    func testGeometrySwapWaitsForGPUAndPresentationInEitherOrder() throws {
+        for gpuFirst in [true, false] {
+            let box = NewestFrameMailbox<Int>()
+            box.offer(1); let a = try XCTUnwrap(box.take(holdUntilPresented: true))
+            box.offer(2); let b = try XCTUnwrap(box.take(holdUntilPresented: true))
+            XCTAssertFalse(box.isOnlyFlight(b.id))
+            if gpuFirst { box.gpuCompleted(a.id) } else { box.presented(a.id) }
+            XCTAssertFalse(box.isOnlyFlight(b.id))
+            if gpuFirst { box.presented(a.id) } else { box.gpuCompleted(a.id) }
+            XCTAssertTrue(box.isOnlyFlight(b.id))
+            box.invalidate(); XCTAssertFalse(box.isOnlyFlight(b.id))
+        }
+    }
+
+    @MainActor
+    func testPictureCandidatesDefaultOffAndPrecompiledPipelinesReuseDeviceCache() throws {
+        let name = "OwnedVideoCandidates." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let admission = VideoPresentationAdmission(identity: identity(), validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        func make() -> OwnedMetalVideoView {
+            OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission), defaults: defaults)
+        }
+        let legacy = make(); defer { legacy.invalidate() }
+        XCTAssertFalse(legacy.renderOptimizations.singleResample)
+        XCTAssertFalse(legacy.renderOptimizations.precompiledShaders)
+        defaults.set(true, forKey: "PocketDeskSingleResample")
+        defaults.set(true, forKey: "PocketDeskPrecompiledShaders")
+        let first = make(); defer { first.invalidate() }
+        XCTAssertTrue(first.renderOptimizations.singleResample)
+        XCTAssertTrue(first.renderOptimizations.precompiledShaders)
+        XCTAssertFalse(legacy.renderOptimizations.singleResample, "the registered renderer's switches are immutable")
+        let builds = OwnedMetalVideoView.precompiledPipelineBuilds
+        XCTAssertGreaterThan(builds, 0, "the compiled library/pipelines must be available in the app bundle")
+        let second = make(); defer { second.invalidate() }
+        XCTAssertEqual(OwnedMetalVideoView.precompiledPipelineBuilds, builds)
+        defaults.set(false, forKey: "PocketDeskSingleResample")
+        defaults.set(false, forKey: "PocketDeskPrecompiledShaders")
+        let restored = make(); defer { restored.invalidate() }
+        XCTAssertFalse(restored.renderOptimizations.singleResample)
+        XCTAssertFalse(restored.renderOptimizations.precompiledShaders)
+    }
+
+    @MainActor
+    func testSingleResampleTracksRedrawPresentationWithLegacyFenceSwitch() throws {
+        let name = "OwnedVideoMixedRollback." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set(true, forKey: "phoneUnfencedDrawableDisabled")
+        for singleResample in [false, true] {
+            defaults.set(singleResample, forKey: "PocketDeskSingleResample")
+            let admission = VideoPresentationAdmission(identity: identity(), validUntil: ProcessInfo.processInfo.systemUptime + 100)
+            let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission), defaults: defaults)
+            XCTAssertTrue(view.observesPresentation(isNew: true))
+            XCTAssertEqual(view.observesPresentation(isNew: false), singleResample,
+                "every retained presentation flight, including a resize redraw, needs its own release callback")
+            view.invalidate()
+        }
+    }
+
+    func testDrawableWaitDiagnosticsAreBoundedAndReportTailsAndFallbackCreations() {
+        let diagnostics = SmoothMotionDiagnostics()
+        for i in 1...100 { diagnostics.drawableAcquisition(ms: Double(i)) }
+        diagnostics.drawableAcquisition(ms: .nan)
+        diagnostics.drawableAcquisition(ms: -1)
+        diagnostics.rendererFallbackCreated()
+        var result = diagnostics.snapshot()
+        XCTAssertEqual(result.drawableWaitSamples, 100)
+        XCTAssertEqual(result.drawableWaitP50Ms, 50)
+        XCTAssertEqual(result.drawableWaitP95Ms, 95)
+        XCTAssertEqual(result.drawableWaitMaxMs, 100)
+        XCTAssertEqual(result.rendererFallbackCreations, 1)
+        XCTAssertTrue(result.settingsLines.contains { $0.contains("Drawable wait:") && $0.contains("max 100.0 ms") })
+        for _ in 0..<(SmoothMotionDiagnostics.sampleCapacity * 2) { diagnostics.drawableAcquisition(ms: 3) }
+        result = diagnostics.snapshot()
+        XCTAssertEqual(result.drawableWaitSamples, SmoothMotionDiagnostics.sampleCapacity)
+        XCTAssertEqual(result.drawableWaitMaxMs, 3)
+        diagnostics.reset(mode: .off)
+        XCTAssertNil(diagnostics.snapshot().drawableWaitMaxMs)
+        XCTAssertEqual(diagnostics.snapshot().rendererFallbackCreations, 0)
+    }
+
+    @MainActor
+    func testDiagnosticsAttachmentIncludesFirstSourcePromptWaitAndFallback() throws {
+        let id = identity()
+        let admission = VideoPresentationAdmission(identity: id, validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission))
+        defer { view.invalidate() }
+        view.drawRequester = { _ in }
+        view.drawableAcquirer = { _ in nil }
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 64, 64, kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+        let buffer = try XCTUnwrap(pixels)
+        CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+        func offer() {
+            view.offer(VideoFrameEnvelope(receiptID: UUID(), identity: id,
+                frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: 1),
+                arrivalMs: 1, marker: nil, originalSource: true, promptDraw: true))
+            view.draw(in: view.metal)
+        }
+        offer() // No scheduled display tick/diagnostics attachment yet.
+        CVBufferRemoveAttachment(buffer, kCVImageBufferTransferFunctionKey)
+        offer() // Unsupported output color creates the compatibility view before attachment.
+        XCTAssertEqual(view.fallbackCreationCount, 1)
+        let diagnostics = SmoothMotionDiagnostics()
+        view.renderDiagnostics = diagnostics
+        XCTAssertEqual(diagnostics.snapshot().drawableWaitSamples, 1)
+        XCTAssertEqual(diagnostics.snapshot().rendererFallbackCreations, 1)
+        view.renderDiagnostics = diagnostics
+        XCTAssertEqual(diagnostics.snapshot().drawableWaitSamples, 1, "repeated tick attachment cannot double count")
+    }
+    @MainActor
+    func testOptInSingleResampleSettlesDownshiftWithoutChangingPinchBacking() throws {
+        let name = "OwnedVideoSingleResample." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set(true, forKey: "PocketDeskSingleResample")
+        let id = identity()
+        let admission = VideoPresentationAdmission(identity: id, validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission), defaults: defaults)
+        defer { view.invalidate() }
+        // A nil drawable is a resize/pressure retry, never permission to insert a black view.
+        view.drawableAcquirer = { _ in nil }
+        func offer(_ width: Int, _ height: Int) throws {
+            var pixels: CVPixelBuffer?
+            XCTAssertEqual(CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA,
+                [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+            let buffer = try XCTUnwrap(pixels)
+            CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+            CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+            view.offer(VideoFrameEnvelope(receiptID: UUID(), identity: id,
+                frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: 1),
+                arrivalMs: 1, marker: nil, originalSource: true))
+            view.draw(in: view.metal)
+        }
+        try offer(256, 160)
+        try offer(192, 120)
+        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 256, height: 160), "transient changes retain backing")
+        RunLoop.current.run(until: Date().addingTimeInterval(2.05))
+        try offer(192, 120)
+        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 192, height: 120), "stable downshift eliminates decoded→larger drawable resampling")
+        view.frame = CGRect(x: 0, y: 0, width: 1200, height: 750)
+        view.setNeedsLayout(); view.layoutIfNeeded(); view.draw(in: view.metal)
+        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 192, height: 120), "pinch changes placement only")
+    }
+
+    @MainActor
+    func testOptInDownshiftAndRotationSubmitEveryGeometryWithoutFallbackOnBothShaderPaths() throws {
+        for compiled in [false, true] {
+            let name = "OwnedVideoResizeDraw." + UUID().uuidString
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+            defer { defaults.removePersistentDomain(forName: name) }
+            defaults.set(true, forKey: "PocketDeskSingleResample")
+            defaults.set(compiled, forKey: "PocketDeskPrecompiledShaders")
+            let id = identity()
+            let admission = VideoPresentationAdmission(identity: id, validUntil: ProcessInfo.processInfo.systemUptime + 100)
+            let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission), defaults: defaults)
+            defer { view.invalidate() }
+            view.frame = CGRect(x: 0, y: 0, width: 320, height: 200)
+            view.setNeedsLayout(); view.layoutIfNeeded()
+            view.drawRequester = { _ in } // Drive the production draw path deterministically.
+            func submit(_ width: Int, _ height: Int) throws {
+                var pixels: CVPixelBuffer?
+                XCTAssertEqual(CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA,
+                    [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+                let buffer = try XCTUnwrap(pixels)
+                CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+                CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+                let before = view.drawsPresented
+                view.offer(VideoFrameEnvelope(receiptID: UUID(), identity: id,
+                    frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: Int64(before + 1)),
+                    arrivalMs: 1, marker: nil, originalSource: true))
+                for _ in 0..<200 {
+                    view.draw(in: view.metal)
+                    if view.drawsPresented > before { break }
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.005))
+                }
+                XCTAssertEqual(view.drawsPresented, before + 1, "every geometry submits a picture, compiled=\(compiled)")
+            }
+            try submit(256, 160)
+            try submit(192, 120)
+            XCTAssertEqual(view.metal.drawableSize, CGSize(width: 256, height: 160))
+            RunLoop.current.run(until: Date().addingTimeInterval(2.05))
+            try submit(192, 120)
+            XCTAssertEqual(view.metal.drawableSize, CGSize(width: 192, height: 120))
+            try submit(120, 192)
+            XCTAssertEqual(view.metal.drawableSize, CGSize(width: 120, height: 192))
+            XCTAssertEqual(view.fallbackCreationCount, 0)
+            // Command submissions and simulator GPU completion cannot prove physical no-blank presentation.
+        }
+    }
     @MainActor
     func testDrawablePixelsFollowOwnedCropAndRotationAcrossPinchLayoutsAndRetirement() throws {
         let id = identity()

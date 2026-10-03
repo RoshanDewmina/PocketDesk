@@ -50,11 +50,63 @@ enum SmoothMotionHint: Equatable {
 enum SmoothMotionBlock: String, Equatable {
     case unsupported = "not supported"
     case display = "display under 120 Hz"
+    case lowPower = "Low Power Mode"
     case thermal = "thermal"
     case behind = "falling behind"
     case failed = "errors"
     case format = "picture format"
     case size = "picture too large"
+}
+
+/// Observed scheduled draw timestamps, never the panel maximum or the requested frame rate.
+/// A slow run bypasses after one second. Recovery needs a full second below 9.5 ms, so
+/// cadence near the 10 ms cutoff cannot repeatedly switch interpolation on and off.
+struct SmoothMotionDisplayCadence {
+    static let slowInterval: TimeInterval = 0.010
+    static let recoveryInterval: TimeInterval = 0.0095
+    static let hold: TimeInterval = 1
+    private(set) var permitsInterpolation = false
+    private(set) var interval: TimeInterval?
+    private var lastTick: TimeInterval?
+    private var slowSince: TimeInterval?
+    private var fastSince: TimeInterval?
+
+    mutating func observe(at now: TimeInterval) {
+        guard now.isFinite else { return }
+        defer { lastTick = now }
+        guard let lastTick else { return }
+        let elapsed = now - lastTick
+        guard elapsed > 0, elapsed < 0.25 else {
+            // Idle/background gaps are not a second of slow display evidence. Fresh callbacks
+            // must establish cadence again before interpolating a resumed stream.
+            self = Self()
+            return
+        }
+        interval = elapsed
+        if elapsed > Self.slowInterval {
+            fastSince = nil
+            if slowSince == nil { slowSince = lastTick }
+            if now - (slowSince ?? now) >= Self.hold { permitsInterpolation = false }
+        } else {
+            slowSince = nil
+            if elapsed <= Self.recoveryInterval {
+                if fastSince == nil { fastSince = lastTick }
+                if now - (fastSince ?? now) >= Self.hold { permitsInterpolation = true }
+            } else {
+                fastSince = nil
+            }
+        }
+    }
+}
+
+enum InterpolationLPMBypassSwitch {
+    static let defaultsKey = "PocketDeskInterpolationLPMBypass"
+    /// Process-start A/B. NO restores maximum/request-based eligibility and ignores LPM.
+    static let isOn = read(defaults: .standard)
+
+    static func read(defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: defaultsKey) == nil ? true : defaults.bool(forKey: defaultsKey)
+    }
 }
 
 /// When to interpolate. Auto engages only for large motion (a scroll, a window drag, an auto-pan,
