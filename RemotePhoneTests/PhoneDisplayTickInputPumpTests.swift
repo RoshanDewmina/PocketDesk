@@ -589,7 +589,7 @@ final class HardwareKeyboardRechordPhoneTests: XCTestCase {
         router.releaseAll()
     }
 
-    func testRemovingShortcutStandInRecomputesThePhysicalKeyChord() {
+    func testRemovingShortcutStandInNeverStartsPlainRepeat() {
         var now: TimeInterval = 0
         let router = makeRouter(rechordEnabled: true, now: { now })
         XCTAssertTrue(router.pressBegan(usage: 0x0B, flags: [.control, .alternate], at: now))
@@ -597,7 +597,7 @@ final class HardwareKeyboardRechordPhoneTests: XCTestCase {
         now = 0.6; router.fireRepeat(at: now)
         XCTAssertEqual(sent.count, 1)
         router.updateModifiers([]); router.fireRepeat(at: now)
-        XCTAssertEqual(sent.count, 2); XCTAssertEqual(sent.last?.0, "h"); XCTAssertEqual(sent.last?.1, [])
+        XCTAssertEqual(sent.count, 1, "A shortcut stand-in (⌃⌥H → ⌘H) never becomes repeated plain h")
         router.releaseAll()
     }
 
@@ -630,7 +630,9 @@ final class HardwareKeyboardRechordPhoneTests: XCTestCase {
         XCTAssertTrue(router.pressEnded(usage: 0x04, flags: []))
     }
 
-    func testCommandAndControlSuppressRepeatAndModifierReleaseResumesIt() {
+    func testShortcutStartedPressNeverRepeatsEvenAfterModifierRelease() {
+        // Like a Mac: a press that began as a shortcut never turns into plain-key repeat, so a dropped
+        // key-up after ⌘→ cannot start typing on the Mac.
         var now: TimeInterval = 0
         let router = makeRouter(rechordEnabled: true, now: { now })
         _ = router.pressBegan(usage: 0x4F, flags: .command, at: now)
@@ -642,14 +644,13 @@ final class HardwareKeyboardRechordPhoneTests: XCTestCase {
 
         router.updateModifiers(.shift)
         router.fireRepeat(at: now)
-        XCTAssertEqual(sent.last?.0, "right")
-        XCTAssertEqual(sent.last?.1, ["shift"], "Releasing Command and Control resumes the still-held key")
+        XCTAssertEqual(sent.count, 1, "Releasing Command does not resume a shortcut-started press")
 
         router.releaseAll()
         router.updateModifiers(.shift)
         now = 2
         router.fireRepeat(at: now)
-        XCTAssertEqual(sent.count, 2, "Cleanup cancels the physical held-key record")
+        XCTAssertEqual(sent.count, 1, "Cleanup leaves nothing to repeat")
     }
 
     func testSwitchOffKeepsExistingCancelOnModifierChangeBehavior() {
