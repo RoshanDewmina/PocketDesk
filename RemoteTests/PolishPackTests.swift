@@ -825,3 +825,185 @@ final class First60PairingSafetyTests: XCTestCase {
         XCTAssertEqual(decision.result(active: true, elapsed: 30, cancelled: true), .cancelled)
     }
 }
+
+
+@MainActor
+final class LowDataPolicyTests: XCTestCase {
+    func testHostAdvertisesLowDataOnlyInModernFeatureList() {
+        let features = HostFeatureList.features(base: SessionFeature.host, allowBigText: true,
+            accessibility: true, peerFeatures: [SessionFeature.extendedFeatureList])
+        XCTAssertTrue(features.contains("network.lowData.1"))
+        XCTAssertLessThanOrEqual(features.count, 32)
+        let legacy = HostFeatureList.features(base: SessionFeature.host, allowBigText: true,
+            accessibility: true, peerFeatures: [])
+        XCTAssertFalse(legacy.contains("network.lowData.1"))
+        let request = MacShareBlocker.Handshake.phoneRequest([SessionFeature.videoRefinement, SessionFeature.textClarity])
+        XCTAssertLessThanOrEqual(request.features.count, 8)
+        XCTAssertLessThanOrEqual(request.options?.count ?? 0, 4)
+    }
+    func testFullFeatureListPreservesOlderCapabilitiesWhenAllSlotsFill() {
+        let extras = [SessionFeature.couch, SessionFeature.deliberateEnd, SessionFeature.lanWake, SessionFeature.away]
+        let list = HostFeatureList.features(base: SessionFeature.host + extras, allowBigText: true,
+            accessibility: true, peerFeatures: [SessionFeature.extendedFeatureList, SessionFeature.causalInput])
+        XCTAssertEqual(list.count, 32)
+        XCTAssertTrue(extras.allSatisfy(list.contains))
+        XCTAssertTrue(list.contains(SessionFeature.displayScale))
+        XCTAssertFalse(list.contains(SessionFeature.lowDataPolicy), "Only new optional media preference yields when full")
+    }
+    func testNarrowScopeRetainsMediaPolicyWithoutGrantingBulkOrInput() {
+        let features = SharedCaptureScopePolicy.features([SessionFeature.lowDataPolicy, SessionFeature.fileTransfer,
+            SessionFeature.clipboardSync, SessionFeature.causalInput], kind: .window)
+        XCTAssertEqual(features, [SessionFeature.lowDataPolicy])
+    }
+    func testConstrainedPathReachesHintWithoutTreatingHotspotAsConstrained() {
+        let watcher = NetworkPathWatcher()
+        watcher.observeLink(.init(constrained: true, wifi: true))
+        XCTAssertEqual(watcher.linkHint?.constrained, true)
+        watcher.observeLink(.init(expensive: true, wifi: true))
+        XCTAssertEqual(watcher.linkHint?.constrained, false)
+        XCTAssertEqual(watcher.linkHint?.metered, true)
+        watcher.observeLink(.init(quality: .minimal, constrained: true, wifi: true))
+        XCTAssertEqual(watcher.linkHint?.kind, .weakWiFi)
+        XCTAssertEqual(watcher.linkHint?.constrained, true)
+        watcher.observeLink(.init(constrained: true, ultraConstrained: true, cellular: true))
+        XCTAssertEqual(watcher.linkHint?.constrained, true)
+        XCTAssertTrue(watcher.linkHint?.metered == true)
+        watcher.stop(); XCTAssertNil(watcher.linkHint)
+    }
+    func testLiveHysteresisRequiresStableEntryAndExitAndResetsOnKillOrOldPeer() {
+        var state = LowDataPolicyState()
+        func read(_ constrained: Bool, _ time: Double) -> Bool? {
+            state.observe(constrained: constrained, supported: true, enabled: true, at: time)
+        }
+        XCTAssertEqual(read(true, 10), false)
+        XCTAssertEqual(read(false, 10.5), false)
+        XCTAssertEqual(read(true, 11), false)
+        XCTAssertEqual(read(true, 12), true)
+        XCTAssertEqual(read(false, 13), true)
+        XCTAssertEqual(read(true, 17), true)
+        XCTAssertEqual(read(false, 18), true)
+        XCTAssertEqual(read(false, 22.9), true)
+        XCTAssertEqual(read(false, 23), false)
+        XCTAssertEqual(read(true, 24), false)
+        XCTAssertEqual(read(true, 25), true)
+        XCTAssertNil(state.observe(constrained: true, supported: false, enabled: true, at: 26))
+        XCTAssertFalse(state.active)
+        XCTAssertEqual(read(true, 27), false)
+        XCTAssertEqual(read(true, 28), true)
+        XCTAssertNil(state.observe(constrained: true, supported: true, enabled: false, at: 29))
+        XCTAssertFalse(state.active)
+    }
+    func testKillSwitchDefaultsOnAndExplicitNoRestoresLegacy() {
+        let name = UUID().uuidString; let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        XCTAssertTrue(LowDataPolicy.isEnabled(defaults))
+        defaults.set(false, forKey: LowDataPolicy.defaultsKey)
+        XCTAssertFalse(LowDataPolicy.isEnabled(defaults))
+        defaults.set(true, forKey: LowDataPolicy.defaultsKey)
+        XCTAssertTrue(LowDataPolicy.isEnabled(defaults))
+    }
+    func testCeilingReusesRelayTierAndRespectsTighterOverride() {
+        let relay = StreamQuality.balanced.startBitrateBps(for: .relay)
+        XCTAssertEqual(LowDataPolicy.ceiling(StreamQuality.sharp.maximumBitrateBps, active: true), relay)
+        XCTAssertEqual(LowDataPolicy.ceiling(1_000_000, active: true), 1_000_000)
+        XCTAssertEqual(LowDataPolicy.ceiling(StreamQuality.sharp.maximumBitrateBps, active: false), StreamQuality.sharp.maximumBitrateBps)
+    }
+    func testPartialHeartbeatCannotWithdrawPolicyAndOtherActionsRejectIt() throws {
+        let regular = RemoteAction(action: "heartbeat", lowDataMode: true)
+        XCTAssertTrue(regular.isRegularPhoneHeartbeat)
+        XCTAssertNoThrow(try regular.validate())
+        let roundtrip = try JSONDecoder().decode(RemoteAction.self, from: JSONEncoder().encode(regular))
+        XCTAssertEqual(roundtrip.lowDataMode, true)
+        var legacyJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(regular)) as? [String: Any])
+        legacyJSON.removeValue(forKey: "lowDataMode")
+        XCTAssertNil(try JSONDecoder().decode(RemoteAction.self, from: JSONSerialization.data(withJSONObject: legacyJSON)).lowDataMode)
+        XCTAssertThrowsError(try RemoteAction(action: "heartbeat", lowDataMode: false, pointerProbe: "probe").validate())
+        XCTAssertThrowsError(try RemoteAction(action: "key", lowDataMode: true, key: "return").validate())
+    }
+    func testLowDataBulkUsesRelayAllowanceInsteadOfLANBurstAndRestoresIt() {
+        let budget = MediaResourceBudget(fastLane: true)
+        budget.observePeerMaxMessageSize(0)
+        budget.observe(.init(at: 1, route: "Direct", capacityKbps: nil, videoKbps: 0, rttMs: 5, pacerDelayMs: 0, routeDetail: "lan", rttSampleMs: 5))
+        XCTAssertEqual(budget.queueBytes(at: 1.1), BulkAdmissionPolicy.fastLaneBufferedBytes)
+        budget.observeLowData(active: true)
+        XCTAssertEqual(budget.queueBytes(at: 1.1), BulkAdmissionPolicy.maximumBufferedBytes)
+        XCTAssertLessThanOrEqual(budget.messageBytes(at: 1.1), BulkAdmissionPolicy.maximumMessageBytes)
+        XCTAssertFalse(budget.permits(bytes: 16_384, at: 1.01, controlBuffered: 0, fileBuffered: 0))
+        XCTAssertFalse(budget.permits(bytes: 16_384, at: 1.1, controlBuffered: 10, fileBuffered: 0))
+        XCTAssertTrue(budget.permits(bytes: 16_384, at: 1.3, controlBuffered: 0, fileBuffered: 0))
+        budget.observeLowData(active: false)
+        XCTAssertEqual(budget.queueBytes(at: 1.4), BulkAdmissionPolicy.fastLaneBufferedBytes)
+    }
+    func testLowDataIdleSkipsExtraResendsButKeepsPictureLease() {
+        XCTAssertTrue(CaptureIdleRefresh.isDue(healthy: true, hasFrame: true, now: 0.5, lastSentAt: 0))
+        XCTAssertFalse(CaptureIdleRefresh.isDue(healthy: true, hasFrame: true, now: 0.5, lastSentAt: 0, lowData: true))
+        XCTAssertTrue(CaptureIdleRefresh.isDue(healthy: true, hasFrame: true, now: 1, lastSentAt: 0, lowData: true))
+        XCTAssertFalse(CaptureIdleRefresh.isDue(healthy: false, hasFrame: true, now: 1, lastSentAt: 0, lowData: true))
+    }
+    func testPeerDisablesOptionalRefinementAndRestoresPolicyState() {
+        let peer = PeerMedia(isHost: true, servers: [], hevc444: false)
+        defer { peer.close() }
+        peer.requestRefinementCapture(true)
+        XCTAssertTrue(peer.refinementCaptureEnabled)
+        peer.applyLowDataPolicy(true)
+        XCTAssertTrue(peer.lowDataPolicyActive)
+        XCTAssertFalse(peer.refinementCaptureEnabled)
+        peer.requestRefinementCapture(true)
+        XCTAssertFalse(peer.refinementCaptureEnabled, "No caller can re-enable refinement under constrained policy")
+        peer.applyLowDataPolicy(false)
+        XCTAssertFalse(peer.lowDataPolicyActive)
+        peer.requestRefinementCapture(true)
+        XCTAssertTrue(peer.refinementCaptureEnabled)
+    }
+    func testNativeControlAppliesLiveSenderCeilingStatsAndRestoresOriginalRate() async throws {
+        let previous = E2EMedia.loopbackOnly; E2EMedia.loopbackOnly = true
+        let host = PeerMedia(isHost: true, servers: [], hevc: false, hevc444: false)
+        let phone = PeerMedia(isHost: false, servers: [], hevc: false, hevc444: false)
+        defer { host.close(); phone.close(); E2EMedia.loopbackOnly = previous }
+        var hostConnected = false, phoneConnected = false
+        var reportedActive: Bool?
+        host.onSignal = { [weak phone] in phone?.receive($0) }
+        phone.onSignal = { [weak host] in host?.receive($0) }
+        host.onState = { if $0 == "connected" { hostConnected = true } }
+        phone.onState = { if $0 == "connected" { phoneConnected = true } }
+        host.onStreamStatistics = { reportedActive = $0.lowDataPolicyActive }
+        host.onControl = { [weak host] bytes in
+            guard let action = try? JSONDecoder().decode(RemoteAction.self, from: bytes),
+                  (try? action.validate()) != nil, action.isRegularPhoneHeartbeat else { return }
+            host?.applyLowDataPolicy(action.lowDataMode == true)
+        }
+        host.offer()
+        var deadline = ProcessInfo.processInfo.systemUptime + 10
+        while !(hostConnected && phoneConnected), ProcessInfo.processInfo.systemUptime < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(hostConnected && phoneConnected)
+        let original = try XCTUnwrap(host.appliedSenderMaxKbps)
+        XCTAssertTrue(phone.sendControl(try JSONEncoder().encode(RemoteAction(action: "heartbeat", lowDataMode: true))))
+        deadline = ProcessInfo.processInfo.systemUptime + 5
+        while reportedActive != true, ProcessInfo.processInfo.systemUptime < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(reportedActive, true)
+        XCTAssertEqual(host.appliedSenderMaxKbps, min(original, 2500))
+        XCTAssertTrue(phone.sendControl(try JSONEncoder().encode(RemoteAction(action: "heartbeat", lowDataMode: false))))
+        deadline = ProcessInfo.processInfo.systemUptime + 5
+        while host.lowDataPolicyActive, ProcessInfo.processInfo.systemUptime < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(host.lowDataPolicyActive)
+        XCTAssertEqual(host.appliedSenderMaxKbps, original)
+    }
+    func testOlderSummaryDecodesWithoutConstrainedField() throws {
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(HostStreamSummary())) as? [String: Any])
+        json.removeValue(forKey: "lowDataPolicyActive")
+        let legacy = try JSONDecoder().decode(HostStreamSummary.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertNil(legacy.lowDataPolicyActive)
+        XCTAssertNoThrow(try legacy.validate())
+    }
+    func testStatsExposeConstrainedPolicy() throws {
+        let stats = StreamStatsReport(role: "phone", previous: nil, current: StreamStatsSample(entries: []), counters: nil)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(stats)) as? [String: Any])
+        XCTAssertEqual(json["lowDataPolicyActive"] as? Bool, false)
+    }
+}

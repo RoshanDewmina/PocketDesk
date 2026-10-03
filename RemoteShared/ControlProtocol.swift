@@ -4,6 +4,8 @@ struct RemoteAction: Codable {
     var action: String
     /// Negotiated audio.listen.1: explicit phone playback consent, only on heartbeats.
     var macAudioRequested: Bool? = nil
+    /// Only after network.lowData.1, on regular phone heartbeats. No route/input authority.
+    var lowDataMode: Bool? = nil
     /// Host-applied control/file/audio suspension while authorized video continues.
     var liveViewOnly: Bool? = nil
     var liveViewOnlyRequestID: String? = nil
@@ -81,6 +83,7 @@ struct RemoteAction: Codable {
     var inputAppliedReceipt: InputAppliedReceipt? = nil
 
     func validate() throws {
+        guard lowDataMode == nil || isRegularPhoneHeartbeat else { throw RemoteError.invalidMessage }
         guard macAudioRequested == nil || action == "heartbeat" else { throw RemoteError.invalidMessage }
 try pencil?.validate(action: action, interaction: interaction)
         if try validateWakeExtension() { return }

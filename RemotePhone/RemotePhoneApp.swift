@@ -148,6 +148,7 @@ final class PhoneRemoteModel: ObservableObject {
     let pointerOverlay = PointerOverlayModel()
     let clipboard = PhoneClipboard()
     let linkHints = PhoneLinkHintMonitor()
+    private var lowDataState = LowDataPolicyState()
     @Published private(set) var linkHint: NetworkLinkHint?
     let diagnostics = PhoneDiagnostics()
     @Published private(set) var dataWarningShown = false
@@ -792,7 +793,7 @@ final class PhoneRemoteModel: ObservableObject {
         if let peer = connection.media {
             let supportsLTR = hostFeatures.contains(SessionFeature.videoLTR)
             // Only a refinement this phone asked for at session start, whatever the Mac advertises.
-            let refines = hostFeatures.contains(SessionFeature.videoRefinement) && connection.requestedFeatures.contains(SessionFeature.videoRefinement)
+            let refines = !lowDataState.active && hostFeatures.contains(SessionFeature.videoRefinement) && connection.requestedFeatures.contains(SessionFeature.videoRefinement)
             peer.videoFeedback.configure(allowed: proof != nil && (supportsLTR || refines || hostFeatures.contains(SessionFeature.exactVideoTiming)),
                 ltr: supportsLTR, refinement: refines, timing: hostFeatures.contains(SessionFeature.exactVideoTiming), geometry: geometryEpoch, scope: sharedCaptureScope?.epoch ?? 1)
             peer.configureVideoRefinement(enabled: proof != nil && refines, geometry: geometryEpoch, scope: sharedCaptureScope?.epoch ?? 1)
@@ -1773,10 +1774,13 @@ final class PhoneRemoteModel: ObservableObject {
     /// viewport capture, so an older Mac receives what it always did, plus `screenPixels`, which it ignores.
     func heartbeatAction(clock: ClockProbe? = nil,
                          at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> RemoteAction {
+        let constrained = lowDataState.observe(constrained: linkHints.hint?.constrained == true,
+            supported: hostFeatures.contains(SessionFeature.lowDataPolicy), enabled: LowDataPolicy.isEnabled(preferences), at: now)
+        connection.media?.applyLowDataPolicy(constrained == true)
         let viewport = viewportCaptureSupported ? viewportReporter.region(forDisplay: sourceSize) : nil
         let load = hostFeatures.contains(SessionFeature.ladder) &&
             phoneLoadReportedAt.map({ now >= $0 && now - $0 <= 2.5 }) == true ? phoneLoad : nil
-        return RemoteAction(action: "heartbeat", macAudioRequested: phoneAudioRequestSupported ? currentMacAudioConsent() && !macAudioSuspended : nil, epoch: geometryEpoch, pointerSync: pointerOverlay.advertisement(),
+        return RemoteAction(action: "heartbeat", macAudioRequested: phoneAudioRequestSupported ? currentMacAudioConsent() && !macAudioSuspended : nil, lowDataMode: constrained, epoch: geometryEpoch, pointerSync: pointerOverlay.advertisement(),
                             streamQuality: appliedStreamQuality == nil ? nil : streamQuality, clock: clock,
                             screenPixels: screenPixels(), viewport: viewport, phoneLoad: load)
     }
@@ -1947,6 +1951,10 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     /// Offline screenshots of the hold states: a finger drag, or a Hold click from Controls.
+    func setLowDataCapabilityForTesting(_ supported: Bool) {
+        if supported { hostFeatures.insert(SessionFeature.lowDataPolicy) }
+        else { hostFeatures.remove(SessionFeature.lowDataPolicy) }
+    }
     func previewHoldForTesting(explicit: Bool) {
         dragging = true
         explicitHoldDeadline = explicit ? ProcessInfo.processInfo.systemUptime + Self.explicitHoldLimit : nil
@@ -1990,7 +1998,7 @@ final class PhoneRemoteModel: ObservableObject {
             clipboard.postUnavailable("Copy needs control of your Mac and a fresh picture.")
             return
         }
-        if !automaticClipboardSupported { clipboard.requestFromMac(afterCopy: true) }
+        if !automaticClipboardSupported || lowDataState.active { clipboard.requestFromMac(afterCopy: true) }
     }
 
     func fetchMacClipboard() {
@@ -2427,7 +2435,7 @@ let now = ProcessInfo.processInfo.systemUptime
             guard !UserDefaults.standard.bool(forKey: "clipboardGesturesDisabled"),
                   !dragging, activeHold == nil, clipboardAvailable else { return false }
             guard automaticClipboardSupported || !clipboard.isBusy, commandShortcut("c") else { return false }
-            if !automaticClipboardSupported { clipboard.requestFromMac(afterCopy: true) }
+            if !automaticClipboardSupported || lowDataState.active { clipboard.requestFromMac(afterCopy: true) }
             return true
         case .clipboardPaste:
             guard !UserDefaults.standard.bool(forKey: "clipboardGesturesDisabled"),
@@ -3096,7 +3104,7 @@ let now = ProcessInfo.processInfo.systemUptime
         case "clipboard":
             if let frame = action.clipboard {
                 if frame.automatic == true {
-                    guard action.epoch == geometryEpoch, clipboardAvailable, hostPresence == nil, automaticClipboardSupported else {
+                    guard action.epoch == geometryEpoch, clipboardAvailable, hostPresence == nil, automaticClipboardSupported, !lowDataState.active else {
                         clipboard.cancelAutomaticReceive()
                         return
                     }
@@ -3436,6 +3444,7 @@ let now = ProcessInfo.processInfo.systemUptime
         pendingText = nil
         textStatus = ""
         hostFeatures = []
+        lowDataState = LowDataPolicyState()
         hostPresence = nil
         sessionBlocker = nil
         curtainState = nil

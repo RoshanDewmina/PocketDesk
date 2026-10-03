@@ -6,6 +6,7 @@ import Foundation
 enum SessionFeature {
   static let liveViewOnly = "viewOnlyLive.2"
     static let extendedFeatureList = "features.32"
+    static let lowDataPolicy = "network.lowData.1"
     static let phoneAudio = "audio.listen.1"
     static let causalInput = "input.causal.1"
     static let lanWake = "wake.helper.1"
@@ -58,7 +59,7 @@ enum SessionFeature {
   static let legacyHost = [clipboardText, backgroundPause, displayWake, privacyCurtain,
                        absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder,
                        momentumScroll, auxiliaryButtons, secureFocus, fileTransfer, focusGeometry, macVitals]
-    static let host = [phoneAudio, clipboardSync, causalInput, liveViewOnly, captureScope, inputReceipt, pencilInput, videoLTR, videoRefinement, exactVideoTiming, hostMomentum] + legacyHost
+    static let host = [lowDataPolicy, phoneAudio, clipboardSync, causalInput, liveViewOnly, captureScope, inputReceipt, pencilInput, videoLTR, videoRefinement, exactVideoTiming, hostMomentum] + legacyHost
 }
 
 /// The first-minute flow is negotiated outside the capped feature list.

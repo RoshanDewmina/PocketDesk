@@ -130,8 +130,9 @@ enum StillScreenWitness {
 enum CaptureIdleRefresh {
     static let interval: TimeInterval = 0.45
 
-    static func isDue(healthy: Bool, hasFrame: Bool, now: TimeInterval, lastSentAt: TimeInterval) -> Bool {
-        healthy && hasFrame && now - lastSentAt >= interval
+    static func isDue(healthy: Bool, hasFrame: Bool, now: TimeInterval, lastSentAt: TimeInterval, lowData: Bool = false) -> Bool {
+        // Keep the essential picture lease alive (phone freshness is two seconds), without 0.45s bursts.
+        healthy && hasFrame && now - lastSentAt >= (lowData ? 1 : interval)
     }
 }
 
@@ -1163,7 +1164,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
         // Keep a static desktop visible, but only while ScreenCaptureKit status (or, once a still
         // screen silences it, the stream's own capturing state) proves the source is still alive.
-        if CaptureIdleRefresh.isDue(healthy: healthy, hasFrame: lastBuffer != nil, now: now, lastSentAt: lastSentAt),
+        if CaptureIdleRefresh.isDue(healthy: healthy, hasFrame: lastBuffer != nil, now: now, lastSentAt: lastSentAt, lowData: peer?.lowDataPolicyActive == true),
            let lastBuffer {
             deliver(lastBuffer, at: now, timing: sourceTiming.resent(), idleResend: true, region: lastBufferRegion)
         }
