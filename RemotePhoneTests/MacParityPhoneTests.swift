@@ -100,3 +100,97 @@ final class MacParityPhoneTests: XCTestCase {
         XCTAssertFalse(model.setMacCurtain(true), "Nothing is sent without a connected Mac that allows control")
     }
 }
+
+@MainActor
+final class ShortcutChipsPhoneTests: XCTestCase {
+    private func fixture(enabled: Bool = true, supporting: Bool = true) throws -> (PhoneRemoteModel, UserDefaults) {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "shortcuts.phone.\(UUID().uuidString)"))
+        defaults.set(enabled, forKey: ShortcutChips.defaultsKey)
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults,
+            coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()))
+        model.prepareConnection(mode: .couch)
+        model.connection.startInputFixtureForTesting(session: "shortcut-chips")
+        var packets: [ControlPacket] = []
+        model.connection.inputPacketSenderForTesting = { packets.append($0); return true }
+        try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 2), model)
+        try deliver(RemoteAction(action: "viewing", x: 1, epoch: 2), model)
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 2,
+            interaction: NativeInteraction(token: "t", doubleClickInterval: 0.5),
+            features: SessionFeature.host + [SessionFeature.couch] + (supporting ? [SessionFeature.shortcutChips] : []), mode: "couch"), model)
+        var context = try XCTUnwrap(packets.first(where: { $0.input?.kind == "offer" })?.input)
+        context.kind = "accept"; context.anchor = String(repeating: "a", count: 32)
+        try model.connection.receiveInputFixtureForTesting(ControlPacket(session: "shortcut-chips", sequence: 1,
+            action: RemoteAction(action: "heartbeat", epoch: 2), input: context))
+        model.connection.inputPacketSenderForTesting = { _ in true }
+        return (model, defaults)
+    }
+    private func deliver(_ action: RemoteAction, _ model: PhoneRemoteModel) throws {
+        try XCTUnwrap(model.connection.onControl)(JSONEncoder().encode(action))
+    }
+    private func app(_ bundle: String = "com.google.Chrome", epoch: UInt64 = 2) -> RemoteAction {
+        RemoteAction(action: "heartbeat", epoch: epoch, frontmostApp: FrontmostApp(bundleID: bundle, displayName: "Chrome"))
+    }
+    func testAppUpdatesRequireCapabilityCurrentEpochAndOnSwitch() throws {
+        for (enabled, supporting) in [(false, true), (true, false)] {
+            let (model, _) = try fixture(enabled: enabled, supporting: supporting)
+            defer { model.disconnect() }
+            try deliver(app(), model)
+            XCTAssertNil(model.frontmostApp)
+            XCTAssertTrue(model.shortcutChips.isEmpty)
+            XCTAssertFalse(model.tapShortcut(ShortcutCatalog.generic[0]))
+        }
+        let (model, _) = try fixture()
+        defer { model.disconnect() }
+        XCTAssertEqual(model.shortcutChips, ShortcutCatalog.generic)
+        try deliver(app(epoch: 1), model)
+        XCTAssertNil(model.frontmostApp)
+        try deliver(app(), model)
+        XCTAssertEqual(model.frontmostApp?.bundleID, "com.google.Chrome")
+        XCTAssertEqual(model.shortcutChips, ShortcutCatalog.chips(for: "com.google.Chrome"))
+        try deliver(app("com.example.unknown"), model)
+        XCTAssertEqual(model.shortcutChips, ShortcutCatalog.generic)
+        try deliver(RemoteAction(action: "heartbeat", epoch: 2, frontmostApp: FrontmostApp(bundleID: nil, displayName: nil)), model)
+        XCTAssertEqual(model.shortcutChips, ShortcutCatalog.generic)
+        model.disconnect()
+        XCTAssertNil(model.frontmostApp)
+        XCTAssertTrue(model.shortcutChips.isEmpty)
+    }
+    func testOneTapSendsOneExplicitChordAndNeverLatchesModifiers() throws {
+        let (model, _) = try fixture()
+        defer { model.disconnect() }
+        try deliver(app(), model)
+        let chip = try XCTUnwrap(model.shortcutChips.first(where: { $0.key == "t" && $0.modifiers == ["command", "shift"] }))
+        var actions: [RemoteAction] = []
+        model.connection.inputPacketSenderForTesting = { actions.append($0.action); return true }
+        model.modifiers = ["option", "control"]
+        XCTAssertTrue(model.tapShortcut(chip))
+        let sent = try XCTUnwrap(actions.first)
+        XCTAssertEqual(actions.count, 1)
+        XCTAssertEqual(sent.action, "key")
+        XCTAssertEqual(sent.key, "t")
+        XCTAssertEqual(sent.modifiers, chip.modifiers)
+        XCTAssertEqual(sent.epoch, 2)
+        XCTAssertTrue(model.modifiers.isEmpty)
+    }
+    func testSecureFocusViewOnlyAndRuntimeNoCannotSendChips() throws {
+        let (model, defaults) = try fixture()
+        defer { model.disconnect() }
+        var actions: [RemoteAction] = []
+        model.connection.inputPacketSenderForTesting = { actions.append($0.action); return true }
+        let chip = ShortcutCatalog.generic[0]
+        model.receiveSecureFocus(secure: true)
+        XCTAssertTrue(model.shortcutChips.isEmpty)
+        XCTAssertFalse(model.tapShortcut(chip))
+        XCTAssertTrue(actions.isEmpty)
+        model.receiveSecureFocus(secure: false)
+        defaults.set(false, forKey: ShortcutChips.defaultsKey)
+        XCTAssertTrue(model.shortcutChips.isEmpty)
+        XCTAssertFalse(model.tapShortcut(chip))
+        XCTAssertTrue(actions.isEmpty)
+        defaults.set(true, forKey: ShortcutChips.defaultsKey)
+        model.controlAllowed = false
+        XCTAssertTrue(model.shortcutChips.isEmpty)
+        XCTAssertFalse(model.tapShortcut(chip))
+        XCTAssertTrue(actions.isEmpty)
+    }
+}

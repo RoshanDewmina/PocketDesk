@@ -1,5 +1,6 @@
 import XCTest
 import Foundation
+import CoreGraphics
 
 @MainActor
 final class MacShareBlockerTests: XCTestCase {
@@ -22,6 +23,11 @@ final class MacShareBlockerTests: XCTestCase {
         XCTAssertThrowsError(try First60SetupStatus(open: false, permission: .init(stage: .accessibility), mediaReady: true).validate())
         XCTAssertThrowsError(try First60SetupStatus(open: true, permission: .init(stage: .accessibility), mediaReady: false).validate())
         XCTAssertNoThrow(try First60SetupStatus(open: true, permission: .init(stage: .screenRecording), mediaReady: false).validate())
+    }
+
+    func testShortcutChipsOptInIsDecodedWithoutGrowingLegacyLists() throws {
+        let body = Data(#"{"features":["features.32"],"shortcutChips":true}"#.utf8)
+        XCTAssertTrue(MacShareBlocker.Handshake.features(in: body).contains("app.shortcuts.1"))
     }
 
     private let server = "ws://127.0.0.1:9/signal"
@@ -241,5 +247,117 @@ final class MacShareBlockerTests: XCTestCase {
         XCTAssertFalse(listen(other: true))
         XCTAssertFalse(listen(paired: false))
         XCTAssertFalse(listen(service: false))
+    }
+}
+
+final class ShortcutChipsProtocolTests: XCTestCase {
+    func testDefaultsAndBothOlderPeerDirectionsAreInert() throws {
+        let suite = "shortcuts.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertTrue(ShortcutChips.isEnabled(defaults))
+        let on = MacShareBlocker.Handshake.phoneRequest([SessionFeature.videoRefinement, SessionFeature.textClarity], defaults: defaults)
+        XCTAssertEqual(on.features.count, 8)
+        XCTAssertEqual(on.options?.count, 4)
+        XCTAssertTrue(on.requested.contains(SessionFeature.shortcutChips))
+        let decoded = MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(on))
+        XCTAssertTrue(decoded.contains(SessionFeature.shortcutChips))
+        struct OldRequest: Decodable { let features: [String]; let options: [String]? }
+        let old = try JSONDecoder().decode(OldRequest.self, from: JSONEncoder().encode(on))
+        XCTAssertEqual(old.features, on.features)
+        XCTAssertEqual(old.options, on.options)
+        XCTAssertFalse(ShortcutChips.negotiated(enabled: true, peerFeatures: Set(old.features + (old.options ?? []))))
+        XCTAssertFalse(ShortcutChips.negotiated(enabled: true, peerFeatures: []))
+        defaults.set(false, forKey: ShortcutChips.defaultsKey)
+        XCTAssertFalse(ShortcutChips.isEnabled(defaults))
+        let off = MacShareBlocker.Handshake.phoneRequest([], defaults: defaults)
+        XCTAssertNil(off.shortcutChips)
+        XCTAssertFalse(off.requested.contains(SessionFeature.shortcutChips))
+        XCTAssertFalse(ShortcutChips.negotiated(enabled: false, peerFeatures: [SessionFeature.shortcutChips]))
+        let overflow = MacShareBlocker.Handshake(features: Array(repeating: "f", count: 9), shortcutChips: true)
+        XCTAssertEqual(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(overflow)), [])
+    }
+
+    func testPublisherDebouncesChangesDoesNotSendSecureAndRetriesOnlyUndelivered() {
+        let chrome = FrontmostApp(bundleID: "com.google.Chrome", displayName: "Chrome")
+        let safari = FrontmostApp(bundleID: "com.apple.Safari", displayName: "Safari")
+        var publisher = FrontmostAppPublication()
+        publisher.observe(chrome, at: 10, allowed: true)
+        XCTAssertNil(publisher.pending(at: 10.24, secure: false))
+        XCTAssertNil(publisher.pending(at: 11, secure: true))
+        XCTAssertEqual(publisher.pending(at: 11, secure: false), chrome)
+        publisher.delivered(chrome)
+        publisher.observe(chrome, at: 12, allowed: true)
+        XCTAssertNil(publisher.pending(at: 12, secure: false))
+        publisher.observe(safari, at: 13, allowed: true)
+        publisher.observe(chrome, at: 13.1, allowed: true)
+        XCTAssertNil(publisher.pending(at: 14, secure: false), "Transient app switches emit nothing")
+        publisher.observe(safari, at: 15, allowed: true)
+        XCTAssertEqual(publisher.pending(at: 15.25, secure: false), safari)
+        publisher.delivered(safari)
+        let unknown = FrontmostApp(bundleID: nil, displayName: nil)
+        publisher.observe(unknown, at: 15.5, allowed: true)
+        XCTAssertEqual(publisher.pending(at: 15.75, secure: false), unknown, "Unavailable identity resets to generic")
+        publisher.observe(safari, at: 16, allowed: false)
+        XCTAssertNil(publisher.pending(at: 17, secure: false))
+        publisher.observe(safari, at: 18, allowed: true)
+        XCTAssertEqual(publisher.pending(at: 18.25, secure: false), safari, "A new session resends current identity")
+    }
+
+    func testAppFrameIsBoundedMetadataOnlyAndWrongActionRejected() throws {
+        let app = FrontmostApp(bundleID: "com.google.Chrome", displayName: "Google Chrome")
+        XCTAssertNoThrow(try FrontmostApp(bundleID: nil, displayName: nil).validate())
+        let update = RemoteAction(action: "heartbeat", epoch: 7, frontmostApp: app)
+        try update.validate()
+        XCTAssertEqual(try JSONDecoder().decode(RemoteAction.self, from: JSONEncoder().encode(update)).frontmostApp, app)
+        let encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(app)) as? [String: Any])
+        XCTAssertEqual(Set(encoded.keys), ["bundleID", "displayName"])
+        for kind in ["key", "capture", "clipboard", "wakeRequest", "sessionEnd"] {
+            XCTAssertThrowsError(try RemoteAction(action: kind, frontmostApp: app).validate())
+        }
+        for bad in [FrontmostApp(bundleID: "", displayName: "Chrome"),
+                    FrontmostApp(bundleID: "com.bad/app", displayName: "Bad"),
+                    FrontmostApp(bundleID: "com.app", displayName: String(repeating: "x", count: 129)),
+                    FrontmostApp(bundleID: "com.app", displayName: "Bad\nname")] {
+            XCTAssertThrowsError(try bad.validate())
+        }
+    }
+
+    func testAChipUsesExactlyOneKeyDownAndUpWithChordFlags() throws {
+        let chip = ShortcutChip(label: "Reopen tab", key: "t", modifiers: ["command", "shift"])
+        var chords: [(CGKeyCode, CGEventFlags)] = []
+        let sink = RemoteInputEventSink(pointerLocation: { .zero }, mouseSequence: { _ in true },
+            scroll: { _, _, _ in true }, text: { _ in true },
+            key: { code, flags in chords.append((code, flags)); return true })
+        let driver = RemoteInputDriver(eventSink: sink, isTrusted: { true })
+        driver.enabled = true
+        driver.configure(bounds: CGRect(x: 0, y: 0, width: 100, height: 100))
+        XCTAssertTrue(driver.handle(RemoteAction(action: "key", key: chip.key, modifiers: chip.modifiers)).accepted)
+        XCTAssertEqual(chords.count, 1)
+        let chord = try XCTUnwrap(chords.first)
+        let events = try XCTUnwrap(RemoteInputEventSink.makeKeyEvents(key: chord.0, flags: chord.1))
+        XCTAssertEqual(events.map(\.type), [.keyDown, .keyUp])
+        XCTAssertTrue(events.allSatisfy { $0.flags == [.maskCommand, .maskShift] })
+        XCTAssertTrue(events.allSatisfy { $0.getIntegerValueField(.keyboardEventKeycode) == Int64(chord.0) })
+        XCTAssertFalse(driver.held)
+    }
+
+    func testHostAdvertisementRetainsBoundsAndDoesNotTellOldPhones() {
+        let peer: Set<String> = [SessionFeature.extendedFeatureList, SessionFeature.shortcutChips, SessionFeature.causalInput]
+        let existing = HostFeatureList.features(base: SessionFeature.host, allowBigText: true, accessibility: true,
+            peerFeatures: peer)
+        let modern = ShortcutChips.advertised(addingTo: existing, enabled: true, peerFeatures: peer)
+        XCTAssertEqual(modern, existing + [SessionFeature.shortcutChips])
+        XCTAssertLessThanOrEqual(modern.count, 32)
+        XCTAssertNoThrow(try RemoteAction(action: "capture", features: modern).validate())
+        let full = HostFeatureList.features(base: SessionFeature.host + [SessionFeature.couch, SessionFeature.deliberateEnd, SessionFeature.lanWake, SessionFeature.away],
+            allowBigText: true, accessibility: true, peerFeatures: peer)
+        XCTAssertEqual(full.count, 32)
+        XCTAssertEqual(ShortcutChips.advertised(addingTo: full, enabled: true, peerFeatures: peer), full,
+            "All previous capabilities survive saturation; chips remain unnegotiated")
+        XCTAssertEqual(ShortcutChips.advertised(addingTo: existing, enabled: false, peerFeatures: peer), existing)
+        let old = HostFeatureList.features(base: SessionFeature.host, allowBigText: true, accessibility: true, peerFeatures: [])
+        XCTAssertLessThanOrEqual(old.count, 16)
+        XCTAssertEqual(ShortcutChips.advertised(addingTo: old, enabled: true, peerFeatures: []), old)
     }
 }

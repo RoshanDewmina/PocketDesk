@@ -5,6 +5,7 @@ import Foundation
 /// action name their validator would reject.
 enum SessionFeature {
   static let liveViewOnly = "viewOnlyLive.2"
+    static let shortcutChips = "app.shortcuts.1"
     static let extendedFeatureList = "features.32"
     static let phoneAudio = "audio.listen.1"
     static let causalInput = "input.causal.1"
@@ -376,4 +377,55 @@ struct HostAudioCaptureEpoch {
         if let epoch { end(epoch) }
         epoch = nil
     }
+}
+
+/// Internal combined-test rollback; absent is ON. Applied on both peers, never a setting.
+enum ShortcutChips {
+    static let defaultsKey = "FarsideShortcutChips"
+    static func isEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: defaultsKey) == nil || defaults.bool(forKey: defaultsKey)
+    }
+    static func advertised(addingTo features: [String], enabled: Bool, peerFeatures: Set<String>) -> [String] {
+        guard negotiated(enabled: enabled, peerFeatures: peerFeatures),
+              peerFeatures.contains(SessionFeature.extendedFeatureList), features.count < 32 else { return features }
+        return features + [SessionFeature.shortcutChips]
+    }
+    static func negotiated(enabled: Bool, peerFeatures: Set<String>) -> Bool {
+        enabled && peerFeatures.contains(SessionFeature.shortcutChips)
+    }
+}
+
+/// App identity only. No window title, document name, field label or content.
+struct FrontmostApp: Codable, Equatable, Sendable {
+    /// Nil identity explicitly restores generic chips when an app exposes no usable metadata.
+    var bundleID: String?
+    var displayName: String?
+    func validate() throws {
+        if let bundleID {
+            guard (1...255).contains(bundleID.utf8.count),
+                  bundleID.unicodeScalars.allSatisfy({ $0.isASCII && (CharacterSet.alphanumerics.contains($0) || $0 == "." || $0 == "-") })
+            else { throw RemoteError.invalidMessage }
+        }
+        if let displayName {
+            guard (1...128).contains(displayName.utf8.count),
+                  !displayName.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+            else { throw RemoteError.invalidMessage }
+        }
+    }
+}
+
+/// Main-actor publisher: coalesce transient app switches and remember only successful delivery.
+struct FrontmostAppPublication {
+    private(set) var candidate: FrontmostApp?
+    private var changedAt: TimeInterval = 0
+    private var sent: FrontmostApp?
+    mutating func observe(_ app: FrontmostApp?, at now: TimeInterval, allowed: Bool) {
+        guard allowed else { self = Self(); return }
+        if candidate != app { candidate = app; changedAt = now }
+    }
+    func pending(at now: TimeInterval, secure: Bool) -> FrontmostApp? {
+        guard !secure, now >= changedAt + 0.25, candidate != sent else { return nil }
+        return candidate
+    }
+    mutating func delivered(_ app: FrontmostApp) { sent = app }
 }

@@ -3,6 +3,36 @@ import UIKit
 
 final class SessionLayoutTests: XCTestCase {
     @MainActor
+    func testShortcutChipsScrollAtAccessibilityXXXLAndNoRestoresOldBar() {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-keyboard-check", "--ui-input-probe",
+            "--ui-shortcut-app=com.google.Chrome", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        // Keyboard fixtures open the bar immediately, replacing the helper's Show controls button.
+        app.launch()
+        let row = app.scrollViews["remote.shortcuts"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 8))
+        XCTAssertLessThanOrEqual(app.frame.width, 375, "Run this acceptance check on a small iPhone simulator")
+        let first = app.buttons["remote.shortcut.t.command"].firstMatch
+        XCTAssertTrue(first.isHittable)
+        XCTAssertGreaterThanOrEqual(first.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(first.frame.minX, row.frame.minX)
+        XCTAssertLessThanOrEqual(first.frame.maxY, row.frame.maxY + 1)
+        let last = app.buttons["remote.shortcut.f.command"].firstMatch
+        for _ in 0..<5 where !last.isHittable { row.swipeLeft() }
+        XCTAssertTrue(last.isHittable, "Every chip remains reachable by horizontal scrolling")
+        XCTAssertLessThanOrEqual(last.frame.maxY, row.frame.maxY + 1)
+        XCTAssertTrue(app.buttons["Hide keyboard"].firstMatch.isHittable)
+        attachScreenshot("Shortcut chips at AX-XXXL portrait")
+        app.terminate()
+        app.launchArguments += ["-FarsideShortcutChips", "NO"]
+        app.launch()
+        XCTAssertTrue(app.buttons["Hide keyboard"].firstMatch.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.scrollViews["remote.shortcuts"].exists)
+        attachScreenshot("NO switch restores the existing keyboard bar")
+    }
+
+    @MainActor
     func testSessionHasNoChecklistAndSettingsReplaysGestureCoach() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-layout-check"]

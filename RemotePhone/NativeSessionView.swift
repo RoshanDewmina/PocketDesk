@@ -373,6 +373,9 @@ struct NativeSessionView: View {
                 controlsCollapsed = false
                 showVoiceInput = true
             }
+            if offlineLayoutCheck, let app = LaunchOptions.value("--ui-shortcut-app=") {
+                model.previewShortcutChipsForTesting(bundleID: app)
+            }
             if offlineLayoutCheck && LaunchOptions.has("--ui-keyboard-check") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { keyboardOpen = true }
             }
@@ -1552,8 +1555,35 @@ struct NativeSessionView: View {
         #endif
     }
 
+    private var shortcutChipRow: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 8) {
+                ForEach(model.shortcutChips) { chip in
+                    Button { model.tapShortcut(chip) } label: {
+                        Text(chip.label)
+                            .font(.subheadline.weight(.semibold))
+                            .fixedSize(horizontal: true, vertical: true)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Farside.Palette.bone)
+                    .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel, stroke: Farside.Palette.line2)
+                    .accessibilityHint("Uses this shortcut on your Mac")
+                    .accessibilityIdentifier("remote.shortcut.\(chip.key).\(chip.modifiers.joined(separator: "."))")
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+        .scrollIndicators(.hidden)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier("remote.shortcuts")
+    }
+
     private var keyboardBar: some View {
         VStack(spacing: 8) {
+            if !model.shortcutChips.isEmpty { shortcutChipRow }
             if SessionChromePolicy.keyboardBar(regular: regularSessionLayout, hardware: regularHardwareKeyboard) {
                 HStack(spacing: 8) {
                     Group {

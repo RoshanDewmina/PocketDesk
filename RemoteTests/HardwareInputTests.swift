@@ -307,3 +307,44 @@ final class HardwarePointerRouterTests: XCTestCase {
         return router
     }
 }
+
+final class ShortcutCatalogTests: XCTestCase {
+    private let expectedBundleIDs: Set<String> = [
+        "com.apple.Safari", "com.google.Chrome", "com.apple.finder", "com.apple.mail",
+        "com.apple.Notes", "com.apple.iChat", "com.tinyspeck.slackmacgap", "com.microsoft.Word",
+        "com.microsoft.Excel", "com.microsoft.Powerpoint", "com.apple.iWork.Pages",
+        "com.apple.iWork.Keynote", "com.microsoft.VSCode", "com.apple.dt.Xcode",
+        "com.spotify.client", "com.apple.Photos", "com.apple.Preview"
+    ]
+
+    func testEveryAppHasThreeToSixUniquePlainLanguageShortcutsWithSupportedKeys() {
+        XCTAssertEqual(Set(ShortcutCatalog.apps.keys), expectedBundleIDs)
+        XCTAssertEqual(ShortcutCatalog.apps.count, 17)
+        let validKeys = Set(HardwareKeyMap.names.values).union(HardwareKeyMap.legacyNames)
+        let validModifiers = Set(["command", "shift", "option", "control"])
+
+        for (bundleID, chips) in ShortcutCatalog.apps {
+            XCTAssertTrue((3...6).contains(chips.count), "\(bundleID) should have 3–6 shortcuts")
+            XCTAssertEqual(Set(chips.map(\.id)).count, chips.count, "\(bundleID) has duplicate labels")
+            for chip in chips {
+                XCTAssertFalse(chip.label.isEmpty, "\(bundleID) has an empty label")
+                XCTAssertEqual(chip.id, chip.label)
+                XCTAssertTrue(chip.label.unicodeScalars.allSatisfy {
+                    CharacterSet.letters.union(.decimalDigits).union(.whitespaces).contains($0)
+                }, "\(chip.label) should use plain language")
+                XCTAssertTrue(validKeys.contains(chip.key), "Unsupported key \(chip.key) in \(bundleID)")
+                XCTAssertTrue(chip.modifiers.allSatisfy(validModifiers.contains), "Unsupported modifier in \(chip.label)")
+                XCTAssertEqual(Set(chip.modifiers).count, chip.modifiers.count, "Duplicate modifier in \(chip.label)")
+                if let usage = HardwareKeyMap.usage(forCharacter: chip.key) {
+                    XCTAssertEqual(HardwareKeyMap.name(forHIDUsage: usage), chip.key)
+                }
+            }
+        }
+    }
+
+    func testUnknownOrMissingBundleIDGetsTheGenericShortcuts() {
+        XCTAssertEqual(ShortcutCatalog.chips(for: nil), ShortcutCatalog.generic)
+        XCTAssertEqual(ShortcutCatalog.chips(for: "com.example.unknown"), ShortcutCatalog.generic)
+        XCTAssertEqual(ShortcutCatalog.generic.map(\.label), ["Copy", "Paste", "Undo", "Find"])
+    }
+}

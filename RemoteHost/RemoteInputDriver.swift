@@ -137,6 +137,17 @@ struct RemoteInputEventSink {
         return event
     }
 
+    /// Construct the existing atomic press/release pair; tests inspect it without posting input.
+    static func makeKeyEvents(key: CGKeyCode, flags: CGEventFlags) -> [CGEvent]? {
+        guard let down = CGEvent(keyboardEventSource: RemoteInputEventSource.shared, virtualKey: key, keyDown: true),
+              let up = CGEvent(keyboardEventSource: RemoteInputEventSource.shared, virtualKey: key, keyDown: false) else { return nil }
+        for event in [down, up] {
+            event.flags = flags
+            RemoteInputTag.mark(event)
+        }
+        return [down, up]
+    }
+
     static let live = RemoteInputEventSink(
         pointerLocation: { CGEvent(source: nil)?.location ?? .zero },
         mouseSequence: { descriptions in
@@ -200,14 +211,8 @@ struct RemoteInputEventSink {
             return true
         },
         key: { key, flags in
-            guard let down = CGEvent(keyboardEventSource: RemoteInputEventSource.shared, virtualKey: key, keyDown: true),
-                  let up = CGEvent(keyboardEventSource: RemoteInputEventSource.shared, virtualKey: key, keyDown: false) else { return false }
-            for event in [down, up] {
-                event.flags = flags
-                RemoteInputTag.mark(event)
-            }
-            down.post(tap: .cghidEventTap)
-            up.post(tap: .cghidEventTap)
+            guard let events = makeKeyEvents(key: key, flags: flags) else { return false }
+            for event in events { event.post(tap: .cghidEventTap) }
             return true
         }
     )

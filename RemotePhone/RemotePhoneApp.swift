@@ -580,6 +580,7 @@ final class PhoneRemoteModel: ObservableObject {
     @Published private(set) var privacyShield = false { willSet { if newValue { invalidatePresentation(keepingPiP: mayKeepLivePiP || autoPiPMayStart || pipBackground && mayHoldBackgroundPiP) } } }
     private var hasBeenActive = false
     @Published var draft = "" { didSet { secureTextFocus.draftChanged(draft) } }
+    @Published private(set) var frontmostApp: FrontmostApp?
     @Published var secureTextFocus = SecureTextFocus()
     @Published var isComposingText = false
     @Published var dragging = false
@@ -2474,6 +2475,27 @@ let now = ProcessInfo.processInfo.systemUptime
         inputRevision &+= 1
     }
 
+    var shortcutChips: [ShortcutChip] {
+        guard ShortcutChips.negotiated(enabled: ShortcutChips.isEnabled(preferences), peerFeatures: hostFeatures),
+              !passwordFieldFocused, canControl else { return [] }
+        return ShortcutCatalog.chips(for: frontmostApp?.bundleID)
+    }
+
+    @discardableResult
+    func tapShortcut(_ chip: ShortcutChip) -> Bool {
+        guard shortcutChips.contains(chip) else { return false }
+        // A complete one-shot chord; the toolbar's latched modifiers never affect it.
+        modifiers.removeAll()
+        return sendInput("key", key: chip.key, modifiers: chip.modifiers)
+    }
+
+    #if DEBUG
+    func previewShortcutChipsForTesting(bundleID: String) {
+        hostFeatures.insert(SessionFeature.shortcutChips)
+        frontmostApp = FrontmostApp(bundleID: bundleID, displayName: "Chrome")
+    }
+    #endif
+
     func key(_ key: String) {
         guard canControl else { return }
         _ = sendInput("key", key: key, modifiers: Array(modifiers))
@@ -2910,6 +2932,11 @@ let now = ProcessInfo.processInfo.systemUptime
             controlAllowed = !captureScopeViewOnly && action.x == 1
             if !controlAllowed { pointerLocator.clear(); release() }
         case "heartbeat":
+            if let app = action.frontmostApp, action.epoch == geometryEpoch,
+               ShortcutChips.negotiated(enabled: ShortcutChips.isEnabled(preferences), peerFeatures: hostFeatures),
+               connection.connected, (try? app.validate()) != nil {
+                frontmostApp = app
+            }
             if let clock = action.clock {
                 diagnostics.receive(clock, session: connection.presentationSessionID, epoch: action.epoch,
                     authorized: diagnosticAuthority)
@@ -2980,6 +3007,7 @@ let now = ProcessInfo.processInfo.systemUptime
             }
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
             hostFeatures = Set(SharedCaptureScopePolicy.features(action.features ?? [], kind: sharedCaptureScope?.kind ?? .display))
+            if !hostFeatures.contains(SessionFeature.shortcutChips) { frontmostApp = nil }
             if action.features != nil { firstPictureCaptureObserved = true }
             if hostFeatures.contains(SessionFeature.causalInput) { connection.requestCausalInput(epoch: geometryEpoch) }
             hostPresence = action.hostState.flatMap(HostPresence.init(rawValue:))
@@ -3436,6 +3464,7 @@ let now = ProcessInfo.processInfo.systemUptime
         pendingText = nil
         textStatus = ""
         hostFeatures = []
+        frontmostApp = nil
         hostPresence = nil
         sessionBlocker = nil
         curtainState = nil

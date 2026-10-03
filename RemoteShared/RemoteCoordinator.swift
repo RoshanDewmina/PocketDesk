@@ -1280,9 +1280,10 @@ final class RemoteCoordinator: ObservableObject {
                             let ephemeral = try PairEnrollment.Ephemeral()
                             let name = localDisplayName.flatMap(PhoneIdentity.sanitized)
                             // Keep the v2 crypto transcript readable by older Macs. The optional
-                            // setup capability rides the proof, which is outside that transcript.
+                            // setup/shortcut capabilities ride the proof, outside that transcript.
                             var enrollmentHandshake = handshake
                             enrollmentHandshake.first60 = nil
+                            enrollmentHandshake.shortcutChips = nil
                             let commit = try PairEnrollment.commitment(invitation: scannedEnrollment, requestID: request,
                                 reveal: ephemeral.reveal, handshake: enrollmentHandshake, phoneName: name)
                             let enrollment = PairEnrollment.Request(commitment: commit, handshake: enrollmentHandshake, phoneName: name)
@@ -1499,6 +1500,7 @@ final class RemoteCoordinator: ObservableObject {
             enrollmentChallenge = challenge
             let handshakeBody = try PairEnrollment.encoded(incoming.handshake)
             peerFeatures = MacShareBlocker.Handshake.features(in: handshakeBody)
+            peerFeatures.remove(SessionFeature.shortcutChips) // Enrollment opt-in comes only from a confirmed proof.
             first60Negotiated = First60.isEnabled() && first60SetupStatus != nil && MacShareBlocker.Handshake.supportsFirst60(in: handshakeBody)
             peerRequestedMode = MacShareBlocker.Handshake.requestedMode(in: handshakeBody)
             first60Negotiated = first60Negotiated && peerRequestedMode == .picture
@@ -1516,6 +1518,7 @@ final class RemoteCoordinator: ObservableObject {
             enrollmentChallenge = challenge; enrollmentKeys = keys
             var proof = PairEnrollment.Proof(reveal: ephemeral.reveal, confirmation: keys.confirmation(role: "phone"))
             proof.first60 = first60Negotiated ? true : nil
+            proof.shortcutChips = requestedFeatures.contains(SessionFeature.shortcutChips) ? true : nil
             #if DEBUG
             proof.e2eApproval = e2eEnrolling ? e2eEnrollmentProof : nil
             #endif
@@ -1532,6 +1535,7 @@ final class RemoteCoordinator: ObservableObject {
             let keys = try PairEnrollment.derive(invitation: pair.invitation, requestID: request, sessionID: session,
                 request: enrollmentRequest, challenge: enrollmentChallenge, phone: proof.reveal, ephemeral: ephemeral, isHost: true)
             guard keys.confirms(proof.confirmation, role: "phone") else { throw RemoteError.invalidMessage }
+            if proof.shortcutChips == true { peerFeatures.insert(SessionFeature.shortcutChips) }
             first60Negotiated = First60.isEnabled() && first60SetupStatus != nil && proof.first60 == true && peerRequestedMode == .picture
             enrollmentKeys = keys; enrollmentEphemeral = nil; proofReceived = true
             cipher = try SignalCipher(key: keys.sessionKey, room: pair.invitation.room)
