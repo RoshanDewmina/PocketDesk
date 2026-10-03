@@ -416,6 +416,8 @@ final class StaleSignalTests: XCTestCase {
         XCTAssertEqual(acceptedAck.request, request)
         XCTAssertEqual(acceptedAck.session, session)
         XCTAssertTrue(phone.isRunning)
+        let mediaDeadline = ContinuousClock.now + .seconds(5) // Connect awaits the codec capability snapshot
+        while phone.media == nil, ContinuousClock.now < mediaDeadline { try? await Task.sleep(for: .milliseconds(2)) }
         XCTAssertNotNil(phone.media, "attempt two reached media negotiation after authenticating")
     }
 

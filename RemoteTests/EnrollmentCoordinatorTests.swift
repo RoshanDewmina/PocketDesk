@@ -190,6 +190,16 @@ private final class ComparisonEnrollmentRig {
         }
         XCTFail("Enrollment signaling did not settle")
     }
+    /// Connect awaits the codec capability snapshot (PocketDeskAsyncCapabilitySnapshot) before media
+    /// exists; keep pumping while that readiness task runs. Bounded; returns whether `condition` held.
+    func settle(_ description: String, seconds: Double = 5, _ condition: () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(seconds)
+        while !condition(), ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(2))
+            pump()
+        }
+        return condition()
+    }
     func stop() { host.stop(); phone.stop() }
 }
 
@@ -243,7 +253,8 @@ final class ComparisonEnrollmentCoordinatorTests: XCTestCase {
         ready = true
         rig.host.refreshFirst60SetupStatus(); rig.pump()
         XCTAssertNil(rig.phone.permissionWait)
-        XCTAssertNotNil(rig.host.media); XCTAssertNotNil(rig.phone.media)
+        let mediaReady = await rig.settle("media after readiness") { rig.host.media != nil && rig.phone.media != nil }
+        XCTAssertTrue(mediaReady, "both peers create media once the Mac's permission wait ends")
         XCTAssertEqual(rig.phone.setupInProgress, true, "Picture readiness does not finish the Done exercise")
         open = false
         rig.host.refreshFirst60SetupStatus(); rig.pump()
@@ -263,12 +274,13 @@ final class ComparisonEnrollmentCoordinatorTests: XCTestCase {
         XCTAssertNil(rig.host.media, "A stale grant after revoke cannot start a peer")
     }
 
-    func testNewPhoneAndOldHostDoNotWaitForAnUnsupportedSetupMessage() throws {
+    func testNewPhoneAndOldHostDoNotWaitForAnUnsupportedSetupMessage() async throws {
         let rig = try ComparisonEnrollmentRig(); defer { rig.stop() }
         try rig.begin(); rig.host.approve(); rig.pump()
         XCTAssertNil(rig.phone.setupInProgress)
         XCTAssertNil(rig.phone.permissionWait)
-        XCTAssertNotNil(rig.phone.media)
+        let phoneMedia = await rig.settle("phone media") { rig.phone.media != nil }
+        XCTAssertTrue(phoneMedia)
     }
 
     func testEarlyAllowAndReplayedCompetingRequestCannotReplaceTheDisplayedCandidate() throws {
@@ -408,7 +420,7 @@ final class ComparisonEnrollmentCoordinatorTests: XCTestCase {
         let accepted = ProtectedMessage(kind: "accepted", request: requestMessage.request, session: session, sequence: 1, body: nil)
         return (phone, store, signal, derived, accepted, saved)
     }
-    func testActualNewPhoneEmitterEnrollsWithLegacyHostWithoutSetupCapabilityAck() throws {
+    func testActualNewPhoneEmitterEnrollsWithLegacyHostWithoutSetupCapabilityAck() async throws {
         let (phone, store, signal, derived, template, legitimate) = try authenticatedPhone()
         defer { phone.stop() }
         var accepted = template
@@ -417,6 +429,8 @@ final class ComparisonEnrollmentCoordinatorTests: XCTestCase {
         XCTAssertEqual(try store.read(PairInvitation.self), legitimate)
         XCTAssertNil(phone.setupInProgress)
         XCTAssertNil(phone.permissionWait)
+        let deadline = ContinuousClock.now + .seconds(5)
+        while phone.media == nil, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(2)) }
         XCTAssertNotNil(phone.media, "An older host sends no setup extension; the new phone continues ordinary media admission")
     }
 
