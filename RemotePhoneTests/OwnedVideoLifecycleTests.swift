@@ -51,7 +51,7 @@ final class OwnedVideoLifecycleTests: XCTestCase {
     }
 
     @MainActor
-    func testPictureCandidatesDefaultOffAndPrecompiledPipelinesReuseDeviceCache() throws {
+    func testPictureCandidatesDefaultOnAndPrecompiledPipelinesReuseDeviceCache() throws {
         let name = "OwnedVideoCandidates." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
@@ -59,6 +59,11 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         func make() -> OwnedMetalVideoView {
             OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission), defaults: defaults)
         }
+        let unset = make(); defer { unset.invalidate() }
+        XCTAssertTrue(unset.renderOptimizations.singleResample, "ON in the combined .7 device test")
+        XCTAssertTrue(unset.renderOptimizations.precompiledShaders)
+        defaults.set(false, forKey: "PocketDeskSingleResample")
+        defaults.set(false, forKey: "PocketDeskPrecompiledShaders")
         let legacy = make(); defer { legacy.invalidate() }
         XCTAssertFalse(legacy.renderOptimizations.singleResample)
         XCTAssertFalse(legacy.renderOptimizations.precompiledShaders)
