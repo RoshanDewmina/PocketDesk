@@ -167,13 +167,17 @@ private final class ComparisonEnrollmentRig {
     /// short handshake timeouts these fixtures use, independent of this Mac's cold VideoToolbox probes.
     private let previousProbes: NativeVideoCapabilityProbes?
     init(handshakeTimeoutNanoseconds: UInt64 = 15_000_000_000) throws {
-        previousProbes = NativeVideoCapabilityProbes.installForTesting(
+        let previous = NativeVideoCapabilityProbes.installForTesting(
             NativeVideoCapabilityProbes(level52: { true }, hevcDecode: { true }, hevcEncode: { true }))
+        previousProbes = previous
+        var invitationCreated = false
+        defer { if !invitationCreated { _ = NativeVideoCapabilityProbes.installForTesting(previous) } } // init threw: no leak
         host = RemoteCoordinator(isHost: true, store: hostStore, signaling: hostSignal, handshakeTimeoutNanoseconds: handshakeTimeoutNanoseconds)
         phone = RemoteCoordinator(isHost: false, store: phoneStore, signaling: phoneSignal, handshakeTimeoutNanoseconds: handshakeTimeoutNanoseconds)
         host.allowLegacyPrivateRoute = true; phone.allowLegacyPrivateRoute = true
         phone.localDisplayName = "Fixture iPhone"
         invitation = try host.createPair(server: "wss://offline.invalid/signal", name: "Mac")
+        invitationCreated = true
         hostSignal.respond = { [weak self] in if $0.type == "signal" { self?.phoneQueue.append($0) } }
         phoneSignal.respond = { [weak self] in if $0.type == "signal" { self?.hostQueue.append($0) } }
         host.start(); hostSignal.deliver(RelayMessage(type: "registered", role: "host"))
@@ -206,6 +210,7 @@ private final class ComparisonEnrollmentRig {
         return condition()
     }
     func stop() { host.stop(); phone.stop(); _ = NativeVideoCapabilityProbes.installForTesting(previousProbes) }
+    deinit { _ = NativeVideoCapabilityProbes.installForTesting(previousProbes) } // never leak the override into later test classes
 }
 
 @MainActor

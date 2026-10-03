@@ -150,7 +150,7 @@ final class PhoneDiagnosticsTests: XCTestCase {
         let trust = MemoryStore()
         try trust.save(TestPairing.invitation())
         let signaling = FakeSignalingTransport()
-        let coordinator = RemoteCoordinator(isHost: false, store: trust, signaling: signaling, sessionLossRetryLimit: 24)
+        let coordinator = RemoteCoordinator(isHost: false, store: trust, sessionLossRetryLimit: 24, signaling: signaling)
         defer { coordinator.stop() }
         coordinator.restore()
         diagnostics.bind(to: coordinator)
