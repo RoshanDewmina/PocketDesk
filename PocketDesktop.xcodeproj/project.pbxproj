@@ -4865,7 +4865,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.RemoteE2ETests;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "RemoteE2ETests/RemoteE2ETests-Bridging-Header.h";
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				TEST_TARGET_NAME = PocketDeskRemote;
 			};
 			name = Debug;
@@ -4890,7 +4890,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.PocketDesk.Remote.Share;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -4931,7 +4931,7 @@
 				SDKROOT = iphoneos;
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphone*27.1*]" = "$(inherited) FARSIDE_DUO_SDK";
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphone*27.2*]" = "$(inherited) FARSIDE_DUO_SDK";
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -5003,7 +5003,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.RemoteE2ETests;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "RemoteE2ETests/RemoteE2ETests-Bridging-Header.h";
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				TEST_TARGET_NAME = PocketDeskRemote;
 			};
 			name = Release;
@@ -5121,7 +5121,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.RemotePhoneUITests;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				TEST_TARGET_NAME = PocketDeskRemote;
 			};
 			name = Release;
@@ -5146,7 +5146,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.PocketDesk.Remote.Share;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -5261,7 +5261,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.PocketDesk.Remote.Widgets;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -5302,7 +5302,7 @@
 				SDKROOT = iphoneos;
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphone*27.1*]" = "$(inherited) FARSIDE_DUO_SDK";
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphone*27.2*]" = "$(inherited) FARSIDE_DUO_SDK";
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -5465,7 +5465,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.RemotePhoneTests;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PocketDeskRemote.app/PocketDeskRemote";
 			};
 			name = Debug;
@@ -5507,7 +5507,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.PocketDesk.Remote.Widgets;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -5546,7 +5546,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.RemotePhoneUITests;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				TEST_TARGET_NAME = PocketDeskRemote;
 			};
 			name = Debug;
@@ -5722,7 +5722,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.RemotePhoneTests;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PocketDeskRemote.app/PocketDeskRemote";
 			};
 			name = Release;
