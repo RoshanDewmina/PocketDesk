@@ -1329,6 +1329,7 @@ final class StreamCounters: @unchecked Sendable {
     func encoderCapacity(inFlight: Int, limit: Int?, atMs now: Double = MachClock.nowMs()) {
         lock.lock(); defer { lock.unlock() }
         accumulateEncoderCapacity(atMs: now)
+        encodeInFlightMax = max(encodeInFlightMax, inFlight)
         encodeCapacityObserved = limit != nil
         encodeAtCapSinceMs = limit.map { inFlight >= $0 } == true ? now : nil
     }
@@ -1486,7 +1487,7 @@ final class StreamCounters: @unchecked Sendable {
         result.encodeLatencyP90Ms = encode.p90
         result.encodeLatencyMaxMs = encode.max
         result.encodeVTP90Ms = encodeVTLatency.drainPercentiles().p90
-        result.encodeInFlightMax = encode.count > 0 ? encodeInFlightMax : nil
+        result.encodeInFlightMax = encode.count > 0 || encodeInFlightMax > 0 ? encodeInFlightMax : nil
         result.encodeBytesP50 = encodeBytes.drainPercentiles().p50.map { Int($0) }
         result.keyFrameBytesMax = keyFrameBytesMax > 0 ? keyFrameBytesMax : nil
         result.rateUpdates = encode.count > 0 || rateUpdates > 0 ? rateUpdates : nil

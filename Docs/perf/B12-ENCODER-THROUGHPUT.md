@@ -20,13 +20,15 @@ This trace begins after pixel adaptation: it implicates VT in the measured delay
 
 Matched loopback receipts, test counts and final verification are recorded in the lane's `NOTES.md` under `~/Documents/Codex/2026-10-01/perf-push/b12-encoder-throughput`. Loopback uses a prebuilt pixel buffer and real encode/decode; it does not establish ScreenCaptureKit, network, installed-host or iPhone performance.
 
-## Verified checkpoint and external gate
+## Verification and remaining performance measurements
 
-The independent GPT reviewer approved the source after two regression fixes. Native test-first evidence includes the expected baseline failures and passing implementation checks. The core remainder passed 1,993 tests (13 skipped), and the full phone suite passed 800 tests (two skipped), both with zero failures. Native core and simulator phone test builds passed.
+The independent GPT reviewer approved the source and the submission-trace follow-up. Native test-first evidence includes the expected baseline failures and passing implementation checks. The final complete core suite passed 2,000 tests (13 skipped), and the full phone suite passed 800 tests (two skipped), both with zero failures. Native core and simulator phone test builds, Mac host compilation and generic iOS compilation passed. The strengthened preemption test observes submission maxima of one at cap1 and two at cap2, including frames whose output has not completed.
 
-The first complete core run stalled in the existing Vision text-recognition test. A process sample showed a semaphore wait inside Apple TextRecognition. The exact base `136361c` OCR sources passed in a fresh native test bundle; a complete core retry is still required rather than treating the stall as a reproduced baseline failure.
+The first complete core run stalled in the existing Vision text-recognition test. A process sample showed a semaphore wait inside Apple TextRecognition. The exact base `136361c` OCR sources passed in a fresh native test bundle, and both complete core retries passed. The earlier stall was transient, not a reproduced baseline assertion failure.
 
-At 12:53 ET the orchestrator's `PAUSE-BUILDS` gate remained active after shared-Mac memory exhaustion. The prepared complete core retry never started. Host and generic iOS compilation and all matched quiet measurements remain pending. The lane left no active waiter or measurement. `QUIET-REQUEST-b12-encoder-throughput` requests four minutes after remaining verification; there has been no grant or performance measurement.
+The final phone suite reported all tests passed before Xcode stalled collecting post-test simulator diagnostics. Only this lane's diagnostic collector and test runner were stopped; simulator shutdown completed. The native suite result and the interrupted harness exit are recorded separately in NOTES.
+
+The earlier build pause lifted. A quiet grant arrived during verification, but Chrome and its helpers remained running, contrary to the required no-browser timing condition. The lane returned its own window without changing unrelated browser state or running measurements. `QUIET-REQUEST-b12-encoder-throughput` requests four minutes after coordinated browser closure, with both build slots idle and no simulator or build activity. All matched performance measurements remain pending.
 
 | Requested stream | Before/after encoded fps | Before/after encode latency |
 | --- | --- | --- |
@@ -34,7 +36,7 @@ At 12:53 ET the orchestrator's `PAUSE-BUILDS` gate remained active after shared-
 | 2560×1660 | Pending quiet grant | Pending quiet grant |
 | 2360×1526 | Pending quiet grant | Pending quiet grant |
 
-The prepared `core-retry.zsh`, `compile-final.zsh`, and `bench-quiet.zsh` commands and exact log paths are in the lane's external `NOTES.md` HANDOFF. This is a verified implementation checkpoint, not completed performance acceptance.
+Final logs and the prepared `bench-quiet.zsh` command are in the lane's external `NOTES.md` HANDOFF. The loopback harness measures throughput without host ladder feedback; sustained live 60 fps recovery still requires the combined device test. This is a verified implementation checkpoint, not completed performance acceptance.
 
 ## Combined .7 iPhone acceptance
 

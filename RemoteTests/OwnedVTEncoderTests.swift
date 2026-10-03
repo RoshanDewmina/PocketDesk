@@ -408,6 +408,7 @@ final class OwnedVTEncoderTests: XCTestCase {
             let snapshot = counters.drain(inputBufferedBytes: nil)
             print("B12 PREEMPT cap=\(limit) sessions=\(sessions) superseded=\(encoder.inFlightCounts.superseded) traceMax=\(snapshot.encodeInFlightMax ?? 0)")
             XCTAssertNotNil(snapshot.encodeAtCapMs, "The safety mode remains active at cap \(limit)")
+            XCTAssertGreaterThanOrEqual(snapshot.encodeInFlightMax ?? 0, 1, "Submitted frames must be traced even before a callback")
             XCTAssertLessThanOrEqual(snapshot.encodeInFlightMax ?? 0, 2)
             // Supersession must actually retire VT, not merely forget gate entries.
             if encoder.inFlightCounts.superseded > 0 { XCTAssertGreaterThan(sessions, 1) }
@@ -447,6 +448,7 @@ final class OwnedVTEncoderTests: XCTestCase {
         counters.encoderCapacity(inFlight: 1, limit: 2, atMs: 20)
         var snapshot = counters.drain(inputBufferedBytes: nil)
         XCTAssertEqual(snapshot.encodeAtCapMs, 10)
+        XCTAssertEqual(snapshot.encodeInFlightMax, 2, "Submission occupancy must not depend on a completed output")
         snapshot.interval = 1
         let empty = StreamStatsSample(entries: [])
         let report = StreamStatsReport(role: "host", previous: empty, current: empty, counters: snapshot)
