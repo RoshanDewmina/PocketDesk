@@ -63,9 +63,11 @@ struct StreamTuning: Equatable {
     /// state), so it would cut the rate on every queueing spike; the app's own ladder decides instead.
     var highRefreshNoAdaptation = true
     /// Newest frame wins: drop a frame at submit while this many are already inside VideoToolbox
-    /// (Chrome Remote Desktop keeps one pending). Nil lets frames queue. Tuned default 1 (efficiency
-    /// audit P1); `NewestFrameWinsSwitch` turns it off at runtime from Settings → Diagnostics.
+    /// (Chrome Remote Desktop keeps one pending). Nil lets frames queue on the old path.
+    /// Tuned default 2 in the .7 pipeline test; the NO kill switch restores 1 and old diagnostics.
     var encoderMaxInFlight: Int?
+    /// .7 test default: bounded two-frame owned VT pipeline and throughput-based 60 fps recovery.
+    var encoderPipelining = true
     /// Cap the capture long edge to the client's advertised screen pixels (reduction only).
     var capToClientPixels = true
     /// G4: crop the capture to the phone's reported viewport (`SessionFeature.viewportCapture`).
@@ -108,7 +110,7 @@ struct StreamTuning: Equatable {
         var tuning = StreamTuning(playoutDelayMinMs: 0, playoutDelayMaxMs: 0, videoPacing: nil,
                                   qualityBitrates: true, bandwidthHeadroom: 1, degradationPreference: .maintainResolution,
                                   encoderRestart: true, presentAtDisplayMaximum: true)
-        tuning.encoderMaxInFlight = 1
+        tuning.encoderMaxInFlight = 2
         return tuning
     }()
     static let legacy: StreamTuning = {
@@ -131,6 +133,7 @@ struct StreamTuning: Equatable {
         tuning.encoderPrioritizeSpeed = false
         tuning.hevcLowLatency = false
         tuning.encoderPeriodicKeyFrames = true
+        tuning.encoderPipelining = false
         return tuning
     }()
 
@@ -150,6 +153,7 @@ struct StreamTuning: Equatable {
     static let senderQueueGovernorKey = "PocketDeskSenderQueueGovernor"
     static let senderQueueGovernorApplyKey = "PocketDeskSenderQueueGovernorApply"
     static let encoderMaxInFlightKey = "PocketDeskEncoderMaxInFlight"
+    static let encoderPipeliningKey = "FarsideEncoderPipelining"
     static let lanHeadroomKey = "PocketDeskLANHeadroom"
     static let mergePointerMovesKey = "PocketDeskMergePointerMoves"
     static let idleVideoRefreshKey = "PocketDeskIdleVideoRefresh"
@@ -165,7 +169,7 @@ struct StreamTuning: Equatable {
                                  highRefreshCaptureKey, targetFPSKey, highRefreshNoAdaptationKey, capToClientPixelsKey,
                                  viewportCaptureKey, ladderKey, encoderMaxInFlightKey, idleVideoRefreshKey, lanHeadroomKey,
                                  mergePointerMovesKey, frameTimingKey, senderQueueGovernorKey, senderQueueGovernorApplyKey, encoderMaximumQPKey, hevcKey,
-                                 encoderPrioritizeSpeedKey, hevcLowLatencyKey, encoderPeriodicKeyFramesKey]
+                                 encoderPrioritizeSpeedKey, hevcLowLatencyKey, encoderPeriodicKeyFramesKey, encoderPipeliningKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -183,6 +187,10 @@ struct StreamTuning: Equatable {
     static func resolve(defaults: UserDefaults = .standard) -> StreamTuning {
         guard !defaults.bool(forKey: legacyDefaultsKey) else { return legacy }
         var tuning = tuned
+        if defaults.object(forKey: encoderPipeliningKey) != nil {
+            tuning.encoderPipelining = defaults.bool(forKey: encoderPipeliningKey)
+        }
+        if !tuning.encoderPipelining { tuning.encoderMaxInFlight = 1 }
         if defaults.object(forKey: captureNativeRateKey) != nil {
             tuning.captureAtNativeRate = defaults.bool(forKey: captureNativeRateKey)
         }
@@ -240,6 +248,8 @@ struct StreamTuning: Equatable {
             let limit = defaults.integer(forKey: encoderMaxInFlightKey)
             tuning.encoderMaxInFlight = (1...8).contains(limit) ? limit : nil
         }
+        // The new path remains bounded even when older diagnostics request an unbounded queue.
+        if tuning.encoderPipelining { tuning.encoderMaxInFlight = min(2, max(1, tuning.encoderMaxInFlight ?? 2)) }
         if defaults.object(forKey: idleVideoRefreshKey) != nil {
             tuning.idleVideoRefresh = defaults.bool(forKey: idleVideoRefreshKey)
         }

@@ -2,6 +2,18 @@ import XCTest
 import WebRTC
 
 final class StreamTuningTests: XCTestCase {
+    func testEncoderPipeliningDefaultsOnAndNORestoresOneInFlight() throws {
+        let suite = "b12.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(StreamTuning.resolve(defaults: defaults).encoderMaxInFlight, 2)
+        defaults.set(8, forKey: StreamTuning.encoderMaxInFlightKey)
+        XCTAssertEqual(StreamTuning.resolve(defaults: defaults).encoderMaxInFlight, 2)
+        defaults.removeObject(forKey: StreamTuning.encoderMaxInFlightKey)
+        defaults.set(false, forKey: "FarsideEncoderPipelining")
+        XCTAssertEqual(StreamTuning.resolve(defaults: defaults).encoderMaxInFlight, 1)
+    }
+
     func testTunedPolicySelectsLowLatencyPlayoutThroughTheReceiverFieldTrial() {
         XCTAssertEqual(StreamTuning.tuned.fieldTrials["WebRTC-ForcePlayoutDelay"], "min_ms:0,max_ms:0")
         XCTAssertTrue(StreamTuning.legacy.fieldTrials.isEmpty)

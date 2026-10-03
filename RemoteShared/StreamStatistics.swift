@@ -173,6 +173,7 @@ struct StreamCounterSnapshot {
     /// encoder's queue and the Annex B copy (owned encoder only).
     var encodeVTP90Ms: Double?
     var encodeInFlightMax: Int?
+    var encodeAtCapMs: Double?
     var encodeBytesP50: Int?
     /// Bytes the encoder produced in this window (X17 sender-queue estimate).
     var encodedBytes = 0
@@ -507,6 +508,8 @@ struct StreamStatsReport: Codable, Equatable {
     var encodeLatencyMaxMs: Double?
     var encodeVTP90Ms: Double?
     var encodeInFlightMax: Int?
+    /// Local trace only; deliberately excluded from HostStreamSummary / control messages.
+    var encodeAtCapShare: Double?
     var encodeBytesP50: Int?
     var keyFrameBytesMax: Int?
     var rateUpdates: Int?
@@ -692,6 +695,7 @@ struct StreamStatsReport: Codable, Equatable {
                     encodeSubmitSamples = counters.encodeSubmitSamples
                 }
                 encodeInFlightMax = counters.encodeInFlightMax
+                encodeAtCapShare = counters.encodeAtCapMs.map { min(1, max(0, $0 / (seconds * 1000))) }
                 encodeBytesP50 = counters.encodeBytesP50
                 keyFrameBytesMax = counters.keyFrameBytesMax
                 rateUpdates = counters.rateUpdates
@@ -1296,6 +1300,9 @@ final class StreamCounters: @unchecked Sendable {
     private var presentedAt120 = 0
     private var presentedIntervalCount = 0
     private var encodeInFlightMax = 0
+    private var encodeAtCapSinceMs: Double?
+    private var encodeAtCapAccumulatedMs = 0.0
+    private var encodeCapacityObserved = false
     private var keyFrameBytesMax = 0
     private var rateUpdates = 0
     private var encoderDropped = 0
@@ -1450,6 +1457,23 @@ final class StreamCounters: @unchecked Sendable {
 
     // MARK: Encoder trace (host)
 
+    /// Called at every owned-encoder occupancy transition. Drain also accounts for a stalled
+    /// pipeline with no callback, so a permanently full cap cannot disappear from the trace.
+    func encoderCapacity(inFlight: Int, limit: Int?, atMs now: Double = MachClock.nowMs()) {
+        lock.lock(); defer { lock.unlock() }
+        accumulateEncoderCapacity(atMs: now)
+        encodeInFlightMax = max(encodeInFlightMax, inFlight)
+        encodeCapacityObserved = limit != nil
+        encodeAtCapSinceMs = limit.map { inFlight >= $0 } == true ? now : nil
+    }
+
+    private func accumulateEncoderCapacity(atMs now: Double) {
+        if let since = encodeAtCapSinceMs {
+            encodeAtCapAccumulatedMs += max(0, now - since)
+            encodeAtCapSinceMs = now
+        }
+    }
+
     func encoded(latencyMs: Double, vtLatencyMs: Double? = nil, bytes: Int, isKeyFrame: Bool, inFlight: Int) {
         lock.lock(); defer { lock.unlock() }
         encodeLatency.record(latencyMs)
@@ -1517,7 +1541,13 @@ final class StreamCounters: @unchecked Sendable {
     func encoderOutput() { lock.lock(); gateOutputs += 1; lock.unlock() }
 
     func recordEncoderEvidence(_ evidence: VideoEncoderEvidence?) {
-        lock.lock(); encoderEvidence = evidence; lock.unlock()
+        lock.lock(); encoderEvidence = evidence
+        if evidence == nil {
+            // Close the active segment without erasing occupancy earlier in this window.
+            accumulateEncoderCapacity(atMs: MachClock.nowMs())
+            encodeAtCapSinceMs = nil; encodeCapacityObserved = false
+        }
+        lock.unlock()
     }
 
     func encoderSessionStarted(atMs ms: Double = MachClock.nowMs()) {
@@ -1526,7 +1556,10 @@ final class StreamCounters: @unchecked Sendable {
 
     func drain(inputBufferedBytes: UInt64?, at time: TimeInterval = ProcessInfo.processInfo.systemUptime) -> StreamCounterSnapshot {
         lock.lock(); defer { lock.unlock() }
+        accumulateEncoderCapacity(atMs: MachClock.nowMs())
         var result = snapshot
+        result.encodeAtCapMs = encodeCapacityObserved || encodeAtCapAccumulatedMs > 0 ? encodeAtCapAccumulatedMs : nil
+        encodeAtCapAccumulatedMs = 0
         result.encoderEvidence = encoderEvidence
         result.interval = time - startedAt
         result.inputBufferedBytes = inputBufferedBytes
@@ -1612,7 +1645,7 @@ final class StreamCounters: @unchecked Sendable {
         let submit = encodeSubmit.drainPercentiles()
         result.encodeSubmitP95Ms = submit.p95
         result.encodeSubmitSamples = submit.count > 0 ? submit.count : nil
-        result.encodeInFlightMax = encode.count > 0 ? encodeInFlightMax : nil
+        result.encodeInFlightMax = encode.count > 0 || encodeInFlightMax > 0 ? encodeInFlightMax : nil
         result.encodeBytesP50 = encodeBytes.drainPercentiles().p50.map { Int($0) }
         result.keyFrameBytesMax = keyFrameBytesMax > 0 ? keyFrameBytesMax : nil
         result.rateUpdates = encode.count > 0 || rateUpdates > 0 ? rateUpdates : nil

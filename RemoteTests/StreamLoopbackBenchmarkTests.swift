@@ -78,6 +78,8 @@ final class StreamLoopbackBenchmarkTests: XCTestCase {
         if let headroom = environment["POCKETDESK_BENCH_LAN_HEADROOM"].flatMap(Double.init) { tuning.lanBandwidthHeadroom = headroom }
         if let limit = environment["POCKETDESK_BENCH_MAX_IN_FLIGHT"].flatMap(Int.init) {
             tuning.encoderMaxInFlight = limit > 0 ? limit : nil
+            // Matched baseline 1 uses the exact pre-pipeline path, including key preemption.
+            tuning.encoderPipelining = limit == 2
         }
         if let pacing = environment["POCKETDESK_BENCH_PACING"] { tuning.videoPacing = pacing == "none" ? nil : pacing }
         switch environment["POCKETDESK_BENCH_DEGRADATION"] {
@@ -164,6 +166,8 @@ final class StreamLoopbackBenchmarkTests: XCTestCase {
         sent=\(last?.sentWidth ?? 0)x\(last?.sentHeight ?? 0) limit=\(last?.qualityLimitation ?? "?") | \
         pushedFPS=\(median(steadyHost.map { $0.pushedFPS })) encodedFPS=\(median(steadyHost.map { $0.encodedFPS })) \
         droppedPreEncode=\(total(steadyHost.map { $0.droppedBeforeEncode })) \
+        encodeFullP50Ms=\(median(steadyHost.map { $0.encodeLatencyMs })) encodeFullP90Ms=\(median(steadyHost.map { $0.encodeLatencyP90Ms })) \
+        encodeVTP90Ms=\(median(steadyHost.map { $0.encodeVTP90Ms })) inFlightMax=\(steadyHost.compactMap { $0.encodeInFlightMax }.max() ?? 0) \
         encodeMs=\(median(steadyHost.map { $0.encodeMs })) pacerMs=\(median(steadyHost.map { $0.pacerDelayMs })) \
         sentKbps=\(median(steadyHost.map { $0.sentKbps })) targetKbps=\(median(steadyHost.map { $0.targetKbps })) \
         bweKbps=\(median(steadyHost.map { $0.availableOutgoingKbps })) qp=\(median(steadyHost.map { $0.qpAverage })) | \

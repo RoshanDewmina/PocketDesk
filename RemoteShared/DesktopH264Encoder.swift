@@ -222,7 +222,8 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
         policy.minimumKbps = tuning.restartFloorKbps
         policy.keyFrameBudgetMs = tuning.restartKeyFrameBudgetMs
         policy.sessionStarted(kbps: Double(settings.startBitrate), at: ProcessInfo.processInfo.systemUptime)
-        maxInFlight = tuning.encoderMaxInFlight
+        // The throughput experiment owns the public VT session; compatibility retains its old cap.
+        maxInFlight = tuning.encoderPipelining ? 1 : tuning.encoderMaxInFlight
         latency.reset()
         lock.unlock()
         let result = inner.startEncode(with: settings, numberOfCores: numberOfCores)

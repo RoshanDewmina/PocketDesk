@@ -233,6 +233,8 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     private let clock: () -> Double
     private let newestFrameWins: () -> Bool
     private let inFlightLimit: () -> Int?
+    private let encoderPipelining: () -> Bool
+    private var pipelineEnabled = false
     private let maximumQPCeiling: () -> Int
     private let options: () -> OwnedEncoderOptions
     private var sessionOptions = OwnedEncoderOptions()
@@ -273,11 +275,13 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
          inFlightLimit: @escaping () -> Int? = { StreamTuning.current.encoderMaxInFlight },
          maximumQPCeiling: @escaping () -> Int = { StreamTuning.current.encoderMaximumQP },
          newestFrameWins: @escaping () -> Bool = { NewestFrameWinsSwitch.isOn },
+         encoderPipelining: @escaping () -> Bool = { StreamTuning.current.encoderPipelining },
          options: @escaping () -> OwnedEncoderOptions = { OwnedEncoderOptions(StreamTuning.current) },
          clock: @escaping () -> Double = { MachClock.nowMs() }) {
         self.options = options
         self.videoFeedback = videoFeedback; self.textClarity = textClarity; self.propertyCatalog = propertyCatalog; self.setFrameQP = setFrameQP
         self.inFlightLimit = inFlightLimit; self.maximumQPCeiling = maximumQPCeiling; self.newestFrameWins = newestFrameWins; self.clock = clock
+        self.encoderPipelining = encoderPipelining
         self.configuration = configuration; self.counters = counters; self.frameTiming = frameTiming
         super.init(); queue.setSpecific(key: queueKey, value: 1)
     }
@@ -296,6 +300,8 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
             maximumQP = max(1, min(ceiling, settings.qpMax == 0 ? ceiling : Int(settings.qpMax)))
             guard configuration.fits(width: Int(width), height: Int(height), fps: Int(fps)) else { return -1 }
             gate.limit = inFlightLimit()
+            pipelineEnabled = encoderPipelining()
+            if pipelineEnabled { gate.limit = min(2, max(1, gate.limit ?? 2)) }
             sessionOptions = options()
             restart = EncoderRestartPolicy(); restart.keyFrameBudgetMs = 250
             restart.sessionStarted(kbps: Double(bitrate), at: ProcessInfo.processInfo.systemUptime)
@@ -447,11 +453,18 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
                 guard createSession() == noErr else { return -1 }
             }
             let keyRequested = forceIDR || frameTypes.contains { $0.intValue == RTCFrameType.videoFrameKey.rawValue }
-            switch gate.admit(key: keyRequested, enabled: newestFrameWins(), now: clock()) {
+            switch gate.admit(key: keyRequested, enabled: pipelineEnabled || newestFrameWins(), now: clock()) {
             case .drop:
                 counters?.droppedBeforeEncode(); return 0
             case let .submit(retired, superseded):
                 if superseded > 0 { counters?.encoderSuperseded(superseded) }
+                if pipelineEnabled, retired > 0 || superseded > 0 {
+                    // Forgetting dictionary entries alone does not bound VT's physical queue.
+                    // Retire the old session before submitting a preempting independent frame.
+                    invalidate()
+                    guard createSession() == noErr else { return -1 }
+                    forceIDR = true
+                }
                 if retired > 0 {
                     counters?.encoderRetired(retired)
                     forceIDR = true // A discarded late output would leave a gap in the reference chain.
@@ -506,6 +519,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
             let entry = Pending(epoch: currentEpoch, videoTag: videoTag, timestamp: UInt32(bitPattern: frame.timeStamp),
                 captureMs: frame.timeStampNs / 1_000_000, rotation: frame.rotation, submittedMs: submittedMs, width: width, height: height)
             gate.submitted(id, entry: entry, at: clock())
+            if pipelineEnabled { counters?.encoderCapacity(inFlight: gate.inFlight, limit: gate.limit) }
             frameTiming?.submitted(ObjectIdentifier(buffer.pixelBuffer), key: entry.captureMs)
             let submitStartedMs = preparationStartedMs != nil ? MachClock.nowMs() : nil
             let result = VTCompressionSessionEncodeFrame(session, imageBuffer: pixels,
@@ -517,7 +531,10 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
                     self.queue.async { [weak self] in self?.completed(id: id, epoch: currentEpoch, status: status, flags: flags, sample: sample, encodedAtMs: encodedAtMs) }
                 }
             if let submitStartedMs { counters?.encoderSubmit(milliseconds: MachClock.nowMs() - submitStartedMs) }
-            if result != noErr { gate.cancel(id); counters?.droppedBeforeEncode() }
+            if result != noErr {
+                gate.cancel(id); counters?.droppedBeforeEncode()
+                if pipelineEnabled { counters?.encoderCapacity(inFlight: gate.inFlight, limit: gate.limit) }
+            }
             if result == noErr { counters?.encoderSubmitted(); acknowledgedLTRSubmission = submittedTokens; refreshSubmission = properties[kVTEncodeFrameOptionKey_ForceLTRRefresh] as? Bool == true; forceIDR = false }
             storedLastStatus = result
             return result == noErr ? 0 : -1
@@ -543,6 +560,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     }
     private func completed(id: UInt64, epoch: UUID, status: OSStatus, flags: VTEncodeInfoFlags, sample: CMSampleBuffer?, encodedAtMs: Double) {
         guard epoch == self.epoch, let entry = gate.complete(id), entry.epoch == epoch else { return }
+        if pipelineEnabled { counters?.encoderCapacity(inFlight: gate.inFlight, limit: gate.limit) }
         guard status == noErr, !flags.contains(.frameDropped), let sample else {
             counters?.encoderSilentlyDropped(1)
             if status != noErr { invalidate(); storedLastStatus = status; onFatalFailure?() }

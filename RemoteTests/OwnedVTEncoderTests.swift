@@ -385,6 +385,85 @@ final class OwnedVTEncoderTests: XCTestCase {
                        "the switch removes the limit, not the lost-callback fallback")
     }
 
+    func testPipeliningIsBoundedEvenWithSavedOneFrameCapAndDiagnosticsOff() throws {
+        let configuration = try XCTUnwrap(OwnedVTConfiguration(parameters: ["profile-level-id": "640034", "packetization-mode": "1"]))
+        for limit in [1, 2] {
+            let counters = StreamCounters(), context = TextClarityContext(enabled: true)
+            var sessions = 0
+            let encoder = OwnedVTEncoder(configuration: configuration, counters: counters, textClarity: context,
+                propertyCatalog: { session in sessions += 1; return OwnedVTEncoder.supportedProperties(session) },
+                inFlightLimit: { limit }, maximumQPCeiling: { 30 }, newestFrameWins: { false }, encoderPipelining: { true })
+            defer { _ = encoder.release() }
+            let settings = RTCVideoEncoderSettings()
+            settings.width = 256; settings.height = 128; settings.startBitrate = 4000
+            settings.maxBitrate = 4000; settings.maxFramerate = 60; settings.qpMax = 30
+            settings.name = "H264"; settings.mode = .screensharing
+            XCTAssertEqual(encoder.startEncode(with: settings, numberOfCores: 1), 0)
+            encoder.setCallback { _, _ in true }
+            let key = [NSNumber(value: RTCFrameType.videoFrameKey.rawValue)]
+            for index in 0..<20 {
+                XCTAssertEqual(encoder.encode(try Self.frame(timeStampNs: 1_000_000_000 + Int64(index) * 16_666_667),
+                    codecSpecificInfo: nil, frameTypes: key), 0)
+            }
+            let snapshot = counters.drain(inputBufferedBytes: nil)
+            print("B12 PREEMPT cap=\(limit) sessions=\(sessions) superseded=\(encoder.inFlightCounts.superseded) traceMax=\(snapshot.encodeInFlightMax ?? 0)")
+            XCTAssertNotNil(snapshot.encodeAtCapMs, "The safety mode remains active at cap \(limit)")
+            XCTAssertGreaterThanOrEqual(snapshot.encodeInFlightMax ?? 0, 1, "Submitted frames must be traced even before a callback")
+            XCTAssertLessThanOrEqual(snapshot.encodeInFlightMax ?? 0, 2)
+            // Supersession must actually retire VT, not merely forget gate entries.
+            if encoder.inFlightCounts.superseded > 0 { XCTAssertGreaterThan(sessions, 1) }
+        }
+    }
+
+    func testInvalidationPreservesCompletedCapacityTimeUntilTheWindowDrains() {
+        let counters = StreamCounters()
+        counters.encoderCapacity(inFlight: 2, limit: 2, atMs: 10)
+        counters.encoderCapacity(inFlight: 1, limit: 2, atMs: 20)
+        counters.recordEncoderEvidence(nil)
+        XCTAssertEqual(counters.drain(inputBufferedBytes: nil).encodeAtCapMs, 10)
+        XCTAssertNil(counters.drain(inputBufferedBytes: nil).encodeAtCapMs)
+    }
+
+    func testTwoFrameGateDropsExcessDeltasAndKeyFramesPreempt() {
+        var gate = EncoderInFlightGate<Int>(limit: 2)
+        for index in 1...100 {
+            if case .submit = gate.admit(key: false, enabled: true, now: 0) {
+                gate.submitted(UInt64(index), entry: index, at: 0)
+            }
+            XCTAssertLessThanOrEqual(gate.inFlight, 2)
+        }
+        XCTAssertEqual(gate.counts.submitted, 2)
+        XCTAssertEqual(gate.counts.droppedByLimit, 98)
+        XCTAssertEqual(gate.admit(key: true, enabled: true, now: 1), .submit(retired: 0, superseded: 2))
+        gate.submitted(101, entry: 101, at: 1)
+        XCTAssertEqual(gate.inFlight, 1)
+        XCTAssertNil(gate.complete(1)); XCTAssertNil(gate.complete(2))
+        XCTAssertEqual(gate.complete(101), 101)
+    }
+
+    func testCapacityTraceDistinguishesOverlapFromAStalledFullPipeline() {
+        let counters = StreamCounters()
+        counters.encoderCapacity(inFlight: 1, limit: 2, atMs: 0)
+        counters.encoderCapacity(inFlight: 2, limit: 2, atMs: 10)
+        counters.encoderCapacity(inFlight: 1, limit: 2, atMs: 20)
+        var snapshot = counters.drain(inputBufferedBytes: nil)
+        XCTAssertEqual(snapshot.encodeAtCapMs, 10)
+        XCTAssertEqual(snapshot.encodeInFlightMax, 2, "Submission occupancy must not depend on a completed output")
+        snapshot.interval = 1
+        let empty = StreamStatsSample(entries: [])
+        let report = StreamStatsReport(role: "host", previous: empty, current: empty, counters: snapshot)
+        XCTAssertEqual(report.encodeAtCapShare, 0.01)
+        let inputs = HostLoadMonitor.inputs(from: HostLoadSample(report: report, targetFPS: 60, longEdge: 2560,
+                                                               hostThermalState: "nominal", lowPowerMode: false))
+        XCTAssertEqual(inputs.encodeAtCapShare, 0.01)
+        // No callback / transition: the statistics drain must still see time at the cap.
+        counters.encoderCapacity(inFlight: 2, limit: 2, atMs: MachClock.nowMs() - 1_000)
+        XCTAssertGreaterThanOrEqual(counters.drain(inputBufferedBytes: nil).encodeAtCapMs ?? 0, 1_000)
+        counters.recordEncoderEvidence(nil)
+        XCTAssertNotNil(counters.drain(inputBufferedBytes: nil).encodeAtCapMs, "Closed tail appears once")
+        XCTAssertNil(counters.drain(inputBufferedBytes: nil).encodeAtCapMs)
+    }
+
     func testCountersSeparateSubmittedDroppedSupersededRetiredAndAccepted() {
         var gate = EncoderInFlightGate<Int>(limit: 1)
         gate.submitted(1, entry: 1, at: 0)
@@ -425,7 +504,7 @@ final class OwnedVTEncoderTests: XCTestCase {
         for switchOn in [true, false] {
             let counters = StreamCounters()
             let encoder = OwnedVTEncoder(configuration: configuration, counters: counters, inFlightLimit: { 1 },
-                                         newestFrameWins: { switchOn }, clock: { 0 })
+                                         newestFrameWins: { switchOn }, encoderPipelining: { false }, clock: { 0 })
             defer { _ = encoder.release() }
             let settings = RTCVideoEncoderSettings()
             settings.width = 256; settings.height = 128; settings.startBitrate = 4000
