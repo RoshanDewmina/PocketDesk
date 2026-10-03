@@ -22,13 +22,45 @@ final class PhoneMediaSessionTests: XCTestCase {
         }
     }
 
+    func testLateBluetoothRouteSwitchWithinOneSecondOfRecordingStartDoesNotEndDictation() {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        defaults.set(true, forKey: "PocketDeskBluetoothMic")
+        var now: TimeInterval = 100
+        var retired = 0
+        let session = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {},
+            configureRecording: { _ in }, recordingInputIsBluetooth: { true }), defaults: defaults, now: { now })
+        let mic = UUID()
+        XCTAssertTrue(session.acquire(mic, kind: .recording, onRetired: { retired += 1 }))
+        now = 100.5
+        session.routeChanged(deviceRemoved: false)
+        XCTAssertEqual(retired, 0, "AirPods switching to HFP right after dictation starts must not end it")
+        XCTAssertTrue(session.contains(mic)); XCTAssertTrue(session.recordingUsesBluetoothInput)
+        session.routeChanged(deviceRemoved: true)
+        XCTAssertEqual(retired, 1, "Removing the device still ends dictation during the grace period")
+        XCTAssertFalse(session.contains(mic))
+
+        XCTAssertTrue(session.acquire(mic, kind: .recording, onRetired: { retired += 1 }))
+        now = 102
+        session.routeChanged(deviceRemoved: false)
+        XCTAssertEqual(retired, 2, "After the grace period any device change ends dictation as before")
+
+        let legacy = UserDefaults(suiteName: UUID().uuidString)!
+        legacy.set(false, forKey: "PocketDeskBluetoothMic")
+        var legacyRetired = 0
+        let legacySession = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {}), defaults: legacy, now: { now })
+        XCTAssertTrue(legacySession.acquire(UUID(), kind: .recording, onRetired: { legacyRetired += 1 }))
+        legacySession.routeChanged(deviceRemoved: false)
+        XCTAssertEqual(legacyRetired, 1, "With the switch off, route changes keep the legacy immediate retirement")
+    }
+
     func testBluetoothInputProbeRunsAfterActivationAndClearsOnTerminalRecordingRetirement() {
         let defaults = UserDefaults(suiteName: UUID().uuidString)!
         defaults.set(true, forKey: "PocketDeskBluetoothMic")
         var active = false, probes = 0, retired = 0
+        var now: TimeInterval = 10
         let session = PhoneMediaSession(backend: .init(configure: { _ in }, activate: { active = true },
             deactivate: { active = false }, configureRecording: { XCTAssertTrue($0); XCTAssertFalse(active) },
-            recordingInputIsBluetooth: { XCTAssertTrue(active); probes += 1; return true }), defaults: defaults)
+            recordingInputIsBluetooth: { XCTAssertTrue(active); probes += 1; return true }), defaults: defaults, now: { now })
         let mic = UUID()
         XCTAssertTrue(session.acquire(mic, kind: .recording, onRetired: {
             retired += 1; XCTAssertFalse(session.recordingUsesBluetoothInput)
@@ -36,6 +68,7 @@ final class PhoneMediaSessionTests: XCTestCase {
         XCTAssertTrue(session.recordingUsesBluetoothInput)
         XCTAssertFalse(session.acquire(UUID(), kind: .macAudio, onRetired: {}))
         XCTAssertEqual(probes, 1)
+        now += 2 // past the one-second HFP switch grace
         session.routeChanged(deviceRemoved: false)
         XCTAssertEqual(retired, 1); XCTAssertFalse(session.recordingUsesBluetoothInput)
         XCTAssertTrue(session.acquire(UUID(), kind: .recording, onRetired: {}))

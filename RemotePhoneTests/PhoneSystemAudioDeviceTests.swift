@@ -48,48 +48,39 @@ final class PhoneSystemAudioDeviceTests: XCTestCase {
         XCTAssertTrue(device.initialize(with: delegate))
         XCTAssertEqual(reads, 0)
         delegate.drain()
-        XCTAssertEqual(device.outputLatency, 0.15)
-        XCTAssertEqual(device.outputIOBufferDuration, 0.02)
+        XCTAssertEqual(device.outputLatency, 0.16, "the extra buffer time folds into latency; the buffer size never changes")
+        XCTAssertEqual(device.outputIOBufferDuration, 0.01)
         for _ in 0..<50 { _ = device.outputLatency; _ = device.outputIOBufferDuration }
         XCTAssertEqual(reads, 1, "ADM getters never query AVAudioSession")
         XCTAssertEqual(delegate.outputParameterChanges, 1)
         latency = 0.23; duration = 0.03
         NotificationCenter.default.post(name: AVAudioSession.routeChangeNotification, object: nil,
             userInfo: [AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue])
-        XCTAssertEqual(device.outputLatency, 0.15)
+        XCTAssertEqual(device.outputLatency, 0.16)
         delegate.drain()
-        XCTAssertEqual(device.outputLatency, 0.23)
-        XCTAssertEqual(device.outputIOBufferDuration, 0.03)
+        XCTAssertEqual(device.outputLatency, 0.25)
+        XCTAssertEqual(device.outputIOBufferDuration, 0.01)
         XCTAssertEqual(delegate.outputParameterChanges, 2)
         XCTAssertFalse(device.startRecording())
         XCTAssertTrue(device.terminateDevice())
     }
 
-    func testUnsetTimingSwitchReadsOnInTheTestBuild() {
-        let defaults = UserDefaults(suiteName: UUID().uuidString)!
-        let delegate = InlineAudioDeviceDelegate()
-        let device = PhoneSystemAudioDevice(defaults: defaults, outputTiming: { (0.2, 0.02) })
-        XCTAssertTrue(device.initialize(with: delegate))
-        XCTAssertEqual(device.outputLatency, 0.2, "missing PocketDeskAVSyncGroup reads ON in the .7 test build")
-        XCTAssertEqual(device.outputIOBufferDuration, 0.02)
-        XCTAssertEqual(delegate.outputParameterChanges, 1)
-        XCTAssertTrue(device.terminateDevice())
-    }
-
-    func testDisabledTimingSwitchKeepsLegacyConstantsAndIsASnapshot() {
-        let defaults = UserDefaults(suiteName: UUID().uuidString)!
-        defaults.set(false, forKey: "PocketDeskAVSyncGroup")
-        let device = PhoneSystemAudioDevice(defaults: defaults, outputTiming: {
-            XCTFail("Disabled timing must not read the platform session"); return (0.2, 0.02)
-        })
-        defaults.set(true, forKey: "PocketDeskAVSyncGroup")
-        let delegate = InlineAudioDeviceDelegate()
-        XCTAssertTrue(device.initialize(with: delegate))
-        NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: nil)
-        XCTAssertEqual(device.outputLatency, 0)
-        XCTAssertEqual(device.outputIOBufferDuration, 0.01)
-        XCTAssertEqual(delegate.outputParameterChanges, 0)
-        XCTAssertTrue(device.terminateDevice())
+    func testAbsentAndDisabledTimingSwitchKeepLegacyConstantsAndAreSnapshots() {
+        for flag in [nil, false] as [Bool?] {
+            let defaults = UserDefaults(suiteName: UUID().uuidString)!
+            if let flag { defaults.set(flag, forKey: "PocketDeskAVSyncGroup") }
+            let device = PhoneSystemAudioDevice(defaults: defaults, outputTiming: {
+                XCTFail("Disabled timing must not read the platform session"); return (0.2, 0.02)
+            })
+            defaults.set(true, forKey: "PocketDeskAVSyncGroup")
+            let delegate = InlineAudioDeviceDelegate()
+            XCTAssertTrue(device.initialize(with: delegate))
+            NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: nil)
+            XCTAssertEqual(device.outputLatency, 0)
+            XCTAssertEqual(device.outputIOBufferDuration, 0.01)
+            XCTAssertEqual(delegate.outputParameterChanges, 0)
+            XCTAssertTrue(device.terminateDevice())
+        }
     }
 
     func testRemovedRouteRefreshesTimingWithoutRestartAndLateRefreshCannotReviveTerminatedDevice() {

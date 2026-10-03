@@ -780,7 +780,8 @@ final class PeerMedia: NSObject {
         sessionVideoFactory = factory
         connection = factory.peerConnection(with: configuration, constraints: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: self)
         if isHost {
-            let mediaStreamIDs = Self.audioVideoStreamIDs(enabled: Self.avSyncGroupEnabled, sessionID: UUID().uuidString)
+            let mediaStreamIDs = Self.audioVideoStreamIDs(enabled: Self.avSyncGroupEnabled,
+                zeroPlayoutDelay: tuning.playoutDelayMinMs == 0 && tuning.playoutDelayMaxMs == 0, sessionID: UUID().uuidString)
             #if os(macOS)
             let audioConstraints = RTCMediaConstraints(mandatoryConstraints: [
                 "googEchoCancellation": "false", "googAutoGainControl": "false",
@@ -868,11 +869,13 @@ final class PeerMedia: NSObject {
         return true
     }
 
-    // On in Roshan's combined .7 device test (3 Oct); explicit NO restores the legacy policy. Snapshot once per process.
-    private static let opusStereoEnabled = audioExperimentEnabled("PocketDeskOpusStereo")
-    private static let avSyncGroupEnabled = audioExperimentEnabled("PocketDeskAVSyncGroup")
-    static func audioExperimentEnabled(_ key: String, defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: key) == nil || defaults.bool(forKey: key)
+    // Stereo is on in Roshan's combined .7 device test (3 Oct); explicit NO restores the legacy policy.
+    // The A/V sync group stays opt-in: it lets libwebrtc hold desktop video for audio, and smoothness is
+    // the product's first complaint, so it waits for a glass-to-glass measurement. Snapshot once per process.
+    private static let opusStereoEnabled = audioExperimentEnabled("PocketDeskOpusStereo", unsetReadsOn: true)
+    private static let avSyncGroupEnabled = audioExperimentEnabled("PocketDeskAVSyncGroup", unsetReadsOn: false)
+    static func audioExperimentEnabled(_ key: String, unsetReadsOn: Bool, defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: key) == nil ? unsetReadsOn : defaults.bool(forKey: key)
     }
 
     @objc(opusSDP:sender:enabled:)
@@ -926,7 +929,11 @@ final class PeerMedia: NSObject {
         return sections.flatMap { $0 }.joined(separator: newline)
     }
 
-    static func audioVideoStreamIDs(enabled: Bool, sessionID: String) -> [String] { enabled ? [sessionID] : [] }
+    /// A shared stream ID asks libwebrtc to synchronise video playout to audio; under the tuned forced
+    /// 0/0 playout delay that would only add video lag, so the group is never formed there.
+    static func audioVideoStreamIDs(enabled: Bool, zeroPlayoutDelay: Bool = false, sessionID: String) -> [String] {
+        enabled && !zeroPlayoutDelay ? [sessionID] : []
+    }
 
     private func setLocal(_ description: RTCSessionDescription?, error: Error?) {
         guard !closed, let description, error == nil else { onState?("failed"); return }

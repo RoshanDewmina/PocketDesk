@@ -115,22 +115,25 @@ final class OpusAudioPolicyTests: XCTestCase {
         XCTAssertFalse(receiver.contains("sprop-stereo=1"))
         XCTAssertEqual(PeerMedia.opusSDP(sender, sender: true, enabled: true), sender)
     }
-    func testAudioExperimentsDefaultOnInTestBuildAndExplicitNoTurnsOff() throws {
+    func testOpusStereoReadsOnWhenUnsetWhileSyncGroupStaysOptIn() throws {
         let suite = "OpusAudioPolicyTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        for key in ["PocketDeskOpusStereo", "PocketDeskAVSyncGroup"] {
-            XCTAssertTrue(PeerMedia.audioExperimentEnabled(key, defaults: defaults), "missing \(key) reads ON in the .7 test build")
+        for (key, unsetReadsOn) in [("PocketDeskOpusStereo", true), ("PocketDeskAVSyncGroup", false)] {
+            XCTAssertEqual(PeerMedia.audioExperimentEnabled(key, unsetReadsOn: unsetReadsOn, defaults: defaults), unsetReadsOn,
+                           "\(key) unset: stereo is ON in the .7 test build, sync grouping stays opt-in until glass-to-glass is measured")
             defaults.set(false, forKey: key)
-            XCTAssertFalse(PeerMedia.audioExperimentEnabled(key, defaults: defaults))
+            XCTAssertFalse(PeerMedia.audioExperimentEnabled(key, unsetReadsOn: unsetReadsOn, defaults: defaults))
             defaults.set(true, forKey: key)
-            XCTAssertTrue(PeerMedia.audioExperimentEnabled(key, defaults: defaults))
+            XCTAssertTrue(PeerMedia.audioExperimentEnabled(key, unsetReadsOn: unsetReadsOn, defaults: defaults))
         }
     }
     func testKillSwitchRestoresExactSDPAndEmptyStreamIDs() {
         XCTAssertEqual(PeerMedia.opusSDP(sdp, sender: true, enabled: false), sdp)
         XCTAssertEqual(PeerMedia.audioVideoStreamIDs(enabled: false, sessionID: "fixture"), [])
         XCTAssertEqual(PeerMedia.audioVideoStreamIDs(enabled: true, sessionID: "fixture"), ["fixture"])
+        XCTAssertEqual(PeerMedia.audioVideoStreamIDs(enabled: true, zeroPlayoutDelay: true, sessionID: "fixture"), [],
+                       "The tuned 0/0 forced playout delay never grants libwebrtc an audio/video sync group")
     }
     func testOnlyOfferedStereo48KOpusIsChangedAndMissingFMTPIsAdded() {
         let input = "v=0\nm=audio 9 UDP/TLS/RTP/SAVPF 112\na=rtpmap:112 opus/48000/2\na=rtpmap:113 opus/48000/2\n"
@@ -160,16 +163,20 @@ final class AudioSyncGroupNegotiationTests: XCTestCase {
             if let previousOpus { defaults.set(previousOpus, forKey: opusKey) }
             else { defaults.removeObject(forKey: opusKey) }
         }
-        let enabled = ProcessInfo.processInfo.environment["FARSIDE_TEST_SYNC_GROUP"] == "YES"
+        // Stereo is ON in the .7 test build when unset (FARSIDE_TEST_OPUS_STEREO=NO runs the legacy
+        // process); sync grouping stays opt-in (FARSIDE_TEST_SYNC_GROUP=YES runs the grouped process).
+        let environment = ProcessInfo.processInfo.environment
+        let stereo = environment["FARSIDE_TEST_OPUS_STEREO"] != "NO"
+        let enabled = environment["FARSIDE_TEST_SYNC_GROUP"] == "YES"
         defaults.set(enabled, forKey: key)
-        defaults.set(enabled, forKey: opusKey)
+        defaults.set(stereo, forKey: opusKey)
         let peer = PeerMedia(isHost: true, servers: [], nativeDesktopCodecs: false)
         defer { peer.close() }
         let offered = expectation(description: "Actual host audio/video offer")
         var identifiers: [String] = []
         peer.onSignal = { signal in
             guard signal.kind == "offer", let sdp = signal.sdp else { return }
-            XCTAssertEqual(sdp.contains("sprop-stereo=1"), enabled)
+            XCTAssertEqual(sdp.contains("sprop-stereo=1"), stereo)
             identifiers = sdp.components(separatedBy: "\r\n").compactMap {
                 guard $0.hasPrefix("a=msid:") else { return nil }
                 return $0.dropFirst("a=msid:".count).split(separator: " ").first.map(String.init)

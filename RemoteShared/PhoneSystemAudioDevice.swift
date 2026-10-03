@@ -17,7 +17,6 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
     private let reportsOutputTiming: Bool
     private let readOutputTiming: () -> (TimeInterval, TimeInterval)
     private var cachedOutputLatency: TimeInterval = 0
-    private var cachedOutputBufferDuration: TimeInterval = 0.01
     private var observers: [NSObjectProtocol] = []
     private var startedOnBuiltInOutput = true
     var outputIsBuiltIn: () -> Bool = {
@@ -31,8 +30,7 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
              let session = AVAudioSession.sharedInstance()
              return (session.outputLatency, session.ioBufferDuration)
          }) {
-        // On in the combined .7 device test; explicit NO keeps the legacy zero-latency constants.
-        reportsOutputTiming = defaults.object(forKey: "PocketDeskAVSyncGroup") == nil || defaults.bool(forKey: "PocketDeskAVSyncGroup")
+        reportsOutputTiming = defaults.bool(forKey: "PocketDeskAVSyncGroup") // opt-in with the host's sync group
         readOutputTiming = outputTiming
         super.init()
         let center = NotificationCenter.default
@@ -56,7 +54,9 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
     var deviceInputSampleRate: Double { 48_000 }
     var deviceOutputSampleRate: Double { 48_000 }
     var inputIOBufferDuration: TimeInterval { 0.01 }
-    var outputIOBufferDuration: TimeInterval { lock.withLock { cachedOutputBufferDuration } }
+    /// Fixed: a changed buffer size makes libwebrtc rebuild its playout buffer while the source node
+    /// renders. The route's extra buffer time is reported through `outputLatency` instead.
+    var outputIOBufferDuration: TimeInterval { 0.01 }
     var inputNumberOfChannels: Int { 2 }
     var outputNumberOfChannels: Int { 2 }
     var inputLatency: TimeInterval { 0 }
@@ -76,7 +76,7 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
         setConsent(false)
         lock.withLock {
             audioDelegate = nil; initialized = false; playbackRequested = false
-            cachedOutputLatency = 0; cachedOutputBufferDuration = 0.01
+            cachedOutputLatency = 0
         }
         return true
     }
@@ -115,12 +115,12 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
         guard reportsOutputTiming,
               let currentEpoch = lock.withLock({ initialized && audioDelegate === delegate ? epoch : nil }) else { return }
         let timing = readOutputTiming()
-        let latency = timing.0.isFinite && timing.0 >= 0 ? timing.0 : 0
         let duration = timing.1.isFinite && timing.1 > 0 ? timing.1 : 0.01
+        let latency = (timing.0.isFinite && timing.0 >= 0 ? timing.0 : 0) + max(0, duration - 0.01)
         let changed = lock.withLock { () -> Bool in
             guard initialized, audioDelegate === delegate, epoch == currentEpoch else { return false }
-            guard cachedOutputLatency != latency || cachedOutputBufferDuration != duration else { return false }
-            cachedOutputLatency = latency; cachedOutputBufferDuration = duration
+            guard cachedOutputLatency != latency else { return false }
+            cachedOutputLatency = latency
             return true
         }
         if changed { delegate.notifyAudioOutputParametersChange() }

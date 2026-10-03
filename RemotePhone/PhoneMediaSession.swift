@@ -29,6 +29,8 @@ final class PhoneMediaSession {
     private(set) var isInterrupted = false
     private let backend: Backend
     private let bluetoothMicEnabled: Bool
+    private let now: () -> TimeInterval
+    private var recordingStartedAt: TimeInterval?
     private var observers: [NSObjectProtocol] = []
     private(set) var lastOperationFailed = false
     private(set) var recordingUsesBluetoothInput = false
@@ -62,8 +64,10 @@ final class PhoneMediaSession {
        }), observesPlatform: true)
     #endif
 
-    init(backend: Backend, observesPlatform: Bool = false, defaults: UserDefaults = .standard) {
+    init(backend: Backend, observesPlatform: Bool = false, defaults: UserDefaults = .standard,
+         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.backend = backend
+        self.now = now
         // On in the combined .7 device test; explicit NO keeps the built-in microphone only.
         bluetoothMicEnabled = defaults.object(forKey: "PocketDeskBluetoothMic") == nil || defaults.bool(forKey: "PocketDeskBluetoothMic")
         #if canImport(UIKit)
@@ -136,6 +140,7 @@ final class PhoneMediaSession {
                     return false
                 }
                 recordingUsesBluetoothInput = bluetoothInput
+                if kind == .recording { recordingStartedAt = now() }
                 lastOperationFailed = false
             } catch {
                 // No sibling owner exists. Undo any partially activated configuration.
@@ -151,7 +156,7 @@ final class PhoneMediaSession {
     @discardableResult
     func release(_ owner: UUID) -> Bool {
         guard let previous = owners.removeValue(forKey: owner) else { return false }
-        if previous.kind == .recording { recordingUsesBluetoothInput = false }
+        if previous.kind == .recording { recordingUsesBluetoothInput = false; recordingStartedAt = nil }
         if owners.isEmpty && !retiring && !acquiring { deactivate() }
         return true
     }
@@ -197,7 +202,7 @@ final class PhoneMediaSession {
         retiring = true
         let previous = Array(owners.values)
         owners.removeAll()
-        recordingUsesBluetoothInput = false
+        recordingUsesBluetoothInput = false; recordingStartedAt = nil
         previous.forEach { $0.retired() }
         deactivate()
         retiring = false
@@ -206,6 +211,9 @@ final class PhoneMediaSession {
     /// playback only when a device is removed: Mac audio then stays retired until the user opts in
     /// again. Dictation ends on any device change because its engine does not follow a new input route.
     func routeChanged(deviceRemoved: Bool) {
+        // With the Bluetooth microphone allowed, AirPods move to their HFP input shortly after recording
+        // starts; that late switch belongs to this dictation and must not end it. Removal still does.
+        if !deviceRemoved, bluetoothMicEnabled, let started = recordingStartedAt, now() - started < 1 { return }
         retire(kinds: deviceRemoved ? [.macAudio, .recording] : [.recording])
     }
 
@@ -216,7 +224,7 @@ final class PhoneMediaSession {
         guard !matching.isEmpty else { return }
         retiring = true
         matching.keys.forEach { owners.removeValue(forKey: $0) }
-        if matching.values.contains(where: { $0.kind == .recording }) { recordingUsesBluetoothInput = false }
+        if matching.values.contains(where: { $0.kind == .recording }) { recordingUsesBluetoothInput = false; recordingStartedAt = nil }
         matching.values.forEach { $0.retired() }
         retiring = false
         guard owners.isEmpty else { return }

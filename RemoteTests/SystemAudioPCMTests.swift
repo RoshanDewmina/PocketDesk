@@ -94,6 +94,7 @@ final class SystemAudioPCMTests: XCTestCase {
         XCTAssertTrue(converter.packets(from: try sample(rate: 48_000, frames: 240, pts: 99.9, value: 0.8)).isEmpty)
         now = 100.2
         XCTAssertTrue(converter.packets(from: try sample(rate: 48_000, frames: 240, pts: 99.905, value: 0.8)).isEmpty, "Continuous but stale PCM must be dropped before joining the remainder")
+        XCTAssertEqual(converter.staleDrops, 1, "Each refused source buffer is counted for stream stats")
         now = 100.205
         XCTAssertTrue(converter.packets(from: try sample(rate: 48_000, frames: 240, pts: 100.2, value: 0.2)).isEmpty)
         let fresh = converter.packets(from: try sample(rate: 48_000, frames: 240, pts: 100.205, value: 0.2))
@@ -106,6 +107,7 @@ final class SystemAudioPCMTests: XCTestCase {
         XCTAssertTrue(converter.packets(from: try sample(rate: 48_000, frames: 240, pts: 199.8, value: 0.8)).isEmpty)
         XCTAssertTrue(converter.packets(from: try sample(rate: 48_000, frames: 240, pts: 199.995, value: 0.2)).isEmpty,
                       "Even an older stale sample must retire the prior partial packet before a continuous fresh sample")
+        XCTAssertEqual(converter.staleDrops, 2, "The counter survives reset so every refused buffer reaches the stats line")
     }
 
     func testDiscontinuityAndResetFencePCMInBothSourceAgeStates() throws {

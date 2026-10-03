@@ -1088,7 +1088,9 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         }
         if type == .audio {
             guard !stopping, applied.capturesAudio, let peer, peer.systemAudioEnabled, let audioEpoch = audioLease.epoch else { return }
+            let staleBefore = audioConverter.staleDrops
             for packet in audioConverter.packets(from: sampleBuffer) { peer.submitSystemAudio(packet.pcm, epoch: audioEpoch, hostTime: packet.hostTime) }
+            peer.counters.audioSourceDropped(audioConverter.staleDrops - staleBefore)
             return
         }
         guard type == .screen, sampleBuffer.isValid,

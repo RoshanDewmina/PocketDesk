@@ -145,6 +145,8 @@ struct StreamCounterSnapshot {
     var encoderDropped: Int?
     var encoderDeliveryDrops: Int?
     var encoderSilentDrops: Int?
+    /// Mac audio source buffers the 120 ms age fence refused in this sample.
+    var audioSourceDrops: Int?
     var encoderSubmitted: Int?
     var encoderSuperseded: Int?
     var encoderRetired: Int?
@@ -200,6 +202,8 @@ struct HostStreamSummary: Codable, Equatable {
     /// Frames VideoToolbox dropped without a callback (retired by a later completion) in the last sample.
     var encoderDeliveryDrops: Int?
     var encoderSilentDrops: Int?
+    /// Mac audio source buffers the 120 ms age fence refused in the last sample.
+    var audioSourceDrops: Int?
     var encoderEvidence: VideoEncoderEvidence?
     /// Owned encoder (X04): frames handed to VideoToolbox, in-flight deltas a requested key frame
     /// replaced, entries retired after the 100 ms window without a callback, and outputs with a sample.
@@ -273,7 +277,7 @@ struct HostStreamSummary: Codable, Equatable {
                        uniqueSourceFPS, resendFPS,
                        bweCeilingKbps, senderQueueMs, networkQueueMs, backlogDrainMs].compactMap { $0 }
         let integers = [pushSkipped, droppedBeforeEncode, sentWidth, sentHeight, encodeInFlightMax, rateUpdates,
-                        encoderDropped, encoderSilentDrops, encoderDeliveryDrops, inputEvents,
+                        encoderDropped, encoderSilentDrops, encoderDeliveryDrops, audioSourceDrops, inputEvents,
                         encoderSubmitted, encoderSuperseded, encoderRetired, encoderOutputs].compactMap { $0 }
         let bytes = [encodeBytesP50, keyFrameBytesMax].compactMap { $0 }
         guard numbers.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 10_000_000 }),
@@ -452,6 +456,8 @@ struct StreamStatsReport: Codable, Equatable {
     var encoderDropped: Int?
     var encoderDeliveryDrops: Int?
     var encoderSilentDrops: Int?
+    /// Mac audio source buffers the 120 ms age fence refused in this sample.
+    var audioSourceDrops: Int?
     var encoderSubmitted: Int?
     var encoderSuperseded: Int?
     var encoderRetired: Int?
@@ -610,6 +616,7 @@ struct StreamStatsReport: Codable, Equatable {
                 encoderDropped = counters.encoderDropped
                 encoderDeliveryDrops = counters.encoderDeliveryDrops
                 encoderSilentDrops = counters.encoderSilentDrops
+                audioSourceDrops = counters.audioSourceDrops
                 encoderSubmitted = counters.encoderSubmitted
                 encoderSuperseded = counters.encoderSuperseded
                 encoderRetired = counters.encoderRetired
@@ -717,6 +724,7 @@ struct StreamStatsReport: Codable, Equatable {
                           encoderDropped: encoderDropped.map { min($0, 100_000) },
                           encoderDeliveryDrops: encoderDeliveryDrops.map { min($0, 100_000) },
                           encoderSilentDrops: encoderSilentDrops.map { min($0, 100_000) },
+                          audioSourceDrops: audioSourceDrops.map { min($0, 100_000) },
                           encoderEvidence: encoderEvidence,
                           encoderSubmitted: encoderSubmitted.map { min($0, 100_000) },
                           encoderSuperseded: encoderSuperseded.map { min($0, 100_000) },
@@ -812,8 +820,9 @@ struct StreamStatsReport: Codable, Equatable {
             guard let events, events > 0 else { return nil }
             return "\(prefix)input main p50 \(value(p50, "ms")) p95 \(value(p95, "ms")) max \(value(maximum, "ms")) · post p95 \(value(post, "ms")) · n \(events)"
         }
-        func dropped(_ count: Int?, _ silent: Int? = nil) -> String {
+        func dropped(_ count: Int?, _ silent: Int? = nil, audio: Int? = nil) -> String {
             (count.map { " · dropped \($0)/s" } ?? "") + (silent.map { " · VT lost \($0)" } ?? "")
+                + (audio.map { " · audio stale \($0)" } ?? "")
         }
         func queueLine(_ pacer: Double?, _ backlog: Double?, _ network: Double?) -> String? {
             guard pacer != nil || backlog != nil || network != nil else { return nil }
@@ -881,7 +890,7 @@ struct StreamStatsReport: Codable, Equatable {
             if let encoderEvidence { lines.append(encoderEvidence.summary) }
             if encodeLatencyMs != nil || encoderDropped != nil {
                 lines.append("VT lat p50 \(value(encodeLatencyMs, "ms")) p90 \(value(encodeLatencyP90Ms, "ms")) max \(value(encodeLatencyMaxMs, "ms")) · in-flight ≤\(encodeInFlightMax ?? 0) · bytes p50 \(encodeBytesP50 ?? 0) · key ≤\((keyFrameBytesMax ?? 0) / 1024)KB · rate upd \(rateUpdates ?? 0) · session \(value(encoderSessionAgeS, "s"))"
-                             + dropped(encoderDropped, encoderSilentDrops))
+                             + dropped(encoderDropped, encoderSilentDrops, audio: audioSourceDrops))
             }
             if let gate = gate(encoderSubmitted, encoderOutputs, encoderSuperseded, encoderRetired) { lines.append(gate) }
             if let load = loadLine("", ladder: ladder, busy: busy, region: captureRegion) { lines.append(load) }
@@ -909,7 +918,7 @@ struct StreamStatsReport: Codable, Equatable {
                 if let evidence = host.encoderEvidence { lines.append("Mac " + evidence.summary) }
                 if host.encodeLatencyMs != nil || host.encoderDropped != nil {
                     lines.append("Mac VT lat p50 \(value(host.encodeLatencyMs, "ms")) p90 \(value(host.encodeLatencyP90Ms, "ms")) · in-flight ≤\(host.encodeInFlightMax ?? 0) · bytes p50 \(host.encodeBytesP50 ?? 0) · key ≤\((host.keyFrameBytesMax ?? 0) / 1024)KB · rate upd \(host.rateUpdates ?? 0) · session \(value(host.encoderSessionAgeS, "s"))"
-                                 + dropped(host.encoderDropped, host.encoderSilentDrops))
+                                 + dropped(host.encoderDropped, host.encoderSilentDrops, audio: host.audioSourceDrops))
                 }
                 if let gate = gate(host.encoderSubmitted, host.encoderOutputs, host.encoderSuperseded, host.encoderRetired) {
                     lines.append("Mac " + gate)
@@ -1169,6 +1178,7 @@ final class StreamCounters: @unchecked Sendable {
     private var encoderDropped = 0
     private var encoderDeliveryDrops = 0
     private var encoderSilentDrops = 0
+    private var audioSourceDrops = 0
     private var gateSubmitted = 0
     private var gateSuperseded = 0
     private var gateRetired = 0
@@ -1336,6 +1346,12 @@ final class StreamCounters: @unchecked Sendable {
         lock.lock(); encoderDropped += 1; lock.unlock()
     }
 
+    /// Host: Mac audio source buffers the 120 ms age fence refused (PocketDeskAudioSourceAge).
+    func audioSourceDropped(_ count: Int = 1) {
+        guard count > 0 else { return }
+        lock.lock(); audioSourceDrops += count; lock.unlock()
+    }
+
     /// Host: one input message handled; `mainDelayMs` from data-channel arrival, `postMs` in the driver.
     func inputHandled(mainDelayMs: Double?, postMs: Double) {
         lock.lock(); defer { lock.unlock() }
@@ -1462,6 +1478,7 @@ final class StreamCounters: @unchecked Sendable {
         result.encoderDropped = encode.count > 0 || encoderDropped > 0 ? encoderDropped : nil
         result.encoderDeliveryDrops = encoderDeliveryDrops > 0 ? encoderDeliveryDrops : nil
         result.encoderSilentDrops = encode.count > 0 || encoderSilentDrops > 0 ? encoderSilentDrops : nil
+        result.audioSourceDrops = audioSourceDrops > 0 ? audioSourceDrops : nil
         let gateActive = gateSubmitted > 0 || gateSuperseded > 0 || gateRetired > 0 || gateOutputs > 0
         result.encoderSubmitted = gateActive ? gateSubmitted : nil
         result.encoderSuperseded = gateActive ? gateSuperseded : nil
@@ -1486,6 +1503,7 @@ final class StreamCounters: @unchecked Sendable {
         encoderDropped = 0
         encoderDeliveryDrops = 0
         encoderSilentDrops = 0
+        audioSourceDrops = 0
         gateSubmitted = 0
         gateSuperseded = 0
         gateRetired = 0

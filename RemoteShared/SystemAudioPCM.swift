@@ -21,6 +21,9 @@ final class SystemAudioPCMConverter {
     private var packetPTS: Double?
     private let sourceAgeEnabled: Bool
     private let hostClockNow: () -> CMTime
+    /// Source buffers the 120 ms age fence refused (cumulative; a slow screen frame ahead of audio
+    /// on the shared capture queue shows up here rather than as silent audio loss).
+    private(set) var staleDrops = 0
     private let output = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: outputRate,
                                       channels: 2, interleaved: true)!
 
@@ -48,7 +51,7 @@ final class SystemAudioPCMConverter {
             // Retire the remainder and resampler too, so stale partial PCM cannot join fresh sound.
             let age = CMTimeSubtract(hostClockNow(), sourcePTS)
             guard age.isNumeric, CMTimeCompare(age, CMTime(value: 120, timescale: 1_000)) <= 0 else {
-                reset(); return []
+                staleDrops += 1; reset(); return []
             }
         }
         // Never encode a duplicate/reversed source sample. Re-anchor when the cumulative source
