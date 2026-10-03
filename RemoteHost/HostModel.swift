@@ -2399,8 +2399,15 @@ final class RemoteHostModel: ObservableObject {
                 // silently remain Couch after the request's ticket was consumed.
                 releaseRemoteInput(notifyPhone: true)
                 sessionState = .picture
+                couchHUD.hide()
+                couchHealthy = false
                 captureHealthy = false
                 advanceEpoch()
+            }
+            // A phone that connects during the pause still gets the lifecycle timer and an honest
+            // "no picture yet" status; cooldown starts capture through finishCriticalThermalPause.
+            if sessionState == .picture {
+                startLifecycleTimer()
                 sendCaptureHealth(false)
             }
             return
@@ -3352,7 +3359,7 @@ final class RemoteHostModel: ObservableObject {
         // Full capture startup retires the old input epoch and publishes geometry before pixels.
         if active, connection.connected, sessionState == .picture, !screenLocked,
            unavailabilityTeardown == nil, !phonePause.isPaused {
-            beginCapture(keepingExclusions: true)
+            beginCapture(keepingExclusions: curtain.phase == .up)
         }
     }
 
