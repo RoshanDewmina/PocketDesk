@@ -109,7 +109,7 @@ final class VideoRefinementTests: XCTestCase {
         XCTAssertLessThanOrEqual(everyOptIn.features.count, 8)
         XCTAssertEqual(everyOptIn.features, base + [SessionFeature.videoRefinement]); XCTAssertEqual(everyOptIn.options, [SessionFeature.textClarity, SessionFeature.clipboardSync, SessionFeature.phoneAudio, SessionFeature.deliberateEnd])
         XCTAssertLessThanOrEqual(everyOptIn.options?.count ?? 0, MacShareBlocker.Handshake.maximumOptions)
-        XCTAssertEqual(everyOptIn.requested, Set(base + [SessionFeature.videoRefinement, SessionFeature.textClarity, SessionFeature.clipboardSync, SessionFeature.phoneAudio, SessionFeature.deliberateEnd]))
+        XCTAssertEqual(everyOptIn.requested, Set(base + [SessionFeature.videoRefinement, SessionFeature.textClarity, SessionFeature.clipboardSync, SessionFeature.phoneAudio, SessionFeature.deliberateEnd]).union(everyOptIn.shortcutChips == true ? [SessionFeature.shortcutChips] : []))
         let body = try JSONEncoder().encode(everyOptIn)
         XCTAssertEqual(MacShareBlocker.Handshake.requestedMode(in: body), .couch)
         let suite = "VideoRefinementTests.clipboardOff.\(UUID().uuidString)"

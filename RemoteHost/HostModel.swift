@@ -259,6 +259,10 @@ final class RemoteHostModel: ObservableObject {
     private var textFocusRevision: UInt64 = 0
     private var textFocusTask: Task<Void, Never>?
     private let textFocusCursor = HostCursorShapeSampler()
+    private var shortcutAppPublication = FrontmostAppPublication()
+    private var shortcutAppTask: Task<Void, Never>?
+    private weak var shortcutAppPeer: PeerMedia?
+    private var shortcutAppAttemptAt: TimeInterval = 0
     private var axPrewarmEdge = HostAXPrewarmEdge()
     private let axSessionGeneration = HostAXSessionGeneration()
     private var captureHealthy = false {
@@ -2529,6 +2533,7 @@ final class RemoteHostModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.reconcileAXPrewarm()
+                self.reconcileShortcutApp()
                 self.reconcileAutomaticClipboard()
                 if self.phonePause.isPaused {
                     if self.phonePause.isExpired(at: ProcessInfo.processInfo.systemUptime) { self.expirePhonePause() }
@@ -2669,6 +2674,8 @@ final class RemoteHostModel: ObservableObject {
 
     private func endCapture() {
         away.refresh()
+        shortcutAppTask?.cancel(); shortcutAppTask = nil
+        shortcutAppPublication = FrontmostAppPublication(); shortcutAppPeer = nil
         axPrewarmEdge = HostAXPrewarmEdge()
         HostTextFocusChanges.shared.setSessionActive(false)
         let generation = axSessionGeneration, ended = generation.current
@@ -3169,6 +3176,50 @@ final class RemoteHostModel: ObservableObject {
         }
     }
 
+    private var shortcutAppAllowed: Bool {
+        axPrewarmSessionActive && sessionHealthy && !sessionRefused && !screenLocked &&
+            !liveViewOnly && !captureScopeViewOnly && !captureScopeNeedsSelection && !away.isLocking &&
+            ShortcutChips.negotiated(enabled: ShortcutChips.isEnabled(), peerFeatures: connection.peerFeatures) &&
+            advertisedFeatures.contains(SessionFeature.shortcutChips)
+    }
+
+    private func currentShortcutApp() -> FrontmostApp {
+        let app = NSWorkspace.shared.frontmostApplication
+        let value = FrontmostApp(bundleID: app?.bundleIdentifier, displayName: app?.localizedName)
+        return (try? value.validate()) != nil ? value : FrontmostApp(bundleID: nil, displayName: nil)
+    }
+
+    /// Reuses the lifecycle/frontmost-app observation; no additional timer or window inspection.
+    private func reconcileShortcutApp() {
+        let allowed = shortcutAppAllowed
+        if shortcutAppPeer !== connection.media || !allowed {
+            shortcutAppTask?.cancel(); shortcutAppTask = nil
+            shortcutAppPublication = FrontmostAppPublication()
+            shortcutAppPeer = connection.media
+            shortcutAppAttemptAt = 0
+        }
+        guard allowed, let peer = connection.media else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let identity = currentShortcutApp()
+        shortcutAppPublication.observe(identity, at: now, allowed: allowed)
+        guard shortcutAppTask == nil, now - shortcutAppAttemptAt >= 1,
+              let pending = shortcutAppPublication.pending(at: now, secure: HostSecureFocus.secureEventInputEnabled()) else { return }
+        shortcutAppAttemptAt = now
+        let epoch = inputEpoch.value
+        shortcutAppTask = Task { [weak self, weak peer] in
+            let secure = await HostSecureFocus.isSecureNow()
+            guard !Task.isCancelled, let self else { return }
+            self.shortcutAppTask = nil
+            guard let peer, self.connection.media === peer, self.shortcutAppAllowed,
+                  self.inputEpoch.value == epoch, !secure, !HostSecureFocus.secureEventInputEnabled(),
+                  self.shortcutAppPublication.pending(at: ProcessInfo.processInfo.systemUptime, secure: false) == pending,
+                  self.currentShortcutApp() == pending else { return }
+            if self.connection.sendControl(RemoteAction(action: "heartbeat", epoch: epoch, frontmostApp: pending)) {
+                self.shortcutAppPublication.delivered(pending)
+            }
+        }
+    }
+
     private func prewarmAXTree(for app: NSRunningApplication) {
         let pid = app.processIdentifier
         let launched = app.launchDate?.timeIntervalSince1970
@@ -3406,10 +3457,12 @@ final class RemoteHostModel: ObservableObject {
                ? [SessionFeature.deliberateEnd] : [])
             + (wakeHelperAvailable ? [SessionFeature.lanWake] : [])
             + (awayAvailable && !ManagedLockPolicy.isManaged() ? [SessionFeature.away] : [])
-        return SharedCaptureScopePolicy.features(HostFeatureList.features(base: base,
+        let existing = SharedCaptureScopePolicy.features(HostFeatureList.features(base: base,
             allowBigText: !captureScopeViewOnly && preferences.allowBigText,
             accessibility: inputAccess.accessibility.isGranted,
             peerFeatures: connection.peerFeatures, requestedMode: connection.peerRequestedMode), kind: captureScopeKind)
+        return ShortcutChips.advertised(addingTo: existing, enabled: ShortcutChips.isEnabled() && !captureScopeViewOnly,
+            peerFeatures: connection.peerFeatures)
     }
 
     private func sendCaptureHealth(_ requestedHealthy: Bool, presence: HostPresence? = nil, viewOnlyRequestID: String? = nil) {

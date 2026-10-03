@@ -938,3 +938,7 @@ The production Anywhere subscription cap increases from three to five devices (S
 ## Control Center Connect — combined .7 test, 3 October 2026
 
 The authorized iPhone-only test adds one Connect to Mac control for Control Center, the Lock Screen and the Action button. It opens Farside after the system unlock check and requests the normal Connect flow for the persisted Home Mac selection; Face ID preferences, pairing, server-data removal and Anywhere admission remain authoritative. No paired or selected Mac opens the normal start screen. The title uses the existing App Group snapshot name, with Connect to Mac as fallback. Internal phone defaults key `FarsideControlConnect` is ON when unset; NO opens the app only. No new user setting, wire message or host behavior. Installation and physical acceptance belong to the orchestrator.
+
+### 3 October 2026 — b12 shortcut chips combined-test authorization
+
+For the combined .7 iPhone-only device test, Roshan authorized app-aware plain-language shortcut chips above the keyboard, ON by default behind `FarsideShortcutChips` (NO restores the old bar and stops app-identity messages). This bounded exception enables the parked shortcut idea for testing; it adds no setting, app launcher or macro. Host metadata is only the frontmost bundle ID/display name during negotiated control, suppressed for secure input. iPad/Duo remain parked under D62; this lane does not bump versions or install apps.

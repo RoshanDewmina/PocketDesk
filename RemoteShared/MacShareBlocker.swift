@@ -28,6 +28,8 @@ enum MacShareBlocker: String, Codable, Equatable {
         var features: [String]
         var mode: String? = nil
         var first60: Bool? = nil
+        /// A separate opt-in preserves old Macs’ eight-feature/four-option decoder bounds.
+        var shortcutChips: Bool? = nil
         /// Opt-in requests outside the eight-name feature bound. Older Macs ignore the key, and too
         /// many options are dropped on their own without touching `features`.
         var options: [String]? = nil
@@ -44,9 +46,9 @@ enum MacShareBlocker: String, Codable, Equatable {
                 + (!defaults.bool(forKey: "phoneAudioRequestDisabled") ? [SessionFeature.phoneAudio] : [])
                 + (DeliberateSessionEnd.isEnabled(defaults) ? [SessionFeature.deliberateEnd] : [])
             return Handshake(features: phone.features + (optional.contains(SessionFeature.videoRefinement) ? [SessionFeature.videoRefinement] : []),
-                             mode: mode, first60: First60.isEnabled(defaults) ? true : nil, options: options.isEmpty ? nil : options)
+                             mode: mode, first60: First60.isEnabled(defaults) ? true : nil, shortcutChips: ShortcutChips.isEnabled(defaults) ? true : nil, options: options.isEmpty ? nil : options)
         }
-        var requested: Set<String> { Set(features + (options ?? [])) }
+        var requested: Set<String> { Set(features + (options ?? []) + (shortcutChips == true ? [SessionFeature.shortcutChips] : [])) }
 
         static func requestedMode(in body: Data?) -> SessionMode {
             guard let body, body.count <= 1024,
@@ -69,7 +71,7 @@ enum MacShareBlocker: String, Codable, Equatable {
                   let decoded = try? JSONDecoder().decode(Handshake.self, from: body),
                   decoded.features.count <= 8 else { return [] }
             let options = (decoded.options?.count ?? 0) <= maximumOptions ? (decoded.options ?? []).filter(knownOptions.contains) : []
-            return Set((decoded.features + options).filter { (1...32).contains($0.utf8.count) })
+            return Set((decoded.features + options + (decoded.shortcutChips == true ? [SessionFeature.shortcutChips] : [])).filter { (1...32).contains($0.utf8.count) })
         }
     }
 

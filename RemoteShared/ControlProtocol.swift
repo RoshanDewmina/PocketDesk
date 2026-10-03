@@ -23,6 +23,8 @@ struct RemoteAction: Codable {
     var pointerLocation: PointerLocation? = nil
     var pointerSync: PointerSync? = nil
     var streamQuality: StreamQuality? = nil
+    /// app.shortcuts.1: only a debounced identity update on a host heartbeat.
+    var frontmostApp: FrontmostApp? = nil
     var textFocusProbe: String? = nil
     var textFocusEditable: Bool? = nil
     /// With a focus reply, after `SessionFeature.secureFocus`: the focused field takes a password.
@@ -86,6 +88,8 @@ struct RemoteAction: Codable {
         guard lowDataMode == nil || isRegularPhoneHeartbeat else { throw RemoteError.invalidMessage }
         guard macAudioRequested == nil || action == "heartbeat" else { throw RemoteError.invalidMessage }
 try pencil?.validate(action: action, interaction: interaction)
+        try frontmostApp?.validate()
+        guard frontmostApp == nil || action == "heartbeat" else { throw RemoteError.invalidMessage }
         if try validateWakeExtension() { return }
         // Before the extension early returns, so no other action can carry an unchecked summary.
       guard liveViewOnly == nil || action == "viewOnly" || action == "capture" else { throw RemoteError.invalidMessage }

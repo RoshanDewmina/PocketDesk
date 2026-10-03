@@ -408,6 +408,7 @@ final class ComparisonEnrollmentCoordinatorTests: XCTestCase {
         struct LegacyRequest: Codable { let version: Int; let commitment: Data; let handshake: LegacyHandshake; let phoneName: String? }
         let actualRequest = try PairEnrollment.decode(PairEnrollment.Request.self, body: requestMessage.body)
         XCTAssertNil(actualRequest.handshake.first60)
+        XCTAssertNil(actualRequest.handshake.shortcutChips, "Opt-in must stay outside the legacy crypto transcript")
         let legacy = try PairEnrollment.decode(LegacyRequest.self, body: requestMessage.body)
         let request = try PairEnrollment.decode(PairEnrollment.Request.self, body: PairEnrollment.encoded(legacy))
         XCTAssertEqual(try PairEnrollment.encoded(request), try PairEnrollment.encoded(actualRequest),
@@ -420,6 +421,7 @@ final class ComparisonEnrollmentCoordinatorTests: XCTestCase {
         struct LegacyProof: Codable { let reveal: PairEnrollment.Reveal; let confirmation: Data }
         let actualProof = try PairEnrollment.decode(PairEnrollment.Proof.self, body: proofMessage.body)
         XCTAssertEqual(actualProof.first60, true)
+        XCTAssertEqual(actualProof.shortcutChips, ShortcutChips.isEnabled() ? true : nil)
         let proof = try PairEnrollment.decode(LegacyProof.self, body: proofMessage.body)
         let keys = try PairEnrollment.derive(invitation: invitation, requestID: requestMessage.request, sessionID: session,
             request: request, challenge: challenge, phone: proof.reveal, ephemeral: ephemeral, isHost: true)
@@ -433,6 +435,16 @@ final class ComparisonEnrollmentCoordinatorTests: XCTestCase {
         let accepted = ProtectedMessage(kind: "accepted", request: requestMessage.request, session: session, sequence: 1, body: nil)
         return (phone, store, signal, derived, accepted, saved)
     }
+    func testNewEnrollmentNegotiatesShortcutIdentityOnlyAfterConfirmedProof() throws {
+        let rig = try ComparisonEnrollmentRig(); defer { rig.stop() }
+        try rig.beginRequestOnly()
+        XCTAssertFalse(rig.host.peerFeatures.contains(SessionFeature.shortcutChips))
+        rig.pump()
+        XCTAssertEqual(rig.host.peerFeatures.contains(SessionFeature.shortcutChips), ShortcutChips.isEnabled())
+        XCTAssertTrue(rig.host.awaitingApproval, "Opt-in grants no pairing or control authority")
+        XCTAssertNil(rig.host.media)
+    }
+
     func testActualNewPhoneEmitterEnrollsWithLegacyHostWithoutSetupCapabilityAck() async throws {
         let (phone, store, signal, derived, template, legitimate) = try authenticatedPhone()
         defer { phone.stop() }
