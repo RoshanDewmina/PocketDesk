@@ -156,7 +156,8 @@ final class PhoneDiagnosticsTests: XCTestCase {
         diagnostics.bind(to: coordinator)
         coordinator.start()
         for retry in 1...24 {
-            now += 1; coordinator.status = "Connecting securely…"
+            // start() already published the first "Connecting securely…"; later ones are the retries.
+            if retry > 1 { now += 1; coordinator.status = "Connecting securely…" }
             now += 1; coordinator.status = "Authenticating your Mac…"
             now += 1; signaling.onClose?()
             XCTAssertTrue(coordinator.isRunning, "retry \(retry) stays within the retry budget")
@@ -184,8 +185,7 @@ final class PhoneDiagnosticsTests: XCTestCase {
         defer { coordinator.stop() }
         coordinator.restore()
         diagnostics.bind(to: coordinator)
-        coordinator.start()
-        now = 11; coordinator.status = "Connecting securely…"
+        coordinator.start() // publishes "Connecting securely…" at 10
         now = 12; coordinator.connected = true
         now = 14; signaling.onMessage?(RelayMessage(type: "route")) // unverifiable route: terminal on the phone
         XCTAssertFalse(coordinator.isRunning)
