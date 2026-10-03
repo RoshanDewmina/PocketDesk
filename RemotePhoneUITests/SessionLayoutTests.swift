@@ -165,7 +165,7 @@ final class SessionLayoutTests: XCTestCase {
     @MainActor
     func testEditableFocusPreviewOpensExistingKeyboardWithoutSending() {
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-layout-check", "--ui-auto-keyboard-preview-check"]
+        app.launchArguments = ["--ui-layout-check", "--ui-auto-keyboard-preview-check", "-FarsideAutoKeyboard", "YES"]
         app.launch()
         let field = app.textViews.firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5), "Editable-focus event should reveal the existing text editor")

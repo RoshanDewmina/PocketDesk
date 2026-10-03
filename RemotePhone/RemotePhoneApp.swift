@@ -2359,6 +2359,17 @@ let now = ProcessInfo.processInfo.systemUptime
         if accepted && isClick {
             lastAcceptedClick = name == "click" && (count ?? 1) >= 2 ? "double" : name
             acceptedClicks &+= 1
+            #if DEBUG
+            // Offline Mac text-field fixture: produce the same focus revision after a tap.
+            if inputProbe != nil, name == "click", LaunchOptions.has("--ui-manual-keyboard-check") {
+                Task { @MainActor [weak self] in
+                    await Task.yield()
+                    guard let self else { return }
+                    self.previewEditableFocusForTesting()
+                    self.inputProbe?.note("editable focus")
+                }
+            }
+            #endif
             if hapticsEnabled { playClickHaptic(name) }
         }
         return accepted

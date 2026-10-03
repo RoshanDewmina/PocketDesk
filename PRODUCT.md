@@ -946,3 +946,7 @@ The authorized iPhone-only test adds one Connect to Mac control for Control Cent
 ### 3 October 2026 — b12 shortcut chips combined-test authorization
 
 For the combined .7 iPhone-only device test, Roshan authorized app-aware plain-language shortcut chips above the keyboard, ON by default behind `FarsideShortcutChips` (NO restores the old bar and stops app-identity messages). This bounded exception enables the parked shortcut idea for testing; it adds no setting, app launcher or macro. Host metadata is only the frontmost bundle ID/display name during negotiated control, suppressed for secure input. iPad/Duo remain parked under D62; this lane does not bump versions or install apps.
+
+### 3 October 2026 — manual keyboard after combined .7 device feedback
+
+Roshan requests a small always-available session-edge Keyboard button and manual dismissal because Mac focus was opening the keyboard too often. Automatic opening is OFF by default: internal phone key `FarsideAutoKeyboard` unset/NO never auto-opens; YES restores the prior automatic opening path. Focus probing, secure-input detection and caret following while typing remain active. The edge button opens the existing editor; existing Hide keyboard dismisses it. Hide the edge button while typing, in Couch/View mode or when control is unavailable. No settings screen, version bump or installation in this lane; iPhone-only D62 applies.
