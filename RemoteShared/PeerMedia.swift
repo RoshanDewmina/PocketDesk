@@ -680,7 +680,7 @@ final class PeerMedia: NSObject {
     func captureContentChanged() { textClarity.contentChanged() }
     init(isHost: Bool, servers: [ICEServerConfiguration], forceRelay: Bool = false, nativeDesktopCodecs: Bool = true,
          localLink: ProvenLocalLink? = nil, fileChannel: Bool = false, hevc: Bool? = nil, hevc444: Bool? = nil, videoLTR: Bool = false,
-         textClarity: Bool = false) {
+         textClarity: Bool = false, capabilitySnapshot: NativeVideoCapabilitySnapshot? = nil) {
         self.isHost = isHost
         self.textClarity = TextClarityContext(enabled: isHost && nativeDesktopCodecs && textClarity)
         acceptsFileChannel = fileChannel
@@ -724,8 +724,12 @@ final class PeerMedia: NSObject {
         // Context is owned by this peer, including negotiation that starts after another
         // peer is created. Never publish a process-global 'next encoder' binding.
         _ = Self.codecRuntime
-        let useHEVC = hevc ?? (nativeDesktopCodecs && NativeHEVCCapability.permits(isHost: isHost))
-        let useFullColor = nativeDesktopCodecs && (hevc444 ?? NativeHEVC444Capability.permits(isHost: isHost))
+        // Freeze one value for both factories and format admission. Direct callers without
+        // Connect readiness get a conservative nonjoining snapshot. NO passes nil throughout.
+        let capabilities = NativeVideoCapabilitySnapshot.enabled
+            ? (capabilitySnapshot ?? NativeVideoCapabilitySnapshot.current(isHost: isHost)) : nil
+        let useHEVC = hevc ?? (nativeDesktopCodecs && NativeHEVCCapability.permits(isHost: isHost, snapshot: capabilities))
+        let useFullColor = nativeDesktopCodecs && (hevc444 ?? NativeHEVC444Capability.permits(isHost: isHost, snapshot: capabilities))
         fullColorCaptureEnabled = isHost && useFullColor
         let fullColorFailure: () -> Void = { [weak self] in
             NativeHEVC444Capability.failed() // Fresh negotiation may use Main1 or H264, never active-byte relabeling.
@@ -740,8 +744,8 @@ final class PeerMedia: NSObject {
                 self.onState?("failed")
             }
         }
-        let ownedEncoderFactory = PocketDeskVideoEncoderFactory(hevc: useHEVC, hevc444: useFullColor, onHEVC444Failure: fullColorFailure, counters: counters, frameTiming: frameTimingLog, onHEVCFailure: codecFailure, videoFeedback: videoFeedback, preferLTR: videoLTR, textClarity: self.textClarity)
-        let ownedDecoderFactory = PocketDeskVideoDecoderFactory(hevc: useHEVC, hevc444: useFullColor, onHEVC444Failure: fullColorFailure, frameTiming: frameTimingReceiver?.log, onHEVCFailure: codecFailure, videoFeedback: videoFeedback)
+        let ownedEncoderFactory = PocketDeskVideoEncoderFactory(hevc: useHEVC, hevc444: useFullColor, onHEVC444Failure: fullColorFailure, counters: counters, frameTiming: frameTimingLog, onHEVCFailure: codecFailure, videoFeedback: videoFeedback, preferLTR: videoLTR, textClarity: self.textClarity, capabilitySnapshot: capabilities)
+        let ownedDecoderFactory = PocketDeskVideoDecoderFactory(hevc: useHEVC, hevc444: useFullColor, onHEVC444Failure: fullColorFailure, frameTiming: frameTimingReceiver?.log, onHEVCFailure: codecFailure, videoFeedback: videoFeedback, capabilitySnapshot: capabilities)
         var configuredFactory: RTCPeerConnectionFactory?
         #if os(macOS)
         if isHost {

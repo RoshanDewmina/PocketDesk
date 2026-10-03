@@ -87,27 +87,35 @@ private final class HostRig {
 
 @MainActor
 final class CouchHandshakeTests: XCTestCase {
-    func testTheMacRecordsTheCouchRequestFromTheAcceptedAckAndForgetsItWithTheSession() throws {
+    /// Connect awaits the codec capability snapshot (PocketDeskAsyncCapabilitySnapshot) before
+    /// creating media; a bounded wait replaces the former synchronous assertion.
+    private func mediaCreated(_ host: RemoteCoordinator) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while host.media == nil, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(2)) }
+        return host.media != nil
+    }
+
+    func testTheMacRecordsTheCouchRequestFromTheAcceptedAckAndForgetsItWithTheSession() async throws {
         let rig = try HostRig()
         let (request, session) = try rig.authenticate()
         XCTAssertEqual(rig.host.peerRequestedMode, .picture)
         rig.signaling.deliver(try rig.phone.seal("acceptedAck", request: request, session: session, sequence: 1,
                                                  body: SessionModeRequest.body(for: .couch)))
         XCTAssertEqual(rig.host.peerRequestedMode, .couch)
-        XCTAssertNotNil(rig.host.media, "the Mac still prepares media exactly as before")
+        XCTAssertTrue(await mediaCreated(rig.host), "the Mac still prepares media exactly as before")
         rig.signaling.deliver(RelayMessage(type: "peer", online: false))
         XCTAssertEqual(rig.host.peerRequestedMode, .picture)
         rig.host.stop()
     }
 
-    func testAnAcceptedAckWithoutOrWithAnUnknownBodyIsAPictureSession() throws {
+    func testAnAcceptedAckWithoutOrWithAnUnknownBodyIsAPictureSession() async throws {
         let bodies: [Data?] = [nil, Data(#"{"mode":"hologram"}"#.utf8), Data("garbage".utf8)]
         for body in bodies {
             let rig = try HostRig()
             let (request, session) = try rig.authenticate()
             rig.signaling.deliver(try rig.phone.seal("acceptedAck", request: request, session: session, sequence: 1, body: body))
             XCTAssertEqual(rig.host.peerRequestedMode, .picture)
-            XCTAssertNotNil(rig.host.media)
+            XCTAssertTrue(await mediaCreated(rig.host))
             XCTAssertTrue(rig.host.isRunning, "an unreadable body never ends the session")
             rig.host.stop()
         }

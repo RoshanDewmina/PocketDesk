@@ -7,13 +7,14 @@ enum NativeHEVC444Capability {
     private static let state = HEVC444ProbeState()
     static var disabledThisLaunch: Bool { state.disabled }
     static func failed() { state.disable() }
-    static func permits(isHost: Bool) -> Bool {
+    static func permits(isHost: Bool, snapshot: NativeVideoCapabilitySnapshot? = nil) -> Bool {
         #if targetEnvironment(simulator)
         return false
         #else
         guard StreamTuning.current.hevc, HEVC444Policy.enabled, !VideoEncoderCompatibility.isOn, !state.disabled else { return false }
         return HEVC444Policy.permits(preference: true, simulator: false, disabled: state.disabled,
-            decoder: supportsDecode, encoder: isHost ? supportsEncode : false, isHost: isHost)
+            decoder: snapshot?.supportsHEVC444Decode ?? supportsDecode,
+            encoder: isHost ? (snapshot?.supportsHEVC444Encode ?? supportsEncode) : false, isHost: isHost)
         #endif
     }
     static func warmUp() {

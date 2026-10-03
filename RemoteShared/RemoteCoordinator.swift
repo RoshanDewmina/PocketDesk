@@ -209,6 +209,8 @@ final class RemoteCoordinator: ObservableObject {
     private var localLinkProof: LocalLinkProof?
     private var localProofPreparation: Task<Void, Never>?
     private var localProofPreparationID: UUID?
+    private var mediaCapabilityPreparation: Task<Void, Never>?
+    private var mediaCapabilityPreparationID: UUID?
     private var pendingLocalEndpoint: LocalProbeEndpoint?
     private var localProofTimeout: Task<Void, Never>?
     private let localProofTimeoutNanoseconds: UInt64
@@ -1186,6 +1188,7 @@ final class RemoteCoordinator: ObservableObject {
         timeout?.cancel(); timeout = nil
         localProofTimeout?.cancel(); localProofTimeout = nil
         localProofPreparation?.cancel(); localProofPreparation = nil; localProofPreparationID = nil
+        mediaCapabilityPreparation?.cancel(); mediaCapabilityPreparation = nil; mediaCapabilityPreparationID = nil
         if let proof = localLinkProof { localProofSummary = proof.stageSummary() }
         localLinkProof?.close(); localLinkProof = nil
         pendingMediaSignals.removeAll()
@@ -1229,7 +1232,7 @@ final class RemoteCoordinator: ObservableObject {
                       let policy = ServerRoutePolicy.accept(message, room: room, previous: routePolicy) else {
                     throw RemoteError.invalidMessage
                 }
-                if let old = routePolicy, old.access != policy.access, media != nil {
+                if let old = routePolicy, old.access != policy.access, media != nil || mediaCapabilityPreparationID != nil {
                     sessionFailed("Route access changed. Reconnect to verify the new route.")
                     return
                 }
@@ -1477,8 +1480,9 @@ final class RemoteCoordinator: ObservableObject {
             guard let body = message.body else { throw RemoteError.invalidMessage }
             let signal = try JSONDecoder().decode(MediaSignal.self, from: body)
             if let media { media.receive(signal); return }
-            guard localLinkProof != nil, pendingMediaSignals.count < 64 else { throw RemoteError.invalidMessage }
-            SessionLog.log.info("media \(signal.kind, privacy: .public) held until the local proof finishes")
+            guard localLinkProof != nil || mediaCapabilityPreparationID != nil,
+                  pendingMediaSignals.count < 64 else { throw RemoteError.invalidMessage }
+            SessionLog.log.info("media \(signal.kind, privacy: .public) held until media preparation finishes")
             pendingMediaSignals.append(signal)
         default: throw RemoteError.invalidMessage
         }
@@ -1746,6 +1750,52 @@ final class RemoteCoordinator: ObservableObject {
 
     private func finishMedia(localLink: ProvenLocalLink?) {
         guard !stopped, media == nil else { return }
+        // NO preserves the original synchronous accessor/factory path with no new suspension.
+        guard NativeVideoCapabilitySnapshot.enabled else {
+            createMedia(localLink: localLink, capabilitySnapshot: nil)
+            return
+        }
+        guard mediaCapabilityPreparationID == nil else { return }
+        let preparation = UUID()
+        let request = self.request, session = self.session
+        let presentation = presentationSessionID
+        let routeEpoch = localOnly ? ownerLocalEpoch : routePolicy?.epoch
+        let routeAccess = routePolicy?.access
+        let proof = localLinkProof, isHost = self.isHost
+        mediaCapabilityPreparationID = preparation
+        mediaCapabilityPreparation = Task { [weak self] in
+            let snapshot = await NativeVideoCapabilitySnapshot.ready(isHost: isHost, timeout: 3)
+            // Only this attempt's own preparation continues, and it releases its slot before any
+            // authority check, so a changed route can never leave a latched preparation behind.
+            guard let self, self.mediaCapabilityPreparationID == preparation else { return }
+            self.mediaCapabilityPreparation = nil; self.mediaCapabilityPreparationID = nil
+            guard !Task.isCancelled, !self.stopped, self.media == nil,
+                  self.request == request, self.session == session,
+                  self.presentationSessionID == presentation,
+                  self.localLinkProof === proof else { return }
+            // Route identity and access must both match the evidence this preparation started with:
+            // a same-epoch access change (remote -> local) would otherwise create media without the
+            // local one-hop proof and route restriction that access requires.
+            guard self.routeAuthorized,
+                  (self.localOnly ? self.ownerLocalEpoch : self.routePolicy?.epoch) == routeEpoch,
+                  self.routePolicy?.access == routeAccess else {
+                self.sessionFailed("Route access changed. Reconnect to verify the new route.")
+                return
+            }
+            if !isHost, self.sessionModeRequest == .couch, !self.routeIsLocal {
+                self.fail(CouchCopy.phoneRefusedStatus)
+                return
+            }
+            if isHost, self.peerRequestedMode != .couch, let blocker = self.shareBlocker?() {
+                self.refuseSession(blocker)
+                return
+            }
+            self.createMedia(localLink: localLink, capabilitySnapshot: snapshot)
+        }
+    }
+
+    private func createMedia(localLink: ProvenLocalLink?, capabilitySnapshot: NativeVideoCapabilitySnapshot?) {
+        guard !stopped, media == nil else { return }
         let relayOnly: Bool
         let decision = NativeRelayPolicy.decide(servers: servers, policy: relayPolicy, localForce: forceRelay)
         SessionLog.log.info("media start: relay decision=\(String(describing: decision), privacy: .public) policy=\(self.relayPolicy ?? "nil", privacy: .public) hasRelay=\(NativeRelayPolicy.hasRelay(self.servers), privacy: .public) localLink=\(localLink != nil, privacy: .public) access=\(self.routePolicy?.access.rawValue ?? "nil", privacy: .public)")
@@ -1757,7 +1807,7 @@ final class RemoteCoordinator: ObservableObject {
             return
         }
         let peer = PeerMedia(isHost: isHost, servers: servers, forceRelay: relayOnly, localLink: localLink, fileChannel: true, videoLTR: isHost && peerFeatures.contains(SessionFeature.videoLTR),
-                             textClarity: isHost && peerFeatures.contains(SessionFeature.textClarity))
+                             textClarity: isHost && peerFeatures.contains(SessionFeature.textClarity), capabilitySnapshot: capabilitySnapshot)
         media = peer
         if let engine = fileTransfer {
             peer.onFileMessage = { [weak engine] data in engine?.receiveChunk(data) }
