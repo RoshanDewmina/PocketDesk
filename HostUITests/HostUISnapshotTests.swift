@@ -292,6 +292,43 @@ final class HostUISnapshotTests: XCTestCase {
         }, actions: .preview))
     }
 
+    func testSettingsPages() throws {
+        let now = Date()
+        let rich = ready(.controlling) {
+            $0.session = HostSessionReadout(route: .direct, roundTripMs: 76, framesPerSecond: 30)
+            $0.sessionStartedAt = now.addingTimeInterval(-754)
+            $0.phoneName = "Your iPhone"
+            $0.pairedDevices = [
+                HostPairedDeviceRow(id: "phone", name: "Your iPhone", lastUsed: now, connected: true),
+                HostPairedDeviceRow(id: "pad", name: "Your iPad", lastUsed: now.addingTimeInterval(-2 * 86_400), connected: false)
+            ]
+            $0.lockWarning = .lockedWhileSharing(at: now.addingTimeInterval(-600))
+            $0.loginItem = .on
+        }
+        for page in HostSettingsPage.allCases {
+            try render("settings-page-\(page.rawValue)", HostSettingsView(state: rich, actions: .preview, page: page))
+        }
+        try render("settings-page-overview-needs-permissions", HostSettingsView(state: ready(.needsScreenRecording) {
+            $0.screenRecording = .denied
+            $0.accessibility = .denied
+            $0.hasPairedPhone = false
+            $0.openAtLogin = false
+        }, actions: .preview))
+        try render("settings-page-overview-paused", HostSettingsView(state: ready(.paused) {
+            $0.pausedUntil = now.addingTimeInterval(540)
+            $0.pairedDevices = [HostPairedDeviceRow(id: "phone", name: "Your iPhone", lastUsed: now, connected: false)]
+        }, actions: .preview))
+    }
+
+    func testConnectionQualityIsPlain() {
+        XCTAssertEqual(HostConnectionQuality(HostSessionReadout(route: .direct, roundTripMs: 14, framesPerSecond: 60)), .excellent)
+        XCTAssertEqual(HostConnectionQuality(HostSessionReadout(route: .direct, roundTripMs: 76, framesPerSecond: 2)), .good,
+                       "A still screen sends few frames; that is not a worse connection")
+        XCTAssertEqual(HostConnectionQuality(HostSessionReadout(route: .relayed, roundTripMs: 150)), .fair)
+        XCTAssertEqual(HostConnectionQuality(HostSessionReadout(route: .relayed, roundTripMs: 400)), .weak)
+        XCTAssertNil(HostConnectionQuality(HostSessionReadout(route: .direct)))
+    }
+
     func testCrashLoopAndCurtainAreExplained() {
         let stopped = HostPopoverPresentation.make(for: ready(.unavailable) { $0.crashLoopStopped = true })
         XCTAssertEqual(stopped.headline, "Stopped after repeated crashes")

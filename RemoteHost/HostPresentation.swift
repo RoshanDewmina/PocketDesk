@@ -74,6 +74,33 @@ struct HostSessionReadout: Equatable {
     }
 }
 
+/// The live connection in plain words, for people who don't read latency numbers. Frame rate is
+/// left out on purpose: a still screen sends few frames and is not a bad connection.
+enum HostConnectionQuality: Int, Equatable, CaseIterable {
+    case weak = 1, fair, good, excellent
+
+    init?(_ readout: HostSessionReadout) {
+        guard let roundTripMs = readout.roundTripMs else { return nil }
+        self = switch roundTripMs {
+        case ..<40: .excellent
+        case ..<100: .good
+        case ..<200: .fair
+        default: .weak
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .excellent: "Excellent connection"
+        case .good: "Good connection"
+        case .fair: "Fair connection"
+        case .weak: "Weak connection"
+        }
+    }
+
+    var bars: Int { rawValue }
+}
+
 /// Process-start rollback switches; the layout experiment stays off until device A/B.
 enum HostPopoverPolicy {
     static let bounded = bounded(defaults: .standard)
