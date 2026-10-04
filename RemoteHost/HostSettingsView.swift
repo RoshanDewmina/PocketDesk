@@ -90,6 +90,9 @@ struct HostSettingsView: View {
             }
             .interactiveDismissDisabled()
         }
+        .onChange(of: state.status) { _, status in
+            if status == .approvalRequested { page = .overview }
+        }
         .onChange(of: state.consentPending, initial: true) { _, pending in
             if pending && state.setupStep == .done { choosingBackground = true }
         }
@@ -212,7 +215,7 @@ struct HostSettingsView: View {
     @ViewBuilder
     private func sidebarBadge(_ item: HostSettingsPage) -> some View {
         switch item {
-        case .overview where state.lockWarning != nil, .mac where macNeedsAttention:
+        case _ where needsAttention(item):
             Circle().fill(Farside.Palette.ember).frame(width: 7, height: 7)
         case .devices where !state.pairedDevices.isEmpty:
             Text("\(state.pairedDevices.count)")
@@ -225,16 +228,33 @@ struct HostSettingsView: View {
 
     private func sidebarBadgeDescription(_ item: HostSettingsPage) -> String? {
         switch item {
-        case .overview where state.lockWarning != nil, .mac where macNeedsAttention: "Needs attention"
+        case _ where needsAttention(item): "Needs attention"
         case .devices where !state.pairedDevices.isEmpty: "\(state.pairedDevices.count) paired"
         default: nil
         }
     }
 
-    private var macNeedsAttention: Bool {
-        !state.screenRecording.isGranted || state.controlNeedsAccessibility
-            || state.loginItem == .needsApproval || state.automaticRecovery == .needsApproval
-            || !state.permissionsTurnedOffByUpdate.isEmpty
+    private func needsAttention(_ item: HostSettingsPage) -> Bool {
+        switch item {
+        case .overview:
+            HostPopoverPresentation.make(for: state).mood == .attention
+                || state.lockWarning != nil || !attentionItems.isEmpty
+        case .devices:
+            state.localPairRemovalMessage != nil || state.guestRows.contains(where: \.pending)
+        case .sharing:
+            false
+        case .mac:
+            state.screenRecording == .denied || (state.allowControl && state.accessibility == .denied)
+                || state.loginItem == .needsApproval || state.automaticRecovery == .needsApproval
+                || loginNotRegistered || !state.permissionsTurnedOffByUpdate.isEmpty
+        case .advanced:
+            state.serverRemovalPending
+        }
+    }
+
+    /// The person asked to open at login but macOS has nothing registered.
+    private var loginNotRegistered: Bool {
+        state.openAtLogin && (state.loginItem == .off || state.loginItem == .unavailable)
     }
 
     private var pillText: String {
@@ -283,7 +303,8 @@ struct HostSettingsView: View {
         case .overview:
             statusHero(presentation)
             if let warning = state.lockWarning { lockBanner(warning) }
-            readyChecklist
+            ForEach(attentionItems) { item in attentionBanner(item) }
+            readyChecklist(presentation)
         case .devices:
             devicesSection
             connectionSection
@@ -294,13 +315,13 @@ struct HostSettingsView: View {
             captureScopeSection
             controlSection
             privacySection
+            agentAlertsSection
         case .mac:
             permissionsSection
             reachableSection
             menuBarSection
             availabilityDisclosure
         case .advanced:
-            agentAlertsSection
             troubleshootingSection
             TransportPreferenceRows()
             serverDataSection
@@ -341,7 +362,7 @@ struct HostSettingsView: View {
             if !heroActions.isEmpty {
                 HStack(spacing: 10) {
                     ForEach(Array(heroActions.enumerated()), id: \.offset) { _, action in
-                        Button(title(of: action)) { perform(action) }
+                        Button(action.title) { perform(action) }
                             .buttonStyle(HostButtonStyle(kind: kind(presentation.emphasis(of: action)), height: 36))
                             .fixedSize()
                             .accessibilityIdentifier("farside.settings.\(action.identifier)")
@@ -405,7 +426,7 @@ struct HostSettingsView: View {
                                 .accessibilityIdentifier("farside.settings.lockScreenSettings")
                         }
                         if offerAway {
-                            Button("Turn On Away Mode…") { setAwayMode(true) }
+                            Button(state.awayIntroShown ? "Turn On Away Mode" : "Turn On Away Mode…") { setAwayMode(true) }
                                 .accessibilityIdentifier("farside.settings.lockWarningAway")
                         }
                     }
@@ -433,9 +454,10 @@ struct HostSettingsView: View {
         .accessibilityElement(children: .contain)
     }
 
-    private var readyChecklist: some View {
+    private func readyChecklist(_ presentation: HostPopoverPresentation) -> some View {
         let tiles = checklistTiles
-        let allGood = !tiles.contains { $0.ok == false }
+        let allGood = !tiles.contains { $0.ok == false } && presentation.mood != .attention
+            && attentionItems.isEmpty && state.lockWarning == nil
         return VStack(alignment: .leading, spacing: 10) {
             Text("Ready to connect").hostCaption()
                 .padding(.horizontal, 4)
@@ -447,31 +469,96 @@ struct HostSettingsView: View {
             }
             .fixedSize(horizontal: false, vertical: true)
             Text(allGood ? "Everything your phone needs is set up."
-                         : "Fix the highlighted items so your phone can connect.")
+                         : "Something above needs you before your phone can connect reliably.")
                 .font(.system(size: 12))
                 .foregroundStyle(Farside.Palette.ash)
                 .padding(.horizontal, 4)
         }
     }
 
+    private struct AttentionItem: Identifiable {
+        let id: String
+        let symbol: String
+        let text: String
+        let buttonTitle: String
+        let action: () -> Void
+    }
+
+    /// Everything that would otherwise hide on another page while the hero looks fine.
+    private var attentionItems: [AttentionItem] {
+        var items: [AttentionItem] = []
+        if let message = state.localPairRemovalMessage {
+            items.append(.init(id: "localRemoval", symbol: "iphone.slash", text: message,
+                               buttonTitle: "Open Devices") { page = .devices })
+        }
+        if state.serverRemovalPending {
+            items.append(.init(id: "serverRemoval", symbol: "icloud.slash",
+                               text: state.serverRemovalMessage ?? "Removing this Mac’s server room didn’t finish. Sharing stays off until it does.",
+                               buttonTitle: "Retry Removal…") { confirmingServerRemoval = true })
+        }
+        let pendingGuests = state.guestRows.filter(\.pending).count
+        if pendingGuests > 0 {
+            items.append(.init(id: "guests", symbol: "person.badge.clock",
+                               text: pendingGuests == 1 ? "A guest is waiting for you to approve video viewing."
+                                                        : "\(pendingGuests) guests are waiting for you to approve video viewing.",
+                               buttonTitle: "Review") { page = .devices })
+        }
+        if state.crashLoopStopped {
+            items.append(.init(id: "crashLoop", symbol: "exclamationmark.arrow.circlepath",
+                               text: "Copying diagnostics helps find out why Farside kept quitting. Nothing is sent until you paste it somewhere.",
+                               buttonTitle: "Copy Diagnostics", action: actions.copyDiagnostics))
+        }
+        return items
+    }
+
+    private func attentionBanner(_ item: AttentionItem) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            Image(systemName: item.symbol)
+                .font(.system(size: 13))
+                .foregroundStyle(Farside.Palette.ember)
+                .frame(width: 32, height: 32)
+                .background(Farside.Palette.ember.opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .accessibilityHidden(true)
+            Text(item.text)
+                .font(.system(size: 13))
+                .foregroundStyle(Farside.Palette.bone)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button(item.buttonTitle, action: item.action)
+                .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
+                .fixedSize()
+                .accessibilityIdentifier("farside.settings.attention.\(item.id)")
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Farside.Palette.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(Farside.Palette.ember.opacity(0.35), lineWidth: 1))
+        .accessibilityElement(children: .contain)
+    }
+
     private var checklistTiles: [HostStatusTile.Model] {
-        let screen = state.screenRecording.isGranted
+        let captureApproval = state.status == .captureNeedsApproval
+        let screen = state.screenRecording.isGranted && !captureApproval
         let control = state.accessibility.isGranted
         let devices = state.pairedDevices.count
+        let login: (value: String, ok: Bool?) = if state.loginItem == .needsApproval { ("Approve…", false) }
+            else if loginNotRegistered { ("Not set up", false) }
+            else if state.openAtLogin { ("On", true) }
+            else { ("Off", nil) }
         return [
-            .init(id: "screen", title: "See the screen", value: screen ? "Allowed" : "Allow…", ok: screen,
+            .init(id: "screen", title: "See the screen",
+                  value: screen ? "Allowed" : (captureApproval ? "Needs approval" : "Allow…"), ok: screen,
                   action: screen ? { page = .mac } : { actions.openSystemSettings(.screenRecording) }),
             .init(id: "control", title: "Click and type",
                   value: !state.allowControl ? "View only" : (control ? "Allowed" : "Allow…"),
                   ok: !state.allowControl ? nil : control,
                   action: state.controlNeedsAccessibility ? { actions.openSystemSettings(.accessibility) } : { page = .sharing }),
             .init(id: "devices", title: "Devices",
-                  value: devices == 0 ? (state.hasPairedPhone ? "Paired" : "Pair…") : "\(devices) paired",
-                  ok: devices > 0 || state.hasPairedPhone,
-                  action: devices == 0 && !state.hasPairedPhone ? actions.pairNewPhone : { page = .devices }),
-            .init(id: "login", title: "Opens at login",
-                  value: state.loginItem == .needsApproval ? "Approve…" : (state.openAtLogin ? "On" : "Off"),
-                  ok: state.loginItem == .needsApproval ? false : (state.openAtLogin ? true : nil),
+                  value: devices == 0 ? "Pair…" : "\(devices) paired",
+                  ok: devices > 0 && state.localPairRemovalMessage == nil,
+                  action: devices == 0 ? actions.pairNewPhone : { page = .devices }),
+            .init(id: "login", title: "Opens at login", value: login.value, ok: login.ok,
                   action: state.loginItem == .needsApproval ? actions.openLoginItems : { page = .mac })
         ]
     }
@@ -598,9 +685,6 @@ struct HostSettingsView: View {
                            set: actions.setChimeOnConnect)
                     .accessibilityIdentifier("farside.settings.chime")
             }
-            if state.away.available {
-                awayModeRow
-            }
         }
     }
 
@@ -680,6 +764,9 @@ struct HostSettingsView: View {
                         .accessibilityIdentifier("farside.settings.automaticRecovery")
                 }
             }
+            if state.away.available {
+                awayModeRow
+            }
         }
     }
 
@@ -699,7 +786,7 @@ struct HostSettingsView: View {
             showingAvailability.toggle()
         }
         if showingAvailability {
-            HostSettingsSection(footer: "Start at login and recovery apply after you log in. Farside never stores your Mac password or unlocks FileVault.") {
+            HostSettingsSection(footer: "Start at login and recovery apply after you log in. Farside never stores your Mac password or unlocks FileVault. Virtual workspace is unavailable in this build.") {
                 HostSettingsRow("Awake and unlocked", subtitle: "A current authenticated connection and fresh content are required.") { EmptyView() }
                 HostSettingsRow("Display asleep", subtitle: "Farside can request display wake while this user’s Mac is awake.") { EmptyView() }
                 HostSettingsRow("System sleep or closed lid", subtitle: "Needs supported network wake and another powered LAN peer. Packet sent does not mean awake.") { EmptyView() }
@@ -802,12 +889,12 @@ struct HostSettingsView: View {
     private var serverDataSection: some View {
         HostSettingsSection("Server data", footer: "Room removal does not cancel an Apple subscription. Purchase history remains for up to 90 days after access ends; security blocks and pending relay revocations may be retained.") {
             HostSettingsRow("This Mac’s server room", subtitle: state.serverRemovalMessage) {
-                Button(state.serverRemovalBusy ? "Removing…" : (state.serverRemovalPending ? "Retry Removal…" : "Remove…"), role: .destructive) {
+                Button(state.serverRemovalBusy ? "Removing…" : (state.serverRemovalPending ? "Retry Server Room Removal…" : "Remove Server Room…"), role: .destructive) {
                     confirmingServerRemoval = true
                 }
                 .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
+                .fixedSize()
                 .disabled(state.serverRemovalBusy || (!state.hasPairedPhone && !state.serverRemovalPending))
-                .accessibilityLabel(state.serverRemovalPending ? "Retry Server Room Removal" : "Remove This Mac’s Server Room")
                 .accessibilityIdentifier("farside.settings.removeServerRoom")
             }
         }
@@ -844,10 +931,6 @@ struct HostSettingsView: View {
         .accessibilityLabel(title)
         .accessibilityValue(expanded ? "Expanded" : "Collapsed")
         .accessibilityIdentifier(identifier)
-    }
-
-    private func title(of action: HostPopoverAction) -> String {
-        action == .pairPhone ? "Pair a Device…" : action.title
     }
 
     private func kind(_ emphasis: HostPopoverPresentation.Emphasis) -> HostButtonStyle.Kind {

@@ -252,11 +252,14 @@ final class HostUISnapshotTests: XCTestCase {
             $0.keepAwake = true
             $0.keepAwakePausedOnBattery = true
             $0.loginItem = .needsApproval
-        }, actions: .preview))
+        }, actions: .preview, page: .mac))
     }
 
     func testSettings() throws {
         try render("settings-removal-retry", HostSettingsView(state: ready(.paused) {
+            $0.localPairRemovalMessage = "Couldn’t confirm removal. Phone sharing is off. Unlock this Mac and retry Remove."
+        }, actions: .preview, page: .devices))
+        try render("settings-removal-retry-overview", HostSettingsView(state: ready(.paused) {
             $0.localPairRemovalMessage = "Couldn’t confirm removal. Phone sharing is off. Unlock this Mac and retry Remove."
         }, actions: .preview))
         try render("settings", HostSettingsView(state: ready(.ready), actions: .preview))
@@ -264,7 +267,7 @@ final class HostUISnapshotTests: XCTestCase {
             $0.displays = [HostDisplayOption(id: 1, name: "Built-in Retina Display"),
                            HostDisplayOption(id: 2, name: "Studio Display")]
             $0.session = Self.measured
-        }, actions: .preview))
+        }, actions: .preview, page: .sharing))
         try render("settings-needs-attention", HostSettingsView(state: ready(.needsPhone) {
             $0.hasPairedPhone = false
             $0.accessibility = .denied
@@ -277,16 +280,16 @@ final class HostUISnapshotTests: XCTestCase {
             $0.automaticRecovery = .needsApproval
             $0.privacyCurtain = true
             $0.curtainStatus = "Covering 2 displays. Your phone still sees the desktop."
-        }, actions: .preview))
+        }, actions: .preview, page: .sharing))
         try render("settings-crash-loop", HostSettingsView(state: ready(.unavailable) {
             $0.crashLoopStopped = true
             $0.automaticRecovery = .on
-        }, actions: .preview))
+        }, actions: .preview, page: .mac))
         try render("settings-agent-alerts", HostSettingsView(state: ready(.controlling) {
             $0.session = Self.measured
             $0.agentAlerts = true
             $0.agentAlertsStatus = "Claude Code asked 2 min ago · told your iPhone"
-        }, actions: .preview))
+        }, actions: .preview, page: .sharing))
         try render("settings-capture-approval-icon-hidden", HostSettingsView(state: ready(.captureNeedsApproval) {
             $0.menuBarIconShown = false
         }, actions: .preview))
@@ -318,15 +321,6 @@ final class HostUISnapshotTests: XCTestCase {
             $0.pausedUntil = now.addingTimeInterval(540)
             $0.pairedDevices = [HostPairedDeviceRow(id: "phone", name: "Your iPhone", lastUsed: now, connected: false)]
         }, actions: .preview))
-    }
-
-    func testConnectionQualityIsPlain() {
-        XCTAssertEqual(HostConnectionQuality(HostSessionReadout(route: .direct, roundTripMs: 14, framesPerSecond: 60)), .excellent)
-        XCTAssertEqual(HostConnectionQuality(HostSessionReadout(route: .direct, roundTripMs: 76, framesPerSecond: 2)), .good,
-                       "A still screen sends few frames; that is not a worse connection")
-        XCTAssertEqual(HostConnectionQuality(HostSessionReadout(route: .relayed, roundTripMs: 150)), .fair)
-        XCTAssertEqual(HostConnectionQuality(HostSessionReadout(route: .relayed, roundTripMs: 400)), .weak)
-        XCTAssertNil(HostConnectionQuality(HostSessionReadout(route: .direct)))
     }
 
     func testCrashLoopAndCurtainAreExplained() {

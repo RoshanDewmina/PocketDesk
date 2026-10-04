@@ -8,7 +8,7 @@ struct LANWakeView: View {
         Form {
             Section("Powered LAN helper") {
                 Text(model.connection.invitation?.name ?? "Select your paired helper Mac")
-                Text("Connect to your paired, powered helper first. Register the sleeping Mac locally in that helper’s Farside Availability settings, then copy its opaque wake target ID here.")
+                Text("Connect to your paired, powered helper first. Register the sleeping Mac locally in that helper’s Farside Settings, under This Mac › When can my phone reach this Mac?, then copy its opaque wake target ID here.")
                 TextField("Owner-registered wake target ID", text: $target).textInputAutocapitalization(.never).autocorrectionDisabled()
                 Button("Send wake packet") { confirm = true }
                     .frame(minHeight: 44).disabled(!model.canRequestLANWake || UUID(uuidString: target) == nil)

@@ -484,4 +484,13 @@ final class HostPresentationTests: XCTestCase {
         XCTAssertEqual(HostCurtainCopy.subtitle(for: state), "Not used while sharing a single window or app",
                        "A greyed-out switch says why")
     }
+
+    func testConnectionQualityIsPlain() {
+        XCTAssertEqual(HostConnectionQuality(HostSessionReadout(route: .direct, roundTripMs: 14, framesPerSecond: 60)), .excellent)
+        XCTAssertEqual(HostConnectionQuality(HostSessionReadout(route: .direct, roundTripMs: 76, framesPerSecond: 2)), .good,
+                       "A still screen sends few frames; that is not a worse connection")
+        XCTAssertEqual(HostConnectionQuality(HostSessionReadout(route: .relayed, roundTripMs: 150)), .fair)
+        XCTAssertEqual(HostConnectionQuality(HostSessionReadout(route: .relayed, roundTripMs: 400)), .weak)
+        XCTAssertNil(HostConnectionQuality(HostSessionReadout(route: .direct)))
+    }
 }
