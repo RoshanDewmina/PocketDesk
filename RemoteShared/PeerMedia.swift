@@ -256,6 +256,9 @@ final class PeerMedia: NSObject {
     let tuning: StreamTuning
     private(set) var streamQuality: StreamQuality = .balanced
     private var hevcRun: HEVCRun?
+    private var hevcDecodeWatchdog = HEVCDecodeWatchdog()
+    private var onFirstPictureHEVCFailure: (() -> Void)?
+    private var onFirstPictureHEVC444Failure: (() -> Void)?
     private var latestHostSummary: HostStreamSummary?
     private var bandwidthSeed = BandwidthSeedPolicy()
     private var ceilingRoute = CeilingRouteTracker()
@@ -744,6 +747,8 @@ final class PeerMedia: NSObject {
                 self.onState?("failed")
             }
         }
+        onFirstPictureHEVCFailure = useHEVC ? codecFailure : nil
+        onFirstPictureHEVC444Failure = useFullColor ? fullColorFailure : nil
         let ownedEncoderFactory = PocketDeskVideoEncoderFactory(hevc: useHEVC, hevc444: useFullColor, onHEVC444Failure: fullColorFailure, counters: counters, frameTiming: frameTimingLog, onHEVCFailure: codecFailure, videoFeedback: videoFeedback, preferLTR: videoLTR, textClarity: self.textClarity, capabilitySnapshot: capabilities)
         let ownedDecoderFactory = PocketDeskVideoDecoderFactory(hevc: useHEVC, hevc444: useFullColor, onHEVC444Failure: fullColorFailure, frameTiming: frameTimingReceiver?.log, onHEVCFailure: codecFailure, videoFeedback: videoFeedback, capabilitySnapshot: capabilities)
         var configuredFactory: RTCPeerConnectionFactory?
@@ -1445,6 +1450,8 @@ final class PeerMedia: NSObject {
             StreamStatsEntry(id: $0.id, type: $0.type, values: $0.values, timestamp: $0.timestamp_us / 1_000_000)
         }
         let sample = StreamStatsSample(entries: entries)
+        recoverUndecodableFirstPicture(entries)
+        guard !closed else { return }
         let counts = counters.drain(inputBufferedBytes: controlBufferedAmount)
         var stats = StreamStatsReport(role: isHost ? "host" : "phone", previous: previousSample,
                                       current: sample, counters: previousSample == nil ? nil : counts)
@@ -1515,6 +1522,27 @@ final class PeerMedia: NSObject {
         if isHost || onStreamStatistics == nil { StreamDebug.record(stats) }
         onStreamStatistics?(stats)
         if isHost { onSenderStatistics?(stats) }
+    }
+
+    static func firstPictureDecodeObservation(_ entries: [StreamStatsEntry]) -> HEVCDecodeWatchdog.Observation? {
+        if let inbound = entries.first(where: { $0.type == "inbound-rtp" && $0.isVideo }),
+           let codecID = inbound.string("codecId"),
+           let codec = entries.first(where: { $0.type == "codec" && $0.id == codecID }),
+           let negotiated = HEVCDecodeWatchdog.Codec.negotiated(mimeType: codec.string("mimeType"), fmtp: codec.string("sdpFmtpLine")),
+           let received = inbound.number("framesReceived"), let decoded = inbound.number("framesDecoded") {
+            return HEVCDecodeWatchdog.Observation(identity: .init(inboundID: inbound.id, codecID: codecID, codec: negotiated),
+                timestamp: inbound.timestamp, framesReceived: received, framesDecoded: decoded)
+        }
+        return nil
+    }
+
+    private func recoverUndecodableFirstPicture(_ entries: [StreamStatsEntry]) {
+        guard !closed, !isHost, nativeDesktopCodecs, connectedPublished else { return }
+        guard let failedCodec = hevcDecodeWatchdog.observe(Self.firstPictureDecodeObservation(entries)) else { return }
+        let failure = failedCodec == .fullColor444 ? onFirstPictureHEVC444Failure : onFirstPictureHEVCFailure
+        guard let failure else { return }
+        SessionLog.log.error("\(self.role, privacy: .public) first picture recovery: \(failedCodec.rawValue, privacy: .public) received frames for 5 s without decoding")
+        failure() // Existing terminal path negotiates a fresh authorized session with the failed codec disabled.
     }
 
     private func observeRemoteVideo(_ track: RTCVideoTrack) {
