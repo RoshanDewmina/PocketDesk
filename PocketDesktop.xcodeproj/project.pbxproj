@@ -775,6 +775,7 @@
 		9CE006540560FFA7FC13EBCD /* ConnectMotionModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8908F41762146046A837BAB8 /* ConnectMotionModel.swift */; };
 		9CEF1683B09BE0190745EC71 /* SystemAudioDeviceTests.m in Sources */ = {isa = PBXBuildFile; fileRef = ADEE330B07936D716DAFBD46 /* SystemAudioDeviceTests.m */; };
 		9D22EE7132079AD83897F348 /* NativeHEVCCapability.swift in Sources */ = {isa = PBXBuildFile; fileRef = A25D032DEA5FD13D95F88713 /* NativeHEVCCapability.swift */; };
+		9D245C1CAD7D6B342D469C12 /* PhysicalLifecycleSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29D6356353621341CB416452 /* PhysicalLifecycleSmokeTests.swift */; };
 		9D7AF401EEBDEF9C8FD659F1 /* PhoneMediaSessionIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F5D890670C90075F70B0F41 /* PhoneMediaSessionIntegrationTests.swift */; };
 		9D9BEC8B5B9F1053B13BB7EE /* SessionDiagnosticReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C8C2C6A2A5201E3EC3AE3D8 /* SessionDiagnosticReport.swift */; };
 		9DB12C1EE89F1C660A4D6B58 /* HEVC444Policy.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA7C297B15EC54A11AEB045F /* HEVC444Policy.swift */; };
@@ -1295,16 +1296,23 @@
 			remoteGlobalIDString = 63FEA3C1ECCDC741299B1BB3;
 			remoteInfo = FarsideWidgets;
 		};
+		DC59EC4A386A686E5A4C283E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = ACE1F58F3656D21C794613D9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 9502F7F2ED810ADCAA0567D4;
+			remoteInfo = PocketDeskRemote;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
 		2E49EEF7069398A9DE44D8A4 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = "agent-hooks";
-			dstSubfolderSpec = 7;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
 			files = (
-				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
+				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1334,10 +1342,10 @@
 		7921CB30C5158D00B1977963 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = Contents/Library/LaunchAgents;
-			dstSubfolderSpec = 1;
+			dstPath = "agent-hooks";
+			dstSubfolderSpec = 7;
 			files = (
-				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
+				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1436,6 +1444,7 @@
 		293C3A4A37C46FD6B3F2B9FC /* LivePiPController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LivePiPController.swift; sourceTree = "<group>"; };
 		29800B2341E92E0C9C977718 /* HostKeepAwake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeepAwake.swift; sourceTree = "<group>"; };
 		29A2166A24EC3846178FA0A2 /* HostIdentityStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostIdentityStore.swift; sourceTree = "<group>"; };
+		29D6356353621341CB416452 /* PhysicalLifecycleSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhysicalLifecycleSmokeTests.swift; sourceTree = "<group>"; };
 		2A39232AC41B46F1C44987CD /* BenchRenderers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchRenderers.swift; sourceTree = "<group>"; };
 		2A4062788DDAD84E5D2C5B3E /* HostTextFocusProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostTextFocusProbe.swift; sourceTree = "<group>"; };
 		2AB621AC85022A9148C82D69 /* FarsideIntentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarsideIntentsTests.swift; sourceTree = "<group>"; };
@@ -1792,6 +1801,7 @@
 		B4EF13B231B5FC765975AB05 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/Localizable.strings; sourceTree = "<group>"; };
 		B5DC5941798CC9570708F6E3 /* E2EWindowCoverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EWindowCoverTests.swift; sourceTree = "<group>"; };
 		B64874362A55A2050EAD9C50 /* SmoothMotionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmoothMotionTests.swift; sourceTree = "<group>"; };
+		B66CBB8A2D56B674597F4A8B /* FarsidePhysicalLifecycleUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = FarsidePhysicalLifecycleUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B6A334F7B8A99B66DD2EFF62 /* AgentHookScriptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentHookScriptTests.swift; sourceTree = "<group>"; };
 		B6A57C1633C1D2CD5334A7ED /* E2EHooksTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EHooksTests.swift; sourceTree = "<group>"; };
 		B6D0BA4C0C5AD25BBF722D7F /* SessionActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionActivityTests.swift; sourceTree = "<group>"; };
@@ -2194,6 +2204,7 @@
 			isa = PBXGroup;
 			children = (
 				87D796D0662E12017DC729F0 /* FarsideE2EStubHost.app */,
+				B66CBB8A2D56B674597F4A8B /* FarsidePhysicalLifecycleUITests.xctest */,
 				7D99E7F09D13D70C68FF3489 /* FarsideShare.appex */,
 				5F13F38CA5606DD3291C2DF7 /* FarsideTestPad.app */,
 				C4522B2D9BDF2090F6D80728 /* FarsideWatchdog */,
@@ -2792,6 +2803,7 @@
 				D390AF68AADA3A56321DCA14 /* RemotePhone */,
 				B8985D87473FF48C32360DA5 /* RemotePhoneTests */,
 				9366CC68AE3F01EB48993885 /* RemotePhoneUITests */,
+				C0715BD1E5244B2989883739 /* RemotePhysicalUITests */,
 				0266A8A075903E706580E246 /* RemoteShared */,
 				6DEB5BEA9B8F3872FB151859 /* RemoteTests */,
 				162DDBBD203E2EC0EE2F9E9A /* RemoteWatchdog */,
@@ -2800,6 +2812,14 @@
 				ACFC8C3A6E6E70FB9881DB78 /* StreamTests */,
 				1224C8FD142B08DEF994D415 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		C0715BD1E5244B2989883739 /* RemotePhysicalUITests */ = {
+			isa = PBXGroup;
+			children = (
+				29D6356353621341CB416452 /* PhysicalLifecycleSmokeTests.swift */,
+			);
+			path = RemotePhysicalUITests;
 			sourceTree = "<group>";
 		};
 		CB327CEC8281C255753027C0 /* SmoothMotion */ = {
@@ -3118,6 +3138,24 @@
 			productReference = FE33F86795CAAD3BAE7FAE69 /* PocketDesktopUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		7FFD5ADB965CD741A1DD2594 /* FarsidePhysicalLifecycleUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AE269E78F41A7C1CBF9DFF16 /* Build configuration list for PBXNativeTarget "FarsidePhysicalLifecycleUITests" */;
+			buildPhases = (
+				D3A2C28BE5510738242ABE49 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				3EA62EF55BFA1C30F0BB9605 /* PBXTargetDependency */,
+			);
+			name = FarsidePhysicalLifecycleUITests;
+			packageProductDependencies = (
+			);
+			productName = FarsidePhysicalLifecycleUITests;
+			productReference = B66CBB8A2D56B674597F4A8B /* FarsidePhysicalLifecycleUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		820FD6A98A8BBCAB17579F3D /* PocketDeskRemoteHost */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = D32E23C36563D84AC50CC5EF /* Build configuration list for PBXNativeTarget "PocketDeskRemoteHost" */;
@@ -3303,6 +3341,9 @@
 					71D528980A31E47B101FF331 = {
 						TestTargetID = 875075D461AE60BFC8500AD1;
 					};
+					7FFD5ADB965CD741A1DD2594 = {
+						TestTargetID = 9502F7F2ED810ADCAA0567D4;
+					};
 					820FD6A98A8BBCAB17579F3D = {
 						DevelopmentTeam = 39HM2X8GS6;
 						ProvisioningStyle = Automatic;
@@ -3345,6 +3386,7 @@
 				0427758AB8BA777A2E39FE9D /* FarsideShare */,
 				9EF7C944457BA639543F81DA /* RemotePhoneTests */,
 				8D0B0014BCDC7D8391789D7B /* RemotePhoneUITests */,
+				7FFD5ADB965CD741A1DD2594 /* FarsidePhysicalLifecycleUITests */,
 				820FD6A98A8BBCAB17579F3D /* PocketDeskRemoteHost */,
 				06EF49D8455D1AF37B315A65 /* FarsideWatchdog */,
 				2227FEA4487CB866EBFC7560 /* RemoteCoreTests */,
@@ -4769,6 +4811,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D3A2C28BE5510738242ABE49 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9D245C1CAD7D6B342D469C12 /* PhysicalLifecycleSmokeTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D420B9C73EB7292CD0E1B6CD /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -4802,6 +4852,11 @@
 			isa = PBXTargetDependency;
 			target = 9502F7F2ED810ADCAA0567D4 /* PocketDeskRemote */;
 			targetProxy = 265492F8B2CDDC83538AA5B8 /* PBXContainerItemProxy */;
+		};
+		3EA62EF55BFA1C30F0BB9605 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 9502F7F2ED810ADCAA0567D4 /* PocketDeskRemote */;
+			targetProxy = DC59EC4A386A686E5A4C283E /* PBXContainerItemProxy */;
 		};
 		76451FECBFC530B1EDE1268B /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -4917,7 +4972,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = FarsideShare/FarsideShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20261004.1;
+				CURRENT_PROJECT_VERSION = 20261004.2;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FarsideShare/Info.plist;
@@ -4943,7 +4998,7 @@
 				CODE_SIGN_ENTITLEMENTS = "$(FARSIDE_ENTITLEMENTS_$(FARSIDE_ENABLE_PUSH))";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20261004.1;
+				CURRENT_PROJECT_VERSION = 20261004.2;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				FARSIDE_APNS_ENVIRONMENT = development;
 				FARSIDE_ENABLE_PUSH = NO;
@@ -4987,7 +5042,7 @@
 				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 20261004.1;
+				CURRENT_PROJECT_VERSION = 20261004.2;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				ENABLE_HARDENED_RUNTIME = YES;
 				EXCLUDED_ARCHS = x86_64;
@@ -5086,6 +5141,24 @@
 			};
 			name = Release;
 		};
+		2B5859AA8BB36564B6CA0FDB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.FarsidePhysicalLifecycleUITests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = PocketDeskRemote;
+			};
+			name = Release;
+		};
 		2DBE16C5B80866ED26AAE229 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -5173,7 +5246,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = FarsideShare/FarsideShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20261004.1;
+				CURRENT_PROJECT_VERSION = 20261004.2;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FarsideShare/Info.plist;
@@ -5222,7 +5295,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 20261004.1;
+				CURRENT_PROJECT_VERSION = 20261004.2;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				ENABLE_HARDENED_RUNTIME = YES;
 				EXCLUDED_ARCHS = x86_64;
@@ -5288,7 +5361,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = FarsideWidgets/FarsideWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20261004.1;
+				CURRENT_PROJECT_VERSION = 20261004.2;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FarsideWidgets/Info.plist;
@@ -5315,7 +5388,7 @@
 				CODE_SIGN_ENTITLEMENTS = "$(FARSIDE_ENTITLEMENTS_$(FARSIDE_ENABLE_PUSH))";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20261004.1;
+				CURRENT_PROJECT_VERSION = 20261004.2;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				FARSIDE_APNS_ENVIRONMENT = production;
 				FARSIDE_ENABLE_PUSH = YES;
@@ -5535,7 +5608,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = FarsideWidgets/FarsideWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20261004.1;
+				CURRENT_PROJECT_VERSION = 20261004.2;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FarsideWidgets/Info.plist;
@@ -5695,6 +5768,24 @@
 				SDKROOT = macosx;
 			};
 			name = Release;
+		};
+		F105E5F79940A7A06C08D024 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.FarsidePhysicalLifecycleUITests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = PocketDeskRemote;
+			};
+			name = Debug;
 		};
 		F2EB721E6490D39DA48D587E /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -5887,6 +5978,15 @@
 			buildConfigurations = (
 				DBDA385634804D65ED9313F0 /* Debug */,
 				5896DE5A5B4CDBCC683E3004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		AE269E78F41A7C1CBF9DFF16 /* Build configuration list for PBXNativeTarget "FarsidePhysicalLifecycleUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F105E5F79940A7A06C08D024 /* Debug */,
+				2B5859AA8BB36564B6CA0FDB /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
