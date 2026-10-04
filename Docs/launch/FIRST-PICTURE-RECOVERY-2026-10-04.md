@@ -15,6 +15,12 @@ The same installed binary relaunched with `-farsideExperimentalFullColorHEVC444 
 
 ## Validation ledger
 
-Source review, scoped tests, signed builds and physical corrected-build acceptance: PENDING.
+- Independent source review: APPROVE, no blocking findings, revisions 5013126 and 9ea94a3 against .8 baseline619c803.
+- Scoped native tests: 36 passed, zero failures (HEVCDecodeWatchdog, HEVC444Policy, HEVCFallbackPolicy, OwnedHEVCCodec); core.xcresult at 19:36 ET.
+- Non-DEBUG policy executable: saved experimental opt-in and developer launch argument cannot enable Main444; passed. This is not a full Release archive.
+- Signed phone and Mac Debug builds from integrated primary checkout: passed.
+- Installed iPhone and /Applications/PocketDesk Host.app: both verified20261004.1 at 19:39 ET. Host identity-continuity guards passed; UI Ready, existing Screen Recording and Accessibility grants preserved.
+- Corrected-build physical first picture and forced-failure recovery: PENDING. Prior owner confirmation is the .8 codec A/B result, not acceptance of the corrected binary.
+- App Store release acceptance: pending; no upload or publication.
 
 Current session evidence is in the Oct4 Codex task work/manual-test-2026-10-04 directory; raw logs are local and are not uploaded.
