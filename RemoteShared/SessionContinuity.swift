@@ -288,6 +288,7 @@ struct BackgroundContinuity {
     enum Phase: Equatable {
         case foreground
         case holding(since: TimeInterval)
+        case viewing(since: TimeInterval)
         case released(since: TimeInterval)
     }
 
@@ -309,6 +310,17 @@ struct BackgroundContinuity {
     var isHolding: Bool {
         if case .holding = phase { return true }
         return false
+    }
+    var isViewing: Bool {
+        if case .viewing = phase { return true }
+        return false
+    }
+
+    /// PiP owns platform continuation, with no finite background task or hold timer.
+    /// Retain only the same bounded foreground-return intent if that live consumer is lost.
+    mutating func enterLiveBackground(at now: TimeInterval, sessionOpen: Bool) {
+        guard phase == .foreground, sessionOpen else { return }
+        phase = .viewing(since: now)
     }
 
     /// - Parameters:
@@ -333,7 +345,11 @@ struct BackgroundContinuity {
     /// The hold timer, the iOS expiration handler or a transport loss ended the held session.
     @discardableResult
     mutating func endHold() -> Bool {
-        guard case .holding(let since) = phase else { return false }
+        let since: TimeInterval
+        switch phase {
+        case .holding(let began), .viewing(let began): since = began
+        default: return false
+        }
         phase = .released(since: since)
         return true
     }
@@ -346,6 +362,9 @@ struct BackgroundContinuity {
             return .none
         case .holding(let since):
             if sessionConnected { return .resumeHeldSession }
+            return now - since <= Self.automaticResumeWindow ? .reconnect : .offerReconnect
+        case .viewing(let since):
+            if sessionConnected { return .none }
             return now - since <= Self.automaticResumeWindow ? .reconnect : .offerReconnect
         case .released(let since):
             return now - since <= Self.automaticResumeWindow ? .reconnect : .offerReconnect

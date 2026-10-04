@@ -385,6 +385,11 @@ final class PhoneRemoteModel: ObservableObject {
     @Published private(set) var lastDeparture: HostPresence? { didSet { lastDepartureInvitation = connection.invitation } }
     private var departureReason: HostPresence?
     private var continuity = BackgroundContinuity()
+    /// Correlation for foreground recovery, never permission to reuse an expired media route.
+    private var backgroundResumeHost: PhoneHostTrust?
+    private var backgroundRecoveryBlocked: Bool {
+        (hostPresence != nil && hostPresence != .displayAsleep) || sessionBlocker != nil || pendingLockMac != nil
+    }
     private let background: BackgroundExecution
     private var holdTask: Task<Void, Never>?
     private var resumeWatchdog: Task<Void, Never>?
@@ -1220,6 +1225,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     func prepareConnection(mode: SessionMode) {
+        clearContinuity()
         requestedMode = mode
         lastOnScreenMode = nil
         connection.sessionModeRequest = mode
@@ -2670,6 +2676,9 @@ let now = ProcessInfo.processInfo.systemUptime
 
     func disconnect() { disconnect(explicitEnd: true) }
     func disconnect(explicitEnd: Bool) {
+        let preserveBackgroundIntent = !explicitEnd && sceneWasBackground && !sceneIsActive &&
+            backgroundResumeHost != nil && backgroundResumeHost == connection.presentationHostTrust &&
+            sessionEndReason != .user && !backgroundRecoveryBlocked
         autoPiPBackgroundGrace?.cancel(); autoPiPBackgroundGrace = nil
         PhoneIdleTimer.shared.endSession()
         cancelLockMacRequest()
@@ -2684,7 +2693,7 @@ let now = ProcessInfo.processInfo.systemUptime
         sessionEndReason = explicitEnd ? .user : (sessionEndReason ?? .error)
         resumeTiming.cancel(explicitEnd ? .userEnded : .timedOut)
         discardResume()
-        clearContinuity()
+        clearContinuity(preservingBackgroundIntent: preserveBackgroundIntent)
         release()
         if explicitEnd { connection.stopDeliberately(epoch: geometryEpoch, hostFeatures: hostFeatures) }
         else { connection.stop() }
@@ -2729,10 +2738,7 @@ let now = ProcessInfo.processInfo.systemUptime
             if hasBeenActive {
                 cancelInput()
                 privacyShield = true
-                if sceneWasBackground {
-                    sceneWasBackground = false
-                    if !pipBackground { returnToForeground() }
-                } else if UserDefaults.standard.bool(forKey: "disableDuoInactiveContinuity"),
+                if !sceneWasBackground, UserDefaults.standard.bool(forKey: "disableDuoInactiveContinuity"),
                           connection.connected && pendingLockMac == nil && !mayKeepLivePiP {
                     background.begin { [weak self] in self?.endBackgroundHold(immediately: true) }
                 }
@@ -2750,6 +2756,11 @@ let now = ProcessInfo.processInfo.systemUptime
     }
 
     func enterBackground() {
+        if backgroundResumeHost == nil, connection.connected, sessionEndReason != .user,
+           !backgroundRecoveryBlocked,
+           let host = presentationHost, host == connection.presentationHostTrust {
+            backgroundResumeHost = host
+        }
         if sessionPolishEnabled { retireBigTextRequest() }
         PhoneIdleTimer.shared.setForeground(false)
         if pendingLockMac != nil {
@@ -2779,6 +2790,7 @@ let now = ProcessInfo.processInfo.systemUptime
         autoPiPBackgroundGrace?.cancel(); autoPiPBackgroundGrace = nil
         pipTransitional = false
         if mayKeepLivePiP {
+            continuity.enterLiveBackground(at: ProcessInfo.processInfo.systemUptime, sessionOpen: connection.connected)
             pipBackground = true
             if DeliberateSessionEnd.isEnabled() { bigText.autoApplied = false }
             invalidatePresentation(keepingPiP: true)
@@ -2885,7 +2897,8 @@ let now = ProcessInfo.processInfo.systemUptime
             resumeTiming.begin(.held, at: now, sceneActive: sceneIsActive)
             resumeHeldSession(at: now)
         case .reconnect:
-            if LaunchOptions.layoutCheck || connection.invitation == nil {
+            if LaunchOptions.layoutCheck || backgroundResumeHost == nil || backgroundResumeHost != connection.presentationHostTrust {
+                backgroundResumeHost = nil
                 resumeState = .needsChoice
             } else {
                 resetQuality()
@@ -2893,8 +2906,10 @@ let now = ProcessInfo.processInfo.systemUptime
                 beginAutomaticReconnect()
             }
         case .offerReconnect:
+            backgroundResumeHost = nil
             resumeState = .needsChoice
         }
+        if resumeState != .backgrounded { backgroundResumeHost = nil }
     }
 
     private func resumeHeldSession(at now: TimeInterval) {
@@ -2940,17 +2955,19 @@ let now = ProcessInfo.processInfo.systemUptime
         lastCaptureHealth = 0
     }
 
-    private func clearContinuity() {
-        continuity.reset()
+    private func clearContinuity(preservingBackgroundIntent: Bool = false) {
+        if preservingBackgroundIntent { continuity.endHold() }
+        else { continuity.reset(); backgroundResumeHost = nil }
         holdTask?.cancel(); holdTask = nil
         resumeWatchdog?.cancel(); resumeWatchdog = nil
         backgroundEndTask?.cancel(); backgroundEndTask = nil
         background.end()
-        resumeState = .none
+        resumeState = preservingBackgroundIntent ? .backgrounded : .none
     }
 
     private func sessionEnded() {
         let waitingForLock = pendingLockMac != nil
+        if backgroundRecoveryBlocked { clearContinuity() }
         diagnostics.ended()
         pipTransitional = false; pipBackground = false
         invalidatePresentation(requestHostExit: false)
@@ -2968,13 +2985,16 @@ let now = ProcessInfo.processInfo.systemUptime
             return
         }
         if sessionEndReason != .user { persistResume() }
-        guard continuity.isHolding else { return }
+        guard continuity.isHolding || continuity.isViewing else { return }
         // Lost while backgrounded: stop the coordinator's retries until the app returns.
         if sessionEndReason == nil { sessionEndReason = .error }
         backgroundHoldEndsAt = nil
         continuity.endHold()
         holdTask?.cancel(); holdTask = nil
-        Task { @MainActor [weak self] in self?.connection.stop() }
+        Task { @MainActor [weak self] in
+            guard let self, self.sceneWasBackground, !self.sceneIsActive else { return }
+            self.connection.stop()
+        }
         endBackgroundExecutionSoon()
     }
 
@@ -3110,6 +3130,7 @@ let now = ProcessInfo.processInfo.systemUptime
             if hostFeatures.contains(SessionFeature.causalInput) { connection.requestCausalInput(epoch: geometryEpoch) }
             hostPresence = action.hostState.flatMap(HostPresence.init(rawValue:))
             sessionBlocker = action.hostState.flatMap(MacShareBlocker.init(rawValue:))
+            if backgroundRecoveryBlocked { clearContinuity() }
             receiveAwayStatus(action)
             if !connection.connected { return }
             let previousCurtain = curtainState
@@ -3415,6 +3436,7 @@ let now = ProcessInfo.processInfo.systemUptime
     func expireViewOnlyExitForTesting(at now: TimeInterval) { tick(at: now) }
     func sendViewOnlyEntryForTesting() { requestViewOnlyEntry() }
     var viewOnlyExitDeadlineForTesting: TimeInterval? { viewOnlyExitDeadline }
+    var viewOnlyStartDeadlineForTesting: TimeInterval? { viewOnlyStartDeadline }
     #endif
     private func refreshIdleTimer(at now: TimeInterval) {
         PhoneIdleTimer.shared.updateSession(authenticated: connection.connected && connection.presentationDeadline(at: now) != nil,

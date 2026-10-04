@@ -80,6 +80,8 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertFalse(packets().contains { $0.action.action == "sessionEnd" })
         XCTAssertTrue(model.connection.connected)
         XCTAssertFalse(model.bigText.autoApplied)
+        model.sceneChanged(.inactive)
+        XCTAssertFalse(packets().contains { $0.action.action == "resume" }, "Inactive return cannot resume held video or input")
         model.sceneChanged(.active)
         XCTAssertTrue(packets().contains { $0.action.action == "resume" })
         XCTAssertFalse(model.bigText.autoApplied)
@@ -96,25 +98,94 @@ final class SessionLifecycleTests: XCTestCase {
     }
 
     /// Downstream model + finite proof + injected public-platform operation boundary; no real native producer.
-    private func activePiPModel() throws -> (PhoneRemoteModel, VideoPresentationAdmission, LifecyclePiPPlatform, () -> [ControlPacket]) {
+    private func activePiPModel(coordinator: RemoteCoordinator? = nil, preferences: UserDefaults = .standard) throws -> (PhoneRemoteModel, VideoPresentationAdmission, LifecyclePiPPlatform, () -> [ControlPacket]) {
         let registry = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {}))
         let platform = LifecyclePiPPlatform()
         let pip = LivePiPController(mediaSession: registry, supported: { true }, platformFactory: { _, _ in platform })
-        let model = PhoneRemoteModel(background: FakeBackgroundExecution(), livePiP: pip)
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(), livePiP: pip, preferences: preferences, coordinator: coordinator)
         model.prepareConnection(mode: .picture); model.sceneChanged(.active)
         model.connection.startInputFixtureForTesting(session: "pip-lifecycle")
+        if coordinator != nil { model.connection.onAuthenticated?() }
         model.geometryEpoch = 1
         var packets: [ControlPacket] = []
         model.connection.inputPacketSenderForTesting = { packets.append($0); return true }
         let proof = model.admitPiPProofForTesting(validUntil: ProcessInfo.processInfo.systemUptime + 20)
         model.sendViewOnlyEntryForTesting()
         let entry = try XCTUnwrap(packets.last { $0.action.action == "viewOnly" && $0.action.liveViewOnly == true })
+        XCTAssertNotNil(model.viewOnlyStartDeadlineForTesting)
         model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", liveViewOnly: true, liveViewOnlyRequestID: entry.action.liveViewOnlyRequestID,
             x: 1, epoch: 1, features: [SessionFeature.liveViewOnly])))
         XCTAssertEqual(platform.starts, 1)
+        XCTAssertNil(model.viewOnlyStartDeadlineForTesting, "A correlated manual confirmation retires the entry timeout")
         pip.confirmPlatformStartForTesting(platform)
         XCTAssertEqual(model.pipState, .active)
         return (model, proof, platform, { packets })
+    }
+
+    /// Exercises production scene/model/PiP teardown with approved isolated trust and a scripted transport.
+    /// No real media route is authorized by the finite downstream fixture proof.
+    private func trustedActivePiPModel() throws -> (PhoneRemoteModel, PhoneTrustStore, FakeSignalingTransport) {
+        let trust = PhoneTrustStore(records: MemoryStore(), legacy: MemoryStore())
+        try trust.saveApproved(TestPairing.invitation())
+        let transport = FakeSignalingTransport()
+        let coordinator = RemoteCoordinator(isHost: false, store: PhonePairPersistence(trust: trust), signaling: transport)
+        let defaults = makeTestDefaults("BackgroundPiPRecovery." + UUID().uuidString)
+        let (model, _, _, _) = try activePiPModel(coordinator: coordinator, preferences: defaults)
+        return (model, trust, transport)
+    }
+
+    func testInvoluntaryBackgroundPiPStopReconnectsOnlyAtActiveWithFreshAuthorization() throws {
+        let (model, _, transport) = try trustedActivePiPModel()
+        defer { model.disconnect() }
+        model.sceneChanged(.inactive); model.sceneChanged(.background)
+        XCTAssertTrue(model.pipBackgroundForTesting)
+        model.livePiP.stop() // Same stop boundary used by AVKit's didStop callback.
+        XCTAssertFalse(model.connection.connected)
+        XCTAssertFalse(model.connection.isRunning)
+        XCTAssertEqual(transport.connects.count, 0, "No background retries after losing the legitimate PiP consumer")
+        model.sceneChanged(.inactive)
+        XCTAssertEqual(transport.connects.count, 0, "Inactive return must not consume the foreground recovery intent")
+        model.sceneChanged(.active)
+        XCTAssertEqual(transport.connects.count, 1)
+        XCTAssertEqual(model.resumeState, .reconnecting)
+        XCTAssertFalse(model.connection.connected, "Reconnect starts the handshake; it cannot reuse the old authorization")
+        XCTAssertFalse(model.canControl)
+        XCTAssertFalse(model.viewOnlyConfirmedForTesting)
+        XCTAssertNil(model.connection.presentationDeadline())
+        model.sceneChanged(.active)
+        XCTAssertEqual(transport.connects.count, 1, "The intent is consumed once")
+    }
+
+    func testExplicitEndOrChangedSelectedHostInvalidatesBackgroundPiPRecovery() throws {
+        for explicitEnd in [true, false] {
+            let (model, trust, transport) = try trustedActivePiPModel()
+            defer { model.disconnect() }
+            model.sceneChanged(.inactive); model.sceneChanged(.background)
+            model.livePiP.stop()
+            if explicitEnd { model.disconnect() }
+            else {
+                try trust.saveApproved(TestPairing.invitation(name: "Other Mac"))
+                let other = try XCTUnwrap(trust.snapshot().hosts.last)
+                try trust.select(hostID: other.id)
+            }
+            model.sceneChanged(.inactive); model.sceneChanged(.active)
+            XCTAssertEqual(transport.connects.count, 0)
+            XCTAssertFalse(model.connection.connected)
+            XCTAssertFalse(model.canControl)
+        }
+    }
+
+    func testReportedMacLockOrPermissionBlockInvalidatesBackgroundPiPRecovery() throws {
+        for hostState in [HostPresence.locked.rawValue, MacShareBlocker.screenRecordingOff.rawValue] {
+            let (model, _, transport) = try trustedActivePiPModel()
+            defer { model.disconnect() }
+            model.sceneChanged(.inactive); model.sceneChanged(.background)
+            model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", x: 0, epoch: 1, hostState: hostState)))
+            model.livePiP.stop()
+            model.sceneChanged(.active)
+            XCTAssertEqual(transport.connects.count, 0)
+            XCTAssertFalse(model.canControl)
+        }
     }
     /// Auto-PiP: armed only while a live picture session is in front; the OS start (simulated) keeps the session
     /// through `.inactive` and `.background` while the Mac's live-view-only confirmation is pending; a refusal ends it.

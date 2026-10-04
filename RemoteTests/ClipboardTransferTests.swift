@@ -295,4 +295,28 @@ final class SessionContinuityTests: XCTestCase {
         XCTAssertEqual(continuity.returnToForeground(at: BackgroundContinuity.automaticResumeWindow + 1, sessionConnected: false),
                        .offerReconnect)
     }
+
+    func testLivePiPNeedsNoHeldResumeButItsLossHasABoundedReturnIntent() {
+        var continuity = BackgroundContinuity()
+        continuity.enterLiveBackground(at: 10, sessionOpen: false)
+        XCTAssertEqual(continuity.phase, .foreground)
+        continuity.enterLiveBackground(at: 10, sessionOpen: true)
+        XCTAssertTrue(continuity.isViewing)
+        XCTAssertFalse(continuity.isHolding, "PiP does not acquire the finite background-task hold")
+        XCTAssertEqual(continuity.returnToForeground(at: 20, sessionConnected: true), .none)
+        continuity.enterLiveBackground(at: 30, sessionOpen: true)
+        continuity.enterLiveBackground(at: 40, sessionOpen: true)
+        XCTAssertTrue(continuity.endHold())
+        XCTAssertFalse(continuity.endHold())
+        XCTAssertEqual(continuity.returnToForeground(at: 50, sessionConnected: false), .reconnect)
+        XCTAssertEqual(continuity.returnToForeground(at: 51, sessionConnected: false), .none)
+        continuity.enterLiveBackground(at: 60, sessionOpen: true)
+        continuity.enterLiveBackground(at: 60 + BackgroundContinuity.automaticResumeWindow, sessionOpen: true)
+        XCTAssertEqual(continuity.returnToForeground(at: 61 + BackgroundContinuity.automaticResumeWindow, sessionConnected: false), .offerReconnect,
+                       "Repeated background callbacks cannot extend the original return limit")
+        continuity.enterLiveBackground(at: 1000, sessionOpen: true)
+        continuity.reset()
+        XCTAssertEqual(continuity.returnToForeground(at: 1001, sessionConnected: false), .none,
+                       "Explicit termination invalidates the live-PiP return intent")
+    }
 }
