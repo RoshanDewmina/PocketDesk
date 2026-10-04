@@ -1,6 +1,20 @@
 import XCTest
 
 final class HEVC444PolicyTests: XCTestCase {
+    func testStoredExperimentalOptInCannotEnableFullColorOnAnOrdinaryLaunch() throws {
+        let name = "HEVC444PolicyTests.releaseHold.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set(true, forKey: HEVC444Policy.preferenceKey)
+        XCTAssertFalse(HEVC444Policy.isEnabled(defaults: defaults, arguments: []))
+        #if DEBUG
+        XCTAssertTrue(HEVC444Policy.isEnabled(defaults: defaults, arguments: ["--farside-full-color-recovery-check"]))
+        defaults.set(false, forKey: HEVC444Policy.preferenceKey)
+        XCTAssertFalse(HEVC444Policy.isEnabled(defaults: defaults, arguments: ["--farside-full-color-recovery-check"]))
+        #else
+        XCTAssertFalse(HEVC444Policy.isEnabled(defaults: defaults, arguments: ["--farside-full-color-recovery-check"]))
+        #endif
+    }
     private let sps = Data([0x42,0x01,0x01,0x04,0x08,0x00,0x00,0x03,0x00,0xbe,0x08,0x00,0x00,0x03,0x00,0x00,0x1e,0x90,0x02,0x84,0x08,0x38,0x18,0x7c,0x40,0xaf,0x72,0x2c,0xa8,0x80])
     func testActualSynthetic64SPSIsMain444EightBitSingleLayer() throws {
         let parsed = try XCTUnwrap(HEVC444SPS.parse(sps))

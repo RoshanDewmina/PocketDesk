@@ -66,7 +66,18 @@ private struct HEVC444Bits {
 
 enum HEVC444Policy {
     static let preferenceKey = "farsideExperimentalFullColorHEVC444"
-    static var enabled: Bool { UserDefaults.standard.bool(forKey: preferenceKey) }
+    /// The physical .8 Main444 path received frames but never decoded them on iPhone 17.
+    /// Keep it out of normal launches and distribution until that path passes acceptance.
+    /// A development-only argument permits an explicit fallback regression run.
+    static var enabled: Bool { isEnabled() }
+    static func isEnabled(defaults: UserDefaults = .standard, arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
+        #if DEBUG
+        return arguments.contains("--farside-full-color-recovery-check")
+            && defaults.bool(forKey: preferenceKey)
+        #else
+        return false
+        #endif
+    }
     /// The profile is obtained from the public session catalog, never a blind private/exportless constant.
     static func catalogProfile(_ values: [String]) -> String? { values.first { $0 == "HEVC_Main444_AutoLevel" } }
     static func permits(preference: Bool, simulator: Bool, disabled: Bool, decoder: Bool, encoder: Bool, isHost: Bool) -> Bool {
