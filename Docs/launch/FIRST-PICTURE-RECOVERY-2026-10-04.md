@@ -20,7 +20,11 @@ The same installed binary relaunched with `-farsideExperimentalFullColorHEVC444 
 - Non-DEBUG policy executable: saved experimental opt-in and developer launch argument cannot enable Main444; passed. This is not a full Release archive.
 - Signed phone and Mac Debug builds from integrated primary checkout: passed.
 - Installed iPhone and /Applications/PocketDesk Host.app: both verified20261004.1 at 19:39 ET. Host identity-continuity guards passed; UI Ready, existing Screen Recording and Accessibility grants preserved.
-- Corrected-build physical first picture and forced-failure recovery: PENDING. Prior owner confirmation is the .8 codec A/B result, not acceptance of the corrected binary.
+- Corrected-build ordinary-launch policy: PASS, owner confirms live desktop within10seconds; fresh statistics identify ordinary HEVC Main with nonzero decoded/rendered/presented frames.
+- Controlled first-picture fallback: PASS at19:41ET. DEBUG experimental arguments on both apps produced a Main444-labelled decoder with zero decoded frames. Actual codec statistics classified negotiated HEVC Main; watchdog fired at19:41:20.233 after sustained reception, then fresh authenticated connection reached connected at19:41:21.606. H.264/VideoToolbox counters decoded53–60fps/rendered53–59fps/presented37–44fps in the captured active windows; owner confirms desktop appeared without retrying.
+- Receipt distinction: experimental decoder label and negotiated RTP profile differ in this run; do not describe this as a proven Main444→Main1 transition or as an internal Main444 decoder repair. Normal/distribution experimental hold remains authoritative.
+- Initial forced test attempt invalid: host launch preceded old process exit, leaving it unavailable; repeated after Ready. This is not a codec-recovery failure.
+- Both apps restored to ordinary launches with no developer arguments. Owner background/resume check FAILED (Reconnect required); PiP FAILED (stops after a fewseconds). These lifecycle failures are separate open blockers; isolated diagnosis/fix is underway. Broader quality/release tests remain pending.
 - App Store release acceptance: pending; no upload or publication.
 
 Current session evidence is in the Oct4 Codex task work/manual-test-2026-10-04 directory; raw logs are local and are not uploaded.
