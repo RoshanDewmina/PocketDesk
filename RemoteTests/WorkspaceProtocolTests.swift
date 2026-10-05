@@ -19,6 +19,21 @@ final class WorkspaceProtocolTests: XCTestCase {
         XCTAssertLessThan(try JSONEncoder().encode(action).count, 12*1024)
         XCTAssertThrowsError(try WorkspaceFrame(kind: .windows, requestID: InputCausalEnvelope.identity(), value: Value(op: String(repeating: "a", count: 8192))))
     }
+    func testStatusMarkerPreservesFullWireListAndFailsClosedForOldUnknownOrNarrow() throws {
+        let wire = (0..<32).map { "test.\($0)" }
+        let derived = WorkspaceUtilities.resolvedFeatures(wire, statusVersion: 1, current: true, fullDisplay: true)
+        XCTAssertEqual(derived.subtracting([WorkspaceUtilities.feature]), Set(wire))
+        XCTAssertTrue(derived.contains(WorkspaceUtilities.feature))
+        for version: Int? in [nil, 2] {
+            XCTAssertFalse(WorkspaceUtilities.resolvedFeatures(wire, statusVersion: version, current: true, fullDisplay: true).contains(WorkspaceUtilities.feature))
+        }
+        XCTAssertFalse(WorkspaceUtilities.resolvedFeatures(wire, statusVersion: 1, current: false, fullDisplay: true).contains(WorkspaceUtilities.feature))
+        XCTAssertFalse(WorkspaceUtilities.resolvedFeatures(wire, statusVersion: 1, current: true, fullDisplay: false).contains(WorkspaceUtilities.feature))
+        XCTAssertNil(WorkspaceUtilities.statusVersion(enabled: true, peerFeatures: [], fullDisplay: true))
+        XCTAssertNoThrow(try RemoteAction(action: "capture", workspaceUtilitiesVersion: 1, features: wire).validate())
+        XCTAssertThrowsError(try RemoteAction(action: "key", workspaceUtilitiesVersion: 1).validate())
+        XCTAssertThrowsError(try RemoteAction(action: "capture", workspaceUtilitiesVersion: 0).validate())
+    }
     func testSlotBudgetAndLegacyPeer() {
         XCTAssertEqual(WorkspaceUtilities.advertised(addingTo: [], peerFeatures: [], enabled: true), [])
         let full = (0..<32).map { "test.\($0)" }

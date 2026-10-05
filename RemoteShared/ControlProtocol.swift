@@ -4,6 +4,8 @@ struct RemoteAction: Codable {
     var action: String
     /// Authenticated owner workspace utility; only after workspace.1 negotiation.
     var workspace: WorkspaceFrame? = nil
+    /// Versioned capture-status marker outside the legacy 32-element list. Unknown versions are ignored.
+    var workspaceUtilitiesVersion: Int? = nil
     /// Negotiated audio.listen.1: explicit phone playback consent, only on heartbeats.
     var macAudioRequested: Bool? = nil
     /// Only after network.lowData.1, on regular phone heartbeats. No route/input authority.
@@ -90,6 +92,9 @@ struct RemoteAction: Codable {
 
     func validate() throws {
         if try validateWorkspace() { return }
+        if let workspaceUtilitiesVersion {
+            guard action == "capture", (1...16).contains(workspaceUtilitiesVersion) else { throw RemoteError.invalidMessage }
+        }
         guard phoneLoadWindows == nil || action == "capture" else { throw RemoteError.invalidMessage }
         guard lowDataMode == nil || isRegularPhoneHeartbeat else { throw RemoteError.invalidMessage }
         guard macAudioRequested == nil || action == "heartbeat" else { throw RemoteError.invalidMessage }
