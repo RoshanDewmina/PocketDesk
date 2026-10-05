@@ -8,7 +8,7 @@ Source inspection found unbounded startCapture and stopCapture awaits. Health mo
 
 ## Reviewed candidate
 
-Worker745a266 is integrated as c8613c4. Metadata724463d prepares candidate20261004.4; the installed build remains20261004.3 until signed installation and inventory verification.
+Worker745a266 is integrated as c8613c4. Metadata724463d prepares candidate20261004.4. Signed phone installation and inventory confirm20261004.4; Mac installation is queued, with20261004.3 still confirmed installed. Physical acceptance of20261004.4 remains pending.
 
 - One callback ticket is created eagerly before a session is published. Successful start and a real valid complete frame are both required for readiness, in either callback order.
 - A nominal five-second startup deadline or cancellation synchronously fences pixels/PCM before resolving the caller. Scheduled deadlines can run later under OS pressure; no exact wall-clock guarantee is claimed.
@@ -19,10 +19,12 @@ Worker745a266 is integrated as c8613c4. Metadata724463d prepares candidate202610
 
 ## Verification state
 
-Independent sensitive source review: APPROVE745a266; no remaining must-fix finding. Parsing/diff checks passed. Seventeen focused callback/recovery tests were added, including actual deadline dispatch, both callback orders, missing/late/duplicate callbacks, cancellation, stop classification, reservation ownership and admission denials. Native execution and host/phone compilation remain pending at this checkpoint, queued under the shared build lock. Existing unrelated work and permission identity are preserved.
+Independent sensitive source review: APPROVE745a266; no remaining must-fix finding. Parsing/diff checks passed. Seventeen focused callback/recovery tests were added, including actual deadline dispatch, both callback orders, missing/late/duplicate callbacks, cancellation, stop classification, reservation ownership and admission denials. Native execution passed59 checks with zero failures:17CaptureStartupTicketTests,24HostLifecycleTests,7SharedCaptureScopeTests and11SystemAudioPCMTests. Host Debug build and signed physical build-for-testing passed. Phone deep/strict signature verification, installation and filtered app inventory confirm20261004.4. Mac installation through the stable-identity script remains queued under the shared build lock; installation and permission readiness remain unverified for the Mac candidate. Existing unrelated work and permission identity are preserved.
 
 The DEBUG-only process argument--farside-capture-start-recovery-check drops complete-frame admission for the first producer once. It uses real SCK startup and cleanup; after confirmed cleanup, the second producer runs normally. Ordinary/Release paths omit the fault adapter. Physical injection would prove recovery from successful SCK startup with withheld complete frames, not recovery from missing OS callbacks.
 
-Physical gates: signed candidate inventory and permissions, injected one-time no-first-frame recovery without phone Reconnect, five consecutive fresh picture/End cycles, Home/return and PiP regressions. Source/compile results remain separate from actual device acceptance. Then resume marked source comparisons and realistic multitasking60fps, sharpness and latency checks. No App Store upload, submission or publication.
+Physical gates (not yet executed for20261004.4): signed Mac candidate inventory and permissions, injected one-time no-first-frame recovery without phone Reconnect, five consecutive fresh picture/End cycles, Home/return and PiP regressions. Source/compile results remain separate from actual device acceptance. Then resume marked source comparisons and realistic multitasking60fps, sharpness and latency checks. No App Store upload, submission or publication.
 
 Raw local receipts belong to the Oct4 Codex chat work/capture-start-checks and work/renderer-checks. No private desktop captures are published.
+
+Current execution blocker: the Mac UI tool reports a locked Mac with automatic unlock paused after physical input. The owner has been asked to unlock it. Phone lock-state reports passcodeRequired:false; no new phone unlock is requested. Earlier physical results belong to20261004.3.
