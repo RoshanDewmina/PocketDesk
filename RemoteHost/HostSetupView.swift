@@ -50,7 +50,7 @@ struct HostSetupView: View {
             if state.first60SetupPending { page = HostSetupFlow.first60Page(for: state) }
         }
         .onChange(of: state.pairingDeferred) { _, deferred in
-            // Skip moves on to the ready check; Pair there (or in the menu bar) comes back.
+            // Skip moves on to the ready check; Pair there (or in Settings → Devices) comes back.
             if deferred && page == .pair { page = .ready }
             if !deferred && page == .ready && state.setupStep == .pairPhone { page = .pair }
         }
@@ -489,7 +489,7 @@ struct HostPairingPage: View {
                     Text("No iPhone or iPad to hand?")
                         .font(.system(size: 12.5))
                         .foregroundStyle(Farside.Palette.ash)
-                    Button("Skip for now, and pair later from the menu bar", action: actions.skipPairing)
+                    Button("Skip, and pair later in Settings → Devices", action: actions.skipPairing)
                         .buttonStyle(HostButtonStyle(kind: .inline))
                         .accessibilityIdentifier("farside.setup.skipPairing")
                 }

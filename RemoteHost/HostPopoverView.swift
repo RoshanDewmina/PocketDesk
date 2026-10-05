@@ -1,14 +1,14 @@
 import SwiftUI
 import AppKit
 
-/// The menu-bar popover: a halftone strip naming the state, who is steering, the two session
-/// toggles, this state's actions, then Settings… · Pair a phone… · Quit.
+/// The menu-bar popover: a halftone strip naming the state, who is steering and how good the
+/// connection is, the two session toggles, this state's actions, then Settings… · Quit.
 struct HostPopoverView: View {
     let state: HostViewState
     let actions: HostActions
     /// Fixed time for review renders; the live popover uses the current time.
     var now: Date?
-    /// The live session's taps, keys, scrolls and round trips (D39); nil in review renders.
+    /// The live session's taps, which ripple across the strip (D39); nil in review renders.
     var activity: HostActivityFeed?
     /// Stop Sharing was pressed while a phone is connected; review renders can start here.
     @State var confirmingStop = false
@@ -94,11 +94,6 @@ struct HostPopoverView: View {
 
     private func details(_ presentation: HostPopoverPresentation) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            if state.status.isSessionLive {
-                HostLiveReadout(session: state.session, allowControl: state.status == .controlling,
-                        activity: activity ?? HostActivityFeed())
-                    .padding(.top, 12)
-            }
             if state.status == .pairing {
                 HostPopoverPairingCode(pairing: state.pairing, copy: actions.copyPairingCode, newCode: actions.beginPairing)
                     .padding(.top, 14)
@@ -145,7 +140,7 @@ struct HostPopoverView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(HostPopoverPolicy.guestStatus(row)).font(.system(size: 12)).foregroundStyle(Farside.Palette.ash)
                     HStack(spacing: 8) {
-                        if row.pending {
+                        if row.pending && HostGuestPolicy.enabled {
                             Button("Review") { confirmingGuest = row }
                                 .accessibilityLabel("Review guest approval")
                                 .accessibilityIdentifier("farside.popover.reviewGuest.\(row.id)")
@@ -168,8 +163,9 @@ struct HostPopoverView: View {
                     .lineLimit(bounded ? 2 : nil)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Farside.Palette.bone)
-                // In the bounded live surface the same measurements remain in the detail meters.
-                if let caption = presentation.caption, !bounded || !state.status.isSessionLive {
+                if state.status.isSessionLive {
+                    connectionLine(presentation)
+                } else if let caption = presentation.caption {
                     Text(caption)
                         .hostCaption(10.5)
                         .lineLimit(2)
@@ -198,10 +194,32 @@ struct HostPopoverView: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel([presentation.title, presentation.spokenCaption ?? presentation.caption,
+        .accessibilityLabel([presentation.title, connectionQuality?.label,
+            presentation.spokenCaption ?? presentation.caption,
             HostPopoverPolicy.scopedControls ? HostPopoverPolicy.scopeCaption(state) : nil,
             HostPopoverPolicy.audience(state.guestRows)]
             .compactMap { $0 }.joined(separator: ". "))
+    }
+
+    private var connectionQuality: HostConnectionQuality? {
+        state.status.isSessionLive ? state.session.flatMap(HostConnectionQuality.init) : nil
+    }
+
+    /// Plain words and signal bars while live; the measured numbers stay in the tooltip.
+    private func connectionLine(_ presentation: HostPopoverPresentation) -> some View {
+        HStack(spacing: 7) {
+            if let quality = connectionQuality {
+                HostSignalBars(bars: quality.bars)
+                Text(quality.label)
+            } else {
+                Text("Measuring the connection")
+            }
+        }
+        .font(.system(size: 12.5))
+        .foregroundStyle(Farside.Palette.ash)
+        .lineLimit(1)
+        .help(presentation.caption ?? "")
+        .accessibilityIdentifier("farside.popover.connectionQuality")
     }
 
     private var awayStatus: some View {
@@ -255,11 +273,6 @@ struct HostPopoverView: View {
                     .accessibilityIdentifier("farside.popover.allowAccessibility")
                 }
             }
-            if !bounded {
-                HostToggleRow(title: "Chime when a phone connects", subtitle: "So you always know",
-                              isOn: state.chimeOnConnect, set: actions.setChimeOnConnect)
-                    .accessibilityIdentifier("farside.popover.chime")
-            }
             HostToggleRow(title: "Hide this Mac’s screen", subtitle: HostCurtainCopy.subtitle(for: state),
                           isOn: state.privacyCurtain, set: actions.setPrivacyCurtain)
                 .accessibilityIdentifier("farside.popover.privacyCurtain")
@@ -267,12 +280,9 @@ struct HostPopoverView: View {
             if let status = state.bigTextStatus {
                 bigTextRow(status)
             }
-            if !bounded {
+            // Only when there is a nudge to show; an empty row would draw a blank hairline gap.
+            if !bounded && ((state.consentPending && state.setupStep == .done) || state.loginItem == .needsApproval) {
                 VStack(alignment: .leading, spacing: 6) {
-                    HostToggleRow(title: "Open at login",
-                                  subtitle: HostBackgroundItemCopy.loginSubtitle(wanted: state.openAtLogin, state: state.loginItem),
-                                  isOn: state.openAtLogin, set: actions.setOpenAtLogin)
-                        .accessibilityIdentifier("farside.popover.openAtLogin")
                     if state.consentPending && state.setupStep == .done {
                         Button("Review open at login and keep awake…") {
                             dismiss()
@@ -344,12 +354,6 @@ struct HostPopoverView: View {
             }
             .keyboardShortcut(",")
             .accessibilityIdentifier("farside.popover.settings")
-            Spacer()
-            Button("Pair a phone…") {
-                dismiss()
-                actions.pairNewPhone()
-            }
-            .accessibilityIdentifier("farside.popover.pairAPhone")
             Spacer()
             Button("Quit", action: actions.quit)
                 .keyboardShortcut("q")

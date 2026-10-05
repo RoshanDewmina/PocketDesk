@@ -1,7 +1,8 @@
 import SwiftUI
 import AppKit
 
-// D39 · Mac popover "Live strip" with Control-room meters. Design: design/motion-lab-2026-09-30 (direction 1).
+// D39 · Mac popover "Live strip". Design: design/motion-lab-2026-09-30 (direction 1). The meters,
+// sparkline and activity lights gave way to plain connection-quality bars in the popover (D63).
 // Transform and opacity only; controls stay native buttons and toggles with their own accessibility.
 
 // MARK: - Strip
@@ -115,140 +116,6 @@ extension HostArtScenes {
     static func peak(in size: CGSize) -> CGPoint {
         let x = size.width * 0.66
         return CGPoint(x: x, y: signalY(x, size: size, mood: .live, phase: 0))
-    }
-}
-
-// MARK: - Live readout
-
-/// Route, latency and frames, each "—" until the session has measured it; a dot sparkline of
-/// measured round trips; and lights for the phone's taps, keys and scrolling.
-struct HostLiveReadout: View {
-    let session: HostSessionReadout?
-    let allowControl: Bool
-    @ObservedObject var activity: HostActivityFeed
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                HostMeter(label: "Route", value: route, spoken: route.map { $0 + " connection" })
-                HostMeter(label: HostMetricCopy.roundTripTitle, value: session?.roundTripMs.map { $0 < 1 ? "<1" : String($0) }, unit: "ms",
-                          spoken: HostMetricCopy.spokenRoundTrip(session?.roundTripMs))
-                    .help(HostMetricCopy.roundTripHelp)
-                HostMeter(label: HostMetricCopy.sendingTitle, value: session?.framesPerSecond.map(String.init), unit: "fps",
-                          spoken: HostMetricCopy.spokenSending(session?.framesPerSecond))
-                    .help(HostMetricCopy.sendingHelp)
-            }
-            HStack(spacing: 16) {
-                HStack(spacing: 16) {
-                    ForEach(HostActivityKind.allCases) { kind in
-                        HostActivityLight(kind: kind, pulse: activity.pulses[kind], enabled: allowControl)
-                    }
-                }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(allowControl ? "Phone activity lights: taps, keys and scrolling" : "View only: the phone can’t control this Mac")
-                Spacer(minLength: 0)
-                HostSparkline(values: activity.roundTrips)
-                    .frame(width: 96)
-            }
-        }
-    }
-
-    private var route: String? {
-        switch session?.route {
-        case .direct: "Direct"
-        case .relayed: "Relayed"
-        case nil: nil
-        }
-    }
-}
-
-private struct HostMeter<Extra: View>: View {
-    let label: String
-    let value: String?
-    var unit: String?
-    var spoken: String?
-    @ViewBuilder var extra: Extra
-
-    init(label: String, value: String?, unit: String? = nil, spoken: String?, @ViewBuilder extra: () -> Extra = { EmptyView() }) {
-        self.label = label
-        self.value = value
-        self.unit = unit
-        self.spoken = spoken
-        self.extra = extra()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label).hostCaption(9.5)
-            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(value ?? "—")
-                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                    .monospacedDigit()
-                    .foregroundStyle(value == nil ? Farside.Palette.ash : Farside.Palette.bone)
-                    .contentTransition(.numericText())
-                    .animation(Farside.Motion.easeOut(), value: value)
-                if value != nil, let unit {
-                    Text(unit).hostCaption(9.5)
-                }
-            }
-            extra
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10).padding(.vertical, 8)
-        .background(Farside.Palette.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(label): \(spoken ?? "not measured yet")")
-    }
-}
-
-/// Measured round trips as columns of dots; the newest column is brightest. Empty until measured.
-private struct HostSparkline: View {
-    let values: [Int]
-
-    var body: some View {
-        Canvas { context, size in
-            let shown = values.suffix(16)
-            let pitch = size.width / 16
-            for (index, value) in shown.enumerated() {
-                let x = size.width - pitch * (CGFloat(shown.count - index) - 0.5)
-                let dots = min(4, max(1, Int((Double(value) / 12).rounded(.up))))
-                for level in 0..<dots {
-                    let y = size.height - 1.5 - CGFloat(level) * 3.4
-                    let newest = index == shown.count - 1
-                    let color = newest ? Farside.Palette.bone : (level == dots - 1 ? Farside.Palette.ash : Farside.Palette.dim)
-                    context.fill(Path(ellipseIn: CGRect(x: x - 1.2, y: y - 1.2, width: 2.4, height: 2.4)), with: .color(color))
-                }
-            }
-        }
-        .frame(height: 14)
-        .accessibilityHidden(true)
-    }
-}
-
-private struct HostActivityLight: View {
-    let kind: HostActivityKind
-    let pulse: HostActivityPulse?
-    let enabled: Bool
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var glow = 0.0
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(glow > 0.02 ? Farside.Palette.ember : (enabled ? Farside.Palette.ash : Farside.Palette.dim))
-                .frame(width: 7, height: 7)
-                .shadow(color: Farside.Palette.ember.opacity(0.8 * glow), radius: 4)
-                .scaleEffect(reduceMotion ? 1 : 1 + 0.6 * glow)
-            Text(kind.title)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(enabled ? Farside.Palette.ash : Farside.Palette.dim)
-        }
-        .onChange(of: pulse?.serial) { _, serial in
-            guard serial != nil, enabled else { return }
-            glow = 1
-            withAnimation(.easeOut(duration: reduceMotion ? 0.15 : 0.42)) { glow = 0 }
-        }
     }
 }
 
