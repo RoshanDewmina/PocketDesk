@@ -13,6 +13,12 @@ final class WorkspaceProtocolTests: XCTestCase {
         action.action = "workspace"; action.clipboard = .pull("0123456789abcdef0123456789abcdef")
         XCTAssertThrowsError(try action.validate())
     }
+    func testBoundedPayloadLeavesRoomForOuterWireEnvelope() throws {
+        let frame = try WorkspaceFrame(kind: .windows, requestID: InputCausalEnvelope.identity(), value: Value(op: String(repeating: "a", count: 8000)))
+        let action = RemoteAction.workspace(frame, epoch: 1)
+        XCTAssertLessThan(try JSONEncoder().encode(action).count, 12*1024)
+        XCTAssertThrowsError(try WorkspaceFrame(kind: .windows, requestID: InputCausalEnvelope.identity(), value: Value(op: String(repeating: "a", count: 8192))))
+    }
     func testSlotBudgetAndLegacyPeer() {
         XCTAssertEqual(WorkspaceUtilities.advertised(addingTo: [], peerFeatures: [], enabled: true), [])
         let full = (0..<32).map { "test.\($0)" }
