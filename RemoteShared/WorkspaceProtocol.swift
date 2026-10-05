@@ -10,6 +10,15 @@ enum WorkspaceUtilities {
     static func isEnabled(_ defaults: UserDefaults = .standard) -> Bool {
         !defaults.bool(forKey: disabledKey)
     }
+    static func statusVersion(enabled: Bool, peerFeatures: Set<String>, fullDisplay: Bool) -> Int? {
+        enabled && fullDisplay && peerFeatures.contains(SessionFeature.extendedFeatureList) ? 1 : nil
+    }
+    /// The wire feature list remains bounded; this derived local set also understands the marker.
+    static func resolvedFeatures(_ wire: [String], statusVersion: Int?, current: Bool, fullDisplay: Bool) -> Set<String> {
+        var result = Set(wire)
+        if statusVersion == 1 && current && fullDisplay { result.insert(feature) }
+        return result
+    }
     static func advertised(addingTo features: [String], peerFeatures: Set<String>, enabled: Bool) -> [String] {
         guard enabled, peerFeatures.contains(SessionFeature.extendedFeatureList),
               features.count < 32, !features.contains(feature) else { return features }

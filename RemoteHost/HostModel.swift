@@ -3562,8 +3562,7 @@ final class RemoteHostModel: ObservableObject {
             peerFeatures: connection.peerFeatures, requestedMode: connection.peerRequestedMode), kind: captureScopeKind)
         let withShortcuts = ShortcutChips.advertised(addingTo: existing, enabled: ShortcutChips.isEnabled() && !captureScopeViewOnly,
             peerFeatures: connection.peerFeatures)
-        return WorkspaceUtilities.advertised(addingTo: withShortcuts, peerFeatures: connection.peerFeatures,
-            enabled: WorkspaceUtilities.isEnabled() && !captureScopeViewOnly)
+        return withShortcuts
     }
 
     private func sendCaptureHealth(_ requestedHealthy: Bool, presence: HostPresence? = nil, viewOnlyRequestID: String? = nil) {
@@ -3589,7 +3588,8 @@ final class RemoteHostModel: ObservableObject {
         let event = recoveryEventForPhone
         let alert = captureScopeViewOnly ? nil : agentAlertOutbox.first
         let sent = connection.sendControl(RemoteAction(
-          action: "capture", liveViewOnly: connection.peerFeatures.contains(SessionFeature.extendedFeatureList) ? liveViewOnly : nil, liveViewOnlyRequestID: viewOnlyRequestID, x: healthy ? 1 : 0, epoch: inputEpoch.value,
+          action: "capture", workspaceUtilitiesVersion: WorkspaceUtilities.statusVersion(enabled: WorkspaceUtilities.isEnabled(),
+            peerFeatures: connection.peerFeatures, fullDisplay: !captureScopeViewOnly), liveViewOnly: connection.peerFeatures.contains(SessionFeature.extendedFeatureList) ? liveViewOnly : nil, liveViewOnlyRequestID: viewOnlyRequestID, x: healthy ? 1 : 0, epoch: inputEpoch.value,
             interaction: capability, pointerLocatorSupported: !captureScopeViewOnly,
             pointerSync: PointerSync(videoCursor: capture.cursorInVideo), streamQuality: capture.appliedQuality,
             features: advertisedFeatures, hostState: state,
