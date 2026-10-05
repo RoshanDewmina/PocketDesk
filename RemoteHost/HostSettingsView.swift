@@ -209,7 +209,7 @@ struct HostSettingsView: View {
     }
 
     private var serverDataSection: some View {
-        HostSettingsSection("Server Data", footer: "Room removal does not cancel an Apple subscription. Purchase history remains for up to 90 days after access ends; security blocks and pending relay revocations may be retained.") {
+        HostSettingsSection("Server Data", footer: "Room removal does not cancel an Apple subscription. Subscription records become eligible for cleanup 90 days after verified expiry or the grace period ends, whichever is later. Provider logs and backups may remain longer; security blocks and pending relay revocations may be retained.") {
             Button(state.serverRemovalBusy ? "Removing…" : (state.serverRemovalPending ? "Retry Server Room Removal…" : "Remove This Mac’s Server Room…"), role: .destructive) {
                 confirmingServerRemoval = true
             }
