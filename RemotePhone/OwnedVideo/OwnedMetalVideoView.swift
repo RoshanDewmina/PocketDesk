@@ -388,7 +388,9 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
                 _ = self.fence.withAdmission(envelope.identity, at: ProcessInfo.processInfo.systemUptime) {
                     self.counters?.presentedFrame(atMs: presentedTime * 1000, marker: envelope.marker)
                     if envelope.originalSource, let trace = envelope.decodeTrace {
-                        self.counters?.phoneRenderTiming(.decodedToPresented, milliseconds: presentedTime * 1000 - trace.callbackMs)
+                        if let callbackMs = trace.callbackMs {
+                            self.counters?.phoneRenderTiming(.decodedToPresented, milliseconds: presentedTime * 1000 - callbackMs)
+                        }
                         self.counters?.phoneRenderTiming(.deliveryToPresented, milliseconds: presentedTime * 1000 - trace.deliveryMs)
                     }
                     let clock = self.counters?.clockObservation

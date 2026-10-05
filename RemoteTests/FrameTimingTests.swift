@@ -295,6 +295,102 @@ final class FrameTimingTests: XCTestCase {
         XCTAssertNil(disabled.takeDecodeTrace(rtp: 1, timeStampNs: 1))
     }
 
+    private final class StubH264Decoder: NSObject, RTCVideoDecoder {
+        var callback: RTCVideoDecoderCallback?
+        private(set) var cores: Int32?
+        private(set) var releases = 0
+        func setCallback(_ callback: @escaping RTCVideoDecoderCallback) { self.callback = callback }
+        func startDecode(withNumberOfCores numberOfCores: Int32) -> Int { cores = numberOfCores; return 7 }
+        func release() -> Int { releases += 1; return 11 }
+        func decode(_ image: RTCEncodedImage, missingFrames: Bool, codecSpecificInfo info: (any RTCCodecSpecificInfo)?,
+                    renderTimeMs: Int64) -> Int { 13 }
+        func implementationName() -> String { "stub H264" }
+    }
+
+    private func decodedFrame(rtp: Int32 = -1, timeStampNs: Int64 = 100) throws -> RTCVideoFrame {
+        var buffer: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 2, 2, kCVPixelFormatType_32BGRA,
+                                         nil, &buffer), kCVReturnSuccess)
+        let frame = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(buffer)),
+                                  rotation: ._90, timeStampNs: timeStampNs)
+        frame.timeStamp = rtp
+        return frame
+    }
+
+    func testH264CallbackObservesDeliveryOnlyAndForwardsSameFrameAndLifecycleResults() throws {
+        let log = PhoneFrameTimingLog(renderTimingEnabled: true)
+        log.isActive = false
+        let inner = StubH264Decoder(); let decoder = TimedH264Decoder(log: log, inner: inner)
+        XCTAssertEqual(decoder.startDecode(withNumberOfCores: 3), 7)
+        XCTAssertEqual(inner.cores, 3)
+        XCTAssertEqual(decoder.implementationName(), inner.implementationName())
+        let frame = try decodedFrame()
+        var delivered = 0
+        decoder.setCallback { output in
+            delivered += 1
+            XCTAssertTrue(output === frame)
+            XCTAssertEqual(output.rotation, ._90)
+            XCTAssertEqual(output.timeStamp, -1)
+            XCTAssertEqual(output.timeStampNs, 100)
+            let trace = log.takeDecodeTrace(rtp: output.timeStamp, timeStampNs: output.timeStampNs)
+            XCTAssertNotNil(trace, "Trace exists before the outward callback, even without host timing")
+            XCTAssertTrue(trace?.isValid == true)
+            XCTAssertNil(trace?.submitMs); XCTAssertNil(trace?.callbackMs); XCTAssertNil(trace?.ownershipMs)
+        }
+        inner.callback?(frame)
+        XCTAssertEqual(delivered, 1)
+        XCTAssertEqual(log.counts.decoded, 1)
+        XCTAssertNil(log.takeDecodeTrace(rtp: -1, timeStampNs: 100), "Delivery owns its trace once")
+        XCTAssertEqual(decoder.release(), 11); XCTAssertEqual(inner.releases, 1)
+    }
+
+    func testH264DisabledAndReleasedTimingDoNotAlterFrameForwarding() throws {
+        for disabled in [true, false] {
+            let log = PhoneFrameTimingLog(renderTimingEnabled: !disabled)
+            let inner = StubH264Decoder(); let decoder = TimedH264Decoder(log: log, inner: inner)
+            let frame = try decodedFrame()
+            var deliveries = 0
+            decoder.setCallback { output in
+                deliveries += 1
+                XCTAssertTrue(output === frame)
+                XCTAssertNil(log.takeDecodeTrace(rtp: output.timeStamp, timeStampNs: output.timeStampNs))
+            }
+            if !disabled { XCTAssertEqual(decoder.release(), 11) }
+            inner.callback?(frame) // A fake late callback tests instrumentation retirement only.
+            XCTAssertEqual(deliveries, 1, "The wrapper preserves stock callback behavior")
+        }
+    }
+
+    func testDuplicateDeliveryIdentityIsQuarantinedBeforeAndAfterConsumption() {
+        for consumeFirst in [false, true] {
+            let log = PhoneFrameTimingLog(renderTimingEnabled: true)
+            let first = PhoneDecodeTrace(deliveryMs: 10)
+            log.decodedDelivery(rtp: -1, timeStampNs: 100, trace: first)
+            if consumeFirst { XCTAssertEqual(log.takeDecodeTrace(rtp: -1, timeStampNs: 100), first) }
+            log.decodedDelivery(rtp: -1, timeStampNs: 100, trace: PhoneDecodeTrace(deliveryMs: 20))
+            XCTAssertNil(log.takeDecodeTrace(rtp: -1, timeStampNs: 100))
+            log.decodedDelivery(rtp: -1, timeStampNs: 101, trace: PhoneDecodeTrace(deliveryMs: 30))
+            XCTAssertEqual(log.takeDecodeTrace(rtp: -1, timeStampNs: 101), PhoneDecodeTrace(deliveryMs: 30))
+        }
+    }
+
+    func testDeliveryOnlyTraceDoesNotFabricateNativeStageStatistics() {
+        let counters = StreamCounters(phoneRenderTimingEnabled: true)
+        let trace = PhoneDecodeTrace(deliveryMs: 100)
+        XCTAssertTrue(trace.isValid)
+        counters.phoneDecodeTrace(trace)
+        counters.phoneRenderTiming(.deliveryToPresented, milliseconds: 125 - trace.deliveryMs)
+        let snapshot = counters.drain(inputBufferedBytes: nil)
+        XCTAssertEqual(snapshot.deliveryToPresentedP95Ms, 25)
+        XCTAssertEqual(snapshot.deliveryToPresentedSamples, 1)
+        XCTAssertNil(snapshot.decodeVTP95Ms); XCTAssertNil(snapshot.decodeVTSamples)
+        XCTAssertNil(snapshot.ownershipDelayP99Ms); XCTAssertNil(snapshot.ownershipDelaySamples)
+        XCTAssertNil(snapshot.deliveryDelayP99Ms); XCTAssertNil(snapshot.deliveryDelaySamples)
+        XCTAssertNil(snapshot.decodedToPresentedP95Ms); XCTAssertNil(snapshot.decodedToPresentedSamples)
+        XCTAssertFalse(PhoneDecodeTrace(deliveryMs: -1).isValid)
+        XCTAssertFalse(PhoneDecodeTrace(deliveryMs: .nan).isValid)
+    }
+
     // MARK: Phone
 
     func testPhoneLogMatchesDecodesByWireTimestampAcrossTheSignBit() {

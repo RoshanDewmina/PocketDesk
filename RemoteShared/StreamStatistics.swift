@@ -1256,11 +1256,13 @@ final class StreamCounters: @unchecked Sendable {
     }
 
     func phoneDecodeTrace(_ trace: PhoneDecodeTrace) {
-        guard phoneRenderTimingEnabled, trace.isValid else { return }
+        guard phoneRenderTimingEnabled, trace.isValid,
+              let submitMs = trace.submitMs, let callbackMs = trace.callbackMs,
+              let ownershipMs = trace.ownershipMs else { return }
         lock.lock(); defer { lock.unlock() }
-        phoneRenderWindows[.decodeVT, default: LatencyWindow()].record(trace.callbackMs - trace.submitMs)
-        phoneRenderWindows[.ownershipDelay, default: LatencyWindow()].record(trace.ownershipMs - trace.callbackMs)
-        phoneRenderWindows[.deliveryDelay, default: LatencyWindow()].record(trace.deliveryMs - trace.callbackMs)
+        phoneRenderWindows[.decodeVT, default: LatencyWindow()].record(callbackMs - submitMs)
+        phoneRenderWindows[.ownershipDelay, default: LatencyWindow()].record(ownershipMs - callbackMs)
+        phoneRenderWindows[.deliveryDelay, default: LatencyWindow()].record(trace.deliveryMs - callbackMs)
     }
 
     func phoneRenderTiming(_ metric: PhoneRenderTimingMetric, milliseconds: Double) {
