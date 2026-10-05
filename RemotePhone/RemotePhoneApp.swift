@@ -613,7 +613,7 @@ final class PhoneRemoteModel: ObservableObject {
     @Published var controlAllowed = false
     @Published var fresh = false
     @Published var captureHealthy = false { willSet { if !newValue { invalidatePresentation() } } }
-    @Published var geometryEpoch: UInt64 = 0 { willSet { if newValue != geometryEpoch { retireContentPresentation() } } }
+    @Published var geometryEpoch: UInt64 = 0 { willSet { if newValue != geometryEpoch { windowWorkspace.retire(); retireContentPresentation() } } }
     @Published var textStatus = ""
     @Published private(set) var voiceDeliveryStatus: VoiceDeliveryStatus = .idle
     @Published private(set) var voiceRetryTranscript = ""
@@ -749,6 +749,7 @@ final class PhoneRemoteModel: ObservableObject {
         presentationHost = host
     }
     private func retireContentPresentation() {
+        windowWorkspace.retire()
         diagnostics.cancel()
         pipTransitional = false
         invalidatePresentation()
@@ -757,6 +758,7 @@ final class PhoneRemoteModel: ObservableObject {
         finishPiPRestore(false)
     }
     private func invalidatePresentation(keepingPiP: Bool = false, requestHostExit: Bool = true) {
+        windowWorkspace.retire()
         phoneLoadCache.invalidate()
         PhoneIdleTimer.shared.endSession()
         if pendingWake != nil { wakeStatus = "The helper session changed. No new wake result can be confirmed." }
@@ -1183,6 +1185,17 @@ final class PhoneRemoteModel: ObservableObject {
         clipboard.pressPaste = { [weak self] in self?.commandShortcut("v") ?? false }
         clipboardObserver = clipboard.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         wireFileTransfer()
+        windowWorkspace.authority = { [weak self] in
+            guard let self, self.windowWorkspaceAllowed else { return nil }
+            return (self.connection.presentationSessionID, self.geometryEpoch)
+        }
+        windowWorkspace.transport = { [weak self] frame, epoch in
+            guard let self, self.windowWorkspaceAllowed, epoch == self.geometryEpoch else { return false }
+            self.cancelInput()
+            return self.connection.sendControl(.workspace(frame, epoch: epoch))
+        }
+        windowWorkspaceObserver = windowWorkspace.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+
         #if DEBUG
         PhoneE2E.active?.attach(self)
         #endif
@@ -1196,6 +1209,13 @@ final class PhoneRemoteModel: ObservableObject {
         return sendInput("key", key: key, modifiers: modifiers)
     }
     #endif
+
+    let windowWorkspace = WindowWorkspaceController()
+    private var windowWorkspaceObserver: AnyCancellable?
+    var windowWorkspaceAllowed: Bool {
+        WorkspaceUtilities.isEnabled(preferences) && hostFeatures.contains(WorkspaceUtilities.feature) && canControl &&
+        sceneIsActive && sessionMode == .picture && !passwordFieldFocused && inlinePresentationAdmission != nil
+    }
 
     var canControl: Bool {
         guard pendingLockMac == nil else { return false }
@@ -3060,6 +3080,9 @@ let now = ProcessInfo.processInfo.systemUptime
 
     private func receive(_ action: RemoteAction) {
         switch action.action {
+        case "workspace":
+            guard (try? action.validateWorkspace()) == true, let frame = action.workspace else { return }
+            windowWorkspace.receive(frame, epoch: action.epoch)
         case "wakeReply": receiveWakeReply(action)
         case "viewing":
             controlAllowed = !captureScopeViewOnly && action.x == 1
