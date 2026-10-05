@@ -20,7 +20,7 @@ enum PairingCodeProblem: Equatable {
     var message: String {
         switch self {
         case .notFarside: "That isn’t a Farside pairing code."
-        case .expired: "That code has expired. On your Mac, choose Pair a phone for a new one."
+        case .expired: "That code has expired. On your Mac, open Farside and make a new one."
         case .damaged: "That code didn’t read cleanly. Make a new one on your Mac and try again."
         }
     }

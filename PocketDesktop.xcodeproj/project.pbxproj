@@ -1299,6 +1299,7 @@
 		F631B70328B2173231051AE8 /* E2EMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E609125CE2A4A1E42653D11 /* E2EMedia.swift */; };
 		F63F824E0BF289C797D43263 /* FarsideHalftone.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D465DB529F7AFB91CFA9A74 /* FarsideHalftone.swift */; };
 		F658DB08DDBEEB4200683415 /* MacVitalsPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E995683BE9DBA429905D977 /* MacVitalsPresentation.swift */; };
+		F69B5BC2DEE2FE400693F94C /* CaptureStartupTicket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F8E2D4203A36E6746A3A0AC /* CaptureStartupTicket.swift */; };
 		F6C86BCB851E3B0D920EEC23 /* LocalOwnerAdmission.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4731957AF98265987D8283E7 /* LocalOwnerAdmission.swift */; };
 		F732777A3B47B0B0529CF18B /* ConnectionQuality.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ACFFF1A44E98A3A402E00CD /* ConnectionQuality.swift */; };
 		F75112E82BE513F5DC00F1F7 /* OneTimeStoreKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 237B92C6715BF03F639AEFF5 /* OneTimeStoreKitTests.swift */; };
@@ -1428,10 +1429,10 @@
 		2E49EEF7069398A9DE44D8A4 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = Contents/Library/LaunchAgents;
-			dstSubfolderSpec = 1;
+			dstPath = "agent-hooks";
+			dstSubfolderSpec = 7;
 			files = (
-				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
+				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1461,10 +1462,10 @@
 		7921CB30C5158D00B1977963 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = "agent-hooks";
-			dstSubfolderSpec = 7;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
 			files = (
-				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
+				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -3821,6 +3822,7 @@
 				ECE550796602008794676392 /* BusyPresentation.swift in Sources */,
 				79406D5554D8F87478BAE926 /* BusyState.swift in Sources */,
 				C5C99463F497758976AC74B3 /* CaptureRatePolicy.swift in Sources */,
+				F69B5BC2DEE2FE400693F94C /* CaptureStartupTicket.swift in Sources */,
 				33721FB534184B10DC91294F /* ClipboardTransfer.swift in Sources */,
 				E8B63E8B552EB593D661EC7B /* ClockSync.swift in Sources */,
 				755422EA7087679E642BFB4D /* ConnectMotionModel.swift in Sources */,

@@ -14,7 +14,7 @@ struct ServerDataRemovalView: View {
         NavigationStack {
             Form {
                 Section {
-                    Text("Remove this iPhone or iPad’s Anywhere link and end its remote session. This frees its subscription device slot. Your Mac’s room is removed separately in the Mac app.")
+                    Text("Remove this iPhone’s Anywhere link and end its remote session. This frees its subscription device slot. Your Mac’s room is removed separately in the Mac app.")
                     Text("This does not cancel your Apple subscription. Purchase records remain for up to 90 days after access ends; security blocks and pending relay revocations may be retained.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
