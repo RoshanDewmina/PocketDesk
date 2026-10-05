@@ -86,6 +86,17 @@ final class FileBrowserTests: XCTestCase {
         access.revoke(root); XCTAssertTrue(second.isClosed); XCTAssertThrowsError(try second.read(upTo: 1))
         XCTAssertThrowsError(try access.list(root, offset: 0, filter: "")); XCTAssertTrue(access.rootEntries().isEmpty)
     }
+    func testRetiredOperationLeaseFencesQueuedEnumerationAndReads() throws {
+        let folder = try fixture(); defer { try? FileManager.default.removeItem(at: folder) }
+        try Data([1]).write(to: folder.appendingPathComponent("item.txt"))
+        let access = FileBrowserAccess(), root = try access.grant(folder), lease = TransferEffectLease()
+        let entry = try XCTUnwrap(access.list(root, offset: 0, filter: "").entries.first)
+        let (source, _) = try access.source(entry.id, authorized: { lease.isActive })
+        lease.closeAdmission()
+        XCTAssertThrowsError(try access.list(root, offset: 0, filter: "", authorized: { lease.isActive }))
+        XCTAssertThrowsError(try source.read(upTo: 1)); source.close()
+    }
+
     func testWorstCaseMetadataFitsEightKiBPayloadAndControlEnvelope() throws {
         let entries = (0..<16).map { _ in FileBrowserEntry(id: InputCausalEnvelope.identity(), name: String(repeating: "\"", count: 128), kind: .unsupported, bytes: Int64.max, modified: Double.greatestFiniteMagnitude) }
         let reply = FileBrowserReply(status: .ok, entries: entries, nextOffset: 100_000)

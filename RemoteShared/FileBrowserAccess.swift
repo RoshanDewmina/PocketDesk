@@ -77,10 +77,10 @@ final class FileBrowserAccess {
         entries = entries.filter { $0.value.root != id }
         sources.removeValue(forKey: id)?.forEach { $0.close() }
     }
-    func list(_ id: String, offset: Int, filter: String) throws -> FileBrowserReply {
+    func list(_ id: String, offset: Int, filter: String, authorized: () -> Bool = { true }) throws -> FileBrowserReply {
         lock.lock(); defer { lock.unlock() }
         leaseLock.lock(); let lease = enumerationLease; leaseLock.unlock()
-        guard lease.isActive else { throw FileTransferStatus.notAllowed }
+        guard lease.isActive, authorized() else { throw FileTransferStatus.notAllowed }
         let (root, components) = try resolve(id)
         let fd = try openEntry(root, components)
         guard let directory = fdopendir(fd) else { close(fd); throw FileTransferStatus.unreadable }
@@ -88,7 +88,7 @@ final class FileBrowserAccess {
         var index = 0, scanned = 0, result: [FileBrowserEntry] = []
         let deadline = ProcessInfo.processInfo.systemUptime + 0.2
         while let pointer = readdir(directory) {
-            guard lease.isActive, root.lease.isActive else { throw FileTransferStatus.notAllowed }
+            guard lease.isActive, root.lease.isActive, authorized() else { throw FileTransferStatus.notAllowed }
             if index < offset {
                 index += 1
                 guard ProcessInfo.processInfo.systemUptime < deadline else { throw FileTransferStatus.busy }
@@ -128,13 +128,13 @@ final class FileBrowserAccess {
         }
         return FileBrowserReply(status: .ok, entries: result)
     }
-    func source(_ id: String) throws -> (DescriptorFileByteSource, String) {
+    func source(_ id: String, authorized: @escaping () -> Bool = { true }) throws -> (DescriptorFileByteSource, String) {
         lock.lock(); defer { lock.unlock() }
         let (root, components) = try resolve(id)
-        guard !components.isEmpty, root.lease.isActive else { throw FileTransferStatus.denied }
+        guard !components.isEmpty, root.lease.isActive, authorized() else { throw FileTransferStatus.denied }
         let fd = try openEntry(root, components)
         do {
-            let source = try DescriptorFileByteSource(descriptor: fd, authorized: { root.lease.isActive })
+            let source = try DescriptorFileByteSource(descriptor: fd, authorized: { root.lease.isActive && authorized() })
             sources[root.id, default: []].removeAll { $0.isClosed }
             sources[root.id, default: []].append(source)
             return (source, components.last!.name)
