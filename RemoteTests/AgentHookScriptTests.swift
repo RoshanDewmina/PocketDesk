@@ -43,20 +43,41 @@ final class FarsideNotifyScriptTests: XCTestCase {
         process.arguments = [Self.scriptURL.path] + arguments
         process.environment = ["PATH": path, "HOME": NSHomeDirectory(),
                                "FARSIDE_BRIDGE_FILE": (bridgeFile ?? bridge.discoveryFile).path]
-        let out = Pipe(), err = Pipe(), input = Pipe()
+        // File-backed capture cannot deadlock a child writing while this synchronous helper waits.
+        // Keep every byte and the actual process status; no timeout/output failure is converted to success.
+        let captureID = UUID().uuidString
+        let outURL = directory.appendingPathComponent(captureID + ".stdout")
+        let errURL = directory.appendingPathComponent(captureID + ".stderr")
+        let inURL = directory.appendingPathComponent(captureID + ".stdin")
+        for url in [outURL, errURL] {
+            guard FileManager.default.createFile(atPath: url.path, contents: nil,
+                                                  attributes: [.posixPermissions: 0o600]) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+        }
+        let out = try FileHandle(forWritingTo: outURL)
+        let err = try FileHandle(forWritingTo: errURL)
+        var input: FileHandle?
+        defer {
+            try? out.close(); try? err.close(); try? input?.close()
+            for url in [outURL, errURL, inURL] { try? FileManager.default.removeItem(at: url) }
+        }
         process.standardOutput = out
         process.standardError = err
-        let source: Any = stdin == nil ? FileHandle.nullDevice as Any : input as Any
-        process.standardInput = source
-        try process.run()
         if let stdin {
-            input.fileHandleForWriting.write(Data(stdin.utf8))
-            try input.fileHandleForWriting.close()
+            try Data(stdin.utf8).write(to: inURL, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: inURL.path)
+            input = try FileHandle(forReadingFrom: inURL)
+            process.standardInput = input
+        } else {
+            process.standardInput = FileHandle.nullDevice
         }
+        try process.run()
         process.waitUntilExit()
+        try out.close(); try err.close()
         return Result(status: process.terminationStatus,
-                      out: String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self),
-                      err: String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+                      out: String(decoding: try Data(contentsOf: outURL), as: UTF8.self),
+                      err: String(decoding: try Data(contentsOf: errURL), as: UTF8.self))
     }
 
     private func notification(_ type: String, message: String = "Claude needs your permission to use Bash") -> String {
