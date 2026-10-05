@@ -41,16 +41,22 @@ enum HostSecureFocus {
     static func isSecureNow() async -> Bool {
         await withCheckedContinuation { continuation in
             queue.async {
-                let budget = HostAXBudget(total: budget)
-                continuation.resume(returning: HostSecureFocusPolicy.resolve(
-                    secureEventInput: secureEventInputEnabled(),
-                    systemWide: { focusedSubrole(of: AXUIElementCreateSystemWide(), budget: budget) },
-                    frontmost: {
-                        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return .unknown }
-                        return focusedSubrole(of: AXUIElementCreateApplication(pid), budget: budget)
-                    }))
+                continuation.resume(returning: isSecureForClipboardTransfer())
             }
         }
+    }
+
+    /// Synchronous metadata query for the serial pasteboard queue immediately before an effect.
+    /// Never call on the main thread; unknown focus remains a refusal.
+    static func isSecureForClipboardTransfer() -> Bool {
+        let budget = HostAXBudget(total: budget)
+        return HostSecureFocusPolicy.resolve(
+            secureEventInput: secureEventInputEnabled(),
+            systemWide: { focusedSubrole(of: AXUIElementCreateSystemWide(), budget: budget) },
+            frontmost: {
+                guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return .unknown }
+                return focusedSubrole(of: AXUIElementCreateApplication(pid), budget: budget)
+            })
     }
 
     /// Carbon's `IsSecureEventInputEnabled` is exported by HIToolbox, but the SDK ships no header for it.

@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import WebRTC
 import AVFoundation
 import Combine
@@ -147,6 +148,7 @@ final class PhoneRemoteModel: ObservableObject {
     let pointerLocator = PointerLocator()
     let pointerOverlay = PointerOverlayModel()
     let clipboard = PhoneClipboard()
+    let richClipboard = RichClipboardEndpoint(isHost: false)
     let linkHints = PhoneLinkHintMonitor()
     private var lowDataState = LowDataPolicyState()
     @Published private(set) var linkHint: NetworkLinkHint?
@@ -607,7 +609,7 @@ final class PhoneRemoteModel: ObservableObject {
     private var hasBeenActive = false
     @Published var draft = "" { didSet { secureTextFocus.draftChanged(draft) } }
     @Published private(set) var frontmostApp: FrontmostApp?
-    @Published var secureTextFocus = SecureTextFocus()
+    @Published var secureTextFocus = SecureTextFocus() { didSet { if secureTextFocus.active { richClipboard.reset() } } }
     @Published var isComposingText = false
     @Published var dragging = false
     @Published var modifiers: Set<String> = []
@@ -762,7 +764,7 @@ final class PhoneRemoteModel: ObservableObject {
     private func invalidatePresentation(keepingPiP: Bool = false, requestHostExit: Bool = true) {
         shortcutWorkspace.retire()
         windowWorkspace.retire()
-        fileBrowser.reset()
+        fileBrowser.reset(); richClipboard.reset()
         phoneLoadCache.invalidate()
         PhoneIdleTimer.shared.endSession()
         if pendingWake != nil { wakeStatus = "The helper session changed. No new wake result can be confirmed." }
@@ -947,7 +949,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
     private func releasePiPControl() {
         setMacAudioMuted(true); endSecureFocus(); cancelInput(); inputToken = nil
-        clipboard.cancel(); clipboard.clearNotice(); files.stopForBackground()
+        richClipboard.reset(); clipboard.cancel(); clipboard.clearNotice(); files.stopForBackground()
     }
 
     private var lastFrame = 0.0
@@ -1199,6 +1201,7 @@ final class PhoneRemoteModel: ObservableObject {
             return self.connection.sendControl(.workspace(frame, epoch: epoch))
         }
         shortcutWorkspaceObserver = shortcutWorkspace.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        wireRichClipboard()
         windowWorkspace.authority = { [weak self] in
             guard let self, self.windowWorkspaceAllowed else { return nil }
             return (self.connection.presentationSessionID, self.geometryEpoch)
@@ -1900,6 +1903,7 @@ final class PhoneRemoteModel: ObservableObject {
         let constrained = lowDataState.observe(constrained: linkHints.hint?.constrained == true,
             supported: hostFeatures.contains(SessionFeature.lowDataPolicy), enabled: LowDataPolicy.isEnabled(preferences), at: now)
         connection.media?.applyLowDataPolicy(constrained == true)
+        if constrained == true { richClipboard.reset() }
         let viewport = viewportCaptureSupported ? viewportReporter.region(forDisplay: sourceSize) : nil
         let load = hostFeatures.contains(SessionFeature.ladder)
             ? phoneLoadCache.current(epoch: geometryEpoch,
@@ -2138,6 +2142,29 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     // MARK: File transfer
+
+    var richClipboardSupported: Bool { WorkspaceUtilities.isEnabled(preferences) && hostFeatures.contains(WorkspaceUtilities.feature) }
+    var richClipboardAvailable: Bool {
+        richClipboardSupported && fileTransferAvailable && sceneIsActive && canControl && sessionMode == .picture
+            && hostPresence == nil && !passwordFieldFocused && !lowDataState.active
+    }
+    private func wireRichClipboard() {
+        richClipboard.allowed = { [weak self] in self?.richClipboardAvailable == true }
+        richClipboard.transport = { [weak self] frame in
+            guard let self, self.connection.connected else { return false }
+            return self.transmit(.workspace(frame, epoch: self.geometryEpoch))
+        }
+        richClipboard.engine.link = { [weak self] in self?.connection.media.map(RichClipboardLink.init) }
+        richClipboard.engine.isRelayed = { [weak self] in self?.connection.media?.isRelayRoute ?? false }
+        connection.richClipboardTransfer = richClipboard.engine
+        richClipboard.beginExplicit = { [weak self] in self?.clipboard.beginRichTransaction(); return 1 }
+        richClipboard.finishExplicit = { [weak self] revision, committed in self?.clipboard.finishRichTransaction(revision: revision, committed: committed) }
+        richClipboard.storeImage = { [weak self] png, _, lease, completion in
+            guard let self, self.richClipboardAvailable, lease.isActive else { completion(false); return }
+            UIPasteboard.general.setItems([[UTType.png.identifier: png.data, ClipboardPrivacy.pocketDeskMarker: Data()]], options: [.localOnly: true])
+            completion(true)
+        }
+    }
 
     var fileBrowserAvailable: Bool {
         WorkspaceUtilities.isEnabled(preferences) && hostFeatures.contains(WorkspaceUtilities.feature)
@@ -2928,7 +2955,7 @@ let now = ProcessInfo.processInfo.systemUptime
         if !mayKeepLivePiP, autoPiPMayStart, !autoPiPGraceSpent, autoPiPBackgroundGrace == nil {
             LivePiPController.log.notice("pip background grace: waiting for the automatic start")
             // Background is terminal for clipboard replies and file I/O whether or not PiP then starts.
-            clipboard.cancel(); clipboard.clearNotice(); files.stopForBackground()
+            richClipboard.reset(); clipboard.cancel(); clipboard.clearNotice(); files.stopForBackground()
             privacyShield = true // The app-switcher snapshot stays shielded while the prepared PiP waits.
             pipTransitional = true
             autoPiPBackgroundGrace = Task { @MainActor [weak self] in
@@ -2976,7 +3003,7 @@ let now = ProcessInfo.processInfo.systemUptime
         suspendInputReadiness()
         clipboard.cancel()
         clipboard.clearNotice()
-        files.stopForBackground()
+        richClipboard.reset(); files.stopForBackground()
         resumeWatchdog?.cancel(); resumeWatchdog = nil
         var canHold = connection.connected && hostFeatures.contains(SessionFeature.backgroundPause)
         if canHold {
@@ -3207,6 +3234,9 @@ let now = ProcessInfo.processInfo.systemUptime
             case .files:
                 guard action.epoch == geometryEpoch, fileBrowserAvailable else { return }
                 fileBrowser.receive(frame)
+            case .richClipboard:
+                guard action.epoch == geometryEpoch else { return }
+                richClipboard.receive(frame)
             default: break
             }
         case "wakeReply": receiveWakeReply(action)
@@ -3294,6 +3324,7 @@ let now = ProcessInfo.processInfo.systemUptime
                 SharedCaptureScopePolicy.features(action.features ?? [], kind: sharedCaptureScope?.kind ?? .display),
                 statusVersion: action.workspaceUtilitiesVersion, current: action.epoch == geometryEpoch,
                 fullDisplay: !captureScopeViewOnly, shortcuts: action.workspaceUtilitiesShortcuts == true)
+            clipboard.richOrderingEnabled = richClipboardSupported
             if !hostFeatures.contains(SessionFeature.shortcutChips) { frontmostApp = nil }
             if action.features != nil { firstPictureCaptureObserved = true }
             if hostFeatures.contains(SessionFeature.causalInput) { connection.requestCausalInput(epoch: geometryEpoch) }
@@ -3301,6 +3332,7 @@ let now = ProcessInfo.processInfo.systemUptime
             sessionBlocker = action.hostState.flatMap(MacShareBlocker.init(rawValue:))
             if backgroundRecoveryBlocked { clearContinuity() }
             receiveAwayStatus(action)
+            if !richClipboardAvailable { richClipboard.reset() }
             if !connection.connected { return }
             let previousCurtain = curtainState
             curtainState = curtainSupported
@@ -3792,7 +3824,7 @@ let now = ProcessInfo.processInfo.systemUptime
         }
         departureReason = nil
         clipboard.cancel()
-        files.reset(); fileBrowser.reset()
+        richClipboard.reset(); clipboard.resetRichSession(); files.reset(); fileBrowser.reset()
         refreshSendToMac(force: true)
         resumeWatchdog?.cancel(); resumeWatchdog = nil
         // couchRefusal, requestedMode and lastOnScreenMode outlive the session: Home explains and

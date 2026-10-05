@@ -11,6 +11,13 @@ protocol HostPasteboardAccess: AnyObject, Sendable {
     var changeCount: Int { get }
     func read(limit: Int) -> HostPasteboardRead
     func write(_ payload: ClipboardPayload) -> Bool
+    func readImage() -> Result<Data, ClipboardStatus>
+    func writeImage(_ png: Data) -> Bool
+}
+
+extension HostPasteboardAccess {
+    func readImage() -> Result<Data, ClipboardStatus> { .failure(.unsupported) }
+    func writeImage(_ png: Data) -> Bool { false }
 }
 
 final class SystemHostPasteboard: HostPasteboardAccess, @unchecked Sendable {
@@ -54,6 +61,24 @@ final class SystemHostPasteboard: HostPasteboardAccess, @unchecked Sendable {
         return pasteboard.writeObjects([item])
     }
 
+    func readImage() -> Result<Data, ClipboardStatus> {
+        if pasteboard.accessBehavior == .alwaysDeny { return .failure(.denied) }
+        var types = Set((pasteboard.types ?? []).map(\.rawValue))
+        for item in pasteboard.pasteboardItems ?? [] { types.formUnion(item.types.map(\.rawValue)) }
+        guard ClipboardPrivacy.verdict(forTypes: types) == .shareable else { return .failure(.concealed) }
+        guard let type = [NSPasteboard.PasteboardType.png, .tiff].first(where: { types.contains($0.rawValue) }),
+              let data = pasteboard.data(forType: type), !data.isEmpty else { return .failure(.unsupported) }
+        guard data.count <= RichClipboardLimits.encodedBytes else { return .failure(.tooLarge) }
+        return .success(data)
+    }
+    func writeImage(_ png: Data) -> Bool {
+        let item = NSPasteboardItem()
+        guard item.setData(png, forType: .png) else { return false }
+        item.setString(Bundle.main.bundleIdentifier ?? "com.roshan.PocketDesk.RemoteHost", forType: NSPasteboard.PasteboardType(ClipboardPrivacy.sourceType))
+        item.setData(Data(), forType: NSPasteboard.PasteboardType(ClipboardPrivacy.pocketDeskMarker))
+        pasteboard.clearContents(); return pasteboard.writeObjects([item])
+    }
+
     static func payload(from data: Data, limit: Int) -> HostPasteboardRead {
         guard !data.isEmpty else { return .refused(.empty) }
         guard data.count <= limit else { return .refused(.tooLarge) }
@@ -81,6 +106,13 @@ final class HostClipboardService {
         var changeCount: Int?
         var phoneDigest: String?
     }
+
+    /// Runs on the serial pasteboard queue immediately before every rich read/write.
+    var richEffectAllowed: @Sendable () -> Bool = { true }
+    var richOrderingEnabled = false
+    private var richBusy = false
+    private var richResumeAutomatic = false
+    private let sourceClock = ClipboardSourceClock()
 
     private let pasteboard: HostPasteboardAccess
     private let queue: DispatchQueue
@@ -125,7 +157,7 @@ final class HostClipboardService {
     var isIdle: Bool { pendingRead == nil && outbox.isEmpty && assembler.activeTransfer == nil }
 
     func reconcileAutomaticSync(allowed: Bool, peerSupports: Bool) {
-        guard allowed, peerSupports, automaticPolicy?() != false else { stopAutomaticSync(); return }
+        guard allowed, peerSupports, !richBusy, automaticPolicy?() != false else { stopAutomaticSync(); return }
         guard automaticObservation == nil else { return }
         automaticObservation = AutomaticObservation()
         automaticLease = TransferEffectLease()
@@ -189,7 +221,8 @@ final class HostClipboardService {
                       self.pendingRead == nil, self.outbox.isEmpty else { return }
                 guard var frames = try? ClipboardChunker.frames(for: payload, operation: "data", transfer: ClipboardTransferID.make()),
                       let digest = frames.first?.digest, digest != self.automaticDigest else { return }
-                for index in frames.indices { frames[index].automatic = true }
+                let revision = self.richOrderingEnabled ? self.sourceClock.next() : nil
+                for index in frames.indices { frames[index].automatic = true; frames[index].sourceRevision = revision }
                 self.automaticDigest = digest
                 self.automaticOutbox = true
                 self.outbox.load(frames)
@@ -199,7 +232,7 @@ final class HostClipboardService {
     }
 
     func receive(_ frame: ClipboardFrame, allowed: Bool) {
-        guard allowed else {
+        guard allowed, !richBusy else {
             if assembler.activeTransfer == frame.transfer { assembler.reset() }
             reply(frame.transfer, .notAllowed)
             return
@@ -229,7 +262,47 @@ final class HostClipboardService {
         return readiness
     }
 
+    /// One transaction coordinator retires automatic assembly, pending reads and paced outboxes.
+    func beginRichTransaction() -> UInt64 {
+        let resume = automaticObservation != nil
+        reset(); richBusy = true; richResumeAutomatic = resume
+        return sourceClock.next()
+    }
+    func finishRichTransaction() {
+        let resume = richResumeAutomatic; richBusy = false; richResumeAutomatic = false
+        if resume { reconcileAutomaticSync(allowed: automaticPolicy?() == true, peerSupports: true) }
+    }
+    func readRichImage(lease: TransferEffectLease, completion: @escaping @MainActor (Result<RichClipboardSource, ClipboardStatus>) -> Void) {
+        let pasteboard = self.pasteboard, effectAllowed = richEffectAllowed
+        queue.async {
+            guard lease.isActive else { return }
+            guard effectAllowed(), lease.isActive else { Task { @MainActor in completion(.failure(.denied)) }; return }
+            let count = pasteboard.changeCount
+            let result: Result<RichClipboardSource, ClipboardStatus>
+            switch pasteboard.readImage() {
+            case .failure(let status): result = .failure(status)
+            case .success(let data):
+                do {
+                    let png = try RichClipboardPNG.normalize(data)
+                    guard lease.isActive, pasteboard.changeCount == count else { throw ClipboardStatus.unchanged }
+                    result = .success(RichClipboardSource(png: png, stillCurrent: { pasteboard.changeCount == count }))
+                } catch { result = .failure((error as? ClipboardStatus) ?? .invalid) }
+            }
+            Task { @MainActor in guard lease.isActive else { return }; completion(result) }
+        }
+    }
+    func storeRichImage(_ image: RichClipboardPNG, lease: TransferEffectLease, completion: @escaping @MainActor (Bool) -> Void) {
+        let pasteboard = self.pasteboard, effect = effectLease, effectAllowed = richEffectAllowed
+        queue.async {
+            guard lease.isActive else { return }
+            let permitted = effectAllowed()
+            let stored = permitted && (effect.performIfActive { lease.performIfActive { pasteboard.writeImage(image.data) } ?? false } ?? false)
+            Task { @MainActor in guard lease.isActive else { return }; completion(stored) }
+        }
+    }
+
     func reset() {
+        richBusy = false; richResumeAutomatic = false
         stopAutomaticSync()
         effectLease.retire()
         effectLease = TransferEffectLease()
