@@ -23,7 +23,8 @@ Options: `--scenarios a,b,c,d,e,f,g` (d = d1–d5), `--repeat N`, `--soak-second
 several renewals in a 10-minute soak), `--simulator NAME`, `--skip-build`, `--derived-data PATH`
 (default `~/Library/Developer/Xcode/DerivedData/FarsideE2E`, reused by every run; outside
 `~/Documents`, where test bundles cannot be loaded), `--no-caffeinate`, `--keep-simulator`,
-`--keep-xcresults` (keep every `.xcresult`; by default none are kept). A run killed outright (no
+`--keep-xcresults` (keep every `.xcresult`; by default none are kept),
+`--keep-telemetry` (also retain successful iteration logs/statistics/resources; default pruning is unchanged). A run killed outright (no
 cleanup) leaves a pid list; the next run stops those leftovers first — only processes carrying the
 harness's own markers (`--farside-e2e`, the Test Pad's `--run-id`, `src/index.ts`, `FarsideWatchdog
 --farside-e2e`). Exit code 0 = every scenario passed (or failed only a known-issue check), 1 = a
@@ -35,8 +36,11 @@ test's own `result.json` (checks, metrics, notes) and `harness.json` (exit code,
 A failed scenario also keeps `xcodebuild.log` and its failure screenshots (`failure-N.png`, taken
 from the result bundle, which is then deleted), and its iteration keeps `iter-N/logs/`: host, phone
 and Test Pad logs, per-second stream statistics, the service and watchdog logs and a process
-CPU/memory sample every 5 s. A passing iteration keeps only the report data, so overnight loops stay
-small. When `bench/stats_summary.py` exists, the report includes its per-stage summary of the E2E
+CPU/memory sample every 5 s. A passing iteration keeps only the report data by default, so overnight loops stay
+small. With `--keep-telemetry`, its collected logs also remain in the existing 30-run report
+retention. These isolated fixture logs can include typed Test Pad markers; the flag does not
+preserve pairing secrets, change process cleanup or enable production input. `meta.json` records
+the retention choice. Simulator decode is not physical iPhone presentation evidence. When `bench/stats_summary.py` exists, the report includes its per-stage summary of the E2E
 stream stats.
 
 Requirements: Xcode with an iOS simulator runtime, Bun, and — for the real host — an installed

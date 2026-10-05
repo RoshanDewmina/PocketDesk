@@ -94,9 +94,16 @@ final class StreamLoopbackBenchmarkTests: XCTestCase {
 
     @MainActor
     private func run(scene: String, width: Int, height: Int, seconds: Double) async throws {
-        let host = PeerMedia(isHost: true, servers: [])
+        // Match Connect's real cold preflight before the factories freeze their codec set.
+        // Conservative fallback remains valid; the receipt names the negotiated codec.
+        let hostCapabilities = NativeVideoCapabilitySnapshot.enabled
+            ? await NativeVideoCapabilitySnapshot.ready(isHost: true) : nil
+        let phoneCapabilities = NativeVideoCapabilitySnapshot.enabled
+            ? await NativeVideoCapabilitySnapshot.ready(isHost: false) : nil
+        let host = PeerMedia(isHost: true, servers: [], capabilitySnapshot: hostCapabilities)
         let compatibleReceiver = ProcessInfo.processInfo.environment["POCKETDESK_BENCH_COMPATIBLE_RECEIVER"] == "1"
-        let phone = PeerMedia(isHost: false, servers: [], nativeDesktopCodecs: !compatibleReceiver)
+        let phone = PeerMedia(isHost: false, servers: [], nativeDesktopCodecs: !compatibleReceiver,
+                              capabilitySnapshot: phoneCapabilities)
         defer { host.close(); phone.close() }
         host.applyStreamQuality(max(width, height) > 1920 ? .sharp : .balanced)
         host.onSignal = { [weak phone] signal in phone?.receive(signal) }
@@ -162,6 +169,7 @@ final class StreamLoopbackBenchmarkTests: XCTestCase {
         }
         print("""
         BENCH RECEIPT scene=\(scene) \(width)x\(height) \(Int(seconds))s tuning=[\(host.tuning.summary)]: \
+        tuningHEVC=\(host.tuning.hevc) compatibleReceiver=\(compatibleReceiver) codec=\(last?.codec ?? lastPhone?.codec ?? "unmeasured") \
         level=\(last?.h264ProfileLevel ?? "?") encoder=\(last?.encoderImplementation ?? "?") hw=\(last?.powerEfficientEncoder.map(String.init) ?? "?") \
         sent=\(last?.sentWidth ?? 0)x\(last?.sentHeight ?? 0) limit=\(last?.qualityLimitation ?? "?") | \
         pushedFPS=\(median(steadyHost.map { $0.pushedFPS })) encodedFPS=\(median(steadyHost.map { $0.encodedFPS })) \

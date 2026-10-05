@@ -44,6 +44,9 @@ Usage: script/e2e/run-e2e.sh (--host-app PATH | --self-test) [options]
   --keep-simulator      Leave the dedicated simulator booted afterwards.
   --keep-xcresults      Keep every scenario's .xcresult bundle (default: none; a failed scenario keeps its
                         logs and failure screenshots, a passing iteration keeps only the report).
+  --keep-telemetry      Keep successful iteration logs/stats/resources as well as failed ones.
+                        E2E fixture logs may include its typed markers. Secrets and run processes
+                        are still cleaned up; the existing 30-run report retention applies.
 Exit: 0 all passed, 1 a scenario failed, 2 usage, 3 preflight/setup failure, 75 another run is active.
 EOF
 }
@@ -59,6 +62,7 @@ SKIP_BUILD=0
 CAFFEINATE=1
 KEEP_SIM=0
 KEEP_XCRESULTS=0
+KEEP_TELEMETRY=0
 # Outside ~/Documents: test bundles built there cannot be loaded (Documents privacy protection).
 DERIVED="$HOME/Library/Developer/Xcode/DerivedData/FarsideE2E"
 while (( $# )); do
@@ -76,6 +80,7 @@ while (( $# )); do
     --no-caffeinate) CAFFEINATE=0; shift ;;
     --keep-simulator) KEEP_SIM=1; shift ;;
     --keep-xcresults) KEEP_XCRESULTS=1; shift ;;
+    --keep-telemetry) KEEP_TELEMETRY=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) print -u2 "Unknown option: $1"; usage >&2; exit 2 ;;
   esac
@@ -729,7 +734,7 @@ prune_run_artifacts() {
       [[ -f $scenario/xcodebuild.log || -f $scenario/failure-1.png ]] && failed=1
       [[ $(jget "$scenario/harness.json" .exitCode) == 0 ]] || failed=1
     done
-    (( failed )) || rm -rf "$iteration/logs"
+    (( failed || KEEP_TELEMETRY )) || rm -rf "$iteration/logs"
   done
   rm -rf "$REPORT_DIR/build"
   rm -rf "$RUN" "$ROOT/host" "$ROOT/phone" "$ROOT/stubhost"
@@ -793,11 +798,12 @@ build
 locate_products
 keep_awake
 json_line --arg run $RUN_STAMP --arg mode $MODE --arg hostApp "$HOST_APP" --arg scenarios "${(j:,:)SCENARIOS}" \
+  --argjson keepTelemetry $([[ $KEEP_TELEMETRY == 1 ]] && print true || print false) \
   --argjson repeat $REPEAT --argjson soak $SOAK --argjson start $(date +%s) --arg simulator "$SIM_NAME ($UDID)" \
   --arg head "$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null)" --argjson spaceKeys $([[ $SPACE_KEYS == 1 ]] && print true || print false) \
   --arg macOS "$(sw_vers -productVersion)" --arg xcode "$(xcodebuild -version 2>/dev/null | head -1)" \
   '{run: $run, mode: $mode, hostApp: $hostApp, scenarios: ($scenarios | split(",")), repeat: $repeat, soakSeconds: $soak,
-    startedAt: $start, simulator: $simulator, commit: $head, spaceKeysEnabled: $spaceKeys, macOS: $macOS, xcode: $xcode}' \
+    startedAt: $start, keepTelemetry: $keepTelemetry, simulator: $simulator, commit: $head, spaceKeysEnabled: $spaceKeys, macOS: $macOS, xcode: $xcode}' \
   > "$REPORT_DIR/meta.json"
 (( SPACE_KEYS )) || log "Mission Control Space shortcuts are off; scenario e will be skipped"
 
