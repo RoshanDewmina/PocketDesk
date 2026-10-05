@@ -32,6 +32,20 @@ final class HostFileBrowserServiceTests: XCTestCase {
         try await Task.sleep(nanoseconds: 150_000_000)
         XCTAssertTrue(replies.isEmpty)
     }
+    func testResetCancelsAnAdmittedBrowserDownload() async throws {
+        let (access, root, url) = try fixture(); defer { try? FileManager.default.removeItem(at: url) }
+        let service = HostFileBrowserService(access: access), engine = FileTransferEngine(acceptsUnsolicitedOffers: true)
+        service.allowed = { true }; service.engine = engine
+        var sent: [FileFrame] = []; engine.sendControl = { sent.append($0); return true }
+        let entry = try XCTUnwrap(access.list(root, offset: 0, filter: "").entries.first), id = FileTransferID.make()
+        service.receive(try WorkspaceFrame(kind: .files, requestID: InputCausalEnvelope.identity(), value: FileBrowserRequest(operation: .download, entry: entry.id, transfer: id)))
+        let deadline = Date().addingTimeInterval(2)
+        while engine.outgoing == nil, Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertEqual(engine.outgoing?.transfer, id)
+        service.reset()
+        XCTAssertNil(engine.outgoing); XCTAssertEqual(sent.last?.op, "cancel"); XCTAssertEqual(sent.last?.transfer, id)
+    }
+
     func testRootsAndQueuedListAreReachableUnderAuthority() async throws {
         let (access, root, url) = try fixture(); defer { try? FileManager.default.removeItem(at: url) }
         let service = HostFileBrowserService(access: access); var replies: [WorkspaceFrame] = []
