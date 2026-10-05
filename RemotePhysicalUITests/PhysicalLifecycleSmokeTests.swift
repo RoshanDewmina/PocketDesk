@@ -103,6 +103,7 @@ final class PhysicalLifecycleSmokeTests: XCTestCase {
         let runs = [("A1 baseline", 2), ("B drawable variant", 3), ("A2 repeated baseline", 2)]
         for (label, count) in runs {
             let arguments = ["-PocketDeskStreamStats", "YES",
+                             "-PocketDeskMarkerReading", "NO",
                              "-farsidePhoneRendererPacingDiagnostics", "YES",
                              "-farsidePhoneRendererDrawableCount", String(count),
                              "-phoneImmediateSourceDrawDisabled", "NO"]
