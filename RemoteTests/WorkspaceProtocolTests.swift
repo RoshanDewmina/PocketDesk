@@ -24,11 +24,16 @@ final class WorkspaceProtocolTests: XCTestCase {
         let derived = WorkspaceUtilities.resolvedFeatures(wire, statusVersion: 1, current: true, fullDisplay: true)
         XCTAssertEqual(derived.subtracting([WorkspaceUtilities.feature]), Set(wire))
         XCTAssertTrue(derived.contains(WorkspaceUtilities.feature))
-        for version: Int? in [nil, 2] {
+        for version in [Optional<Int>.none, Optional(2)] {
             XCTAssertFalse(WorkspaceUtilities.resolvedFeatures(wire, statusVersion: version, current: true, fullDisplay: true).contains(WorkspaceUtilities.feature))
         }
         XCTAssertFalse(WorkspaceUtilities.resolvedFeatures(wire, statusVersion: 1, current: false, fullDisplay: true).contains(WorkspaceUtilities.feature))
         XCTAssertFalse(WorkspaceUtilities.resolvedFeatures(wire, statusVersion: 1, current: true, fullDisplay: false).contains(WorkspaceUtilities.feature))
+        XCTAssertTrue(WorkspaceUtilities.resolvedFeatures(wire, statusVersion: 1, current: true, fullDisplay: true, shortcuts: true).contains(SessionFeature.shortcutChips))
+        XCTAssertFalse(WorkspaceUtilities.resolvedFeatures(wire, statusVersion: nil, current: true, fullDisplay: true, shortcuts: true).contains(SessionFeature.shortcutChips))
+        XCTAssertFalse(WorkspaceUtilities.resolvedFeatures(wire, statusVersion: 1, current: true, fullDisplay: false, shortcuts: true).contains(SessionFeature.shortcutChips))
+        XCTAssertNoThrow(try RemoteAction(action: "capture", workspaceUtilitiesVersion: 1, workspaceUtilitiesShortcuts: true, features: wire).validate())
+        XCTAssertThrowsError(try RemoteAction(action: "capture", workspaceUtilitiesShortcuts: true).validate())
         XCTAssertNil(WorkspaceUtilities.statusVersion(enabled: true, peerFeatures: [], fullDisplay: true))
         XCTAssertNoThrow(try RemoteAction(action: "capture", workspaceUtilitiesVersion: 1, features: wire).validate())
         XCTAssertThrowsError(try RemoteAction(action: "key", workspaceUtilitiesVersion: 1).validate())

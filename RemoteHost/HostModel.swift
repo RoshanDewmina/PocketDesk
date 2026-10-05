@@ -1239,7 +1239,8 @@ final class RemoteHostModel: ObservableObject {
         fileBrowser.engine = engine
         fileBrowser.allowed = { [weak self] in
             guard let self else { return false }
-            return WorkspaceUtilities.isEnabled(self.preferences.defaults) && self.connection.peerFeatures.contains(WorkspaceUtilities.feature)
+            return WorkspaceUtilities.statusVersion(enabled: WorkspaceUtilities.isEnabled(self.preferences.defaults),
+                peerFeatures: self.connection.peerFeatures, fullDisplay: !self.captureScopeViewOnly) != nil
                 && self.fileTransferRefusal == nil && self.controlPermission.isGranted && self.sessionState == .picture
                 && self.sessionHealthy && !self.screenLocked && !self.displayAsleep
         }
@@ -1760,6 +1761,7 @@ final class RemoteHostModel: ObservableObject {
             awayRecord(Self.awayPhaseDescription(lastAwayPhase))
         }
         if !awayPictureClear || away.isLocking {
+            fileBrowser.reset()
             input.withAuthority {
                 input.enabled = false
                 input.invalidateQueued(); inputFreshness.expireTokens()
@@ -3279,7 +3281,13 @@ final class RemoteHostModel: ObservableObject {
         axPrewarmSessionActive && sessionHealthy && !sessionRefused && !screenLocked &&
             !liveViewOnly && !captureScopeViewOnly && !captureScopeNeedsSelection && !away.isLocking &&
             ShortcutChips.negotiated(enabled: ShortcutChips.isEnabled(), peerFeatures: connection.peerFeatures) &&
-            advertisedFeatures.contains(SessionFeature.shortcutChips)
+            (advertisedFeatures.contains(SessionFeature.shortcutChips) || workspaceShortcutMarker)
+    }
+
+    private var workspaceShortcutMarker: Bool {
+        WorkspaceUtilities.statusVersion(enabled: WorkspaceUtilities.isEnabled(preferences.defaults),
+            peerFeatures: connection.peerFeatures, fullDisplay: !captureScopeViewOnly) != nil &&
+            ShortcutChips.negotiated(enabled: ShortcutChips.isEnabled(), peerFeatures: connection.peerFeatures)
     }
 
     private func currentShortcutApp() -> FrontmostApp {
@@ -3589,7 +3597,8 @@ final class RemoteHostModel: ObservableObject {
         let alert = captureScopeViewOnly ? nil : agentAlertOutbox.first
         let sent = connection.sendControl(RemoteAction(
           action: "capture", workspaceUtilitiesVersion: WorkspaceUtilities.statusVersion(enabled: WorkspaceUtilities.isEnabled(),
-            peerFeatures: connection.peerFeatures, fullDisplay: !captureScopeViewOnly), liveViewOnly: connection.peerFeatures.contains(SessionFeature.extendedFeatureList) ? liveViewOnly : nil, liveViewOnlyRequestID: viewOnlyRequestID, x: healthy ? 1 : 0, epoch: inputEpoch.value,
+            peerFeatures: connection.peerFeatures, fullDisplay: !captureScopeViewOnly),
+          workspaceUtilitiesShortcuts: workspaceShortcutMarker ? true : nil, liveViewOnly: connection.peerFeatures.contains(SessionFeature.extendedFeatureList) ? liveViewOnly : nil, liveViewOnlyRequestID: viewOnlyRequestID, x: healthy ? 1 : 0, epoch: inputEpoch.value,
             interaction: capability, pointerLocatorSupported: !captureScopeViewOnly,
             pointerSync: PointerSync(videoCursor: capture.cursorInVideo), streamQuality: capture.appliedQuality,
             features: advertisedFeatures, hostState: state,

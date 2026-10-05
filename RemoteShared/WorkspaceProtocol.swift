@@ -14,9 +14,12 @@ enum WorkspaceUtilities {
         enabled && fullDisplay && peerFeatures.contains(SessionFeature.extendedFeatureList) ? 1 : nil
     }
     /// The wire feature list remains bounded; this derived local set also understands the marker.
-    static func resolvedFeatures(_ wire: [String], statusVersion: Int?, current: Bool, fullDisplay: Bool) -> Set<String> {
+    static func resolvedFeatures(_ wire: [String], statusVersion: Int?, current: Bool, fullDisplay: Bool, shortcuts: Bool = false) -> Set<String> {
         var result = Set(wire)
-        if statusVersion == 1 && current && fullDisplay { result.insert(feature) }
+        if statusVersion == 1 && current && fullDisplay {
+            result.insert(feature)
+            if shortcuts { result.insert(SessionFeature.shortcutChips) }
+        }
         return result
     }
     static func advertised(addingTo features: [String], peerFeatures: Set<String>, enabled: Bool) -> [String] {
