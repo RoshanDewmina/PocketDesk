@@ -26,8 +26,10 @@ final class FrozenTextController: ObservableObject {
               !model.contentConcealed, !model.privacyShield, !model.captureScopeViewOnly,
               let admission = model.inlinePresentationAdmission,
               let session = VideoPresentationSession.active, session.admissionIdentity == admission.identity,
-              let crop = FrozenTextSnapshot.normalizedCrop(visible: visible,
-                placement: model.placementRegion?.rect ?? CGRect(origin: .zero, size: model.sourceSize)) else { return }
+              FrozenTextSnapshot.normalizedCrop(visible: visible,
+                placement: model.placementRegion?.rect ?? CGRect(origin: .zero, size: model.sourceSize)) != nil else { return }
+        let placement = model.placementRegion?.rect ?? CGRect(origin: .zero, size: model.sourceSize)
+        let requiresRegion = model.hostFeatures.contains(SessionFeature.viewportCapture)
         Self.active?.cancel(); Self.active = self
         self.admission = admission; self.session = session
         allowed = { [weak model, weak session] in
@@ -46,7 +48,7 @@ final class FrozenTextController: ObservableObject {
                 if self.allowed?() != true { self.cancel() }
             }
         }
-        session.requestTextSnapshot(crop: crop) { [weak self] copied in
+        session.requestTextSnapshot(visible: visible, placement: placement, requiresRegion: requiresRegion) { [weak self] copied in
             DispatchQueue.main.async {
                 guard let self, self.token == job, self.allowed?() == true else { return }
                 guard let copied else { self.status = "This frame could not be copied. Close and try again."; return }

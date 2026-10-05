@@ -16,6 +16,17 @@ enum FrozenTextSnapshot {
         return CGRect(x: (area.minX-placement.minX)/placement.width, y: (area.minY-placement.minY)/placement.height,
                       width: area.width/placement.width, height: area.height/placement.height)
     }
+    /// A later receipt must cover the same source-space placement selected by the user.
+    static func presentedCrop(visible: CGRect, expectedPlacement: CGRect, region: CaptureRegion?,
+                              geometryCurrent: Bool, requiresRegion: Bool) -> CGRect? {
+        if let region {
+            guard geometryCurrent, (try? region.validate()) != nil,
+                  region.rect == expectedPlacement else { return nil }
+            return normalizedCrop(visible: visible, placement: region.rect)
+        }
+        guard !requiresRegion else { return nil }
+        return normalizedCrop(visible: visible, placement: expectedPlacement)
+    }
     static func copy(_ frame: RTCVideoFrame, crop: CGRect) -> CGImage? {
         guard let buffer = frame.buffer as? RTCCVPixelBuffer,
               [crop.minX, crop.minY, crop.width, crop.height].allSatisfy(\.isFinite),

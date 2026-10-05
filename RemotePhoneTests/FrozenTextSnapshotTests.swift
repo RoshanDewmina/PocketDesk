@@ -11,6 +11,18 @@ final class FrozenTextSnapshotTests: XCTestCase {
         XCTAssertTrue(gate.begin())
         gate.finish()
     }
+    func testNextReceiptRejectsChangedUnknownOrStaleTransportPlacement() throws {
+        let placement = CGRect(x: 50, y: 0, width: 400, height: 200)
+        let visible = CGRect(x: 100, y: 50, width: 200, height: 100)
+        var region = CaptureRegion(epoch: 3, x: 50, y: 0, width: 400, height: 200, outputWidth: 800, outputHeight: 400)
+        XCTAssertEqual(FrozenTextSnapshot.presentedCrop(visible: visible, expectedPlacement: placement, region: region, geometryCurrent: true, requiresRegion: true), CGRect(x: 0.125, y: 0.25, width: 0.5, height: 0.5))
+        region.x = 75
+        XCTAssertNil(FrozenTextSnapshot.presentedCrop(visible: visible, expectedPlacement: placement, region: region, geometryCurrent: true, requiresRegion: true))
+        region.x = 50
+        XCTAssertNil(FrozenTextSnapshot.presentedCrop(visible: visible, expectedPlacement: placement, region: region, geometryCurrent: false, requiresRegion: true))
+        XCTAssertNil(FrozenTextSnapshot.presentedCrop(visible: visible, expectedPlacement: placement, region: nil, geometryCurrent: true, requiresRegion: true))
+        XCTAssertNotNil(FrozenTextSnapshot.presentedCrop(visible: visible, expectedPlacement: placement, region: nil, geometryCurrent: true, requiresRegion: false))
+    }
     func testCropIncludesOnlyVisiblePlacementWithNonzeroOrigin() throws {
         let crop = try XCTUnwrap(FrozenTextSnapshot.normalizedCrop(visible: CGRect(x: 100, y: 50, width: 200, height: 100),
             placement: CGRect(x: 50, y: 0, width: 400, height: 200)))

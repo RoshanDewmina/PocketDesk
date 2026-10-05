@@ -133,11 +133,16 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
     }
     /// One request, consumed by a real public presentation receipt under the existing fence.
     /// Copy synchronously before releasing the envelope, then pass only owned pixels to Vision.
-    func requestTextSnapshot(crop: CGRect, completion: @escaping (CGImage?) -> Void) {
+    func requestTextSnapshot(visible: CGRect, placement: CGRect, requiresRegion: Bool, completion: @escaping (CGImage?) -> Void) {
         _ = fence.withAdmission(admissionIdentity, at: ProcessInfo.processInfo.systemUptime) {
             view.textSnapshotPresented = { [weak self] envelope in
                 guard let self else { return }
                 self.view.textSnapshotPresented = nil
+                guard self.sourceCrop == nil,
+                      let crop = FrozenTextSnapshot.presentedCrop(visible: visible, expectedPlacement: placement,
+                        region: envelope.videoTag?.region,
+                        geometryCurrent: envelope.videoTag?.geometryEpoch == self.admissionIdentity.geometryEpoch,
+                        requiresRegion: requiresRegion) else { completion(nil); return }
                 completion(FrozenTextSnapshot.copy(envelope.frame, crop: crop))
             }
         }
