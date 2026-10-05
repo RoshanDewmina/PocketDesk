@@ -1,5 +1,12 @@
 # Host retention copy reconciliation — 5 October 2026
 
+## Secure-input native query ownership — 5 October 2026
+
+The isolated quality candidate now serializes its own synchronous Carbon secure-input calls with a native-only nonblocking try-lock. Contention conservatively reports secure for the current publication instead of blocking the MainActor or reusing another answer; cancellation cannot unlock an entered native query. The existing AX budget, policy, caller/epoch/privacy guards and native symbol lookup remain unchanged. The admitted OS call still has no added completion deadline.
+
+Actual injected-boundary verification: six positives pass (two ownership/cancellation regressions plus four existing pure policy/protocol cases); removing only the guard/unlock yields two intended failing cases with 22 assertion failures and measured concurrent entry of two; exact restoration passes both regressions with maximum concurrent entry one and fresh post-completion answers. All twelve native held/final attachments were read and hash-verified. The integrated ordinary arm64 Host Release build passes with actual optimized/no-DEBUG compiler evidence, emitted HostSecureFocus object and final executable; DEBUG query fixtures are absent. No signed install, real Carbon answer, whole-HostModel or physical secure-field acceptance is claimed. Main and installed regular9/beta remain protected. Exact receipts are in the initiating chat outputs/farside-secure-input-integration-root-validation.json and work/overnight/secure-input-integration-release.
+
+
 Only the Server Data footer now describes subscription-record cleanup eligibility 90 days after later verified expiry/grace, rather than promising deletion within90days after access ends. Provider logs/backups and retained security/revocation state remain separate. Exact one-string source patch independently approved and source-hash verified; no runtime/service/control/default change, compiler/native/rendering or physical deletion acceptance. This is separate overnight quality source only, not a production install or public release. See initiating chat outputs/farside-host-retention-copy-independent-review.md and -source-manifest.json. Existing private privacy R2 draft checkpoint and installed regular9/beta106 remain unchanged.
 
 # Privacy publication draft reconciliation — 5 October 2026

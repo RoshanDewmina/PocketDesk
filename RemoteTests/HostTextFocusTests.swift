@@ -193,4 +193,149 @@ final class HostTextFocusTests: XCTestCase {
         let editable = await HostTextFocusProbe.editableAtClick(CGPoint(x: CGFloat.nan, y: 1))
         XCTAssertFalse(editable)
     }
+
+    #if DEBUG
+    @MainActor
+    func testAsyncAndDirectSecureInputQueriesFailClosedOnContention() async {
+        await observeSerializedSecureInput(cancelWaitingTask: false)
+    }
+
+    @MainActor
+    func testCancellationKeepsEnteredSecureInputQueryOwnedUntilReturn() async {
+        await observeSerializedSecureInput(cancelWaitingTask: true)
+    }
+
+    @MainActor
+    private func observeSerializedSecureInput(cancelWaitingTask: Bool,
+                                             file: StaticString = #filePath, line: UInt = #line) async {
+        let entered = expectation(description: "Existing secure-focus queue entered native boundary")
+        let boundary = SerializedSecureInputObservation(entered: entered)
+        let query: @Sendable () -> Bool = { boundary.read() }
+        let pending = Task { @MainActor in
+            let value = await HostSecureFocus.isSecureNow(query: query)
+            return (value: value, cancelled: Task.isCancelled)
+        }
+        defer { boundary.releaseFirst(); pending.cancel() }
+
+        let readiness = await XCTWaiter.fulfillment(of: [entered], timeout: 3)
+        guard readiness == .completed else {
+            attachSerializedSecureInputObservation(boundary.snapshot(), stage: "entry failure",
+                                                   cancelled: cancelWaitingTask, answer: nil)
+            XCTFail("The async production path did not enter the injected native boundary", file: file, line: line)
+            boundary.releaseFirst()
+            _ = await pending.value
+            return
+        }
+        if cancelWaitingTask { pending.cancel() }
+        let held = boundary.snapshot()
+        XCTAssertEqual(held.calls, 1, file: file, line: line)
+        XCTAssertEqual(held.active, 1, "Cancelling a caller is not a native completion", file: file, line: line)
+        XCTAssertEqual(held.completed, 0, file: file, line: line)
+
+        // The first native body remains held throughout this actual synchronous MainActor call.
+        // Busy must return secure without entering a second body or waiting for the first to end.
+        // A lock-removed fault enters body #2, returns false, and remains safe to clean up below.
+        let busy = HostSecureFocus.secureEventInputEnabled(query: query)
+        let whileHeld = boundary.snapshot()
+        attachSerializedSecureInputObservation(whileHeld, stage: "busy return before release",
+                                               cancelled: cancelWaitingTask, answer: busy)
+        XCTAssertTrue(busy, "A busy native query must fail closed for this operation", file: file, line: line)
+        XCTAssertEqual(whileHeld.calls, 1, "No second native invocation before actual completion", file: file, line: line)
+        XCTAssertEqual(whileHeld.active, 1, file: file, line: line)
+        XCTAssertEqual(whileHeld.completed, 0, file: file, line: line)
+        XCTAssertEqual(whileHeld.completedOrdinals, [], file: file, line: line)
+        XCTAssertEqual(whileHeld.maximumActive, 1, file: file, line: line)
+        XCTAssertEqual(whileHeld.mainThreadEntries, [false], file: file, line: line)
+        XCTAssertFalse(whileHeld.releaseIssued, file: file, line: line)
+        XCTAssertFalse(whileHeld.queryTimedOut, "A watchdog cannot establish nonblocking admission", file: file, line: line)
+
+        // Explicit test control, independent of a second native entry; never an elapsed-time release.
+        boundary.releaseFirst()
+        let asynchronous = await pending.value
+        XCTAssertTrue(asynchronous.value, "The first true answer short-circuits real AX inspection", file: file, line: line)
+        XCTAssertEqual(asynchronous.cancelled, cancelWaitingTask, file: file, line: line)
+        let later = HostSecureFocus.secureEventInputEnabled(query: query)
+        let observed = boundary.snapshot()
+        attachSerializedSecureInputObservation(observed, stage: "fresh query after completion",
+                                               cancelled: cancelWaitingTask, answer: later)
+        XCTAssertFalse(later, "After completion, execute a fresh false query; never cache the busy/first true answer", file: file, line: line)
+        XCTAssertEqual(observed.calls, 2, file: file, line: line)
+        XCTAssertEqual(observed.completed, 2, file: file, line: line)
+        XCTAssertEqual(observed.completedOrdinals, [1, 2], file: file, line: line)
+        XCTAssertEqual(observed.active, 0, file: file, line: line)
+        XCTAssertEqual(observed.maximumActive, 1, "Actual native bodies remain serialized", file: file, line: line)
+        XCTAssertEqual(observed.mainThreadEntries, [false, true],
+                       "Preserve async queue and direct MainActor contexts; this is not an affinity rule", file: file, line: line)
+        XCTAssertTrue(observed.releaseIssued, file: file, line: line)
+        XCTAssertFalse(observed.queryTimedOut, "A watchdog is cleanup, never native completion evidence", file: file, line: line)
+    }
+
+    private func attachSerializedSecureInputObservation(_ value: SerializedSecureInputObservation.Snapshot,
+                                                        stage: String, cancelled: Bool, answer: Bool?) {
+        let attachment = XCTAttachment(string: "stage=\(stage) cancelled=\(cancelled) answer=\(String(describing: answer)) calls=\(value.calls) completed=\(value.completed) completedOrdinals=\(value.completedOrdinals) active=\(value.active) maximumActive=\(value.maximumActive) mainThreadEntries=\(value.mainThreadEntries) releaseIssued=\(value.releaseIssued) queryTimedOut=\(value.queryTimedOut)")
+        attachment.name = "secure-input-query-serialized-\(cancelled ? "cancelled" : "ordinary")-\(stage)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+    #endif
 }
+
+#if DEBUG
+/// Only bookkeeping is locked here; it does not serialize the injected native bodies.
+/// Body #1 is held by explicit test control and later bodies return a different value immediately.
+private final class SerializedSecureInputObservation: @unchecked Sendable {
+    struct Snapshot {
+        var calls = 0
+        var completed = 0
+        var completedOrdinals: [Int] = []
+        var active = 0
+        var maximumActive = 0
+        var mainThreadEntries: [Bool] = []
+        var releaseIssued = false
+        var queryTimedOut = false
+    }
+
+    private let lock = NSLock()
+    private let firstEntered: XCTestExpectation
+    private let release = DispatchSemaphore(value: 0)
+    private var state = Snapshot()
+
+    init(entered: XCTestExpectation) { firstEntered = entered }
+
+    func read() -> Bool {
+        lock.lock()
+        state.calls += 1
+        let ordinal = state.calls
+        state.active += 1
+        state.maximumActive = max(state.maximumActive, state.active)
+        state.mainThreadEntries.append(Thread.isMainThread)
+        lock.unlock()
+
+        var timedOut = false
+        if ordinal == 1 {
+            firstEntered.fulfill()
+            timedOut = release.wait(timeout: .now() + 5) == .timedOut
+        }
+
+        lock.lock()
+        state.active -= 1
+        state.completed += 1
+        state.completedOrdinals.append(ordinal)
+        state.queryTimedOut = state.queryTimedOut || timedOut
+        lock.unlock()
+        return ordinal == 1
+    }
+
+    func releaseFirst() {
+        lock.lock()
+        state.releaseIssued = true
+        lock.unlock()
+        release.signal()
+    }
+
+    func snapshot() -> Snapshot {
+        lock.lock(); defer { lock.unlock() }
+        return state
+    }
+}
+#endif

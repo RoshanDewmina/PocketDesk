@@ -34,16 +34,21 @@ enum HostFocusSubrole: Equatable, Sendable {
 
 enum HostSecureFocus {
     private static let queue = DispatchQueue(label: "farside.secure-focus", qos: .userInitiated)
+    private static let nativeQueryLock = NSLock()
     /// One deadline for every call of a check, so the reply still meets the focus ticket's 1 s window
     /// after the 100 ms settle and the 250 ms probe. Out of time is unknown, and unknown is secure.
     static let budget: TimeInterval = 0.25
 
     static func isSecureNow() async -> Bool {
+        await resolveFocus(secureEventInput: { secureEventInputEnabled() })
+    }
+
+    private static func resolveFocus(secureEventInput: @escaping @Sendable () -> Bool) async -> Bool {
         await withCheckedContinuation { continuation in
             queue.async {
                 let budget = HostAXBudget(total: budget)
                 continuation.resume(returning: HostSecureFocusPolicy.resolve(
-                    secureEventInput: secureEventInputEnabled(),
+                    secureEventInput: secureEventInput(),
                     systemWide: { focusedSubrole(of: AXUIElementCreateSystemWide(), budget: budget) },
                     frontmost: {
                         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return .unknown }
@@ -53,11 +58,33 @@ enum HostSecureFocus {
         }
     }
 
-    /// Carbon's `IsSecureEventInputEnabled` is exported by HIToolbox, but the SDK ships no header for it.
+    /// Public CarbonEventsCore.h declares this API "Not thread safe", not main-thread-only.
     static func secureEventInputEnabled() -> Bool {
         guard let function = isSecureEventInputEnabled else { return false }
-        return function() != 0
+        return querySecureEventInput { function() != 0 }
     }
+
+    /// The native API is not thread safe. Busy means conservatively secure for this check;
+    /// never block a direct caller behind an earlier native query with no completion deadline.
+    /// Only the native call owns this lock, so cancellation cannot admit an overlapping query.
+    private static func querySecureEventInput(_ query: () -> Bool) -> Bool {
+        guard nativeQueryLock.try() else { return true }
+        defer { nativeQueryLock.unlock() }
+        return query()
+    }
+
+    #if DEBUG
+    /// Per-call fixtures share the production queue, policy and query boundary without replacing
+    /// process-global state. True fixture answers short-circuit real Accessibility inspection.
+    static func isSecureNow(query: @escaping @Sendable () -> Bool) async -> Bool {
+        await resolveFocus(secureEventInput: { secureEventInputEnabled(query: query) })
+    }
+
+    static func secureEventInputEnabled(query: () -> Bool) -> Bool {
+        querySecureEventInput(query)
+    }
+
+    #endif
 
     private typealias SecureEventInputQuery = @convention(c) () -> UInt8
 
