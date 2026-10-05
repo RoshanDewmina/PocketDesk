@@ -40,7 +40,8 @@ final class HostShortcutWorkspace: @unchecked Sendable {
     }
     func posting(_ ticket: Ticket, operation: () -> RemoteInputOutcome) -> RemoteInputOutcome {
         lock.withLock {
-            guard ticket.generation == generation, !ticket.app.isTerminated, AXIsProcessTrusted(),
+            guard WorkspaceUtilities.isEnabled(), ShortcutChips.isEnabled(),
+                  ticket.generation == generation, !ticket.app.isTerminated, AXIsProcessTrusted(),
                   !HostScreenLock.isLocked(), !Self.secure(), let app = NSWorkspace.shared.frontmostApplication,
                   app.bundleIdentifier == ticket.bundleID,
                   ScopedChordPolicy.current(issuedAt: ticket.issuedAt, now: ProcessInfo.processInfo.systemUptime,

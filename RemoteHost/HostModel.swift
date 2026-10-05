@@ -2984,10 +2984,13 @@ final class RemoteHostModel: ObservableObject {
         }
     }
 
+    private var scopedChordAllowed: Bool {
+        windowWorkspaceAllowed && ShortcutChips.negotiated(enabled: ShortcutChips.isEnabled(preferences.defaults), peerFeatures: connection.peerFeatures)
+    }
     private func receiveScopedChordWorkspace(_ action: RemoteAction) {
         guard (try? action.validateWorkspace()) == true, let frame = action.workspace, frame.kind == .scopedChord,
               let request = try? frame.decode(ScopedChordRequest.self), (try? request.validate()) != nil else { return }
-        guard action.epoch == inputEpoch.value, windowWorkspaceAllowed else { scopedChordWorkspace.retire(); return }
+        guard action.epoch == inputEpoch.value, scopedChordAllowed else { scopedChordWorkspace.retire(); return }
         guard scopedChordWorkspace.admitRequest(frame.requestID) else { return }
         let session = connection.presentationSessionID, epoch = inputEpoch.value, contextGeneration = scopedChordWorkspace.currentGeneration
         func reply(_ value: ScopedChordReply) {
@@ -2998,7 +3001,7 @@ final class RemoteHostModel: ObservableObject {
         releaseRemoteInput(notifyPhone: true)
         if request.operation == .context {
             Task { [weak self] in
-                guard let self, !(await HostSecureFocus.isSecureNow()), self.windowWorkspaceAllowed,
+                guard let self, !(await HostSecureFocus.isSecureNow()), self.scopedChordAllowed,
                       self.connection.presentationSessionID == session, self.inputEpoch.value == epoch, self.scopedChordWorkspace.currentGeneration == contextGeneration,
                       let bundle = request.bundleID else { reply(.init(outcome: .rejected)); return }
                 reply(self.scopedChordWorkspace.issue(bundleID: bundle, session: session, epoch: epoch))

@@ -1192,11 +1192,11 @@ final class PhoneRemoteModel: ObservableObject {
         clipboardObserver = clipboard.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         wireFileTransfer()
         shortcutWorkspace.authority = { [weak self] in
-            guard let self, self.windowWorkspaceAllowed else { return nil }
+            guard let self, self.scopedChordAllowed else { return nil }
             return (self.connection.presentationSessionID, self.geometryEpoch)
         }
         shortcutWorkspace.transport = { [weak self] frame, epoch in
-            guard let self, self.windowWorkspaceAllowed, epoch == self.geometryEpoch else { return false }
+            guard let self, self.scopedChordAllowed, epoch == self.geometryEpoch else { return false }
             self.modifiers.removeAll(); self.cancelInput()
             return self.connection.sendControl(.workspace(frame, epoch: epoch))
         }
@@ -1231,6 +1231,9 @@ final class PhoneRemoteModel: ObservableObject {
     private var shortcutWorkspaceObserver: AnyCancellable?
     let windowWorkspace = WindowWorkspaceController()
     private var windowWorkspaceObserver: AnyCancellable?
+    var scopedChordAllowed: Bool {
+        windowWorkspaceAllowed && ShortcutChips.negotiated(enabled: ShortcutChips.isEnabled(preferences), peerFeatures: hostFeatures)
+    }
     var windowWorkspaceAllowed: Bool {
         WorkspaceUtilities.isEnabled(preferences) && hostFeatures.contains(WorkspaceUtilities.feature) && canControl &&
         sceneIsActive && sessionMode == .picture && !passwordFieldFocused && inlinePresentationAdmission != nil
@@ -2757,11 +2760,11 @@ let now = ProcessInfo.processInfo.systemUptime
         profile.custom.removeAll { $0.id == id }; savePersonalShortcutProfile(profile)
     }
     var activePersonalChords: [PersonalShortcut] {
-        guard let host = connection.presentationHostTrust, let bundle = frontmostApp?.bundleID, windowWorkspaceAllowed else { return [] }
+        guard let host = connection.presentationHostTrust, let bundle = frontmostApp?.bundleID, scopedChordAllowed else { return [] }
         return ShortcutWorkspaceStore(defaults: preferences).profile(host: host, bundleID: bundle, catalog: ShortcutCatalog.chips(for: bundle)).custom
     }
     func runPersonalChord(_ chord: PersonalShortcut) {
-        guard windowWorkspaceAllowed, personalShortcutProfile?.custom.contains(chord) == true || activePersonalChords.contains(chord) else { return }
+        guard scopedChordAllowed, personalShortcutProfile?.custom.contains(chord) == true || activePersonalChords.contains(chord) else { return }
         modifiers.removeAll(); shortcutWorkspace.run(chord)
     }
 
@@ -3230,7 +3233,9 @@ let now = ProcessInfo.processInfo.systemUptime
             guard (try? action.validateWorkspace()) == true, let frame = action.workspace else { return }
             switch frame.kind {
             case .windows: windowWorkspace.receive(frame, epoch: action.epoch)
-            case .scopedChord: shortcutWorkspace.receive(frame, epoch: action.epoch)
+            case .scopedChord:
+                guard scopedChordAllowed else { shortcutWorkspace.retire(); return }
+                shortcutWorkspace.receive(frame, epoch: action.epoch)
             case .files:
                 guard action.epoch == geometryEpoch, fileBrowserAvailable else { return }
                 fileBrowser.receive(frame)
