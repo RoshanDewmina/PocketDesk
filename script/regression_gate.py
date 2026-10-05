@@ -77,7 +77,7 @@ def run_locked(command, logfile, ui=False, cleanup=False):
     while True:
         wait_permission(ui)
         with logfile.open('w') as handle:
-            process = subprocess.run(['/usr/bin/lockf', '-k', '/tmp/farside-xcodebuild.lock', *wrapper, *command], cwd=ROOT, env=env, stdout=handle, stderr=subprocess.STDOUT)
+            process = subprocess.run(['/Users/roshansilva/bin/farside-lock', *wrapper, *command], cwd=ROOT, env=env, stdout=handle, stderr=subprocess.STDOUT)
         if process.returncode != 75:
             break
         # The wrapper released the lock before waiting, so priority builds can acquire it.
