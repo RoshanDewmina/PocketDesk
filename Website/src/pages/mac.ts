@@ -11,7 +11,7 @@ import { breadcrumbs, graph, webPage } from "./schema";
 const R = config.requirements;
 const PATH = "/mac";
 const DESC =
-  "Download Farside for Mac, the free helper that lets your iPhone or iPad control your Mac. For Macs with Apple silicon and macOS 26 or later.";
+  "Download Farside for Mac, the free helper that lets your iPhone control your Mac. For Macs with Apple silicon and macOS 26 or later.";
 
 /** Bytes as macOS Finder shows them (decimal megabytes). */
 const megabytes = (bytes: number) => `${(bytes / 1_000_000).toFixed(1)} MB`;
@@ -33,7 +33,7 @@ export function macPage(assets: Assets) {
     crumbs,
     cap: "Farside for Mac",
     title: html`Farside for <em>Mac.</em>`,
-    lead: html`The small helper that lets your iPhone or iPad control this Mac. It’s free, and it sits quietly in your menu bar.`,
+    lead: html`The small helper that lets your iPhone control this Mac. It’s free, and it sits quietly in your menu bar.`,
     extra: download,
   })}
 <div class="w doc single">
@@ -42,19 +42,20 @@ export function macPage(assets: Assets) {
       <ol class="setup" role="list">
         <li><b>Open the download.</b> Open the file you just downloaded, from your Downloads folder. A window opens with Farside in it.</li>
         <li><b>Drag Farside to Applications.</b> In that window, drag the Farside icon onto the Applications folder.</li>
-        <li><b>Open Farside and follow the setup.</b> Open Farside from your Applications folder. Its icon appears in the menu bar at the top of your screen, and a setup window walks you through the two permissions it needs. Then pair your iPhone or iPad; the <a href="/support#setup">support page</a> shows each step.</li>
+        <li><b>Open Farside and follow the setup.</b> Open Farside from your Applications folder. Its icon appears in the menu bar at the top of your screen, and a setup window starts with pairing your iPhone. Scan the code, compare the code on both devices and choose Allow on the Mac, then follow the permission prompts; the <a href="/support#setup">support page</a> shows each step.</li>
       </ol>
     </section>
     <section aria-labelledby="needs"><h2 id="needs">What you need</h2>
+      <p>This download is ${L.macVersion}. Setup instructions describe the current testing flow; older builds may show different screens. The public iPhone beta is not open yet. The Mac download alone does not provide a working phone session. Follow the announcement from the <a href="/#beta">home page</a>.</p>
       <div class="contact-card">
         <dl>
           <div><dt>Your Mac</dt><dd>${R.mac}. Macs with an Intel processor aren’t supported.</dd></div>
-          <div><dt>Your iPhone or iPad</dt><dd>An iPhone with ${R.iphone}, or an iPad with ${R.ipad}, with the Farside app.</dd></div>
+          <div><dt>Your iPhone</dt><dd>An iPhone with ${R.iphone}, with the Farside app.</dd></div>
         </dl>
       </div>
     </section>
     <section aria-labelledby="file"><h2 id="file">About this download</h2>
-      <p>Farside for Mac is signed with an Apple Developer ID and checked by Apple (notarized), so your Mac can confirm it comes from us before it opens.</p>
+      <p>The version, file size and checksum below identify this download. Follow macOS’s normal checks when opening it.</p>
       ${L.macDownloadUrl ? html`<div class="contact-card">
         <dl>
           ${L.macVersion ? html`<div><dt>Version</dt><dd>${L.macVersion}</dd></div>` : ""}

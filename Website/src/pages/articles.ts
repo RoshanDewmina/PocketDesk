@@ -1,0 +1,54 @@
+// Original educational articles adapted from the reviewed 5 October research drafts.
+import { html, type Html } from "../lib/html";
+import { longDate, updated } from "./dates";
+import { docBody, pageHero, type Section } from "./doc";
+import { ctaSentence, icon, ogUrl, page, type Assets } from "./layout";
+import { breadcrumbs, graph, webPage } from "./schema";
+
+type Article = { path: string; title: string; lead: string; sections: Section[] };
+const ARTICLES: Article[] = [
+  {
+    path: "/blog/before-you-leave-your-mac",
+    title: "Before you leave your Mac: a remote-access checklist",
+    lead: "Prepare power, permissions and a small task before relying on remote access. A local connection checks one network.",
+    sections: [
+      { id: "availability", title: "Plan for the connection you will use", body: html`<p>You finish a task on your Mac, put your phone in your pocket and leave. Later, you need to read a result or make a small change. Preparation starts with knowing which connection your app supports.</p><p><b>Farside’s public beta is not open yet, and Farside Anywhere is not on sale.</b> Use this checklist to prepare for remote access when your chosen app and plan support it. ${ctaSentence({ brief: true })}</p>` },
+      { id: "mac", title: "Check the Mac itself", body: html`<p>For Farside, leave your Mac powered on, awake, unlocked and logged in. Farside for Mac must be running and sharing must be enabled. After a restart, complete the Mac’s login before expecting to see its desktop remotely.</p><p>Check the permissions needed for your task. Screen Recording lets the app show the screen. Accessibility lets approved pointer and keyboard actions reach the Mac. Viewing and controlling are different choices: a visible desktop does not automatically mean you can click or type.</p>` },
+      { id: "task", title: "Complete one harmless task beside the Mac", body: html`<p>Connect while you are beside the computer. Read a line of text and find the window you need. If control is enabled, move the pointer to a harmless button and send a short sentence to an empty test document. Confirm it arrived where you intended.</p><p>A picture shows that viewing worked in that moment. Finishing a small task checks more of the experience you will need later: legibility, pointing, typing and the result.</p>` },
+      { id: "network", title: "Test the actual network separately", body: html`<p>A connection on home Wi-Fi checks the home Wi-Fi path. It does not establish that access from another network will work.</p><p>Once a supported internet-access plan is available and configured, disconnect the phone from home Wi-Fi and test over cellular while you are still beside the Mac. Use the same computer and complete the same harmless task. If it fails, investigate before leaving. A local success cannot certify the cellular route.</p>` },
+      { id: "power", title: "Understand sleep and login limits", body: html`<p>Farside’s keep-awake choice is intended to prevent idle sleep while sharing on power. A manual sleep action, closing a laptop lid, a restart or lost power can still change availability. Battery operation also changes the keep-awake policy.</p><p>Keep your normal login and security protections. Do not assume a remote app can repair every state the Mac enters. Apple’s <a href="https://support.apple.com/guide/mac-help/if-your-mac-sleeps-or-wakes-unexpectedly-mchlp2995/mac" rel="noopener">sleep troubleshooting guide</a> explains how settings, processes and connected hardware can affect sleep behavior. Farside cannot log in for you or guarantee access after sleep.</p>` },
+      { id: "record", title: "Keep a useful test record", body: html`<p>Pair only the phone you intend to use. Review the shared display or window and its control choice. End the test deliberately, then check that you can start a fresh session under the conditions you plan to use.</p><p>Record which Mac you tested, when, which network the phone used and whether the task succeeded. Yesterday’s result tells you what worked yesterday. It cannot guarantee the Mac is still powered, sharing and reachable now.</p><p>If a later session fails, begin with power, login, app, sharing, permissions and network. The <a href="/support#cant-connect">support page</a> explains those checks. Keep a local way to access the Mac while testing an unfamiliar setup.</p>` },
+    ],
+  },
+  {
+    path: "/blog/ssh-or-remote-desktop-for-ai-agents",
+    title: "SSH or remote desktop for checking an AI agent?",
+    lead: "Choose the interface around your next task: a command, a log, a browser result or an app’s question.",
+    sections: [
+      { id: "task", title: "Start with what you need to check", body: html`<p>An AI coding agent has been working on your Mac. You want to check its progress from your phone. The most useful connection depends on what you need to do next.</p><p>A successful build, a usable web page and an answered agent prompt are different outcomes. Identify the next action before choosing the connection.</p>` },
+      { id: "ssh", title: "Use a terminal for commands and text output", body: html`<p>If you need to read a terminal log or run a command, SSH may provide the interface you need. SSH provides remote login and remote operations; OpenSSH also includes file-transfer and tunneling tools. Its authentication and connection configuration are a separate setup to understand and maintain. The <a href="https://www.openssh.org/" rel="noopener">OpenSSH project</a> documents these capabilities.</p><p>This can suit a command-line agent whose state and controls are available in the terminal. You might inspect a build log, check a process or review output through your established workflow. Know which process or session you are observing and whether your next command affects it. An SSH login does not automatically attach you to a GUI agent’s conversation.</p>` },
+      { id: "desktop", title: "Use a desktop view for windows and controls", body: html`<p>A desktop view helps when the next step is visible in an app: a browser result, a document, a file picker or a GUI agent’s question. Seeing the surrounding context helps you decide what to do.</p><p>Apple’s <a href="https://support.apple.com/guide/mac-help/share-the-screen-of-another-mac-mh14066/mac" rel="noopener">Screen Sharing guide</a> describes viewing and interacting with another Mac’s desktop. That is a Mac-to-Mac reference; it does not promise an iPhone client.</p><p>Imagine an agent produced a web page and its terminal says the build succeeded. That answers one question. Whether the buttons fit on the screen and the correct image appears is another task. A desktop session lets you inspect the browser on the Mac, subject to the sharing app’s permissions and supported controls.</p>` },
+      { id: "limits", title: "Check the boundaries before acting", body: html`<p>A command-line prompt may be accessible through an existing terminal session. A sign-in screen or system prompt may require its own supported GUI interaction. A remote desktop app should explain protected-field, login, lock and permission limits. A visible control is not proof it can be operated remotely.</p><p>On a phone, readability and precision matter as much as connection success. Read the relevant output, choose the right window, enter a harmless sentence and confirm the result. Check that text is legible at your preferred zoom, and distinguish sending a draft from sending a keyboard shortcut.</p>` },
+      { id: "farside", title: "Where Farside fits", body: html`<p>Farside is being built for small-screen desktop interaction: inspect the actual Mac screen, steer its pointer and send text from an iPhone. Farside for Mac is the host companion; this is not a remote-shell service.</p><p><b>The public beta is not open yet, and Farside Anywhere is not on sale.</b> Supported network and availability details will accompany the release. Check that your chosen agent’s next action is available through the interface you use. ${ctaSentence({ brief: true })}</p><p>Choose the connection around the next task. A terminal suits work expressed as commands and text output. A desktop view suits work expressed in windows and controls. Some workflows benefit from both. In each case, see the relevant state, perform the intended action and verify its result.</p>` },
+    ],
+  },
+];
+function articleCards(except?: string): Html {
+  return html`<ul class="guides" role="list">${ARTICLES.filter((a) => a.path !== except).map((a) => html`<li><a href="${a.path}"><span><b>${a.title}</b><small>${a.lead}</small></span>${icon.chevron}</a></li>`)}</ul>`;
+}
+export function articlesPage(assets: Assets) {
+  const path = "/blog";
+  const title = "Mac remote-access articles · Farside";
+  const description = "Practical reading on preparing a Mac for remote access and choosing SSH or a desktop view for an AI agent. Farside’s public beta is not open yet.";
+  const crumbs: [string, string][] = [["Home", "/"], ["Articles", path]];
+  return page({ path, title, description, script: "site", current: "blog", jsonLd: graph(webPage({ path, name: title, description, image: ogUrl(assets), breadcrumb: true }), breadcrumbs(path, crumbs)) }, assets,
+    html`${pageHero({ crumbs, cap: "Articles", title: html`A little <em>preparation.</em>`, lead: html`Practical reading for checking your Mac from a phone, starting with the next task and the connection it needs.` })}<div class="w doc single"><div class="prose"><h2>Start here</h2><p>Farside’s public beta is not open yet; Anywhere is not on sale. These articles help you plan and choose an interface. ${ctaSentence({ brief: true })}</p>${articleCards()}<p>Already testing Farside? See <a href="/support">setup and connection support</a>.</p></div></div>`);
+}
+function renderArticle(index: number, assets: Assets) {
+  const article = ARTICLES[index]!;
+  const crumbs: [string, string][] = [["Home", "/"], ["Articles", "/blog"], [article.title, article.path]];
+  return page({ path: article.path, title: `${article.title} · Farside`, description: article.lead, script: "site", current: "blog", jsonLd: graph(webPage({ path: article.path, name: article.title, description: article.lead, image: ogUrl(assets), breadcrumb: true }), breadcrumbs(article.path, crumbs)) }, assets,
+    html`${pageHero({ crumbs, cap: "Practical reading", title: html`${article.title}`, lead: html`${article.lead}`, extra: html`<p class="meta-row"><span class="cap">Updated · <b>${longDate(updated(article.path))}</b></span></p>` })}${docBody(article.sections)}<div class="w doc single"><div class="prose"><h2>Keep reading</h2>${articleCards(article.path)}<p><a href="/blog">All articles</a> · <a href="/support">Farside support</a></p></div></div>`);
+}
+export const beforeLeavingPage = (assets: Assets) => renderArticle(0, assets);
+export const sshOrDesktopPage = (assets: Assets) => renderArticle(1, assets);

@@ -21,26 +21,26 @@ const S: Section[] = [
   {
     id: "agreement",
     title: "Who these terms are between",
-    body: html`<p>These terms are between you and ${detail(config.contact.legalName, "legal name")} (“we”, “us”). They cover the Farside app for iPhone and iPad, Farside for Mac, our connection and relay service, and this website. Using any of them means you agree to these terms. If you don’t agree, please don’t use Farside.</p>`,
+    body: html`<p>These terms are between you and ${detail(config.contact.legalName, "legal name")} (“we”, “us”). They cover the Farside app for iPhone, Farside for Mac, our connection and relay service, and this website. Using any of them means you agree to these terms. If you don’t agree, please don’t use Farside.</p>`,
   },
   {
     id: "what",
     title: "What Farside is",
-    body: html`<p>Farside lets you see and control your own Mac from your iPhone or iPad. Farside for Mac needs a Mac with Apple silicon. Farside is free when your devices are on the same local network. The optional Farside Anywhere plan, when it is on sale, adds access over the internet.</p>`,
+    body: html`<p>Farside lets you see and control your own Mac from your iPhone. Farside for Mac needs a Mac with Apple silicon. Farside is free when your devices are on the same local network. The optional Farside Anywhere plan, when it is on sale, adds access over the internet.</p>`,
   },
   {
     id: "your-mac",
     title: "Your Mac, your responsibility",
     body: html`<ul>
   <li>Use Farside only with Macs you own or are allowed to control.</li>
-  <li>You are responsible for what happens on your Mac while it is shared, including anything done by someone holding your paired, unlocked iPhone or iPad, and for whom you invite to watch through a guest link. Guests can record what they see.</li>
-  <li>Keep your iPhone and iPad locked, and keep your Mac and both apps up to date. Stop Sharing in the Mac menu bar ends a session immediately.</li>
+  <li>You are responsible for what happens on your Mac while it is shared, including anything done by someone holding your paired, unlocked iPhone, and for whom you invite to watch through a guest link. Guests can record what they see.</li>
+  <li>Keep your iPhone locked, and keep your Mac and both apps up to date. Stop Sharing in the Mac menu bar ends a session immediately.</li>
 </ul>`,
   },
   {
     id: "apple",
     title: "The app, Apple and these terms",
-    body: html`<p>The app for iPhone and iPad is licensed to you under Apple’s standard Licensed Application End User License Agreement, and these terms add to it. Apple is not responsible for the app or these terms. Farside for Mac is a free download from this website; you may install and use it with Farside, but please don’t sell it, modify and redistribute it, or use it to build a competing service.</p>`,
+    body: html`<p>The app for iPhone is licensed to you under Apple’s standard Licensed Application End User License Agreement, and these terms add to it. Apple is not responsible for the app or these terms. Farside for Mac is a free download from this website; you may install and use it with Farside, but please don’t sell it, modify and redistribute it, or use it to build a competing service.</p>`,
   },
   {
     id: "anywhere",

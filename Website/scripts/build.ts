@@ -6,7 +6,7 @@
 //   SITE_URL=https://… bun run build   → one-off origin override
 
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { config, ctaUrl, missingRequired, pendingLaunch } from "../site.config";
 import { faviconSvg } from "../src/lib/mark";
 import { ARTS, PHOTOS, SHOTS } from "../src/pages/images";
@@ -156,9 +156,9 @@ Sitemap: ${config.SITE_URL}/sitemap.xml
 
 /** Where Farside stands, for llms.txt (site.config.ts `cta.stage`). */
 function llmsAvailability() {
-  if (config.cta.stage === "follow") return `Farside is heading into a TestFlight beta, with the App Store to follow; the beta link will be posted at ${ctaUrl()}.`;
+  if (config.cta.stage === "follow") return `Farside’s public TestFlight beta is not open yet, with the App Store to follow; the beta link will be posted at ${ctaUrl()}.`;
   if (config.cta.stage === "testflight") return `The public TestFlight beta is open at ${ctaUrl()}, with the App Store to follow.`;
-  return `Farside for iPhone and iPad is available for pre-order on the App Store: ${ctaUrl()}.`;
+  return `Farside for iPhone is available for pre-order on the App Store: ${ctaUrl()}.`;
 }
 
 /** llms.txt (llmstxt.org): a plain summary and link list for language models reading the site. */
@@ -171,15 +171,15 @@ function llmsFile() {
       .join("\n");
   return `# Farside
 
-> Farside lets you see and control your own Mac from your iPhone or iPad. The whole screen is a trackpad, a pinch zooms in on any part of the Mac, and the on-screen keyboard types into the Mac. Pairing is a QR code approved on the Mac, with no account. ${llmsAvailability()}
+> Farside lets you see and control your own Mac from your iPhone. The whole screen is a trackpad, a pinch zooms in on any part of the Mac, and the on-screen keyboard types into the Mac. Pairing is a QR code approved on the Mac, with no account. ${llmsAvailability()}
 
 Key facts:
 
 - Free on the same local network as the Mac, with no account and no ads.
-- Farside Anywhere is the paid plan for using the Mac away from home${P.final ? `: ${P.monthly} a month or ${P.yearly} a year` : ""}. It is not on sale yet, and will be sold only inside the iPhone and iPad app through Apple.
-- Farside for Mac (the companion that runs on the Mac) ${config.launch.macDownloadUrl ? `is a free download at ${config.SITE_URL}/mac` : "will be a free download from this website"}, signed with an Apple Developer ID and notarized by Apple. Farside for iPhone and iPad (one universal app) will be on the App Store.
-- Planned requirements: ${R.mac} (Macs with an Intel processor are not supported); iPhone with ${R.iphone}, or iPad with ${R.ipad}.
-- Limits: Macs only (no Windows, Linux or Android); one Mac display at a time; the Mac must be awake and logged in; no pressure gestures.
+- Farside Anywhere is the paid plan for using the Mac away from home${P.final ? `: ${P.monthly} a month or ${P.yearly} a year` : ""}. It is not on sale yet, and will be sold only inside the iPhone app through Apple.
+- Farside for Mac (the companion that runs on the Mac) ${config.launch.macDownloadUrl ? `is a free download at ${config.SITE_URL}/mac` : "will be a free download from this website"}, identified by version, size and checksum on that page. Farside for iPhone (the native iPhone app) will be on the App Store.
+- Planned requirements: ${R.mac} (Macs with an Intel processor are not supported); iPhone with ${R.iphone}.
+- Limits: Macs only (no Windows, Linux or Android); one Mac display at a time; the Mac must be awake, unlocked and logged in; no pressure gestures.
 - The website sets no cookies and runs no analytics.
 - Farside (getfarside.com) is not related to farside.app or to other products with a similar name.
 
@@ -187,6 +187,10 @@ Key facts:
 
 - [Home](${config.SITE_URL}/): what Farside does, how it works, features, pricing, FAQ, how to get the beta
 - [About](${config.SITE_URL}/about): who makes Farside, what it is, how to get in touch
+
+## Guides
+
+${section("Guides")}
 
 ## Help
 
@@ -203,7 +207,7 @@ function manifestFile() {
     {
       name: "Farside",
       short_name: "Farside",
-      description: "See and control your own Mac from your iPhone or iPad.",
+      description: "See and control your own Mac from your iPhone.",
       start_url: "/",
       display: "browser",
       background_color: "#050505",
@@ -383,7 +387,10 @@ export async function build(opts: { outDir?: string; quiet?: boolean } = {}) {
     _headers: headersFile(styleHashes),
     _redirects: redirectsFile(),
   };
-  await Promise.all(Object.entries(files).map(([name, body]) => writeFile(join(out, name), body)));
+  await Promise.all(Object.entries(files).map(async ([name, body]) => {
+    await mkdir(dirname(join(out, name)), { recursive: true });
+    await writeFile(join(out, name), body);
+  }));
 
   if (!opts.quiet) {
     const missing = missingRequired();

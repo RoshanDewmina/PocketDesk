@@ -29,7 +29,7 @@ const S: Section[] = [
     id: "short",
     title: "The short version",
     body: html`<ul class="short">
-  <li>Farside lets you see and control your own Mac from your iPhone or iPad. There is no Farside account, and the apps never ask for your name, email address or phone number. This website has no sign-up form.</li>
+  <li>Farside lets you see and control your own Mac from your iPhone. There is no Farside account, and the apps never ask for your name, email address or phone number. This website has no sign-up form.</li>
   <li>What is on your Mac’s screen, its sound if you share it, what you type, what you say and the files you send travel between your own devices, encrypted. We do not record, store or look at your screen, keystrokes, clipboard, files or voice.</li>
   <li>Our servers usually introduce your devices to each other and, if you subscribe to the Farside Anywhere plan, pass encrypted traffic along when your devices cannot connect directly. To do that they see technical details such as IP addresses, timing and data volume, and random identifiers for each paired Mac and device.</li>
   <li>We check that your subscription was signed by Apple. Apple handles your payment; we never see your card or Apple Account details.</li>
@@ -41,22 +41,23 @@ const S: Section[] = [
     id: "devices",
     title: "What stays on your devices",
     body: html`<ul>
-  <li><b>Screen and sound.</b> After you allow Screen Recording in macOS, Farside for Mac captures the display, app or window you choose and streams it to your paired iPhone or iPad using WebRTC with DTLS-SRTP encryption. If you turn on Share Mac audio, the Mac’s sound is streamed the same way. The stream is not saved. It is not sent to us in readable form.</li>
-  <li><b>Control.</b> After you enable control and allow Accessibility in macOS, taps and keys on your iPhone or iPad become pointer and keyboard actions on your Mac. They are not logged.</li>
-  <li><b>Typing help.</b> When you click on your Mac, Farside for Mac can check whether the clicked item is a text field so your iPhone or iPad can open its keyboard. It checks only the type of item. It does not read what is in it.</li>
-  <li><b>Voice input.</b> When you tap the microphone, your iPhone or iPad converts speech to text using Apple’s speech recognition on the device. Only the text is sent to your Mac, when you tap Done. We never receive audio. If on-device recognition is not available for your language, Farside turns voice input off; it does not send audio to a server instead.</li>
+  <li><b>Screen and sound.</b> After you allow Screen Recording in macOS, Farside for Mac captures the display, app or window you choose and streams it to your paired iPhone using WebRTC with DTLS-SRTP encryption. If you turn on Listen and the Mac allows it, the Mac’s sound is streamed the same way. The stream is not saved. It is not sent to us in readable form.</li>
+  <li><b>Control.</b> After you enable control and allow Accessibility in macOS, taps and keys on your iPhone become pointer and keyboard actions on your Mac. They are not logged.</li>
+  <li><b>Typing help.</b> While you control your Mac, Farside for Mac can inspect focus metadata, including whether a field accepts text, its location and whether input is protected. It does not read the field’s text or label. Automatic keyboard opening is off by default; you open the keyboard when you need it.</li>
+  <li><b>Voice input.</b> When you tap the microphone, your iPhone converts speech to text using Apple’s speech recognition on the device. Only the text is sent to your Mac, when you choose to send it. We never receive audio. If on-device recognition is not available for your language, Farside turns voice input off; it does not send audio to a server instead.</li>
   <li><b>Camera.</b> Used only to scan the pairing code on your Mac. Pictures are not saved or sent.</li>
   <li><b>Face ID.</b> If you turn it on in Settings, Farside asks iOS to confirm it’s you before connecting to or forgetting a Mac. Face ID is handled by iOS; Farside only learns whether the check passed.</li>
-  <li><b>Local network.</b> Used to connect your iPhone or iPad to your Mac when they are on the same network.</li>
-  <li><b>Clipboard.</b> While you control your Mac from your iPhone or iPad, text you copy on the Mac is sent to your device automatically, encrypted, and kept on its clipboard for 5 minutes, on that device only. Text goes from your device to the Mac only when you tap Paste. Clipboard contents never reach our servers and are not logged.</li>
-  <li><b>Files.</b> When you choose to send a file, photo, video, text or web link to your Mac (including from the Share menu), or a file from your Mac, it travels between your devices inside the same encrypted connection. We never receive it.</li>
+  <li><b>Local network.</b> Used to connect your iPhone to your Mac when they are on the same network.</li>
+  <li><b>Clipboard.</b> While you control your Mac from your iPhone, eligible text you copy on the Mac can sync automatically, encrypted, and is kept on its clipboard for 5 minutes, on that device only. Protected, concealed and transient clipboard content is excluded. Low Data Mode can suppress automatic sync. Text goes from your device to the Mac only when you tap Paste. We cannot read clipboard contents and do not log them; a relay may carry the encrypted traffic.</li>
+  <li><b>Files.</b> When you choose to send a file, photo, video, text or web link to your Mac (including from the Share menu), or a file from your Mac, it travels between your devices inside the same encrypted connection. We cannot read its contents; a relay may carry the encrypted traffic.</li>
   <li><b>Settings and trust.</b> Your pairing trust is stored in the Keychain on your devices and is not synced to iCloud. Preferences such as pointer speed live on the device.</li>
 </ul>`,
   },
   {
     id: "connect",
     title: "What our servers see to connect you",
-    body: html`<p>When you pair an iPhone or iPad with a Mac, the Mac shows a code that contains a random room identifier, a one-time token, an encryption key and an expiry of about two minutes. The key stays on your two devices. Our connection service forwards connection-setup messages between them; those messages are encrypted with that key, so we cannot read them.</p>
+    body: html`<p>The public beta is not open yet, and Anywhere is not on sale. The following describes how the connection service handles supported app sessions.</p>
+<p>When you pair an iPhone with a Mac, the Mac shows a code that contains a random room identifier, a one-time token, an encryption key and an expiry of about two minutes. The invitation expires quickly. Fresh pairing also asks you to compare the code on both devices before choosing Allow on the Mac. Your devices derive the keys used for the session and saved trust; those keys are not sent to our servers. Our connection service forwards encrypted setup messages, which we cannot read.</p>
 <p>Each time a device connects, our service receives its IP address (as any internet service does), the random room identifier, a random token and the time. It uses the IP address only while the connection is open, to limit abuse, and does not store it. It stores the connection state it needs, such as hashed tokens, connection times, the relay server list it last sent each device, and the status of relay credentials, and deletes it after 30 days without a connection, except the room identifier and a one-way hash of your pairing, which are kept until you remove the Mac’s server room, so that a device can still turn alerts off.</p>
 <p>It also keeps a registry of Mac room identifiers, stored as a one-way hash, so it can limit abuse and block misuse. A Mac is added the first time it connects; there is no approval step. The registry entry is deleted when you choose Remove This Mac’s Server Room in the Settings of Farside for Mac, or after 12 months without use. Entries blocked for abuse are kept to enforce the block.</p>
 <p>Our service keeps security audit records (event names, shortened identifiers and a hashed subscription identifier) for 30 days, and service logs for up to 7 days. Neither contains IP addresses or the content of your messages.</p>
@@ -65,7 +66,7 @@ const S: Section[] = [
   {
     id: "notifications",
     title: "Notifications (agent alerts, beta)",
-    body: html`<p>Farside only asks to send notifications if you turn on agent alerts. To deliver them, your iPhone or iPad’s Apple push notification token is sent to our server and stored with the random room identifier of the Mac it belongs to, a one-way hash of your pairing, and your alert settings (whether alerts are on, whether they may break through Focus, whether to show the agent’s name), your language, the app build, the major version of iOS or iPadOS and whether it is a test or live build.</p>
+    body: html`<p>Farside only asks to send notifications if you turn on agent alerts. To deliver them, your iPhone’s Apple push notification token is sent to our server and stored with the random room identifier of the Mac it belongs to, a one-way hash of your pairing, and your alert settings (whether alerts are on, whether they may break through Focus, whether to show the agent’s name), your language, the app build, the major version of iOS and whether it is a test or live build.</p>
 <p>When a coding agent on your Mac needs you, Farside for Mac tells our server so, with the kind of agent and a short hashed identifier for its session, which we keep briefly to avoid repeat alerts. The alert itself always uses the same fixed wording and contains no screen contents, prompts, file names or agent names. If you open, snooze, decline or dismiss an alert, the app tells our server which, and we keep that with the alert record. Alert records expire after 15 minutes and are deleted within a day.</p>
 <p>Turning agent alerts off in Farside deletes the token from our server. Turning notifications off in iOS Settings only stops them from appearing; the token stays on our server until you turn agent alerts off in Farside, remove the Mac’s server room, or leave it unused for 12 months.</p>
 <p>Separately, a session Live Activity uses its own push token so we can end it on your Lock Screen. We store that token with the room identifier and delete it once the session’s Live Activity has ended, and in any case within two days.</p>`,
@@ -147,15 +148,15 @@ const S: Section[] = [
   {
     id: "security",
     title: "Security",
-    body: html`<p>Media is encrypted between your devices with DTLS-SRTP. Connection-setup messages use AES-256-GCM with a key that never reaches our servers. Connections to our servers use TLS. Trust is kept in the Keychain. Pairing codes expire quickly and the Mac must approve each iPhone or iPad. Stop Sharing on the Mac ends access immediately.</p>
-<p>No system is perfectly secure. Keep your iPhone or iPad locked and your Mac updated; anyone holding your paired, unlocked device can use what you have allowed.</p>`,
+    body: html`<p>Media is encrypted between your devices with DTLS-SRTP. Connection-setup messages use AES-256-GCM with a key that never reaches our servers. Connections to our servers use TLS. Trust is kept in the Keychain. Pairing codes expire quickly and the Mac must approve each iPhone. Stop Sharing on the Mac ends access immediately.</p>
+<p>No system is perfectly secure. Keep your iPhone locked and your Mac updated; anyone holding your paired, unlocked device can use what you have allowed.</p>`,
   },
   {
     id: "choices",
     title: "Your choices and rights",
     body: html`<ul>
-  <li>Stop sharing at any time from the Mac menu bar. Remove a paired iPhone or iPad from Farside on your Mac. Remove a Mac from the iPhone or iPad. End a guest at any time from Farside on your Mac.</li>
-  <li>To delete what our servers hold about your Mac, open Settings on the Mac and choose Remove This Mac’s Server Room under Server Data. On the iPhone or iPad, Server Data removes that device from your subscription. Neither cancels your Apple subscription, and subscription records are still kept for 90 days after access ends, as described above. Removing a device or a pairing on its own does not delete server data.</li>
+  <li>Stop sharing at any time from the Mac menu bar. Remove a paired iPhone from Farside on your Mac. Remove a Mac from the iPhone. End a guest at any time from Farside on your Mac.</li>
+  <li>To delete what our servers hold about your Mac, open Settings on the Mac and choose Remove This Mac’s Server Room under Server Data. On the iPhone, Server Data removes that device from your subscription. Neither cancels your Apple subscription, and subscription records are still kept for 90 days after access ends, as described above. Removing a device or a pairing on its own does not delete server data.</li>
   <li>You can also email ${email("privacy")}. With no account, we may ask you to prove ownership from the device.</li>
   <li>Change permissions (camera, microphone, speech recognition, Face ID, local network, notifications, screen recording, accessibility) in your device settings.</li>
   <li>Cancel your subscription in your Apple Account subscription settings. Refunds are handled by Apple.</li>
@@ -197,7 +198,7 @@ ${pageHero({
   crumbs,
   cap: "Privacy policy",
   title: html`Your screen is <em>yours.</em>`,
-  lead: html`How Farside handles information across Farside for iPhone and iPad, Farside for Mac, our connection service and this website. The short version: <b>no account, no ads, no tracking</b>.`,
+  lead: html`How Farside handles information across Farside for iPhone, Farside for Mac, our connection service and this website. The short version: <b>no account, no ads, no tracking</b>.`,
   extra: html`<p class="meta-row"><span class="cap">Last updated · <b>${config.legalUpdated}</b></span><span class="cap">Effective · <b>${effective()}</b></span></p>`,
 })}
 ${docBody(S)}`;

@@ -24,7 +24,7 @@ export function guideHero(opts: { crumbs: [string, string][]; cap: string; title
     <p class="cap">${opts.cap}</p>
     <h1 class="h-page dw" id="page-title">${opts.title}</h1>
     <p class="lead">${opts.lead}</p>
-    <p class="meta-row"><span class="cap">Updated · <b>${longDate(updated(opts.crumbs[opts.crumbs.length - 1]![1]))}</b></span>${opts.meta ? html`<span class="cap">${opts.meta}</span>` : ""}<span class="cap">Status · <b>in beta, coming soon</b></span></p>
+    <p class="meta-row"><span class="cap">Updated · <b>${longDate(updated(opts.crumbs[opts.crumbs.length - 1]![1]))}</b></span>${opts.meta ? html`<span class="cap">${opts.meta}</span>` : ""}<span class="cap">Status · <b>public beta not open yet</b></span></p>
   </div>
 </section>`;
 }
@@ -48,8 +48,8 @@ export function ctaBand(): Html {
   return html`<section class="sec band band-sm" aria-labelledby="cta-title">
   <div class="w">
     <div class="band-mark" aria-hidden="true">${raw(markSvg(40))}</div>
-    <h2 class="h2" id="cta-title">Try Farside first</h2>
-    <p class="lead">Farside is in beta. It’s free when your Mac and your iPhone or iPad are on the same Wi‑Fi, and there’s no account.</p>
+    <h2 class="h2" id="cta-title">Follow Farside’s progress</h2>
+    <p class="lead">Farside’s public beta is not open yet. It will be free when your Mac and your iPhone are on the same Wi‑Fi, and there’s no account.</p>
     <div class="row">${ctaButton()}</div>
   </div>
 </section>`;
@@ -69,7 +69,7 @@ export const GESTURES: [string, string][] = [
 export function gestureTable(): Html {
   return html`<table class="table gest-t">
   <caption class="sr-only">Farside gestures and what they do on the Mac</caption>
-  <thead><tr><th scope="col">On your iPhone or iPad</th><th scope="col">On your Mac</th></tr></thead>
+  <thead><tr><th scope="col">On your iPhone</th><th scope="col">On your Mac</th></tr></thead>
   <tbody>${GESTURES.map(([g, a]) => html`<tr><th scope="row">${g}</th><td>${a}</td></tr>`)}</tbody>
 </table>`;
 }

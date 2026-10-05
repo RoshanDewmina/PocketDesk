@@ -80,7 +80,7 @@ const hero = html`<section class="hero" id="top" aria-labelledby="hero-title">
   <div class="hero-c w">
     <p class="eyebrow"><i></i>Farside · remote desktop for your Mac<i></i></p>
     <h1 class="h1" id="hero-title"><span class="ln dw"><span>Your Mac is far${pd}</span></span> <span class="ln dw"><span>Your reach <em>isn’t.</em></span></span></h1>
-    <p class="sub">Use your Mac from your iPhone or iPad. Free on your own Wi‑Fi.</p>
+    <p class="sub">Use your Mac from your iPhone. Free on your own Wi‑Fi.</p>
     ${ctaBlock()}
   </div>
   ${pocketDemo}
@@ -98,11 +98,11 @@ const how = (assets: Assets) => html`<section class="sec" id="how" aria-labelled
   <div class="w">
     ${sh("how-title", "How it works", html`Three steps<span class="pd">,</span> <em>then</em> you’re in${pd}`)}
     <ol class="steps" role="list" data-rv>
-      <li class="step">${art(assets, "art-step1")}<p class="n" aria-hidden="true">01</p><h3>Get Farside for Mac</h3><p>It’s free. Install it and allow the two permissions it asks for.</p></li>
-      <li class="step">${art(assets, "art-step2")}<p class="n" aria-hidden="true">02</p><h3>Pair your iPhone or iPad</h3><p>Scan the code on your Mac, then approve it on the Mac. No account.</p></li>
-      <li class="step">${art(assets, "art-step3")}<p class="n" aria-hidden="true">03</p><h3>Tap Connect</h3><p>Your Mac’s screen appears. Your screen is now its trackpad.</p></li>
+      <li class="step">${art(assets, "art-step1")}<p class="n" aria-hidden="true">01</p><h3>Get Farside for Mac</h3><p>It’s free. Install it and open the pairing code.</p></li>
+      <li class="step">${art(assets, "art-step2")}<p class="n" aria-hidden="true">02</p><h3>Pair your iPhone</h3><p>Scan the code, compare the code on both devices, then choose Allow on your Mac. No account.</p></li>
+      <li class="step">${art(assets, "art-step3")}<p class="n" aria-hidden="true">03</p><h3>Reach your Mac</h3><p>Follow the permission prompts, then tap Connect to see your Mac.</p></li>
     </ol>
-    <p class="req" data-rv="self">You’ll need ${R.mac}, and an iPhone with ${R.iphone} or an iPad with ${R.ipad}.</p>
+    <p class="req" data-rv="self">You’ll need ${R.mac}, and an iPhone with ${R.iphone}.</p>
   </div>
 </section>`;
 
@@ -112,8 +112,8 @@ const features = (assets: Assets) => html`<section class="sec" id="features" ari
     <ul class="feats" role="list" data-rv>
       <li class="feat">${art(assets, "art-feat-pad")}<h3>The screen is a trackpad</h3><p>Slide to move the pointer. Tap to click.</p></li>
       <li class="feat">${art(assets, "art-feat-zoom")}<h3>Zoom in on small text</h3><p>Pinch to zoom in on any part of your Mac.</p></li>
-      <li class="feat">${art(assets, "art-feat-voice")}<h3>Type from your phone</h3><p>Open the keyboard and type into any field on your Mac.</p></li>
-      <li class="feat">${art(assets, "art-feat-trust")}<h3>Only your devices</h3><p>Your Mac asks before a new iPhone or iPad can connect, and pairs only with the devices you approve.</p></li>
+      <li class="feat">${art(assets, "art-feat-voice")}<h3>Type from your phone</h3><p>Open the keyboard to send text to your Mac. Protected fields and system prompts have limits.</p></li>
+      <li class="feat">${art(assets, "art-feat-trust")}<h3>You approve access</h3><p>Your Mac asks before a new iPhone can connect, and pairs only with the devices you approve.</p></li>
     </ul>
   </div>
 </section>`;
@@ -126,7 +126,7 @@ const pricing = html`<section class="sec" id="pricing" aria-labelledby="pricing-
       <div class="price-col">
         <h3 class="cap">Free at home</h3>
         <p class="amt">Free</p>
-        <p>When your Mac and your iPhone or iPad are on the same Wi‑Fi. No account, no ads.</p>
+        <p>When your Mac and your iPhone are on the same Wi‑Fi. No account, no ads.</p>
       </div>
       <div class="price-col any">
         <h3 class="cap">Farside Anywhere</h3>
@@ -141,19 +141,23 @@ const pricing = html`<section class="sec" id="pricing" aria-labelledby="pricing-
 const QAS: QA[] = [
   {
     q: "Is it really free?",
-    a: html`<p>Yes, when your Mac and your iPhone or iPad are on the same Wi‑Fi. No account, no ads. Using your Mac away from home is a paid plan, Farside Anywhere, which isn’t on sale yet.</p>`,
+    a: html`<p>Yes, when your Mac and your iPhone are on the same Wi‑Fi. No account, no ads. Using your Mac away from home is a paid plan, Farside Anywhere, which isn’t on sale yet.</p>`,
   },
   {
     q: "What do I need?",
-    a: html`<p>${R.mac}, with Farside for Mac (free). And an iPhone with ${R.iphone} or an iPad with ${R.ipad}. Macs with an Intel processor aren’t supported. The <a href="/support#setup">support page</a> shows each step.</p>`,
+    a: html`<p>${R.mac}, with Farside for Mac (free). And an iPhone with ${R.iphone}. Macs with an Intel processor aren’t supported. The <a href="/support#setup">support page</a> shows each step.</p>`,
+  },
+  {
+    q: "Can I use an iPad?",
+    a: html`<p>Farside 1.0 is designed for iPhone. iPads can run the iPhone app in compatibility mode; a dedicated iPad experience is outside this release’s scope.</p>`,
   },
   {
     q: "Can anyone else see my screen?",
-    a: html`<p>Only an iPhone or iPad your Mac has approved can connect, and you can stop sharing from the Mac’s menu bar at any time. More in the <a href="/privacy">privacy policy</a>.</p>`,
+    a: html`<p>Your Mac approves pairing before an iPhone can start a trusted-device session. You can remove a pairing or stop sharing from the Mac’s menu bar at any time. More in the <a href="/privacy">privacy policy</a>.</p>`,
   },
   {
     q: "Does my Mac need to be awake?",
-    a: html`<p>Yes. Farside can’t wake a sleeping Mac or log in for you.</p>`,
+    a: html`<p>Yes. Your Mac must be awake, unlocked and logged in. Keep-awake can help prevent idle sleep while sharing on power; manual sleep, closing a laptop lid, a restart or loss of power can interrupt access. Farside can’t log in for you.</p>`,
   },
   {
     q: "When can I get it?",
@@ -176,14 +180,14 @@ const faq = html`<section class="sec" id="faq" aria-labelledby="faq-title">
 </section>`;
 
 const DESC =
-  "Control your Mac from your iPhone or iPad. See your Mac’s screen and use it with your finger. Free on the same Wi‑Fi, with no account.";
+  "Control your Mac from your iPhone. See your Mac’s screen and use it with your finger. Free on the same Wi‑Fi, with no account.";
 
 export function homePage(assets: Assets) {
   const image = ogUrl(assets, "home");
   return page(
     {
       path: "/",
-      title: "Farside: Control your Mac from your iPhone or iPad",
+      title: "Farside: Control your Mac from your iPhone",
       ogTitle: "Farside · Your Mac is far. Your reach isn’t.",
       description: DESC,
       script: "home",
@@ -191,7 +195,7 @@ export function homePage(assets: Assets) {
       og: "home",
       homeCss: true,
       jsonLd: graph(
-        webPage({ path: "/", name: "Farside: Control your Mac from your iPhone or iPad", description: DESC, image }),
+        webPage({ path: "/", name: "Farside: Control your Mac from your iPhone", description: DESC, image }),
         softwareApplication(image),
         faqPage("/", QAS),
       ),

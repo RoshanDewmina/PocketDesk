@@ -142,7 +142,7 @@ export const config = {
   requirements: {
     /** D35: Apple silicon only for 1.0. */
     mac: "macOS 26 or later on a Mac with Apple silicon (M1 or later)",
-    /** 1.0 is universal, iPhone and iPad from day one (owner, 2 Oct 2026). */
+    /** D62 (3 Oct 2026): native iPhone 1.0; dedicated iPad support is parked. */
     iphone: "iOS 26 or later",
     ipad: "iPadOS 26 or later",
   },
@@ -157,7 +157,7 @@ export const config = {
   },
 
   /** Last content review of the legal pages. */
-  legalUpdated: "2 October 2026",
+  legalUpdated: "5 October 2026",
   /**
    * The effective date of the privacy policy and the terms, e.g. "27 October 2026": set it to the production deploy
    * date in the commit that goes live. `bun run build:prod` (the production build, DEPLOY.md) refuses to build while it is

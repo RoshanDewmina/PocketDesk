@@ -1,7 +1,7 @@
 {
   "name": "Farside",
   "short_name": "Farside",
-  "description": "See and control your own Mac from your iPhone or iPad.",
+  "description": "See and control your own Mac from your iPhone.",
   "start_url": "/",
   "display": "browser",
   "background_color": "#050505",

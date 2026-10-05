@@ -1,6 +1,7 @@
 // Every page the site publishes. The build, sitemap.xml, llms.txt, screenshots, Lighthouse runs and link
 // checks all read this list, so adding a page here is enough to wire it everywhere.
 
+import { articlesPage, beforeLeavingPage, sshOrDesktopPage } from "./articles";
 import { aboutPage } from "./about";
 import { homePage } from "./home";
 import type { Assets } from "./layout";
@@ -60,5 +61,11 @@ export const PAGES: PageDef[] = [
     llms: { section: "Legal", title: "Terms of use", note: "using Farside with your own Mac, the Anywhere subscription, acceptable use, liability" },
   },
   { slug: "about", path: "/about", file: "about.html", render: aboutPage, sitemap: true },
+  { slug: "blog", path: "/blog", file: "blog.html", render: articlesPage, sitemap: true,
+    llms: { section: "Guides", title: "Articles", note: "original planning and interface-choice articles; public beta is not open yet" } },
+  { slug: "before-leaving", path: "/blog/before-you-leave-your-mac", file: "blog/before-you-leave-your-mac.html", render: beforeLeavingPage, sitemap: true,
+    llms: { section: "Guides", title: "Before you leave your Mac", note: "power, permissions, a harmless task and a separate network test; away access is not on sale" } },
+  { slug: "ssh-or-desktop", path: "/blog/ssh-or-remote-desktop-for-ai-agents", file: "blog/ssh-or-remote-desktop-for-ai-agents.html", render: sshOrDesktopPage, sitemap: true,
+    llms: { section: "Guides", title: "SSH or remote desktop for checking an AI agent?", note: "choose commands and logs or windows and controls; no Farside agent integration is announced" } },
   { slug: "404", path: "/404", file: "404.html", render: notFoundPage, sitemap: false },
 ];

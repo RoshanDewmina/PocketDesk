@@ -2,16 +2,19 @@
 // and the visible "Updated" lines, so bump a page's date only when its words change, not on every build.
 
 export const UPDATED: Record<string, string> = {
-  "/": "2026-10-02",
-  "/about": "2026-10-02",
-  "/mac": "2026-10-02",
+  "/": "2026-10-05",
+  "/about": "2026-10-05",
+  "/mac": "2026-10-05",
   "/control-mac-from-iphone": "2026-09-30",
   "/iphone-as-mac-trackpad": "2026-09-30",
   "/remote-desktop-for-mac": "2026-09-30",
+  "/blog": "2026-10-05",
+  "/blog/before-you-leave-your-mac": "2026-10-05",
+  "/blog/ssh-or-remote-desktop-for-ai-agents": "2026-10-05",
   "/compare": "2026-09-28",
-  "/support": "2026-10-02",
-  "/privacy": "2026-10-02",
-  "/terms": "2026-10-02",
+  "/support": "2026-10-05",
+  "/privacy": "2026-10-05",
+  "/terms": "2026-10-05",
 };
 
 export function updated(path: string): string {

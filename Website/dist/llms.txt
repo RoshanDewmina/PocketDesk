@@ -1,14 +1,14 @@
 # Farside
 
-> Farside lets you see and control your own Mac from your iPhone or iPad. The whole screen is a trackpad, a pinch zooms in on any part of the Mac, and the on-screen keyboard types into the Mac. Pairing is a QR code approved on the Mac, with no account. Farside is heading into a TestFlight beta, with the App Store to follow; the beta link will be posted at https://x.com/getfarside.
+> Farside lets you see and control your own Mac from your iPhone. The whole screen is a trackpad, a pinch zooms in on any part of the Mac, and the on-screen keyboard types into the Mac. Pairing is a QR code approved on the Mac, with no account. Farside’s public TestFlight beta is not open yet, with the App Store to follow; the beta link will be posted at https://x.com/getfarside.
 
 Key facts:
 
 - Free on the same local network as the Mac, with no account and no ads.
-- Farside Anywhere is the paid plan for using the Mac away from home. It is not on sale yet, and will be sold only inside the iPhone and iPad app through Apple.
-- Farside for Mac (the companion that runs on the Mac) is a free download at https://getfarside.com/mac, signed with an Apple Developer ID and notarized by Apple. Farside for iPhone and iPad (one universal app) will be on the App Store.
-- Planned requirements: macOS 26 or later on a Mac with Apple silicon (M1 or later) (Macs with an Intel processor are not supported); iPhone with iOS 26 or later, or iPad with iPadOS 26 or later.
-- Limits: Macs only (no Windows, Linux or Android); one Mac display at a time; the Mac must be awake and logged in; no pressure gestures.
+- Farside Anywhere is the paid plan for using the Mac away from home. It is not on sale yet, and will be sold only inside the iPhone app through Apple.
+- Farside for Mac (the companion that runs on the Mac) is a free download at https://getfarside.com/mac, identified by version, size and checksum on that page. Farside for iPhone (the native iPhone app) will be on the App Store.
+- Planned requirements: macOS 26 or later on a Mac with Apple silicon (M1 or later) (Macs with an Intel processor are not supported); iPhone with iOS 26 or later.
+- Limits: Macs only (no Windows, Linux or Android); one Mac display at a time; the Mac must be awake, unlocked and logged in; no pressure gestures.
 - The website sets no cookies and runs no analytics.
 - Farside (getfarside.com) is not related to farside.app or to other products with a similar name.
 
@@ -16,6 +16,12 @@ Key facts:
 
 - [Home](https://getfarside.com/): what Farside does, how it works, features, pricing, FAQ, how to get the beta
 - [About](https://getfarside.com/about): who makes Farside, what it is, how to get in touch
+
+## Guides
+
+- [Articles](https://getfarside.com/blog): original planning and interface-choice articles; public beta is not open yet
+- [Before you leave your Mac](https://getfarside.com/blog/before-you-leave-your-mac): power, permissions, a harmless task and a separate network test; away access is not on sale
+- [SSH or remote desktop for checking an AI agent?](https://getfarside.com/blog/ssh-or-remote-desktop-for-ai-agents): choose commands and logs or windows and controls; no Farside agent integration is announced
 
 ## Help
 
