@@ -520,13 +520,15 @@ final class PushRegistrarTests: XCTestCase {
         let record = try XCTUnwrap(registrar.registration(preferences: preferences, now: Date(timeIntervalSince1970: 1_790_000_000)))
         XCTAssertEqual(record.deviceToken, "010203")
         XCTAssertTrue(record.alertsEnabled)
+        XCTAssertFalse(record.completedEnabled, "Completion needs its own opt-in")
+        XCTAssertFalse(record.failedEnabled, "Failure needs its own opt-in")
         XCTAssertTrue(record.timeSensitive)
         XCTAssertFalse(record.showAgentName, "Alerts never name an agent, so the service is never asked to")
         XCTAssertEqual(record.updatedAt, 1_790_000_000)
         XCTAssertEqual(record.environment, "sandbox", "The environment comes from signed-build configuration")
         let keys = Set(try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any]).keys)
         XCTAssertEqual(keys, ["deviceToken", "environment", "alertsEnabled", "timeSensitive", "showAgentName",
-                              "locale", "appBuild", "osMajor", "updatedAt"], "No Mac name, agent text or screen content")
+                              "locale", "appBuild", "osMajor", "updatedAt", "completedEnabled", "failedEnabled"], "No Mac name, agent text or screen content")
     }
 
     func testNothingIsSentUntilAServiceExists() async {
