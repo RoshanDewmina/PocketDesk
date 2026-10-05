@@ -664,9 +664,9 @@ struct HostPairingPage: View {
     private var paired: some View {
         VStack(alignment: .leading, spacing: 0) {
             HostHeading(parts: [.display("Your iPhone is"), .accent(" paired"), .plain(".")])
-            HostSetupText.body("It can connect whenever sharing is on. Pairing a different phone replaces this one.")
+            HostSetupText.body("It can connect whenever sharing is on. Your other devices stay paired. Up to five devices can use this Mac, one at a time.")
                 .padding(.top, 10)
-            Button("Pair a Different Phone…", action: actions.pairNewPhone)
+            Button("Pair Another Device…", action: actions.pairNewPhone)
                 .buttonStyle(HostButtonStyle(kind: .plate, height: 34))
                 .padding(.top, 20)
         }
