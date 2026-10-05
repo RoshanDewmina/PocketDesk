@@ -964,6 +964,18 @@ struct NativeSessionView: View {
         case preparing = "Preparing Workspace…"
         case offered = "Try Workspace"
         case unavailable = "Workspace unavailable on this Mac"
+
+        var compactTitle: String {
+            switch self {
+            case .restorationAttention, .blocked: "Check Mac"
+            case .restoring: "Restoring"
+            case .ready: "Ready"
+            case .waiting: "Waiting"
+            case .preparing: "Preparing"
+            case .offered: "Available"
+            case .unavailable: "Unavailable"
+            }
+        }
     }
 
     private var betaWorkspaceStatus: String {
@@ -983,16 +995,23 @@ struct NativeSessionView: View {
             // Every phase reserves the same measured extent at this width/text size.
             // A Ready/Waiting label change must not change the requested Workspace raster.
             ForEach(BetaWorkspaceCaption.allCases, id: \.self) { caption in
-                Text(caption.rawValue).fixedSize(horizontal: false, vertical: true)
+                Text(betaWorkspaceTitle(caption)).fixedSize(horizontal: false, vertical: true)
                     .hidden().accessibilityHidden(true)
             }
-            Text(betaWorkspaceStatus).fixedSize(horizontal: false, vertical: true)
+            Text(betaWorkspaceTitle(BetaWorkspaceCaption(rawValue: betaWorkspaceStatus) ?? .unavailable))
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel(betaWorkspaceStatus)
         }
-        .font(.caption)
+        .font(.caption2)
+    }
+
+    private func betaWorkspaceTitle(_ caption: BetaWorkspaceCaption) -> String {
+        dynamicTypeSize.isAccessibilitySize ? caption.compactTitle : caption.rawValue
     }
 
     private var betaWorkspaceOptions: some View {
         Menu {
+            Text(betaWorkspaceStatus)
             if !model.workspaceBetaRequested && !model.workspaceBetaExitPending {
                 Button("Try experimental Workspace") { _ = model.enterBetaWorkspace() }
                     .disabled(!model.phoneWorkspaceOffered || couch)
@@ -1001,28 +1020,32 @@ struct NativeSessionView: View {
             }
             Button("End session", role: .destructive) { model.disconnect() }
             Text("Supported Mac windows move to a temporary display. Restoration can need attention on your Mac.")
-        } label: { Image(systemName: "ellipsis.circle").frame(width: 44, height: 44) }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 20, weight: .medium))
+                .frame(width: 44, height: 44)
+                .contentShape(.rect)
+        }
         .accessibilityLabel("Beta Workspace options")
+        .accessibilityValue(betaWorkspaceStatus)
+        .accessibilityHint("Workspace details, normal desktop and session options")
     }
 
     private var betaWorkspaceBar: some View {
-        Group {
-            if dynamicTypeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        Text("BETA").font(.caption.weight(.bold))
-                        Spacer(minLength: 0)
-                        betaWorkspaceOptions
-                    }
-                    betaWorkspaceCaption
-                }
-            } else {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                Text("BETA").font(.caption2.weight(.bold)).fixedSize()
+                betaWorkspaceCaption.fixedSize(horizontal: true, vertical: true)
+                Spacer(minLength: 0)
+                betaWorkspaceOptions
+            }
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
-                    Text("BETA").font(.caption.weight(.bold))
-                    betaWorkspaceCaption
+                    Text("BETA").font(.caption2.weight(.bold))
                     Spacer(minLength: 0)
                     betaWorkspaceOptions
                 }
+                betaWorkspaceCaption
             }
         }
         .foregroundStyle(Farside.Palette.bone)
@@ -1048,8 +1071,8 @@ struct NativeSessionView: View {
                 smartZoomNavigationControls
             }
         }
-        .font(.caption.weight(.medium)).foregroundStyle(Farside.Palette.bone)
-        .buttonStyle(.bordered).controlSize(.regular)
+        .font(.caption2.weight(.medium)).foregroundStyle(Farside.Palette.bone)
+        .buttonStyle(.plain)
         .padding(6).farsidePlate(16, fill: Farside.Palette.panel, stroke: Farside.Palette.line2)
         .padding(.horizontal, 12)
         .accessibilityElement(children: .contain)
@@ -1058,11 +1081,17 @@ struct NativeSessionView: View {
 
     private var smartZoomModeControls: some View {
         HStack(spacing: 8) {
-            Label("View", systemImage: "hand.draw")
+            Text("View").fixedSize()
                 .accessibilityLabel("View mode. Drag or pinch to look around.")
-            Button("Control") { setInteractionMode(false) }
-                .accessibilityLabel("Control desktop")
-                .accessibilityHint("Returns to controlling your Mac")
+            Button { setInteractionMode(false) } label: {
+                Text("Control").fixedSize()
+                    .padding(.horizontal, 10)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .background(Farside.Palette.bone.opacity(0.16), in: .capsule)
+                    .contentShape(.capsule)
+            }
+            .accessibilityLabel("Control desktop")
+            .accessibilityHint("Returns to controlling your Mac")
         }
     }
 
@@ -1078,17 +1107,30 @@ struct NativeSessionView: View {
                 // Bookmark changes must not resize the measured Workspace chrome:
                 // a new safe inset would cancel focus and discard its return point.
                 ZStack {
-                    Text("Zoom in").hidden().accessibilityHidden(true)
-                    Text("Back to view").hidden().accessibilityHidden(true)
-                    Text(focusReturn.canRestore ? "Back to view" : "Zoom in")
+                    Text(betaZoomTitle(returning: false)).hidden().accessibilityHidden(true)
+                    Text(betaZoomTitle(returning: true)).hidden().accessibilityHidden(true)
+                    Text(betaZoomTitle(returning: focusReturn.canRestore))
                 }
+                .fixedSize()
+                .padding(.horizontal, 10)
+                .frame(minWidth: 44, minHeight: 44)
+                .background(Farside.Palette.bone.opacity(0.16), in: .capsule)
+                .contentShape(.capsule)
             }
             .accessibilityLabel(focusReturn.canRestore ? "Back to view" : "Zoom in")
             .accessibilityHint(focusReturn.canRestore
                 ? "Returns to the framing before your focus zoom without clicking your Mac"
                 : "Focuses your view without clicking your Mac")
-            Button("Fit") { setMode(.fit) }
+            if !compactBetaViewChrome {
+                Button { setMode(.fit) } label: {
+                    Text("Fit").fixedSize().frame(minWidth: 44, minHeight: 44)
+                }
+            }
             Menu {
+                if compactBetaViewChrome {
+                    Button("Fit desktop") { setMode(.fit) }
+                    Divider()
+                }
                 Button("Pan left") { _ = handle(.pan(CGSize(width: 80, height: 0))) }
                 Button("Pan right") { _ = handle(.pan(CGSize(width: -80, height: 0))) }
                 Button("Pan up") { _ = handle(.pan(CGSize(width: 0, height: 80))) }
@@ -1096,12 +1138,24 @@ struct NativeSessionView: View {
             } label: {
                 if compactBetaViewChrome {
                     Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 20, weight: .medium))
+                        .frame(width: 44, height: 44)
+                        .contentShape(.rect)
                 } else {
                     Text("Look around")
+                        .fixedSize().frame(minWidth: 44, minHeight: 44)
                 }
             }
-            .accessibilityLabel("Look around")
+            .accessibilityLabel(compactBetaViewChrome ? "View options" : "Look around")
+            .accessibilityHint(compactBetaViewChrome ? "Fit desktop or pan your view" : "Pan your view")
         }
+    }
+
+    private func betaZoomTitle(returning: Bool) -> String {
+        if compactBetaViewChrome && dynamicTypeSize.isAccessibilitySize {
+            return returning ? "Back" : "Zoom"
+        }
+        return returning ? "Back to view" : "Zoom in"
     }
 
     private var showsSessionRecoveryHint: Bool {
@@ -2264,7 +2318,7 @@ struct NativeSessionView: View {
     private var textField: some View {
         ZStack(alignment: .leading) {
             CommittedTextField(text: $model.draft, isComposing: $model.isComposingText, focusOnAppear: true,
-                               secure: model.passwordFieldFocused)
+                               secure: model.passwordFieldFocused, draftOwner: model)
                 .disabled(!model.textEditable)
                 .opacity(model.textEditable ? 1 : 0)
                 .allowsHitTesting(model.textEditable)

@@ -1,6 +1,16 @@
 import SwiftUI
 import UIKit
 
+struct DraftPublicationIdentity: Equatable {
+    let session: UUID
+    let privacy: UUID
+}
+
+@MainActor
+protocol DraftPublicationOwner: AnyObject {
+    var draftPublicationIdentity: DraftPublicationIdentity { get }
+}
+
 /// Hosts SwiftUI keyboard chrome above UIKit's keyboard layout guide. The guide updates in the same
 /// layout pass that presents the software keyboard, avoiding a stale SwiftUI keyboard safe-area
 /// proposal when the contained editor becomes first responder immediately after insertion.
@@ -135,10 +145,12 @@ struct CommittedTextField: UIViewRepresentable {
     var style: TextEntryStyle = .exact
     /// The Mac's focused field takes a password: mask it and keep it out of the keyboard's memory.
     var secure = false
+    /// Stable local draft owner; a replacement editor retires an older queued teardown.
+    var draftOwner: AnyObject? = nil
     @Environment(\.isEnabled) private var isEnabled
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, isComposing: $isComposing)
+        Coordinator(text: $text, isComposing: $isComposing, draftOwner: draftOwner)
     }
 
     func makeUIView(context: Context) -> UITextView {
@@ -163,7 +175,7 @@ struct CommittedTextField: UIViewRepresentable {
     }
 
     func updateUIView(_ view: UITextView, context: Context) {
-        context.coordinator.update(text: $text, isComposing: $isComposing)
+        context.coordinator.update(text: $text, isComposing: $isComposing, draftOwner: draftOwner, in: view)
         // A pending remote text request disables editing, preventing a new composition from
         // racing an acknowledgement that clears the corresponding draft.
         view.isEditable = isEnabled
@@ -188,9 +200,10 @@ struct CommittedTextField: UIViewRepresentable {
 
     static func dismantleUIView(_ view: UITextView, coordinator: Coordinator) {
         // Let UIKit finish the active composition into the local draft before detaching.
+        coordinator.beginTeardown()
         view.resignFirstResponder()
         view.delegate = nil
-        coordinator.clearCompositionAsynchronously()
+        coordinator.finishTeardown(finalText: view.text)
     }
 
     /// Focus once after attachment, without stealing it back on subsequent draft updates.
@@ -274,18 +287,76 @@ struct CommittedTextField: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
+        private final class WeakEditor {
+            weak var value: Coordinator?
+            init(_ value: Coordinator) { self.value = value }
+        }
+        private static var owners: [ObjectIdentifier: WeakEditor] = [:]
         private var text: Binding<String>
         private var isComposing: Binding<Bool>
         private var isApplyingViewUpdate = false
+        private var tearingDown = false
+        private weak var draftOwner: AnyObject?
+        private var ownerKey: ObjectIdentifier?
+        /// The context that owns the native contents, not merely the context at dismissal.
+        private var contentIdentity: DraftPublicationIdentity?
+        private var contentRevision: UInt = 0
+        private var expectedDraft: String?
+        private var expectedComposition = false
 
-        init(text: Binding<String>, isComposing: Binding<Bool>) {
+        init(text: Binding<String>, isComposing: Binding<Bool>, draftOwner: AnyObject? = nil) {
             self.text = text
             self.isComposing = isComposing
+            self.draftOwner = draftOwner
+            ownerKey = draftOwner.map(ObjectIdentifier.init)
+            contentIdentity = (draftOwner as? any DraftPublicationOwner)?.draftPublicationIdentity
+            super.init()
+            if let draftOwner {
+                Self.owners = Self.owners.filter { $0.value.value != nil }
+                Self.owners[ObjectIdentifier(draftOwner)] = WeakEditor(self)
+            }
         }
 
-        func update(text: Binding<String>, isComposing: Binding<Bool>) {
+        func update(text: Binding<String>, isComposing: Binding<Bool>, draftOwner: AnyObject? = nil,
+                    in view: UITextView) {
+            guard !tearingDown else { return }
+            let nextKey = draftOwner.map(ObjectIdentifier.init)
+            let nextIdentity = (draftOwner as? any DraftPublicationOwner)?.draftPublicationIdentity
+            let ownerChanged = self.draftOwner !== draftOwner || ownerKey != nextKey
+            let contextChanged = ownerChanged || contentIdentity != nextIdentity
+            if ownerChanged {
+                if let previous = self.draftOwner,
+                   Self.owners[ObjectIdentifier(previous)]?.value === self {
+                    Self.owners.removeValue(forKey: ObjectIdentifier(previous))
+                }
+                self.draftOwner = draftOwner
+                ownerKey = nextKey
+                if let draftOwner { Self.owners[ObjectIdentifier(draftOwner)] = WeakEditor(self) }
+            }
             self.text = text
             self.isComposing = isComposing
+            guard contextChanged else { return }
+
+            // Unmarking may finalize old text and invoke the delegate. Suppress those callbacks
+            // and replace native contents before enrolling this editor in the new context.
+            applyModelText(text.wrappedValue, to: view, discardMarkedText: true)
+            contentIdentity = nextIdentity
+            contentRevision &+= 1
+            let revision = contentRevision
+            DispatchQueue.main.async { [weak self, weak view] in
+                guard let self, let view, !self.tearingDown,
+                      self.contentRevision == revision, self.contentContextIsCurrent,
+                      view.markedTextRange == nil, view.text == self.text.wrappedValue else { return }
+                if self.isComposing.wrappedValue { self.isComposing.wrappedValue = false }
+            }
+        }
+
+        private var contentContextIsCurrent: Bool {
+            if let ownerKey {
+                guard let draftOwner, ObjectIdentifier(draftOwner) == ownerKey,
+                      Self.owners[ownerKey]?.value === self else { return false }
+            }
+            return (draftOwner as? any DraftPublicationOwner)?.draftPublicationIdentity == contentIdentity
         }
 
         func textViewDidChange(_ textView: UITextView) {
@@ -298,22 +369,39 @@ struct CommittedTextField: UIViewRepresentable {
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
-            isComposing.wrappedValue = false
+            guard !isApplyingViewUpdate, !tearingDown, contentContextIsCurrent else { return }
+            if isComposing.wrappedValue { isComposing.wrappedValue = false }
             commit(textView.text)
         }
 
-        func clearCompositionAsynchronously() {
-            let isComposing = isComposing
-            DispatchQueue.main.async {
-                isComposing.wrappedValue = false
+        func beginTeardown() {
+            guard !tearingDown else { return }
+            tearingDown = true
+            guard contentContextIsCurrent else { return }
+            expectedDraft = text.wrappedValue
+            expectedComposition = isComposing.wrappedValue
+        }
+
+        func finishTeardown(finalText: String) {
+            guard tearingDown, let expectedDraft else { return }
+            self.expectedDraft = nil // Queue the final local publication at most once.
+            let expectedComposition = expectedComposition
+            DispatchQueue.main.async { [self] in
+                guard contentContextIsCurrent, text.wrappedValue == expectedDraft,
+                      isComposing.wrappedValue == expectedComposition else { return }
+                // The delegate stayed attached until UIKit finalized its marked text, but its
+                // teardown callbacks never publish inside SwiftUI's representable update.
+                commit(finalText)
+                if contentContextIsCurrent, isComposing.wrappedValue { isComposing.wrappedValue = false }
             }
         }
 
-        func applyModelText(_ value: String, to view: UITextView) {
+        func applyModelText(_ value: String, to view: UITextView, discardMarkedText: Bool = false) {
             let selectedRange = view.selectedRange
             isApplyingViewUpdate = true
             defer { isApplyingViewUpdate = false }
 
+            if discardMarkedText { view.unmarkText() }
             view.text = value
             (view as? InitialFocusTextView)?.refreshMask()
             let length = value.utf16.count
@@ -325,16 +413,16 @@ struct CommittedTextField: UIViewRepresentable {
         }
 
         private func updateCompositionState(from view: UITextView) {
-            guard !isApplyingViewUpdate else { return }
+            guard !isApplyingViewUpdate, !tearingDown, contentContextIsCurrent else { return }
             let composing = view.markedTextRange != nil
-            isComposing.wrappedValue = composing
+            if isComposing.wrappedValue != composing { isComposing.wrappedValue = composing }
             if !composing {
                 commit(view.text)
             }
         }
 
         private func commit(_ value: String) {
-            guard text.wrappedValue != value else { return }
+            guard contentContextIsCurrent, text.wrappedValue != value else { return }
             text.wrappedValue = value
         }
     }

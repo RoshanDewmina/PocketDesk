@@ -1,3 +1,13 @@
+# Experimental beta104 verified candidate — 5 October 2026
+
+The beta now has compact Workspace/View/Zoom chrome at large accessibility text sizes, retaining full status in accessibility and details, Dynamic Type, distinct44-point actions and stable phase/bookmark reservation. The resting native view source is independently reviewed and unchanged after the focused menu-fixture corrections. Actual offline PNGs are saved in the initiating chat outputs; they do not demonstrate live Workspace or camera motion.
+
+The inherited UIKit editor teardown now suppresses callbacks before responder resignation, preserves current finalized native IME text through a deferred local publication, and rejects old editor/privacy/session lifetimes. The real model retires composition synchronously on actual privacy transitions and every end; repeated same-state replies preserve current IME. Fresh independent sensitive review approves the final source. Native65 unit cases pass (22editor,3secure-focus,40lifecycle);6 of7UI pass in that same run, and the remaining largest-text landscape case passes after scoped native-menu traversal correction. Exact multiline Unicode draft Hide/reopen passes. No publication-during-view-update warning appears in the corrected runs. These fixtures stage local text and never press Send.
+
+Meaningful isolated negatives: late teardown suppression yields2 runtime assertion failures, exact source restoration passes1case; bypassing native-content identity yields12 assertions across3cases, exact restoration passes3; the actual previous model boundary yields5 assertions while the new-IME control passes. Exact final owner-bound restoration passes all25 editor/secure-focus cases. The real beta checkout is unchanged by all negative controls.
+
+Both signed104 builds pass, including generic-iOS physical-UI build-for-testing. Actual beta IDs, bool marker, version104, team39HM2X8GS6, deep/strict signatures, no production phone extensions/App Group, and installed beta Mac identity continuity verify. Mac installed beta remains103 and phone last verified101/unavailable;104 packaging/install is pending. Owner pairing/grants and live Workspace/focus/return/restoration remain pending. Production's fresh-window7 correction is a separate branch and is not inherited by this beta. No physical60FPS/sharpness/latency/M1, competitive or App Store acceptance claim.
+
 # Workspace phone beta orchestration — 4 October 2026
 
 ## Current checkpoint — 2026-10-05T03:37Z

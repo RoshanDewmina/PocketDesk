@@ -95,9 +95,11 @@ final class CommittedTextTests: XCTestCase {
     func testDismissalRetainsNativeCompositionInLocalDraft() async {
         var draft = "prefix "
         var composing = false
+        var dismantling = false
+        var synchronousPublications = 0
         let coordinator = CommittedTextField.Coordinator(
-            text: Binding(get: { draft }, set: { draft = $0 }),
-            isComposing: Binding(get: { composing }, set: { composing = $0 }))
+            text: Binding(get: { draft }, set: { if dismantling { synchronousPublications += 1 }; draft = $0 }),
+            isComposing: Binding(get: { composing }, set: { if dismantling { synchronousPublications += 1 }; composing = $0 }))
         let editor = CommittedTextField.InitialFocusTextView()
         editor.delegate = coordinator
         editor.text = draft
@@ -115,13 +117,295 @@ final class CommittedTextTests: XCTestCase {
         coordinator.textViewDidChange(editor)
         XCTAssertTrue(composing)
         XCTAssertEqual(draft, "prefix ")
+        dismantling = true
         CommittedTextField.dismantleUIView(editor, coordinator: coordinator)
+        dismantling = false
+        XCTAssertEqual(synchronousPublications, 0, "UIKit may finalize marked text but cannot publish during SwiftUI teardown")
+        XCTAssertEqual(draft, "prefix ", "Final native text is published only after teardown returns")
         await drainMainQueue()
         XCTAssertFalse(editor.isFirstResponder)
         XCTAssertFalse(composing)
         XCTAssertEqual(draft, editor.text, "Dismissal must preserve the local native editor contents")
         XCTAssertTrue(draft.hasSuffix("かな"))
         window.isHidden = true
+    }
+
+    func testTeardownCannotOverwriteNewerDraftBeforeDeferredPublication() async {
+        var draft = "before"
+        var composing = true
+        let owner = NSObject()
+        let coordinator = CommittedTextField.Coordinator(
+            text: Binding(get: { draft }, set: { draft = $0 }),
+            isComposing: Binding(get: { composing }, set: { composing = $0 }), draftOwner: owner)
+        coordinator.beginTeardown()
+        coordinator.finishTeardown(finalText: "old final composition")
+        draft = "new draft"
+        await drainMainQueue()
+        XCTAssertEqual(draft, "new draft")
+        XCTAssertTrue(composing, "A stale teardown must not change the newer draft's composition flag")
+    }
+
+    func testReplacementEditorRetiresOldTeardownEvenWithIdenticalDraftAndComposition() async {
+        var draft = "same"
+        var composing = true
+        let owner = NSObject()
+        let text = Binding(get: { draft }, set: { draft = $0 })
+        let composition = Binding(get: { composing }, set: { composing = $0 })
+        let old = CommittedTextField.Coordinator(text: text, isComposing: composition, draftOwner: owner)
+        old.beginTeardown()
+        old.finishTeardown(finalText: "retired native composition")
+        let replacement = CommittedTextField.Coordinator(text: text, isComposing: composition, draftOwner: owner)
+        await drainMainQueue()
+        XCTAssertEqual(draft, "same", "Value equality alone cannot identify the current editor")
+        XCTAssertTrue(composing)
+        withExtendedLifetime(replacement) {}
+    }
+
+    func testTeardownSuppressesAllDelegateCallbacksAndQueuesOnlyOneFinalPublication() async {
+        var draft = "prefix"
+        var composing = true
+        var publications = 0
+        let coordinator = CommittedTextField.Coordinator(
+            text: Binding(get: { draft }, set: { publications += 1; draft = $0 }),
+            isComposing: Binding(get: { composing }, set: { publications += 1; composing = $0 }))
+        let view = UITextView(); view.text = "prefix finalized"
+        coordinator.beginTeardown()
+        coordinator.textViewDidChange(view)
+        coordinator.textViewDidChangeSelection(view)
+        coordinator.textViewDidEndEditing(view)
+        coordinator.finishTeardown(finalText: view.text)
+        coordinator.finishTeardown(finalText: "duplicate")
+        XCTAssertEqual(publications, 0)
+        await drainMainQueue()
+        XCTAssertEqual(draft, "prefix finalized")
+        XCTAssertFalse(composing)
+        XCTAssertEqual(publications, 2)
+    }
+
+    private func secureComposerModel() throws -> PhoneRemoteModel {
+        let model = PhoneRemoteModel(coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()))
+        model.prepareConnection(mode: .picture)
+        model.connection.startInputFixtureForTesting(session: "local-secure-composition")
+        let receive = try XCTUnwrap(model.connection.onControl)
+        try receive(JSONEncoder().encode(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 3)))
+        try receive(JSONEncoder().encode(RemoteAction(action: "capture", x: 1, epoch: 3, features: [SessionFeature.secureFocus])))
+        model.receiveSecureFocus(secure: true)
+        XCTAssertTrue(model.passwordFieldFocused)
+        return model
+    }
+
+    func testSecureFocusEndRetiresDeferredNativeSecretWithUnchangedBindingValues() async throws {
+        let model = try secureComposerModel()
+        defer { model.connection.stop() }
+        model.isComposingText = true
+        let coordinator = CommittedTextField.Coordinator(
+            text: Binding(get: { model.draft }, set: { model.draft = $0 }),
+            isComposing: Binding(get: { model.isComposingText }, set: { model.isComposingText = $0 }), draftOwner: model)
+        coordinator.beginTeardown()
+        coordinator.finishTeardown(finalText: "native secret")
+        model.endSecureFocus()
+        XCTAssertEqual(model.draft, "")
+        XCTAssertFalse(model.isComposingText, "The owner retires composition without waiting for its old editor")
+        // A new-context composition may restore identical binding values. Identity must still reject the old text.
+        model.isComposingText = true
+        XCTAssertTrue(model.secureTextFocus.draftMayPersist)
+        await drainMainQueue()
+        XCTAssertEqual(model.draft, "", "A retired native secret cannot become an ordinary persistable draft")
+        XCTAssertTrue(model.isComposingText, "Old teardown cannot clear a new-context composition")
+    }
+
+    func testSecureLeaveAndReenterCannotReviveDeferredComposition() async throws {
+        let model = try secureComposerModel()
+        defer { model.connection.stop() }
+        model.isComposingText = true
+        let original = model.draftPublicationIdentity
+        let coordinator = CommittedTextField.Coordinator(
+            text: Binding(get: { model.draft }, set: { model.draft = $0 }),
+            isComposing: Binding(get: { model.isComposingText }, set: { model.isComposingText = $0 }), draftOwner: model)
+        coordinator.beginTeardown(); coordinator.finishTeardown(finalText: "old native secret")
+        model.receiveSecureFocus(secure: false); model.receiveSecureFocus(secure: true)
+        XCTAssertTrue(model.passwordFieldFocused)
+        XCTAssertFalse(model.isComposingText)
+        XCTAssertNotEqual(model.draftPublicationIdentity, original)
+        model.isComposingText = true // A new composition restores the same values across secure leave/reenter.
+        await drainMainQueue()
+        XCTAssertEqual(model.draft, "")
+        XCTAssertTrue(model.isComposingText)
+    }
+
+    func testSessionRetirementRejectsDeferredDraftWithoutBindingChanges() async {
+        let model = PhoneRemoteModel()
+        model.isComposingText = true
+        let original = model.draftPublicationIdentity
+        let coordinator = CommittedTextField.Coordinator(
+            text: Binding(get: { model.draft }, set: { model.draft = $0 }),
+            isComposing: Binding(get: { model.isComposingText }, set: { model.isComposingText = $0 }), draftOwner: model)
+        coordinator.beginTeardown(); coordinator.finishTeardown(finalText: "retired draft")
+        model.connection.stop()
+        XCTAssertNotEqual(model.draftPublicationIdentity.session, original.session)
+        XCTAssertFalse(model.isComposingText, "Session stop reaches the owner's composition retirement")
+        model.isComposingText = true // New-context state must survive the old editor's queued publication.
+        await drainMainQueue()
+        XCTAssertEqual(model.draft, "")
+        XCTAssertTrue(model.isComposingText)
+    }
+
+    private func markedEditor(for model: PhoneRemoteModel) -> (CommittedTextField.Coordinator, UITextView) {
+        let coordinator = CommittedTextField.Coordinator(
+            text: Binding(get: { model.draft }, set: { model.draft = $0 }),
+            isComposing: Binding(get: { model.isComposingText }, set: { model.isComposingText = $0 }), draftOwner: model)
+        let editor = UITextView()
+        editor.text = model.draft
+        editor.delegate = coordinator
+        editor.setMarkedText("かな", selectedRange: NSRange(location: 2, length: 0))
+        coordinator.textViewDidChange(editor)
+        XCTAssertNotNil(editor.markedTextRange)
+        XCTAssertEqual(model.draft, "")
+        XCTAssertTrue(model.isComposingText)
+        return (coordinator, editor)
+    }
+
+    private func assertRetiredEditorCannotPublish(_ editor: UITextView,
+                                                 coordinator: CommittedTextField.Coordinator,
+                                                 model: PhoneRemoteModel) async {
+        let currentComposition = model.isComposingText
+        // Exercise all delegate paths before SwiftUI gets an opportunity to update or dismantle.
+        coordinator.textViewDidChange(editor)
+        coordinator.textViewDidChangeSelection(editor)
+        editor.unmarkText()
+        coordinator.textViewDidEndEditing(editor)
+        XCTAssertEqual(model.draft, "")
+        XCTAssertEqual(model.isComposingText, currentComposition, "Retired callbacks cannot change current binding state")
+        CommittedTextField.dismantleUIView(editor, coordinator: coordinator)
+        await drainMainQueue()
+        XCTAssertEqual(model.draft, "", "Teardown cannot enroll retired native text in the current context")
+        XCTAssertEqual(model.isComposingText, currentComposition)
+    }
+
+    func testSecureFocusEndBeforeTeardownRetiresPendingNativeText() async throws {
+        let model = try secureComposerModel()
+        defer { model.connection.stop() }
+        let (coordinator, editor) = markedEditor(for: model)
+        model.endSecureFocus()
+        XCTAssertEqual(model.draft, "")
+        XCTAssertFalse(model.isComposingText)
+        XCTAssertTrue(model.secureTextFocus.draftMayPersist)
+        await assertRetiredEditorCannotPublish(editor, coordinator: coordinator, model: model)
+    }
+
+    func testSecureLeaveAndReenterBeforeTeardownRetiresPendingNativeText() async throws {
+        let model = try secureComposerModel()
+        defer { model.connection.stop() }
+        let (coordinator, editor) = markedEditor(for: model)
+        model.receiveSecureFocus(secure: false)
+        model.receiveSecureFocus(secure: true)
+        XCTAssertTrue(model.passwordFieldFocused)
+        XCTAssertFalse(model.isComposingText)
+        await assertRetiredEditorCannotPublish(editor, coordinator: coordinator, model: model)
+    }
+
+    func testSessionRetirementBeforeTeardownRetiresPendingNativeText() async {
+        let model = PhoneRemoteModel()
+        let (coordinator, editor) = markedEditor(for: model)
+        model.connection.stop()
+        XCTAssertFalse(model.isComposingText)
+        await assertRetiredEditorCannotPublish(editor, coordinator: coordinator, model: model)
+    }
+
+    func testContextUpdateReplacesRetiredMarkedTextWithoutSynchronousPublication() async throws {
+        let model = try secureComposerModel()
+        defer { model.connection.stop() }
+        var updating = false
+        var synchronousPublications = 0
+        let text = Binding(get: { model.draft }, set: {
+            if updating { synchronousPublications += 1 }
+            model.draft = $0
+        })
+        let composition = Binding(get: { model.isComposingText }, set: {
+            if updating { synchronousPublications += 1 }
+            model.isComposingText = $0
+        })
+        let coordinator = CommittedTextField.Coordinator(text: text, isComposing: composition, draftOwner: model)
+        let editor = UITextView()
+        editor.delegate = coordinator
+        editor.setMarkedText("かな", selectedRange: NSRange(location: 2, length: 0))
+        coordinator.textViewDidChange(editor)
+        XCTAssertTrue(model.isComposingText)
+        XCTAssertEqual(model.draft, "")
+        model.endSecureFocus()
+        model.draft = "current draft"
+        updating = true
+        coordinator.update(text: text, isComposing: composition, draftOwner: model, in: editor)
+        updating = false
+        XCTAssertEqual(synchronousPublications, 0)
+        XCTAssertNil(editor.markedTextRange)
+        XCTAssertEqual(editor.text, "current draft", "The model, not retired native composition, owns the new context")
+        XCTAssertFalse(model.isComposingText, "The owner already retired composition before the representable update")
+        await drainMainQueue()
+        XCTAssertFalse(model.isComposingText)
+        XCTAssertEqual(model.draft, "current draft")
+    }
+
+    func testNewCompositionAfterContextUpdateSurvivesDeferredResetAndSameContextHide() async throws {
+        let model = try secureComposerModel()
+        defer { model.connection.stop() }
+        let (coordinator, editor) = markedEditor(for: model)
+        let text = Binding(get: { model.draft }, set: { model.draft = $0 })
+        let composition = Binding(get: { model.isComposingText }, set: { model.isComposingText = $0 })
+        model.endSecureFocus()
+        coordinator.update(text: text, isComposing: composition, draftOwner: model, in: editor)
+        XCTAssertNil(editor.markedTextRange)
+        XCTAssertEqual(editor.text, "")
+        editor.setMarkedText("新しい", selectedRange: NSRange(location: 3, length: 0))
+        coordinator.textViewDidChange(editor)
+        coordinator.update(text: text, isComposing: composition, draftOwner: model, in: editor)
+        await drainMainQueue()
+        XCTAssertNotNil(editor.markedTextRange, "Same-context updates must leave the new IME composition intact")
+        XCTAssertTrue(model.isComposingText, "The prior context reset cannot clear a new composition")
+        XCTAssertEqual(model.draft, "")
+        CommittedTextField.dismantleUIView(editor, coordinator: coordinator)
+        await drainMainQueue()
+        XCTAssertEqual(model.draft, "新しい")
+        XCTAssertFalse(model.isComposingText)
+    }
+
+    func testSecureFocusRetirementClearsCompositionWithoutAnEditor() throws {
+        let model = try secureComposerModel()
+        defer { model.connection.stop() }
+        model.isComposingText = true
+        let initial = model.draftPublicationIdentity
+        model.endSecureFocus()
+        XCTAssertFalse(model.isComposingText, "Removed editors cannot leave the shared auto-keyboard/voice composition gate blocked")
+        XCTAssertNotEqual(model.draftPublicationIdentity, initial)
+        model.draft = "ordinary local draft"
+        XCTAssertTrue(model.textCanSend, "The composition gate is cleared; sending still requires separate control authority")
+        XCTAssertTrue(model.textEditable)
+        let ended = model.draftPublicationIdentity
+        model.isComposingText = true
+        model.endSecureFocus()
+        XCTAssertFalse(model.isComposingText, "Every end retires composition even when secure focus was already inactive")
+        XCTAssertNotEqual(model.draftPublicationIdentity, ended)
+        XCTAssertEqual(model.draft, "ordinary local draft")
+    }
+
+    func testRepeatedSecureFocusReplyPreservesCurrentComposition() throws {
+        let model = try secureComposerModel()
+        defer { model.connection.stop() }
+        model.isComposingText = true
+        let secure = model.draftPublicationIdentity
+        model.receiveSecureFocus(secure: true)
+        XCTAssertTrue(model.isComposingText)
+        XCTAssertEqual(model.draftPublicationIdentity, secure)
+        model.receiveSecureFocus(secure: false)
+        XCTAssertFalse(model.isComposingText, "An actual secure-state change retires the old composition")
+        let ordinary = model.draftPublicationIdentity
+        model.isComposingText = true
+        model.receiveSecureFocus(secure: false)
+        XCTAssertTrue(model.isComposingText, "A repeated ordinary focus reply also leaves current IME intact")
+        XCTAssertEqual(model.draftPublicationIdentity, ordinary)
+        model.receiveSecureFocus(secure: true)
+        XCTAssertFalse(model.isComposingText)
+        XCTAssertNotEqual(model.draftPublicationIdentity, ordinary)
     }
 
     func testMarkedTextStaysLocalUntilCommitted() {

@@ -115,6 +115,24 @@ final class SimpleSessionUITests: XCTestCase {
     }
 
     @MainActor
+    func testExtraLargeTextPortraitKeepsPictureAndNamedViewActions() {
+        assertViewLayout(category: "UICTContentSizeCategoryXXXL", orientation: .portrait,
+                         title: "Simple XXXL portrait compact View chrome")
+    }
+
+    @MainActor
+    func testExtraLargeTextLandscapeKeepsPictureAndNamedViewActions() {
+        assertViewLayout(category: "UICTContentSizeCategoryXXXL", orientation: .landscapeLeft,
+                         title: "Simple XXXL landscape compact View chrome")
+    }
+
+    @MainActor
+    func testAccessibilityTextLandscapeKeepsPictureAndSecondaryViewActions() {
+        assertViewLayout(category: "UICTContentSizeCategoryAccessibilityXXXL", orientation: .landscapeLeft,
+                         title: "Simple Accessibility XXXL landscape compact View chrome", inspectOptions: true)
+    }
+
+    @MainActor
     func testManualKeyboardOpensDockWithoutDedicatedDictateTile() {
         let app = launchPreview(extra: ["--ui-software-keyboard"])
         defer { app.terminate() }
@@ -128,7 +146,18 @@ final class SimpleSessionUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Voice input"].exists)
         XCTAssertFalse(app.buttons["Move view"].exists)
         record("Simple manual keyboard dock no dedicated Dictate", app)
-        // The native system keyboard may expose its own mic. No typing/dictation is sent.
+        // Exercise actual editor teardown with a local multiline Unicode draft. Never press Send.
+        let localDraft = "Local draft\ncafé"
+        draft.tap()
+        draft.typeText(localDraft)
+        XCTAssertTrue(wait { draft.value as? String == localDraft })
+        app.buttons["remote.keyboard.hide"].firstMatch.tap()
+        XCTAssertTrue(wait { !app.keyboards.firstMatch.exists && keyboard.isHittable })
+        keyboard.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 8))
+        XCTAssertTrue(draft.waitForExistence(timeout: 5) && draft.isHittable)
+        XCTAssertTrue(wait { draft.value as? String == localDraft }, "Hide and reopen retain the exact local draft")
+        record("Simple manual keyboard retains multiline Unicode draft", app)
         app.buttons["remote.keyboard.hide"].firstMatch.tap()
         XCTAssertTrue(wait { !app.keyboards.firstMatch.exists && keyboard.isHittable })
     }
@@ -152,7 +181,8 @@ final class SimpleSessionUITests: XCTestCase {
 
     @MainActor
     private func openDock(_ app: XCUIApplication) {
-        app.buttons["Show controls"].firstMatch.swipeUp()
+        // Use the handle's real single-tap action; landscape has little room for a long swipe.
+        app.buttons["Show controls"].firstMatch.tap()
         XCTAssertTrue(app.buttons["More"].firstMatch.waitForExistence(timeout: 5))
     }
 
@@ -171,13 +201,112 @@ final class SimpleSessionUITests: XCTestCase {
         let bar = element("remote.beta.smartZoom", in: app)
         let workspace = element("remote.beta.workspace", in: app)
         XCTAssertTrue(bar.waitForExistence(timeout: 5) && workspace.exists)
-        for title in ["Zoom in", "Fit", "Look around", "Control desktop"] {
-            XCTAssertTrue(bar.buttons[title].firstMatch.isHittable, title)
+        let titles = ["Zoom in", "View options", "Control desktop"]
+        for title in titles {
+            let button = bar.buttons[title].firstMatch
+            assertVisibleTarget(button, inside: bar, window: app.windows.firstMatch, name: title)
         }
+        for first in titles.indices {
+            for second in titles.indices where second > first {
+                XCTAssertFalse(bar.buttons[titles[first]].firstMatch.frame.intersects(bar.buttons[titles[second]].firstMatch.frame),
+                               "View actions must have separate hit regions")
+            }
+        }
+        let options = workspace.buttons["Beta Workspace options"].firstMatch
+        assertVisibleTarget(options, inside: workspace, window: app.windows.firstMatch, name: "Workspace options")
+        XCTAssertEqual(options.value as? String, "Workspace unavailable on this Mac", "Full truthful status remains available to accessibility")
+        XCTAssertFalse(app.staticTexts["Workspace ready"].exists, "The offline fixture has no admitted Workspace source")
         XCTAssertFalse(app.staticTexts["View · drag or pinch"].exists, "View status and Control escape share the zoom chrome")
+        XCTAssertTrue(bar.staticTexts["View mode. Drag or pinch to look around."].exists, "Current mode stays explicit")
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "Control desktop")).count, 1)
         XCTAssertTrue(app.windows.firstMatch.frame.contains(bar.frame), "View chrome must fit the visible window")
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(workspace.frame), "Workspace chrome must fit the visible window")
         XCTAssertGreaterThanOrEqual(bar.frame.minY, workspace.frame.maxY, "Zoom chrome must not cover Workspace status")
+        let window = app.windows.firstMatch.frame
+        let maximumFraction = window.width > window.height ? 0.5 : 0.38
+        XCTAssertLessThan(bar.frame.maxY - workspace.frame.minY, window.height * maximumFraction,
+                          "Resting beta chrome must leave most of the picture available at this text size")
+        #endif
+    }
+
+    @MainActor
+    private func assertVisibleTarget(_ target: XCUIElement, inside container: XCUIElement,
+                                     window: XCUIElement, name: String) {
+        XCTAssertTrue(target.isHittable, name)
+        XCTAssertGreaterThanOrEqual(target.frame.width, 44 - 0.01, name + " width")
+        XCTAssertGreaterThanOrEqual(target.frame.height, 44 - 0.01, name + " height")
+        XCTAssertTrue(container.frame.contains(target.frame), name + " belongs inside its chrome")
+        XCTAssertTrue(window.frame.contains(target.frame), name + " stays inside the window")
+    }
+
+    @MainActor
+    private func assertViewLayout(category: String, orientation: UIDeviceOrientation, title: String,
+                                  inspectOptions: Bool = false) {
+        XCUIDevice.shared.orientation = orientation
+        let app = launchPreview(extra: ["-UIPreferredContentSizeCategoryName", category])
+        defer { app.terminate() }
+        openDock(app)
+        app.buttons["More"].firstMatch.tap()
+        let panel = element("remote.controls.content", in: app)
+        XCTAssertTrue(panel.waitForExistence(timeout: 5))
+        let view = panel.buttons["Move view"].firstMatch
+        XCTAssertTrue(view.isHittable)
+        view.tap()
+        let canvas = element("remote.canvas", in: app)
+        XCTAssertTrue(wait { canvas.label == "Remote desktop view" && !app.buttons["Done"].firstMatch.isHittable })
+        record(title, app)
+        assertBetaViewChrome(app)
+        #if FARSIDE_WORKSPACE_BETA
+        if inspectOptions {
+            let workspace = element("remote.beta.workspace", in: app)
+            let bar = element("remote.beta.smartZoom", in: app)
+            let workspaceFrame = workspace.frame
+            let zoomFrame = bar.frame
+            bar.buttons["View options"].firstMatch.tap()
+            record("Simple Accessibility XXXL landscape View options before traversal", app)
+            for name in ["Fit desktop", "Pan left", "Pan right", "Pan up", "Pan down"] {
+                let action = app.buttons[name].firstMatch
+                // UIKit may scroll its native menu at accessibility sizes in short landscape.
+                // Verify every action is actually reachable instead of requiring all five onscreen.
+                for _ in 0..<2 where !action.exists || !action.isHittable {
+                    // The captured native menu exposes a CollectionView and a three-page
+                    // vertical scroll bar; use that menu rather than the remote canvas.
+                    let scroll = app.collectionViews.firstMatch
+                    guard scroll.exists else { break }
+                    scroll.swipeUp()
+                }
+                XCTAssertTrue(action.waitForExistence(timeout: 3), name)
+                XCTAssertTrue(action.isHittable, name)
+            }
+            record("Simple Accessibility XXXL landscape View options", app)
+            // Local offline View canvas: dismiss the menu without invoking a camera action.
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.9)).tap()
+            XCTAssertTrue(wait { !app.collectionViews.firstMatch.exists })
+            XCTAssertEqual(workspace.frame, workspaceFrame, "Secondary menu dismissal cannot reflow Workspace chrome")
+            XCTAssertEqual(bar.frame, zoomFrame, "Secondary menu dismissal cannot reflow View chrome")
+            workspace.buttons["Beta Workspace options"].firstMatch.tap()
+            let entry = app.buttons["Try experimental Workspace"].firstMatch
+            XCTAssertTrue(entry.waitForExistence(timeout: 3))
+            XCTAssertFalse(entry.isEnabled, "Unavailable Workspace stays unavailable in this local preview")
+            record("Simple Accessibility XXXL landscape Workspace details before traversal", app)
+            let menu = app.collectionViews.firstMatch
+            let end = menu.buttons["End session"].firstMatch
+            for _ in 0..<5 where !end.exists || !end.isHittable {
+                guard menu.exists else { break }
+                // UIKit reports a collection taller than its clipped native-menu viewport.
+                // Start a deliberate drag inside the visible rows, rather than flinging from
+                // the clipped collection's edge or an unrelated underlying End button.
+                let visible = menu.frame.intersection(app.windows.firstMatch.frame)
+                let start = app.coordinate(withNormalizedOffset: .zero)
+                    .withOffset(CGVector(dx: visible.midX, dy: visible.minY + visible.height * 0.65))
+                let finish = app.coordinate(withNormalizedOffset: .zero)
+                    .withOffset(CGVector(dx: visible.midX, dy: visible.minY + visible.height * 0.3))
+                start.press(forDuration: 0.1, thenDragTo: finish)
+            }
+            record("Simple Accessibility XXXL landscape Workspace details after traversal", app)
+            XCTAssertTrue(end.isHittable)
+            record("Simple Accessibility XXXL landscape Workspace details", app)
+        }
         #endif
     }
 
