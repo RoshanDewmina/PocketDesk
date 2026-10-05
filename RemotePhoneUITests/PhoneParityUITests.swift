@@ -483,13 +483,16 @@ final class PhoneParityUITests: XCTestCase {
             XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
             XCTAssertTrue(button.waitForExistence(timeout: 5))
             XCTAssertTrue(button.isHittable)
+            XCTAssertGreaterThan(button.frame.midY, app.windows.firstMatch.frame.height * 0.75,
+                                 "The Keyboard button sits along the bottom, level with the controls handle")
             revealDock(app)
             let controls = app.buttons["Controls"].firstMatch
             XCTAssertTrue(controls.isHittable)
-            XCTAssertFalse(button.frame.intersects(controls.frame), "Keyboard must not cover Controls in the expanded dock")
+            XCTAssertTrue(button.waitForNonExistence(timeout: 5), "The open dock has its own Keyboard tile")
+            XCTAssertTrue(app.buttons["Keyboard"].firstMatch.isHittable)
             attachScreenshot("manual-keyboard-\(name)-largest-type-expanded-controls")
             controls.tap()
-            XCTAssertTrue(button.waitForNonExistence(timeout: 5))
+            XCTAssertFalse(button.exists)
             app.terminate()
         }
     }
@@ -537,9 +540,13 @@ final class PhoneParityUITests: XCTestCase {
         let button = app.buttons["remote.keyboard.open"]
         XCTAssertTrue(button.waitForExistence(timeout: 5))
         revealDock(app)
+        XCTAssertTrue(button.waitForNonExistence(timeout: 5), "The open dock has its own Keyboard tile")
         app.buttons["Move view"].firstMatch.tap()
-        XCTAssertTrue(button.waitForNonExistence(timeout: 5))
+        app.buttons["Hide controls"].firstMatch.swipeDown()
+        XCTAssertFalse(button.waitForExistence(timeout: 2), "No Keyboard button while only moving the view")
+        revealDock(app)
         app.buttons["Control desktop"].firstMatch.tap()
+        app.buttons["Hide controls"].firstMatch.swipeDown()
         XCTAssertTrue(button.waitForExistence(timeout: 5))
     }
 

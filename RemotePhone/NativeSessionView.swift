@@ -23,6 +23,9 @@ struct NativeSessionView: View {
     @State private var keyboardOpen = false
     /// Internal opt-in: Mac text focus leaves the keyboard closed unless explicitly enabled.
     @AppStorage("FarsideAutoKeyboard") private var autoKeyboardEnabled = false
+    /// Internal kill switch: NO puts the Keyboard button back on the right edge and keeps the tall
+    /// single-column dock in landscape.
+    @AppStorage("FarsideBottomControls") private var bottomControls = true
     @State private var dismissedAutoKeyboardRevision: UInt64 = 0
     @State private var autoKeyboardPreviewEmitted = false
     @State private var showControls = false
@@ -180,20 +183,16 @@ struct NativeSessionView: View {
             if regularSessionLayout && couchSideTiles && !keyboardOpen && !showControls { couchTileColumn }
         }
         .overlay(alignment: .trailing) {
-            if !keyboardOpen && !couch && !panMode && model.canControl && scenePhase == .active &&
-               !showControls && !showOverlaySettings && !showVoiceInput {
-                Button(action: openKeyboard) {
-                    Image(systemName: "keyboard")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundStyle(Farside.Palette.bone)
-                        .frame(width: 46, height: 46)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.97), stroke: Farside.Palette.line2)
-                .accessibilityLabel("Keyboard")
-                .accessibilityIdentifier("remote.keyboard.open")
-                .padding(.trailing, 8)
+            if !bottomControls && keyboardButtonEligible {
+                keyboardButton.padding(.trailing, 8)
+            }
+        }
+        .overlay(alignment: miniMap.shown && miniMapEligible ? .bottomLeading : .bottomTrailing) {
+            // Level with the controls handle, in the thumb's corner; the open dock has its own Keyboard tile.
+            if bottomControls && keyboardButtonEligible && (controlsCollapsed || regularSessionLayout) {
+                keyboardButton
+                    .padding(.horizontal, 14)
+                    .transition(.opacity)
             }
         }
         .overlay(alignment: .bottomTrailing) {
@@ -1177,6 +1176,25 @@ struct NativeSessionView: View {
         .accessibilityIdentifier("remote.privacyShield")
     }
 
+    private var keyboardButtonEligible: Bool {
+        !keyboardOpen && !couch && !panMode && model.canControl && scenePhase == .active &&
+            !showControls && !showOverlaySettings && !showVoiceInput
+    }
+
+    private var keyboardButton: some View {
+        Button(action: openKeyboard) {
+            Image(systemName: "keyboard")
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(Farside.Palette.bone)
+                .frame(width: 46, height: 46)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.97), stroke: Farside.Palette.line2)
+        .accessibilityLabel("Keyboard")
+        .accessibilityIdentifier("remote.keyboard.open")
+    }
+
     // MARK: - Dock
 
     private var dock: some View {
@@ -1205,14 +1223,17 @@ struct NativeSessionView: View {
         }
         .padding(.horizontal, 8)
         .padding(.bottom, controlsCollapsed && !couch ? 0 : 6)
-        .frame(maxWidth: adaptiveLayout && compactHeight ? .infinity : (compactHeight ? 620 : 560))
+        .frame(maxWidth: adaptiveLayout && compactHeight ? .infinity : (wideDock ? 760 : (compactHeight ? 620 : 560)))
     }
 
     private var compactHeight: Bool { verticalSizeClass == .compact }
 
+    /// Landscape: tiles beside the mode switches and End, so the open dock covers half the height.
+    private var wideDock: Bool { compactHeight && (adaptiveLayout || bottomControls) }
+
     private var dockPanel: some View {
         Group {
-            if adaptiveLayout && compactHeight && !couch && !showVoiceInput && !showClipboardRow {
+            if wideDock && !couch && !showVoiceInput && !showClipboardRow {
                 // Use landscape width to preserve a scrollable notice above all dock controls.
                 HStack(alignment: .top, spacing: 16) {
                     VStack(spacing: 10) { if !regularSessionLayout { grabHandle }; tilesRow }
@@ -1623,6 +1644,9 @@ struct NativeSessionView: View {
     private var keyboardBar: some View {
         VStack(spacing: 8) {
             if !model.shortcutChips.isEmpty { shortcutChipRow }
+            // Landscape: keys and the text field share one row, leaving more of the Mac above the keyboard.
+            let oneRow = compactHeight && bottomControls && !regularSessionLayout
+            (oneRow ? AnyLayout(HStackLayout(spacing: 8)) : AnyLayout(VStackLayout(spacing: 8))) {
             if SessionChromePolicy.keyboardBar(regular: regularSessionLayout, hardware: regularHardwareKeyboard) {
                 HStack(spacing: 8) {
                     Group {
@@ -1663,6 +1687,7 @@ struct NativeSessionView: View {
                     .accessibilityLabel("Hide keyboard")
                     .accessibilityIdentifier("remote.keyboard.hide")
                 }
+                .frame(maxWidth: oneRow ? 420 : nil)
             }
             HStack(alignment: .center, spacing: 8) {
                 textField
@@ -1699,6 +1724,7 @@ struct NativeSessionView: View {
                 .disabled(!canSend)
                 .accessibilityLabel("Send text")
             }
+            }
             if let limit = model.textLimitMessage {
                 Text(limit).font(.caption).foregroundStyle(Farside.Palette.bone)
             } else if model.textEditable && !model.textStatus.isEmpty {
@@ -1708,7 +1734,7 @@ struct NativeSessionView: View {
         .padding(.horizontal, 10)
         .padding(.bottom, 6)
         .padding(.top, 6)
-        .frame(maxWidth: regularSessionLayout ? .infinity : 640)
+        .frame(maxWidth: regularSessionLayout || (compactHeight && bottomControls) ? .infinity : 640)
     }
 
     private var keySeparator: some View {
