@@ -30,12 +30,17 @@ final class CouchModeUITests: XCTestCase {
     }
 
     @MainActor
-    func testHomeOffersCouchModeUnderConnect() {
+    func testHomeMenuOffersCouchMode() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-demo-mac"]
         app.launch()
-        let couch = app.buttons["home.couch"]
-        XCTAssertTrue(couch.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Trackpad and keys. No picture."].exists)
+        let more = app.buttons["Help and more"]
+        XCTAssertTrue(more.waitForExistence(timeout: 10))
+        let couch = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Couch mode")).firstMatch
+        XCTAssertFalse(couch.exists, "Home keeps one Connect button")
+        more.tap()
+        XCTAssertTrue(couch.waitForExistence(timeout: 5))
+        XCTAssertTrue(couch.label.contains("Trackpad and keys. No picture.")
+                      || app.staticTexts["Trackpad and keys. No picture."].exists, couch.label)
     }
 }

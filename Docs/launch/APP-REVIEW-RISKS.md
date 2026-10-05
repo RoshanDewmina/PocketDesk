@@ -201,7 +201,7 @@ TEST STEPS (about 5 minutes)
 1. Install and open Farside on the Mac. Grant Screen Recording and
    Accessibility when asked (System Settings). The menu-bar icon shows status.
 2. Mac window shows a pairing QR. On the iPhone: Add Mac, allow Camera, scan.
-   (Camera denied? "Paste Pairing Code" works too.)
+   (Camera denied? "Paste a pairing code" on Home works too.)
 3. Approve the phone on the Mac. The Mac screen appears; drag to move the
    pointer, tap to click, two-finger drag scrolls. Microphone button dictates
    text using on-device speech recognition; nothing is sent to us.

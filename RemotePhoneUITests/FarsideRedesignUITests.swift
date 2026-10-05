@@ -22,9 +22,104 @@ final class FarsideRedesignUITests: XCTestCase {
         XCTAssertFalse(app.buttons["home.pairedMacs"].exists)
         app.buttons["Help and more"].tap()
         XCTAssertTrue(app.buttons["Farside Anywhere"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["Settings"].exists)
-        XCTAssertTrue(app.buttons["How to steer"].exists)
+        for label in ["Settings", "Your Macs", "Help", "Forget This Mac"] {
+            XCTAssertTrue(app.buttons[label].exists, "The menu is missing \(label)")
+        }
+        XCTAssertTrue(couchMenuItem(app).exists, "Couch mode stays one tap away in the menu")
         attach("First minute - later options remain in menu")
+        app.buttons["Settings"].tap()
+        let localOnly = app.switches["home.localOnly"]
+        XCTAssertTrue(localOnly.waitForExistence(timeout: 5), "Settings holds Local network only")
+        XCTAssertTrue(app.buttons["home.agentAlerts"].exists, "Settings holds Alerts & Lock Screen")
+        let steer = app.buttons["settings.howToSteer"]
+        for _ in 0..<4 where !steer.isHittable { app.swipeUp() }
+        steer.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["coach"].firstMatch.waitForExistence(timeout: 5),
+                      "How to steer closes Settings and opens the lessons")
+    }
+
+    @MainActor
+    func testHomeMenuHelpHoldsTroubleshootingAndConnectionDetails() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-demo-mac", "--ui-last-reached"]
+        app.launch()
+        XCTAssertTrue(app.buttons["home.connect"].waitForExistence(timeout: 5))
+        for gone in ["home.couch", "home.localOnly", "home.agentAlerts"] {
+            XCTAssertFalse(app.descendants(matching: .any)[gone].firstMatch.exists, "\(gone) moved off Home")
+        }
+        XCTAssertFalse(app.buttons["How to steer, 40 seconds"].exists, "How to steer moved to Settings")
+        XCTAssertTrue(app.buttons["home.pairedMacs"].exists)
+        attach("Home - paired Mac")
+        app.buttons["Help and more"].tap()
+        XCTAssertTrue(app.buttons["Help"].waitForExistence(timeout: 3))
+        for label in ["Paste Pairing Code", "How to steer", "Server Data", "Third-Party Notices", "Connection Details"] {
+            XCTAssertFalse(app.buttons[label].exists, "\(label) is no longer in the main menu")
+        }
+        attach("Home menu")
+        app.buttons["Help"].tap()
+        XCTAssertTrue(app.buttons["Trouble connecting?"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Connection Details"].exists)
+        attach("Home menu - Help")
+        app.buttons["Connection Details"].tap()
+        XCTAssertTrue(app.navigationBars["Connection Details"].waitForExistence(timeout: 5))
+        app.buttons["Done"].tap()
+        app.buttons["Help and more"].tap()
+        app.buttons["Help"].tap()
+        app.buttons["Trouble connecting?"].tap()
+        XCTAssertTrue(app.staticTexts["Trouble connecting?"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testSettingsKeepsAlertsPrivacyDataRemovalAndNotices() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-demo-mac", "--ui-last-reached"]
+        app.launch()
+        let more = app.buttons["Help and more"]
+        XCTAssertTrue(more.waitForExistence(timeout: 5))
+        more.tap()
+        app.buttons["Settings"].tap()
+        XCTAssertTrue(app.switches["home.localOnly"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["settings.pairAnother"].exists)
+        XCTAssertTrue(app.switches["settings.security.requireOwner"].exists)
+        attach("Settings")
+        app.swipeUp()
+        for id in ["settings.howToSteer", "settings.privacy", "settings.serverData", "settings.legal"] {
+            let row = app.buttons[id]
+            for _ in 0..<3 where !row.isHittable { app.swipeUp() }
+            XCTAssertTrue(row.isHittable, "Settings is missing \(id)")
+        }
+        attach("Settings - scrolled")
+        app.buttons["settings.legal"].tap()
+        XCTAssertTrue(app.navigationBars["Third-Party Notices"].waitForExistence(timeout: 5))
+        app.navigationBars["Third-Party Notices"].buttons["Done"].tap()
+        let serverData = app.buttons["settings.serverData"]
+        XCTAssertTrue(serverData.waitForExistence(timeout: 5))
+        serverData.tap()
+        XCTAssertTrue(app.navigationBars["Server Data"].waitForExistence(timeout: 5), "Server Data removal opens from Settings")
+    }
+
+    @MainActor
+    func testEmptyHomeMenuKeepsSettingsAndPlans() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-x"]
+        app.launch()
+        XCTAssertTrue(app.buttons["Scan pairing code"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Paste a pairing code"].exists)
+        attach("Home - empty")
+        app.buttons["Help and more"].tap()
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Farside Anywhere"].exists)
+        XCTAssertFalse(app.buttons["Forget This Mac"].exists)
+        XCTAssertFalse(couchMenuItem(app).exists)
+        attach("Home menu - empty")
+        app.buttons["Settings"].tap()
+        XCTAssertTrue(app.switches["settings.security.requireOwner"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.switches["home.localOnly"].exists, "No Mac, so no Mac options")
+        attach("Settings - empty")
+    }
+
+    private func couchMenuItem(_ app: XCUIApplication) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Couch mode")).firstMatch
     }
 
     @MainActor
@@ -36,10 +131,16 @@ final class FarsideRedesignUITests: XCTestCase {
         ] {
             app.launchArguments = arguments
             app.launch()
-            XCTAssertTrue(app.buttons["home.couch"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["home.connect"].waitForExistence(timeout: 5))
             let scroll = app.scrollViews.firstMatch
-            for _ in 0..<4 where !app.switches["home.localOnly"].isHittable { scroll.swipeUp() }
-            XCTAssertTrue(app.switches["home.localOnly"].exists)
+            for _ in 0..<4 where !app.buttons["home.pairedMacs"].isHittable { scroll.swipeUp() }
+            XCTAssertTrue(app.buttons["home.pairedMacs"].exists)
+            XCTAssertTrue(app.buttons["home.anywhere"].exists)
+            scroll.swipeDown()
+            app.buttons["Help and more"].tap()
+            XCTAssertTrue(couchMenuItem(app).waitForExistence(timeout: 3))
+            app.buttons["Settings"].tap()
+            XCTAssertTrue(app.switches["home.localOnly"].waitForExistence(timeout: 5))
             app.terminate()
         }
     }

@@ -37,7 +37,7 @@ final class AgentAlertPushUITests: XCTestCase {
             return false
         }
         app.launch()
-        XCTAssertTrue(app.buttons["home.agentAlerts"].waitForExistence(timeout: 10), "Home is showing")
+        XCTAssertTrue(app.buttons["home.connect"].waitForExistence(timeout: 10), "Home is showing")
         // iOS asks once per install; a simulator that already answered goes straight on.
         let allow = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Allow"]
         if allow.waitForExistence(timeout: 8) { allow.tap() }
