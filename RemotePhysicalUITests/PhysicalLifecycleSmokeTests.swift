@@ -41,8 +41,19 @@ final class PhysicalLifecycleSmokeTests: XCTestCase {
     @MainActor
     func testHomeReturnAutomaticallyRestoresFreshSession() throws {
         let app = try pairedSession()
+        try requireHomeReturn(app, backgroundSeconds: 10, label: "default automatic PiP")
+    }
+
+    @MainActor
+    func testHomeReturnWithoutAutomaticPiPRestoresFreshSession() throws {
+        let app = try pairedSession(launchArguments: ["-farsideAutoPiPDisabled", "YES"])
+        try requireHomeReturn(app, backgroundSeconds: 50, label: "automatic PiP disabled, 50-second background")
+    }
+
+    @MainActor
+    private func requireHomeReturn(_ app: XCUIApplication, backgroundSeconds: TimeInterval, label: String) throws {
         XCUIDevice.shared.press(.home)
-        Thread.sleep(forTimeInterval: 10)
+        Thread.sleep(forTimeInterval: backgroundSeconds)
         app.activate()
         // Closing the Controls sheet leaves the session dock expanded. Either chrome
         // state is valid on return; fresh control admission below is the actual gate.
@@ -50,11 +61,11 @@ final class PhysicalLifecycleSmokeTests: XCTestCase {
             app.buttons["Show controls"].exists || app.buttons["Hide controls"].exists
         }, object: nil)
         let result = XCTWaiter.wait(for: [restored], timeout: 20)
-        record("Physical Home-return before readiness assertion", app)
+        record("Physical Home-return " + label + " before readiness assertion", app)
         XCTAssertEqual(result, .completed, "Return must restore the session without tapping Connect")
         XCTAssertFalse(app.buttons["home.connect"].exists)
         try requireFreshControls(app)
-        record("Physical Home-return fresh controls", app)
+        record("Physical Home-return " + label + " fresh controls", app)
     }
 
     @MainActor
