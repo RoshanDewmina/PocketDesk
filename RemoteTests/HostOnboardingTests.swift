@@ -89,7 +89,7 @@ final class HostOnboardingTests: XCTestCase {
         let skipped = HostReadyCheck.checks(for: pairStep(deferred: true)).first { $0.id == .phone }
         XCTAssertEqual(skipped?.result, .optional)
         XCTAssertEqual(skipped?.fix, .pairPhone)
-        XCTAssertEqual(skipped?.detail, "Skipped for now · pair from the menu bar")
+        XCTAssertEqual(skipped?.detail, "Skipped for now · pair in Settings → Devices")
 
         let missing = HostReadyCheck.checks(for: pairStep(deferred: false)).first { $0.id == .phone }
         XCTAssertEqual(missing?.result, .fail)

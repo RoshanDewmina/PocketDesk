@@ -167,6 +167,21 @@ enum HostPopoverPolicy {
     }
 }
 
+/// Guest viewing is off for 1.0 (D63): no Settings section, no new links, no approvals. A guest row
+/// that somehow exists while off still shows wherever it did, so nobody watches this Mac unseen and
+/// it can always be ended or declined.
+enum HostGuestPolicy {
+    static let enabled = enabled(defaults: .standard)
+
+    static func enabled(defaults: UserDefaults) -> Bool {
+        defaults.bool(forKey: "farsideGuestViewingEnabled")
+    }
+
+    static func showsSettings(available: Bool, rows: [HostGuestRow], enabled: Bool = enabled) -> Bool {
+        (enabled && available) || !rows.isEmpty
+    }
+}
+
 enum HostMetricCopy {
     static let roundTripTitle = "Network RTT"
     static let sendingTitle = "Sending FPS"
@@ -633,7 +648,7 @@ struct HostReadyCheck: Equatable, Identifiable {
             return Self(id: .phone, title: "iPhone paired", detail: "Only your approved phone can connect", result: .pass)
         }
         return state.pairingDeferred
-            ? Self(id: .phone, title: "iPhone paired", detail: "Skipped for now · pair from the menu bar",
+            ? Self(id: .phone, title: "iPhone paired", detail: "Skipped for now · pair in Settings → Devices",
                    result: .optional, fix: .pairPhone)
             : Self(id: .phone, title: "iPhone paired", detail: "No phone paired yet", result: .fail, fix: .pairPhone)
     }

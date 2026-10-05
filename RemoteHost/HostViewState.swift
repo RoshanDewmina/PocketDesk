@@ -123,7 +123,7 @@ struct HostViewState: Equatable {
     var guestRows: [HostGuestRow] = []
     var guestMessage: String?
     var detail: String?
-    /// Setup's Pair step was skipped; pairing happens later from the menu bar.
+    /// Setup's Pair step was skipped; pairing happens later in Settings → Devices.
     var pairingDeferred = false
     var serverRemovalBusy = false
     var serverRemovalPending = false

@@ -47,6 +47,7 @@ final class HostUISnapshotTests: XCTestCase {
                 $0.detail = "Couldn’t reach the connection. Check this Mac’s internet, then try again."
             }),
             ("popover-needs-setup", ready(.needsScreenRecording) { $0.screenRecording = .denied }),
+            ("popover-needs-phone", ready(.needsPhone) { $0.hasPairedPhone = false }),
             ("popover-capture-approval", ready(.captureNeedsApproval)),
             ("popover-crash-loop", ready(.unavailable) {
                 $0.crashLoopStopped = true
@@ -311,6 +312,9 @@ final class HostUISnapshotTests: XCTestCase {
         for page in HostSettingsPage.allCases {
             try render("settings-page-\(page.rawValue)", HostSettingsView(state: rich, actions: .preview, page: page))
         }
+        var guestsOff = rich
+        guestsOff.guestViewingAvailable = true
+        try render("settings-page-devices-guests-off", HostSettingsView(state: guestsOff, actions: .preview, page: .devices))
         try render("settings-page-overview-needs-permissions", HostSettingsView(state: ready(.needsScreenRecording) {
             $0.screenRecording = .denied
             $0.accessibility = .denied

@@ -165,6 +165,21 @@ final class HostPresentationTests: XCTestCase {
         XCTAssertNil(HostPopoverPolicy.audience([viewing, pending], enabled: false), "Rollback restores no audience block")
     }
 
+    func testGuestViewingIsOffByDefaultButNeverHidesAnExistingGuest() throws {
+        let name = "HostGuestPolicyTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        XCTAssertFalse(HostGuestPolicy.enabled(defaults: defaults), "Guest viewing stays hidden for 1.0")
+        defaults.set(true, forKey: "farsideGuestViewingEnabled")
+        XCTAssertTrue(HostGuestPolicy.enabled(defaults: defaults))
+        let row = HostGuestRow(id: "1", fingerprint: "a", status: "Viewing · video only", pending: false, linkReady: false)
+        XCTAssertFalse(HostGuestPolicy.showsSettings(available: true, rows: [], enabled: false))
+        XCTAssertTrue(HostGuestPolicy.showsSettings(available: true, rows: [], enabled: true))
+        XCTAssertFalse(HostGuestPolicy.showsSettings(available: false, rows: [], enabled: true))
+        XCTAssertTrue(HostGuestPolicy.showsSettings(available: false, rows: [row], enabled: false),
+                      "A guest that exists can still be seen and ended")
+    }
+
     func testMetricLabelsExplainNetworkAndSenderMeasurements() {
         XCTAssertEqual(HostMetricCopy.roundTripTitle, "Network RTT")
         XCTAssertEqual(HostMetricCopy.sendingTitle, "Sending FPS")
@@ -295,7 +310,7 @@ final class HostPresentationTests: XCTestCase {
     func testStepChangesMoveThePageOnlyWhenTheyMust() {
         XCTAssertEqual(HostSetupFlow.page(afterStepChangeFrom: .done, to: .screenRecording, current: .ready), .permissions)
         XCTAssertEqual(HostSetupFlow.page(afterStepChangeFrom: .done, to: .pairPhone, current: .ready), .pair,
-                       "Pair a phone… from the menu opens the pairing page")
+                       "Pairing from Settings or the popover opens the pairing page")
         XCTAssertEqual(HostSetupFlow.page(afterStepChangeFrom: .pairPhone, to: .done, current: .pair), .ready,
                        "Approving the phone moves on to the ready check")
         XCTAssertEqual(HostSetupFlow.page(afterStepChangeFrom: .accessibility, to: .pairPhone, current: .permissions),

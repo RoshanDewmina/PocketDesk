@@ -237,7 +237,7 @@ struct HostSettingsView: View {
             HostPopoverPresentation.make(for: state).mood == .attention
                 || state.lockWarning != nil || !attentionItems.isEmpty
         case .devices:
-            state.localPairRemovalMessage != nil || state.guestRows.contains(where: \.pending)
+            state.localPairRemovalMessage != nil || (HostGuestPolicy.enabled && state.guestRows.contains(where: \.pending))
         case .sharing:
             state.screenRecording == .denied || (state.allowControl && state.accessibility == .denied)
                 || state.loginItem == .needsApproval || state.automaticRecovery == .needsApproval
@@ -302,7 +302,7 @@ struct HostSettingsView: View {
             readyChecklist(presentation)
         case .devices:
             devicesSection
-            if state.guestViewingAvailable || !state.guestRows.isEmpty {
+            if HostGuestPolicy.showsSettings(available: state.guestViewingAvailable, rows: state.guestRows) {
                 HostGuestSettingsView(state: state, actions: actions)
             }
         case .sharing:
@@ -491,7 +491,7 @@ struct HostSettingsView: View {
                                text: state.serverRemovalMessage ?? "Removing this Mac’s server data didn’t finish. Sharing stays off until it does.",
                                buttonTitle: "Retry Removal…") { confirmingServerRemoval = true })
         }
-        let pendingGuests = state.guestRows.filter(\.pending).count
+        let pendingGuests = HostGuestPolicy.enabled ? state.guestRows.filter(\.pending).count : 0
         if pendingGuests > 0 {
             items.append(.init(id: "guests", symbol: "person.badge.clock",
                                text: pendingGuests == 1 ? "A guest is waiting for you to approve video viewing."
