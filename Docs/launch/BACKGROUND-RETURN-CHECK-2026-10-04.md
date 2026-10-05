@@ -23,3 +23,11 @@ Preparation1255694 adds the explicitly opt-in FarsidePhysicalLifecycleUITests sc
 - No App Store upload/submission, publication, Mac permission reset or codec-quality default change.
 
 Receipts are local in the Oct4 Codex chat work/lifecycle-checks and work/manual-test-2026-10-04 directories. Raw diagnostics are not uploaded.
+
+## Renderer / native batch checkpoint
+
+Candidate20261004.3 integrated at281f6e3 preserves normal/Release two-drawable defaults; DEBUG-only alternate pool3 keeps at most two frame flights. Source review approved renderer and observation harness. Integrated OwnedVideoLifecycleTests plus VideoRefreshPolicyTests:39 passed, zero failures. Signed phone physical runner and host builds passed; phone and Mac installs are version-verified20261004.3 and host Ready shows both grants. No permission resets.
+
+Native batch includes corrected default Home10seconds, no-automatic-PiP Home50seconds (beyond phone25second hold), manual PiP12seconds, and opt-in2→3→2 renderer60second observation sessions. The fixture is local native scrolling code/text; existing owner apps stay running. Marker reads are disabled consistently for this non-marker fixture. Draw submissions are not actual displayedFPS; actual presentation callbacks/timing must be used. Physical batch is staged but blocked by the current OS passcode requirement; owner unlock requested. No performance acceptance inferred from39 unit tests or installs.
+
+User requires60fps under realistic multitasking at the same sharpness and latency. A quiet comparison is diagnostic only; acceptance must include representative load. No default30fps target is accepted as the outcome, and forcing60/lowering resolution/inventing frames would not satisfy this gate.
