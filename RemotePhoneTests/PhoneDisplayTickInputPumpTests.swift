@@ -498,12 +498,19 @@ final class PhoneDisplayTickInputPumpTests: XCTestCase {
             var outgoing: [ControlPacket] = []
             model.connection.inputPacketSenderForTesting = { outgoing.append($0); return true }
             try prepareInput(model, outgoing: { outgoing }, session: "phone-cancel")
+            outgoing.removeAll() // Geometry/setup cleanup precedes the gesture under test.
 
             func move(_ x: Double) -> Bool {
                 absolute ? model.pointTo(CGPoint(x: x, y: 10))
                     : model.gesture(.move(CGSize(width: x, height: 0)))
             }
             XCTAssertTrue(move(5)) // The burst's leading sample leaves immediately.
+            // The real reliable motion lane permits one checkpoint per ACK round trip.
+            // ACK the leading sample so an erroneous later tick can actually emit 6/7.
+            var ack = try XCTUnwrap(outgoing.last?.input)
+            ack.kind = "ack"; ack.segments = []
+            try model.connection.receiveInputFixtureForTesting(ControlPacket(session: "phone-cancel", sequence: 2,
+                action: RemoteAction(action: "heartbeat", epoch: 7), input: ack))
             let afterLeading = outgoing.count
             XCTAssertTrue(move(6)); XCTAssertTrue(move(7)) // Both wait for the display tick.
             XCTAssertEqual(outgoing.count, afterLeading)
@@ -533,6 +540,7 @@ final class PhoneDisplayTickInputPumpTests: XCTestCase {
         var outgoing: [ControlPacket] = []
         model.connection.inputPacketSenderForTesting = { outgoing.append($0); return true }
         try prepareInput(model, outgoing: { outgoing }, session: "phone-cancel-hold")
+        outgoing.removeAll() // Only this hold's cleanup belongs to the assertion below.
         model.drag()
         let hold = try XCTUnwrap(outgoing.last { $0.action.action == "dragDown" }?.action.interaction?.hold)
         XCTAssertTrue(model.dragging)
