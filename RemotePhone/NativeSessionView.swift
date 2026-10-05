@@ -53,6 +53,7 @@ struct NativeSessionView: View {
     @State private var revision: UInt64 = 0
     @State private var keyboardBarFrame: CGRect = .zero
     @State private var manualViewportRevision: UInt64 = 0
+    @State private var readingLensOpen = false
     @StateObject private var precisionTap = PrecisionTapController()
     @AppStorage(PrecisionTapTrigger.key) private var precisionTrigger: PrecisionTapTrigger = .off
     @AppStorage("pointerSensitivity") private var sensitivity = 1.0
@@ -121,6 +122,12 @@ struct NativeSessionView: View {
             if !couch { PrecisionLoupeOverlay(controller: precisionTap, model: model, viewport: viewport,
                                   track: connection.remoteVideo, offline: offlineLayoutCheck)
                 .ignoresSafeArea() }
+            if readingLensOpen && !couch && !model.contentConcealed && !model.privacyShield && !showControls && !keyboardOpen && precisionTap.tap == nil,
+               offlineLayoutCheck || (scenePhase == .active && connection.connected && model.inlinePresentationAdmission != nil) {
+                ReadingGlassLens(model: model, viewport: viewport, track: connection.remoteVideo,
+                                 offline: offlineLayoutCheck, close: { readingLensOpen = false })
+                    .ignoresSafeArea()
+            }
             ReconnectVeil(active: (!offlineLayoutCheck && !connection.connected && !lockVisible) || LaunchOptions.has("--ui-reconnecting"))
             Color.clear
                 .allowsHitTesting(false)
@@ -251,6 +258,10 @@ struct NativeSessionView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { openVoiceInput() }
             }
         }
+        .onChange(of: model.privacyShield) { _, shielded in if shielded { readingLensOpen = false } }
+        .onChange(of: model.contentConcealed) { _, concealed in if concealed { readingLensOpen = false } }
+        .onChange(of: connection.connected) { _, connected in if !connected { readingLensOpen = false } }
+        .onChange(of: model.inlinePresentationAdmission?.identity) { _, _ in readingLensOpen = false }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { cancelGesture() }
             if phase == .background { cancelVoiceInput() }
@@ -429,6 +440,7 @@ struct NativeSessionView: View {
                     model.previewHoldForTesting(explicit: hold == "explicit")
                 }
             }
+            if offlineLayoutCheck && LaunchOptions.has("--ui-reading-lens") { readingLensOpen = true }
             if offlineLayoutCheck && LaunchOptions.has("--ui-dock-open") { controlsCollapsed = false }
             if offlineLayoutCheck && LaunchOptions.has("--ui-clipboard-row") {
                 controlsCollapsed = false
@@ -2564,6 +2576,22 @@ struct NativeSessionView: View {
                         summaryRow("Display", "display", value: currentDisplayName, page: .display)
                     }
                 }
+            }
+            if !couch {
+                Section {
+                    Button {
+                        cancelGesture()
+                        closeControls()
+                        controlsCollapsed = true
+                        readingLensOpen = true
+                    } label: {
+                        Label("Magnifier", systemImage: "plus.magnifyingglass")
+                            .frame(minHeight: 44)
+                    }
+                    .disabled(!offlineLayoutCheck && (model.contentConcealed || model.privacyShield || !connection.connected || model.inlinePresentationAdmission == nil))
+                    .accessibilityHint("Open a movable glass lens to read small text")
+                    .accessibilityIdentifier("remote.magnifier.open")
+                } footer: { Text("Drag the lens to enlarge small text without moving your Mac’s pointer.") }
             }
             Section {
                 summaryRow("Picture", "photo", value: model.pictureMode.localizedTitle(), page: .picture)

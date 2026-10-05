@@ -3796,6 +3796,7 @@ struct RemoteVideoSurface: UIViewRepresentable {
     var videoFeedback: VideoFeedbackContext?
     var frameTiming: PhoneFrameTimingLog?
     var sourceCrop: CGRect?
+    var glassLens = false
     let onFrame: () -> Void
 
     static func contentMode(fillsFrame: Bool) -> UIView.ContentMode { fillsFrame ? .scaleToFill : .scaleAspectFit }
@@ -3830,7 +3831,7 @@ struct RemoteVideoSurface: UIViewRepresentable {
         context.coordinator.session?.onFrameDrawn = onFrameDrawn
         context.coordinator.session?.configure(admission: admission, counters: counters, statistics: statistics,
             sourceSize: sourceSize, displayedPixelWidth: displayedPixelWidth, fillsFrame: fillsFrame,
-            mode: smoothMotion, upscale: smoothMotionUpscale, onSourceFrame: onSourceFrame, videoFeedback: videoFeedback, sourceCrop: sourceCrop, frameTiming: frameTiming)
+            mode: smoothMotion, upscale: smoothMotionUpscale, onSourceFrame: onSourceFrame, videoFeedback: videoFeedback, sourceCrop: sourceCrop, frameTiming: frameTiming, glassLens: glassLens)
     }
     static func dismantleUIView(_ view: UIView, coordinator: Coordinator) { coordinator.invalidate(); view.subviews.forEach { $0.removeFromSuperview() } }
 }

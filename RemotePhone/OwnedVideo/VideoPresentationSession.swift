@@ -59,13 +59,14 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
     }
     func configure(admission: VideoPresentationAdmission, counters: StreamCounters?, statistics: Bool,
                    sourceSize: CGSize, displayedPixelWidth: CGFloat, fillsFrame: Bool,
-                   mode: SmoothMotionMode, upscale: Bool, onSourceFrame: ((VideoFrameEnvelope) -> Void)?, videoFeedback: VideoFeedbackContext? = nil, sourceCrop: CGRect? = nil, frameTiming: PhoneFrameTimingLog? = nil) {
+                   mode: SmoothMotionMode, upscale: Bool, onSourceFrame: ((VideoFrameEnvelope) -> Void)?, videoFeedback: VideoFeedbackContext? = nil, sourceCrop: CGRect? = nil, frameTiming: PhoneFrameTimingLog? = nil, glassLens: Bool = false) {
         guard !stopped, fence.renew(admission) else { invalidate(); return }
         expiryTimer?.invalidate()
         let timer = Timer(timeInterval: max(0.001, admission.validUntil - ProcessInfo.processInfo.systemUptime), repeats: false) { [weak self] _ in self?.invalidate() }
         expiryTimer = timer; RunLoop.main.add(timer, forMode: .common)
         let configured = fence.withAdmission(admissionIdentity, at: ProcessInfo.processInfo.systemUptime) {
             view.counters = counters; view.fillsFrame = fillsFrame; readsMarkers = statistics
+            view.glassLensEnabled = glassLens
             self.onSourceFrame = onSourceFrame
             self.sourceCrop = sourceCrop
             self.frameTiming = frameTiming

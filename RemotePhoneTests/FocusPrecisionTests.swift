@@ -168,4 +168,36 @@ final class FocusPrecisionTests: XCTestCase {
         XCTAssertGreaterThan(below.y, 100)
         XCTAssertGreaterThanOrEqual(below.x - LoupeGeometry.diameter / 2, safe.minX)
     }
+    func testReadingLensStaysInsidePictureAndLeavesRoomForControls() {
+        for safe in [CGRect(x: 0, y: 59, width: 393, height: 700), CGRect(x: 59, y: 0, width: 720, height: 320),
+                     CGRect(x: 0, y: 200, width: 393, height: 300)] {
+            let diameter = ReadingLensLayout.diameter(in: safe)
+            for proposed in [CGPoint(x: -1000, y: -1000), CGPoint(x: 10000, y: 10000)] {
+                let center = ReadingLensLayout.center(proposed, in: safe, diameter: diameter)
+                XCTAssertGreaterThanOrEqual(center.x - diameter / 2, safe.minX)
+                XCTAssertLessThanOrEqual(center.x + diameter / 2, safe.maxX)
+                XCTAssertGreaterThanOrEqual(center.y - diameter / 2, safe.minY)
+                XCTAssertLessThanOrEqual(center.y + diameter / 2 + 50, safe.maxY)
+            }
+        }
+        XCTAssertEqual(ReadingLensLayout.diameter(in: CGRect(x: 0, y: 0, width: 50, height: 50)), 0)
+    }
+
+    func testPrecisionRefractionKeepsTargetInUndistortedCenter() {
+        XCTAssertTrue(PrecisionGlassPolicy.permitsRefraction(crosshair: CGPoint(x: 66, y: 66), diameter: 132))
+        XCTAssertFalse(PrecisionGlassPolicy.permitsRefraction(crosshair: CGPoint(x: 2, y: 130), diameter: 132))
+        XCTAssertFalse(PrecisionGlassPolicy.permitsRefraction(crosshair: CGPoint(x: 66, y: 112), diameter: 132))
+    }
+
+    func testReadingLensCanSampleNarrowCaptureAtDisplayEdge() throws {
+        let region = CaptureRegion(epoch: 1, x: 0, y: 0, width: 200, height: 200, outputWidth: 400, outputHeight: 400)
+        let target = ReadingLensLayout.sampleTarget(CGPoint(x: 500, y: 300), region: region, displaySize: display)
+        XCTAssertEqual(target, CGPoint(x: 200, y: 200))
+        let geometry = try XCTUnwrap(LoupeGeometry.make(target: target, scale: 0.3, region: region,
+                                                       displaySize: display, diameter: 220, magnification: 2))
+        XCTAssertGreaterThan(geometry.crop.width, 0)
+        XCTAssertLessThanOrEqual(geometry.crop.maxX, 1)
+        XCTAssertLessThanOrEqual(geometry.crop.maxY, 1)
+    }
+
 }
