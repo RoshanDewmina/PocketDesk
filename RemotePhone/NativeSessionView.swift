@@ -1551,6 +1551,7 @@ struct NativeSessionView: View {
                 }
                 Divider().overlay(Farside.Palette.line)
             }
+            if model.richClipboardSupported { RichClipboardRow(model: model, clipboard: model.richClipboard) }
             FileTransferRow(model: model, files: model.files)
         }
         .padding(14)

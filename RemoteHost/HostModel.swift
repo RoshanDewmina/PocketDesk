@@ -90,7 +90,7 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var keepAwakeActive = false
     @Published private(set) var onBattery = false
     @Published private(set) var consentPending = false
-    @Published private(set) var displayAsleep = false { didSet { if displayAsleep { fileBrowser.reset() } } }
+    @Published private(set) var displayAsleep = false { didSet { if displayAsleep { fileBrowser.reset(); richClipboard.reset() } } }
     @Published private(set) var openAtLogin = false
     @Published private(set) var chimeOnConnect: Bool
     @Published private(set) var allowSystemAudio = true
@@ -233,13 +233,14 @@ final class RemoteHostModel: ObservableObject {
     private let powerAssertions = HostPowerAssertions()
     private let displayWake = HostDisplayWake()
     private var screenLocked = false {
-        didSet { reconcileAutomaticClipboard(); if screenLocked { fileBrowser.reset() } }
+        didSet { reconcileAutomaticClipboard(); if screenLocked { fileBrowser.reset(); richClipboard.reset() } }
     }
     private var couchSessionSnapshot = CouchSessionSnapshotCache()
     private var unavailabilityTeardown: Task<Void, Never>?
     private var availabilityTeardownGeneration = AvailabilityTeardownGeneration()
     private var timedPauseTask: Task<Void, Never>?
     private let clipboard = HostClipboardService()
+    private let richClipboard = RichClipboardEndpoint(isHost: true)
     private let fileTransfer = HostFileTransferService()
     private lazy var fileBrowser = HostFileBrowserService(access: HostFileBrowserFolders.shared.access)
     private var phonePause = HostPhonePause()
@@ -266,10 +267,10 @@ final class RemoteHostModel: ObservableObject {
     private var axPrewarmEdge = HostAXPrewarmEdge()
     private let axSessionGeneration = HostAXSessionGeneration()
     private var captureHealthy = false {
-        didSet { reconcileAutomaticClipboard(); if !captureHealthy { fileBrowser.reset() } }
+        didSet { reconcileAutomaticClipboard(); if !captureHealthy { fileBrowser.reset(); richClipboard.reset() } }
     }
     private var sessionState: HostSessionState = .picture {
-        didSet { reconcileAutomaticClipboard(); if sessionState != .picture { fileBrowser.reset() } }
+        didSet { reconcileAutomaticClipboard(); if sessionState != .picture { fileBrowser.reset(); richClipboard.reset() } }
     }
     private var couchHealthy = false
     private var lastPhoneHeartbeatAt: TimeInterval?
@@ -353,7 +354,7 @@ final class RemoteHostModel: ObservableObject {
         capture.setSystemAudioEnabled(false)
         guests.endAll()
         _ = capture.stop() // synchronous frame fence, before any await or peer teardown
-        clipboard.reset()
+        richClipboard.reset(); clipboard.reset()
         fileTransfer.reset(); fileBrowser.reset()
         stopSharing()
         advanceEpoch()
@@ -667,6 +668,7 @@ final class RemoteHostModel: ObservableObject {
         clipboard.bufferedAmount = { [weak self] in self?.connection.media?.controlBufferedAmount }
         clipboard.automaticPolicy = { [weak self] in self?.automaticClipboardAllowed == true }
         wireFileTransfer()
+        wireRichClipboard()
         connectionObserver = connection.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
             Task { @MainActor [weak self] in self?.connectionDidChange() }
@@ -1223,6 +1225,42 @@ final class RemoteHostModel: ObservableObject {
         return refusal.rawValue
     }
 
+    private var richClipboardAllowed: Bool {
+        WorkspaceUtilities.isEnabled(preferences.defaults) && connection.peerFeatures.contains(SessionFeature.extendedFeatureList)
+            && fileTransferRefusal == nil && controlPermission.isGranted && sessionState == .picture && sessionHealthy
+            && !screenLocked && !displayAsleep && !away.wantsCover && !away.isLocking && !HostSecureFocus.secureEventInputEnabled()
+            && connection.media?.lowDataPolicyActive != true
+    }
+    private func wireRichClipboard() {
+        clipboard.richEffectAllowed = { !HostSecureFocus.isSecureForClipboardTransfer() }
+        richClipboard.allowed = { [weak self] in self?.richClipboardAllowed == true }
+        richClipboard.transport = { [weak self] frame in
+            guard let self, self.connection.connected, !self.sessionRefused else { return false }
+            return self.connection.sendControl(.workspace(frame, epoch: self.inputEpoch.value))
+        }
+        richClipboard.engine.link = { [weak self] in self?.connection.media.map(RichClipboardLink.init) }
+        richClipboard.engine.isRelayed = { [weak self] in self?.connection.media?.isRelayRoute ?? false }
+        connection.richClipboardTransfer = richClipboard.engine
+        richClipboard.beginExplicit = { [weak self] in self?.clipboard.beginRichTransaction() ?? 1 }
+        richClipboard.finishExplicit = { [weak self] _, _ in self?.clipboard.finishRichTransaction() }
+        richClipboard.readImage = { [weak self] lease, completion in
+            guard let self, self.richClipboardAllowed else { completion(.failure(.notAllowed)); return }
+            Task { @MainActor [weak self] in
+                let secure = await HostSecureFocus.isSecureNow()
+                guard let self, !secure, lease.isActive, self.richClipboardAllowed else { completion(.failure(.notAllowed)); return }
+                self.clipboard.readRichImage(lease: lease, completion: completion)
+            }
+        }
+        richClipboard.storeImage = { [weak self] png, _, lease, completion in
+            guard let self, self.richClipboardAllowed else { completion(false); return }
+            Task { @MainActor [weak self] in
+                let secure = await HostSecureFocus.isSecureNow()
+                guard let self, !secure, lease.isActive, self.richClipboardAllowed else { completion(false); return }
+                self.clipboard.storeRichImage(png, lease: lease, completion: completion)
+            }
+        }
+    }
+
     private func wireFileTransfer() {
         let engine = fileTransfer.engine
         engine.sendControl = { [weak self] frame in
@@ -1761,7 +1799,7 @@ final class RemoteHostModel: ObservableObject {
             awayRecord(Self.awayPhaseDescription(lastAwayPhase))
         }
         if !awayPictureClear || away.isLocking {
-            fileBrowser.reset()
+            fileBrowser.reset(); richClipboard.reset()
             input.withAuthority {
                 input.enabled = false
                 input.invalidateQueued(); inputFreshness.expireTokens()
@@ -1783,7 +1821,7 @@ final class RemoteHostModel: ObservableObject {
         }
         if input.held { connection.dropPeerSession() }
         guests.endAll(); browserSession.stop()
-        invalidateTextFocus(); clipboard.reset(); fileTransfer.reset(); fileBrowser.reset()
+        invalidateTextFocus(); richClipboard.reset(); clipboard.reset(); fileTransfer.reset(); fileBrowser.reset()
         connection.media?.setSystemAudioEnabled(false); capture.setSystemAudioEnabled(false)
         sendCaptureHealth(false)
     }
@@ -2396,7 +2434,7 @@ final class RemoteHostModel: ObservableObject {
         )
         if !effective {
             releaseRemoteInput(notifyPhone: notifyPhone)
-            clipboard.reset()
+            richClipboard.reset(); clipboard.reset()
             fileTransfer.revoke(); fileBrowser.reset()
         }
         reconcileAutomaticClipboard()
@@ -2770,7 +2808,7 @@ final class RemoteHostModel: ObservableObject {
         phonePause.clear()
         acceptedPhonePauseEpoch = nil
         liveViewOnly = false
-        clipboard.reset()
+        richClipboard.reset(); clipboard.reset()
         fileTransfer.reset(); fileBrowser.reset()
         releaseRemoteInput(notifyPhone: false)
         input.endCausalContext(); inputFreshness.invalidate()
@@ -3016,6 +3054,11 @@ final class RemoteHostModel: ObservableObject {
             receiveModeRequest(action)
             return
         }
+        if action.action == "workspace", action.workspace?.kind == .richClipboard {
+            guard action.epoch == inputEpoch.value, (try? action.validateWorkspace()) == true,
+                  connection.connected, active, !sessionRefused, !deliberatePeerEnding, let frame = action.workspace else { return }
+            richClipboard.receive(frame); return
+        }
         if action.action == "workspace", action.workspace?.kind == .files {
             guard action.epoch == inputEpoch.value, (try? action.validateWorkspace()) == true,
                   connection.connected, active, !sessionRefused, !deliberatePeerEnding,
@@ -3260,6 +3303,8 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func reconcileAutomaticClipboard() {
+        clipboard.richOrderingEnabled = WorkspaceUtilities.isEnabled(preferences.defaults) && connection.peerFeatures.contains(SessionFeature.extendedFeatureList)
+        if !richClipboardAllowed { richClipboard.reset() }
         clipboard.reconcileAutomaticSync(allowed: automaticClipboardAllowed,
             peerSupports: connection.peerFeatures.contains(SessionFeature.clipboardSync))
     }
@@ -3733,7 +3778,7 @@ final class RemoteHostModel: ObservableObject {
                 return true
             }
             guard released else { connection.dropPeerSession(); return }
-            invalidateTextFocus(); clipboard.reset(); fileTransfer.reset(); fileBrowser.reset()
+            invalidateTextFocus(); richClipboard.reset(); clipboard.reset(); fileTransfer.reset(); fileBrowser.reset()
             // Restore only the Mac owner's existing producer consent when leaving live PiP.
             // Phone playback remains muted until the person explicitly enables it again.
             if next { cancelHeldScale(); phoneAudioRequested = false }
@@ -3889,7 +3934,7 @@ final class RemoteHostModel: ObservableObject {
         curtain.cancelRaise()
         phonePause.begin(at: ProcessInfo.processInfo.systemUptime)
         reconcileSystemAudio()
-        clipboard.reset()
+        richClipboard.reset(); clipboard.reset()
         fileTransfer.reset(); fileBrowser.reset()
         invalidateTextFocus()
         releaseRemoteInput(notifyPhone: false)

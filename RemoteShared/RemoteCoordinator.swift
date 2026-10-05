@@ -101,6 +101,7 @@ final class RemoteCoordinator: ObservableObject {
     var media: PeerMedia?
     /// Receives the `file` channel's chunks and buffer changes for every session's peer.
     weak var fileTransfer: FileTransferEngine?
+    weak var richClipboardTransfer: FileTransferEngine?
     static let multiDeviceDisabledKey = "FarsideHostMultiDeviceDisabled"
     private let multiDeviceEnabled: Bool
     private var registeredHostTokens: [String] = []
@@ -1830,8 +1831,13 @@ final class RemoteCoordinator: ObservableObject {
                              textClarity: isHost && peerFeatures.contains(SessionFeature.textClarity), capabilitySnapshot: capabilitySnapshot)
         media = peer
         if let engine = fileTransfer {
-            peer.onFileMessage = { [weak engine] data in engine?.receiveChunk(data) }
-            peer.onFileBufferedAmountChange = { [weak engine] in engine?.fileBufferedAmountChanged() }
+            let rich = richClipboardTransfer
+            peer.onFileMessage = { [weak engine, weak rich] data in
+                if RichClipboardBulk.isRich(data) {
+                    if let payload = RichClipboardBulk.unwrap(data) { rich?.receiveChunk(payload) }
+                } else { engine?.receiveChunk(data) }
+            }
+            peer.onFileBufferedAmountChange = { [weak engine, weak rich] in engine?.fileBufferedAmountChanged(); rich?.fileBufferedAmountChanged() }
         }
         if isHost { peer.offer() }
         peer.onDiagnostics = { [weak self, weak peer] value in

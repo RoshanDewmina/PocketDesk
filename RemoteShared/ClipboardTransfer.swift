@@ -48,6 +48,8 @@ struct ClipboardFrame: Codable, Equatable {
     var afterCopy: Bool? = nil
     /// Capability-negotiated Mac→phone sync. Every chunk carries the same marker.
     var automatic: Bool? = nil
+    /// workspace.1 rich ordering: all automatic chunks bind one host source revision.
+    var sourceRevision: UInt64? = nil
 
     static let operations: Set<String> = ["push", "pull", "data", "result"]
 
@@ -55,7 +57,8 @@ struct ClipboardFrame: Codable, Equatable {
 
     func validate() throws {
         guard version == 1, Self.operations.contains(op), ClipboardTransferID.isValid(transfer),
-              automatic == nil || (op == "data" && automatic == true) else {
+              automatic == nil || (op == "data" && automatic == true),
+              sourceRevision == nil || (automatic == true && (sourceRevision ?? 0) > 0) else {
             throw RemoteError.invalidMessage
         }
         switch op {
@@ -171,6 +174,7 @@ struct ClipboardAssembler {
     private var transfer: String?
     private var kind = ""
     private var automatic: Bool?
+    private var sourceRevision: UInt64?
     private var count = 0
     private var bytes = 0
     private var digest = ""
@@ -190,13 +194,14 @@ struct ClipboardAssembler {
             transfer = frame.transfer
             kind = frame.kind ?? ""
             automatic = frame.automatic
+            sourceRevision = frame.sourceRevision
             count = frame.count ?? 0
             bytes = frame.bytes ?? 0
             digest = frame.digest ?? ""
             buffer.reserveCapacity(bytes)
         } else {
             guard frame.transfer == transfer, index == nextIndex, frame.kind == kind,
-                  frame.count == count, frame.bytes == bytes, frame.digest == digest, frame.automatic == automatic
+                  frame.count == count, frame.bytes == bytes, frame.digest == digest, frame.automatic == automatic, frame.sourceRevision == sourceRevision
             else { return fail(frame.transfer) }
         }
         buffer.append(data)
@@ -220,7 +225,7 @@ struct ClipboardAssembler {
     mutating func reset() {
         transfer = nil
         kind = ""
-        automatic = nil
+        automatic = nil; sourceRevision = nil
         count = 0
         bytes = 0
         digest = ""

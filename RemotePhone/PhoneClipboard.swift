@@ -49,6 +49,23 @@ final class PhoneClipboard: ObservableObject {
         (UIPasteboard.general.changeCount, UIPasteboard.general.hasStrings)
     }
 
+    var richOrderingEnabled = false
+    private var richBusy = false
+    private var revisionBarrier = ClipboardRevisionBarrier()
+    private var automaticSourceRevision: UInt64?
+    func beginRichTransaction() {
+        cancel(); richBusy = true; automaticSourceRevision = nil; revisionBarrier.retireAssembly()
+    }
+    func finishRichTransaction(revision: UInt64?, committed: Bool) {
+        // A negotiated transaction retires every older host source even when canceled.
+        if let revision { revisionBarrier.commit(revision); automaticAssembler.reset(); automaticSourceRevision = nil }
+        if committed, revision != nil {
+            lastSyncedChangeCount = pasteboardMetadata().changeCount
+            showsPasteChip = false; pasteChipChangeCount = nil
+        }
+        richBusy = false
+    }
+
     private let defaults: UserDefaults
     private let clock: () -> TimeInterval
     private var outbox = ClipboardOutbox()
@@ -70,11 +87,11 @@ final class PhoneClipboard: ObservableObject {
         pasteAfterSending = defaults.object(forKey: Self.pasteAfterKey) == nil ? true : defaults.bool(forKey: Self.pasteAfterKey)
     }
 
-    var isBusy: Bool { pending != nil }
+    var isBusy: Bool { pending != nil || richBusy }
 
     /// Paste to Mac: replaces the Mac clipboard with this text, then optionally presses ⌘V.
     func send(_ text: String, pasteAfter: Bool? = nil, sourceChangeCount: Int? = nil, usesPhonePasteboard: Bool = true) {
-        guard pending == nil else { post("Wait for the current clipboard transfer to finish.", .caution); return }
+        guard pending == nil, !richBusy else { post("Wait for the current clipboard transfer to finish.", .caution); return }
         let transfer = ClipboardTransferID.make()
         let frames: [ClipboardFrame]
         do {
@@ -96,7 +113,7 @@ final class PhoneClipboard: ObservableObject {
     /// Copy from Mac: asks the Mac for its current clipboard text. With `afterCopy`, the Mac
     /// first waits briefly for the ⌘C the phone just sent to change its clipboard.
     func requestFromMac(afterCopy: Bool = false) {
-        guard pending == nil else { post("Wait for the current clipboard transfer to finish.", .caution); return }
+        guard pending == nil, !richBusy else { post("Wait for the current clipboard transfer to finish.", .caution); return }
         let transfer = ClipboardTransferID.make()
         guard transport?(.pull(transfer, afterCopy: afterCopy)) == true else {
             post("Your Mac isn't connected. Try again when the session is live.", .caution); return
@@ -139,14 +156,19 @@ final class PhoneClipboard: ObservableObject {
     }
 
     private func receiveAutomatic(_ frame: ClipboardFrame) {
-        guard !defaults.bool(forKey: Self.automaticDisabledKey), frame.op == "data" else {
+        guard !richBusy, !defaults.bool(forKey: Self.automaticDisabledKey), frame.op == "data" else {
             automaticAssembler.reset(); return
+        }
+        if richOrderingEnabled {
+            guard let revision = frame.sourceRevision, revisionBarrier.admit(revision) else { return }
+            if automaticSourceRevision != revision { automaticAssembler.reset(); automaticSourceRevision = revision }
         }
         if clock() - automaticLastActivity > ClipboardLimits.reassemblyTimeout { automaticAssembler.reset() }
         automaticLastActivity = clock()
         switch automaticAssembler.accept(frame, at: clock()) {
         case .complete(_, let payload):
             writeMacPayload(payload)
+            if richOrderingEnabled, let revision = frame.sourceRevision { revisionBarrier.commit(revision); automaticSourceRevision = nil }
             automaticCopyRevision &+= 1
         case .progress, .failed: break
         }
@@ -199,6 +221,10 @@ final class PhoneClipboard: ObservableObject {
         stopTimers()
     }
 
+    func resetRichSession() {
+        richBusy = false; revisionBarrier = ClipboardRevisionBarrier(); automaticSourceRevision = nil
+        automaticAssembler.reset()
+    }
     func clearNotice() {
         notice = nil
     }
