@@ -1917,7 +1917,7 @@ struct NativeSessionView: View {
     private var textField: some View {
         ZStack(alignment: .leading) {
             CommittedTextField(text: $model.draft, isComposing: $model.isComposingText, focusOnAppear: true,
-                               secure: model.passwordFieldFocused)
+                               secure: model.passwordFieldFocused, draftOwner: model)
                 .disabled(!model.textEditable)
                 .opacity(model.textEditable ? 1 : 0)
                 .allowsHitTesting(model.textEditable)

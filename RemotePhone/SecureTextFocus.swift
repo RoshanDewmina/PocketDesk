@@ -7,12 +7,15 @@ struct SecureTextFocus: Equatable {
     private(set) var active = false
     /// The current draft was typed while a password field was focused.
     private(set) var draftIsSecret = false
+    /// Local-only retirement identity for deferred editor publications. Never crosses the wire.
+    private(set) var draftPublicationLifetime = UUID()
 
     /// A focus reply for the probe this phone sent. Returns true when the state changed.
     @discardableResult
     mutating func reply(secure: Bool?, hostSupports: Bool) -> Bool {
         let next = hostSupports && secure == true
         guard next != active else { return false }
+        draftPublicationLifetime = UUID()
         active = next
         return true
     }
@@ -23,6 +26,7 @@ struct SecureTextFocus: Equatable {
 
     /// The draft to keep once the password field is left, the session ends or the app backgrounds.
     mutating func end(draft: String) -> String {
+        draftPublicationLifetime = UUID()
         let kept = draftIsSecret ? "" : draft
         active = false
         draftIsSecret = false
@@ -33,24 +37,32 @@ struct SecureTextFocus: Equatable {
     var draftMayPersist: Bool { !active && !draftIsSecret }
 }
 
-extension PhoneRemoteModel {
+extension PhoneRemoteModel: DraftPublicationOwner {
+    var draftPublicationIdentity: DraftPublicationIdentity {
+        DraftPublicationIdentity(session: connection.presentationSessionID,
+                                 privacy: secureTextFocus.draftPublicationLifetime)
+    }
     /// Lock state for the text composer and keyboard bar.
     var passwordFieldFocused: Bool { secureTextFocus.active }
 
     func receiveSecureFocus(secure: Bool?) {
         var state = secureTextFocus
         let wasActive = state.active
-        state.reply(secure: secure, hostSupports: hostFeatures.contains(SessionFeature.secureFocus))
+        let changed = state.reply(secure: secure, hostSupports: hostFeatures.contains(SessionFeature.secureFocus))
         if wasActive && !state.active {
             draft = state.end(draft: draft)
         }
         secureTextFocus = state
+        // The owner retires composition even if its UIKit editor has already disappeared.
+        // A repeated focus reply belongs to the same context and must leave current IME alone.
+        if changed, isComposingText { isComposingText = false }
     }
 
     func endSecureFocus() {
         var state = secureTextFocus
         draft = state.end(draft: draft)
         secureTextFocus = state
+        if isComposingText { isComposingText = false }
     }
 }
 
