@@ -3191,7 +3191,7 @@ let now = ProcessInfo.processInfo.systemUptime
             hostFeatures = WorkspaceUtilities.resolvedFeatures(
                 SharedCaptureScopePolicy.features(action.features ?? [], kind: sharedCaptureScope?.kind ?? .display),
                 statusVersion: action.workspaceUtilitiesVersion, current: action.epoch == geometryEpoch,
-                fullDisplay: !captureScopeViewOnly)
+                fullDisplay: !captureScopeViewOnly, shortcuts: action.workspaceUtilitiesShortcuts == true)
             if !hostFeatures.contains(SessionFeature.shortcutChips) { frontmostApp = nil }
             if action.features != nil { firstPictureCaptureObserved = true }
             if hostFeatures.contains(SessionFeature.causalInput) { connection.requestCausalInput(epoch: geometryEpoch) }
