@@ -151,7 +151,7 @@ final class AgentAlertBridgeTests: XCTestCase {
     private func makeBridge(readDeadline: TimeInterval = 3) -> AgentAlertBridge {
         let received = self.received!
         let disposition = nextDisposition
-        return AgentAlertBridge(directory: directory, readDeadline: readDeadline) { alert in
+        return AgentAlertBridge(directory: directory, readDeadline: readDeadline) { alert, _ in
             received.mutate { $0.append(alert) }
             return disposition.value
         }
@@ -344,7 +344,7 @@ final class AgentAlertBridgeTests: XCTestCase {
     func testASlowHandlerIsNotCutOffByTheReadDeadline() async throws {
         bridge.stop()
         let received = self.received!
-        bridge = AgentAlertBridge(directory: directory, readDeadline: 0.3) { alert in
+        bridge = AgentAlertBridge(directory: directory, readDeadline: 0.3) { alert, _ in
             try? await Task.sleep(nanoseconds: 900_000_000)
             received.mutate { $0.append(alert) }
             return .pushed
@@ -356,7 +356,7 @@ final class AgentAlertBridgeTests: XCTestCase {
 
     func testSwitchingAlertsOffWhileAnAnswerIsPendingDoesNotCrash() async throws {
         bridge.stop()
-        var local: AgentAlertBridge? = AgentAlertBridge(directory: directory, readDeadline: 3) { _ in
+        var local: AgentAlertBridge? = AgentAlertBridge(directory: directory, readDeadline: 3) { _, _ in
             try? await Task.sleep(nanoseconds: 600_000_000)
             return .forwarded
         }

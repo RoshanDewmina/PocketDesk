@@ -179,10 +179,17 @@ final class AgentAlertCenter: ObservableObject {
     private let defaults: UserDefaults
     private var bannerTask: Task<Void, Never>?
     private var seenFromMac: [String] = []
+    private var localGenerations: [AgentAlertEvent: UUID] = [:]
     static let bannerSeconds: Double = 12
     private static let snoozedKey = "agentAlerts.snoozedIDs"
     private static let declinedKey = "agentAlerts.declinedIDs"
     private static let rememberedIDs = 64
+
+    private func localKey(_ event: AgentAlertEvent) -> String { "agentAlerts.localIDs.\(event.rawValue)" }
+
+    private func forgetLocal(_ id: String, event: AgentAlertEvent) {
+        defaults.set(remembered(localKey(event)).filter { $0 != id }, forKey: localKey(event))
+    }
 
     init(center: (any AgentNotificationScheduling)? = nil, defaults: UserDefaults = .standard,
          reports: AgentAlertReports? = nil) {
@@ -226,7 +233,14 @@ final class AgentAlertCenter: ObservableObject {
     func setEventEnabled(_ event: AgentAlertEvent, on: Bool) async -> EnableResult {
         guard on else {
             preferences.set(event, enabled: false)
-            center.removePending(remembered(Self.snoozedKey).map(AgentNotification.reminderIdentifier))
+            localGenerations[event] = UUID()
+            let identifiers = remembered(localKey(event))
+            center.removePending(identifiers)
+            center.removeDelivered(identifiers)
+            defaults.removeObject(forKey: localKey(event))
+            if event.isAttention {
+                center.removePending(remembered(Self.snoozedKey).map(AgentNotification.reminderIdentifier))
+            }
             if !preferences.anyEnabled { unregisterForRemoteNotifications() }
             return .enabled
         }
@@ -324,7 +338,12 @@ final class AgentAlertCenter: ObservableObject {
                 identifier: AgentNotification.reminderIdentifier(for: id),
                 content: AgentNotification.reminderContent(for: payload),
                 trigger: UNTimeIntervalNotificationTrigger(timeInterval: AgentNotification.snoozeDelay, repeats: false))
+            let generation = localGenerations[.needsUser] ?? UUID()
+            localGenerations[.needsUser] = generation
             _ = await center.add(request)
+            if localGenerations[.needsUser] != generation {
+                center.removePending([request.identifier]); center.removeDelivered([request.identifier])
+            }
         case .notNow:
             report(.declined, payload: payload)
             remember(id, in: Self.declinedKey)
@@ -378,11 +397,18 @@ final class AgentAlertCenter: ObservableObject {
                 identifier: "agent-mac-\(frame.id)",
                 content: AgentNotification.alertContent(for: payload, preferences: preferences),
                 trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false))
+            let generation = localGenerations[event] ?? UUID()
+            localGenerations[event] = generation
+            remember(request.identifier, in: localKey(event))
             Task {
-                guard preferences.allows(event), isCurrentPairing(payload) else { return }
+                guard localGenerations[event] == generation, preferences.allows(event), isCurrentPairing(payload) else {
+                    forgetLocal(request.identifier, event: event)
+                    return
+                }
                 _ = await center.add(request)
-                if !preferences.allows(event) || !isCurrentPairing(payload) {
+                if localGenerations[event] != generation || !preferences.allows(event) || !isCurrentPairing(payload) {
                     center.removePending([request.identifier]); center.removeDelivered([request.identifier])
+                    forgetLocal(request.identifier, event: event)
                 }
             }
         }

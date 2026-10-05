@@ -15,7 +15,10 @@ import Darwin
 /// - The body is read for an agent kind, a hashed session id and an event name. Any other field, such as
 ///   the agent's own message, is never read, stored or forwarded.
 final class AgentAlertBridge: @unchecked Sendable {
-    typealias Handler = @Sendable (AgentAlert) async -> AgentAlertDisposition
+    struct Admission: Sendable {
+        let isCurrent: @Sendable () -> Bool
+    }
+    typealias Handler = @Sendable (AgentAlert, Admission) async -> AgentAlertDisposition
 
     /// What the hook script reads to find the bridge. `port` is 0 while the bridge is not listening.
     struct Discovery: Codable, Equatable {
@@ -48,6 +51,7 @@ final class AgentAlertBridge: @unchecked Sendable {
     private var listener: NWListener?
     private var currentToken = ""
     private var currentPort: UInt16 = 0
+    private var intakeGeneration = UUID()
     private var openConnections = 0
 
     init(directory: URL = AgentAlertBridge.defaultDirectory, readDeadline: TimeInterval = AgentAlertBridge.defaultReadDeadline,
@@ -102,6 +106,7 @@ final class AgentAlertBridge: @unchecked Sendable {
             self.listener = listener
             self.currentToken = token
             self.currentPort = port
+            self.intakeGeneration = UUID()
         }
         do { try writeDiscovery(port: port) }
         catch {
@@ -118,6 +123,7 @@ final class AgentAlertBridge: @unchecked Sendable {
             listener?.cancel()
             listener = nil
             currentPort = 0
+            intakeGeneration = UUID()
             return running
         }
         if wasListening { try? writeDiscovery(port: 0) }
@@ -130,10 +136,28 @@ final class AgentAlertBridge: @unchecked Sendable {
         let fresh = Self.makeToken()
         let port = queue.sync { () -> UInt16 in
             currentToken = fresh
+            intakeGeneration = UUID()
             return currentPort
         }
         try writeDiscovery(port: port)
         return fresh
+    }
+
+    /// Preference changes retire already authenticated requests without stopping unrelated opt-ins.
+    func invalidateAdmissions() {
+        queue.sync { intakeGeneration = UUID() }
+    }
+
+    /// Called on the intake queue, before handing an authenticated request to another executor.
+    private func admission() -> Admission {
+        let generation = intakeGeneration
+        let token = currentToken
+        return Admission { [weak self] in
+            guard let self else { return false }
+            return self.queue.sync {
+                self.currentPort != 0 && self.intakeGeneration == generation && self.currentToken == token
+            }
+        }
     }
 
     // MARK: Storage
@@ -314,8 +338,11 @@ final class AgentAlertBridge: @unchecked Sendable {
                 return finish(.serviceUnavailable, json: AgentBridgeHTTP.body("state", AgentAlertDisposition.disabled.rawValue))
             }
             handling = true
+            guard let admission = bridge?.admission() else {
+                return finish(.serviceUnavailable, json: AgentBridgeHTTP.body("state", AgentAlertDisposition.disabled.rawValue))
+            }
             Task { [self] in
-                let disposition = await handler(alert)
+                let disposition = admission.isCurrent() ? await handler(alert, admission) : .disabled
                 queue.async { [self] in
                     finish(Self.status(for: disposition), json: AgentBridgeHTTP.body("state", disposition.rawValue))
                 }
