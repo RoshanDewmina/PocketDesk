@@ -2548,6 +2548,17 @@ struct NativeSessionView: View {
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { panelFrame = $0 }
                 .accessibilityIdentifier("remote.controls.scroll")
                 #if DEBUG
+                .overlay {
+                    if controlsGeometryProbeEnabled {
+                        // Native ScrollView accessibility may include the sheet's bottom safe area.
+                        // This independent AX element marks the fixed SwiftUI layout viewport.
+                        Color.clear
+                            .allowsHitTesting(false)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Controls layout viewport")
+                            .accessibilityIdentifier("remote.controls.viewportReference")
+                    }
+                }
                 .overlay(alignment: .bottomTrailing) {
                     if controlsGeometryProbeEnabled {
                         VStack {
@@ -2614,7 +2625,8 @@ struct NativeSessionView: View {
                     Label("Settings", systemImage: "gearshape")
                         .font(.body.weight(.medium))
                         .foregroundStyle(Farside.Palette.bone)
-                        .frame(minWidth: 44, minHeight: 44)
+                        // The floating sheet scales its contents; preserve a 44-point screen target.
+                        .frame(minWidth: 48, minHeight: 48)
                         .contentShape(.rect)
                 }
                 .accessibilityShowsLargeContentViewer()
@@ -2666,7 +2678,7 @@ struct NativeSessionView: View {
                 .foregroundStyle(Farside.Palette.ink)
                 .frame(width: 36, height: 36)
                 .background(Farside.Palette.bone, in: .circle)
-                .frame(minWidth: 44, minHeight: 44)
+                .frame(minWidth: 48, minHeight: 48)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)

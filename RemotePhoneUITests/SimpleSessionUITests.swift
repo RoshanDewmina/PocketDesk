@@ -264,38 +264,40 @@ final class SimpleSessionUITests: XCTestCase {
         app.buttons["More"].firstMatch.tap()
         let scroll = app.scrollViews["remote.controls.scroll"].firstMatch
         XCTAssertTrue(scroll.waitForExistence(timeout: 5))
-        XCTAssertTrue(wait {
-            guard let geometry = self.controlsGeometry(in: app) else { return false }
-            return geometry.panel.height > 0 && !geometry.blocked && geometry.content.height > geometry.panel.height + 400
-        })
-        let before = try XCTUnwrap(controlsGeometry(in: app))
-        let viewport = scroll.frame
-        XCTAssertLessThan(viewport.height, app.windows.firstMatch.frame.height * 0.8,
+        let beforeSnapshot = stableControlsGeometry(in: app)
+        recordControlsGeometry("Overflowing short More before content scroll", app, snapshot: beforeSnapshot)
+        let before = try XCTUnwrap(beforeSnapshot, "Require two unchanged geometry snapshots before checking the short detent")
+        XCTAssertLessThan(before.scroll.height, app.windows.firstMatch.frame.height * 0.8,
                           "This must exercise the ordinary short detent, with the trackpad still admitted")
-        XCTAssertFalse(before.blocked)
-        assertSameFrame(before.panel, viewport)
-        XCTAssertGreaterThan(before.content.height, viewport.height + 400, "The content must actually overflow")
-        record("Overflowing short More before content scroll", app)
+        XCTAssertFalse(before.geometry.blocked)
+        assertViewportReference(before)
+        assertSameFrame(before.geometry.panel, before.reference, name: "Initial panel versus layout viewport")
+        XCTAssertGreaterThan(before.geometry.content.height, before.reference.height + 400, "The content must actually overflow")
 
         // The fixture scrolls the native ScrollView itself. A sheet swipe could expand its
         // detent instead, hiding the production bug by blocking pointer following entirely.
         let fixture = app.buttons["remote.controls.geometryScroll"].firstMatch
         XCTAssertTrue(fixture.isHittable)
         fixture.tap()
-        XCTAssertTrue(wait {
+        let contentMoved = wait {
             guard let geometry = self.controlsGeometry(in: app) else { return false }
-            return geometry.content.minY < before.content.minY - 100
-        }, "The regression is invalid unless actual content moved inside the viewport")
-        let after = try XCTUnwrap(controlsGeometry(in: app))
-        XCTAssertFalse(after.blocked, "Keep the production nonblocking short-detent path under test")
-        assertSameFrame(scroll.frame, viewport)
-        assertSameFrame(after.panel, viewport)
-        assertSameFrame(after.panel, before.panel)
-        record("Overflowing short More retains stationary pointer-follow panel", app)
+            return geometry.content.minY < before.geometry.content.minY - 100
+        }
+        let afterSnapshot = stableControlsGeometry(in: app)
+        recordControlsGeometry("Overflowing short More retains stationary pointer-follow panel", app, snapshot: afterSnapshot)
+        XCTAssertTrue(contentMoved, "The regression is invalid unless actual content moved inside the viewport")
+        let after = try XCTUnwrap(afterSnapshot, "Require two unchanged geometry snapshots after the content scroll")
+        XCTAssertLessThan(after.geometry.content.minY, before.geometry.content.minY - 100)
+        XCTAssertFalse(after.geometry.blocked, "Keep the production nonblocking short-detent path under test")
+        assertViewportReference(after)
+        assertSameFrame(after.scroll, before.scroll, name: "Native scroll extent stays stationary")
+        assertSameFrame(after.reference, before.reference, name: "Layout viewport stays stationary")
+        assertSameFrame(after.geometry.panel, after.reference, name: "Scrolled panel versus layout viewport")
+        assertSameFrame(after.geometry.panel, before.geometry.panel, name: "Pointer-follow panel stays stationary")
         XCTAssertFalse(probeText(app).contains("key space command"))
     }
 
-    private struct ControlsGeometry {
+    private struct ControlsGeometry: Equatable {
         let panel: CGRect
         let content: CGRect
         let blocked: Bool
@@ -325,11 +327,69 @@ final class SimpleSessionUITests: XCTestCase {
         return ControlsGeometry(value)
     }
 
-    private func assertSameFrame(_ actual: CGRect, _ expected: CGRect, file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertEqual(actual.minX, expected.minX, accuracy: 1, file: file, line: line)
-        XCTAssertEqual(actual.minY, expected.minY, accuracy: 1, file: file, line: line)
-        XCTAssertEqual(actual.width, expected.width, accuracy: 1, file: file, line: line)
-        XCTAssertEqual(actual.height, expected.height, accuracy: 1, file: file, line: line)
+    private struct ControlsGeometrySnapshot: Equatable {
+        let geometry: ControlsGeometry
+        let reference: CGRect
+        let scroll: CGRect
+    }
+
+    @MainActor
+    private func stableControlsGeometry(in app: XCUIApplication) -> ControlsGeometrySnapshot? {
+        let reference = element("remote.controls.viewportReference", in: app)
+        let scroll = app.scrollViews["remote.controls.scroll"].firstMatch
+        var previous: ControlsGeometrySnapshot?
+        var settled: ControlsGeometrySnapshot?
+        let stable = wait {
+            guard reference.exists, scroll.exists, let geometry = self.controlsGeometry(in: app) else {
+                previous = nil
+                return false
+            }
+            let current = ControlsGeometrySnapshot(geometry: geometry, reference: reference.frame, scroll: scroll.frame)
+            guard !geometry.panel.isEmpty, !current.reference.isEmpty, !current.scroll.isEmpty else {
+                previous = nil
+                return false
+            }
+            defer { previous = current }
+            // Readiness requires stable measurements, not agreement with the expected result.
+            guard current == previous else { return false }
+            settled = current
+            return true
+        }
+        return stable ? settled : nil
+    }
+
+    private func assertViewportReference(_ snapshot: ControlsGeometrySnapshot,
+                                         file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(snapshot.reference.minX, snapshot.scroll.minX, accuracy: 1, "Viewport/native scroll minX", file: file, line: line)
+        XCTAssertEqual(snapshot.reference.minY, snapshot.scroll.minY, accuracy: 1, "Viewport/native scroll minY", file: file, line: line)
+        XCTAssertEqual(snapshot.reference.width, snapshot.scroll.width, accuracy: 1, "Viewport/native scroll width", file: file, line: line)
+        XCTAssertTrue(snapshot.scroll.insetBy(dx: -1, dy: -1).contains(snapshot.reference),
+                      "The layout viewport must remain inside the native scroll extent, including its safe area", file: file, line: line)
+    }
+
+    private func assertSameFrame(_ actual: CGRect, _ expected: CGRect, name: String,
+                                 file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(actual.minX, expected.minX, accuracy: 1, name + " minX", file: file, line: line)
+        XCTAssertEqual(actual.minY, expected.minY, accuracy: 1, name + " minY", file: file, line: line)
+        XCTAssertEqual(actual.width, expected.width, accuracy: 1, name + " width", file: file, line: line)
+        XCTAssertEqual(actual.height, expected.height, accuracy: 1, name + " height", file: file, line: line)
+    }
+
+    @MainActor
+    private func recordControlsGeometry(_ title: String, _ app: XCUIApplication, snapshot: ControlsGeometrySnapshot?) {
+        record(title, app)
+        let probe = element("remote.controls.geometryProbe", in: app)
+        let reference = element("remote.controls.viewportReference", in: app)
+        let scroll = app.scrollViews["remote.controls.scroll"].firstMatch
+        let probeValue = probe.exists ? String(describing: probe.value) : "missing"
+        let referenceFrame = reference.exists ? String(describing: reference.frame) : "missing"
+        let scrollFrame = scroll.exists ? String(describing: scroll.frame) : "missing"
+        let diagnostic = XCTAttachment(string: "stable snapshot: \(String(describing: snapshot))\n"
+            + "latest probe: \(probeValue)\n"
+            + "latest reference: \(referenceFrame)\nlatest native scroll: \(scrollFrame)")
+        diagnostic.name = title + " full geometry"
+        diagnostic.lifetime = .keepAlways
+        add(diagnostic)
     }
 
     @MainActor
