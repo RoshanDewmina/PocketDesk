@@ -480,6 +480,91 @@ final class PhoneDisplayTickInputPumpTests: XCTestCase {
         XCTAssertEqual(sizes, [1, 24])
         pump.cancel(); pump.tick(); XCTAssertEqual(sizes, [1, 24])
     }
+    func testActualModelCancellationDiscardsQueuedMotionWithoutAnActiveHold() throws {
+        for absolute in [false, true] {
+            var config = configuration()
+            var links: [FakePhoneDisplayTickLink] = []
+            config.displayLinkFactory = { _, tick in
+                let link = FakePhoneDisplayTickLink(onTick: tick)
+                links.append(link)
+                return link
+            }
+            let pump = PhoneDisplayTickInputPump(configuration: config)
+            let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+            model.setDisplayTickInputForTesting(pump)
+            model.prepareConnection(mode: .picture)
+            model.connection.startInputFixtureForTesting(session: "phone-cancel")
+            defer { model.connection.stop() }
+            var outgoing: [ControlPacket] = []
+            model.connection.inputPacketSenderForTesting = { outgoing.append($0); return true }
+            try prepareInput(model, outgoing: { outgoing }, session: "phone-cancel")
+
+            func move(_ x: Double) -> Bool {
+                absolute ? model.pointTo(CGPoint(x: x, y: 10))
+                    : model.gesture(.move(CGSize(width: x, height: 0)))
+            }
+            XCTAssertTrue(move(5)) // The burst's leading sample leaves immediately.
+            let afterLeading = outgoing.count
+            XCTAssertTrue(move(6)); XCTAssertTrue(move(7)) // Both wait for the display tick.
+            XCTAssertEqual(outgoing.count, afterLeading)
+            XCTAssertFalse(model.dragging)
+
+            let oldLink = try XCTUnwrap(links.first)
+            model.cancelInput()
+            XCTAssertEqual(oldLink.invalidationCount, 1, "Cancellation retires the display clock synchronously")
+            oldLink.fire() // An already scheduled callback must also be harmless.
+            pump.tick() // Prove the pending queue was discarded, not merely its clock stopped.
+            XCTAssertEqual(outgoing.count, afterLeading, "A no-hold cancellation must not send queued motion")
+            XCTAssertFalse(outgoing.contains { $0.action.action == "release" }, "No synthetic Mac input is needed without a hold")
+
+            XCTAssertTrue(move(8), "Fresh input can start a new burst after cancellation")
+            XCTAssertEqual(outgoing.last?.input?.segments.last?.action.x, 8)
+            XCTAssertFalse(outgoing.flatMap { $0.input?.segments ?? [] }.contains { [6, 7].contains($0.action.x) })
+        }
+    }
+
+    func testActualModelCancellationPreservesHeldButtonCleanup() throws {
+        let pump = PhoneDisplayTickInputPump(automaticTicks: false, configuration: configuration())
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        model.setDisplayTickInputForTesting(pump)
+        model.prepareConnection(mode: .picture)
+        model.connection.startInputFixtureForTesting(session: "phone-cancel-hold")
+        defer { model.connection.stop() }
+        var outgoing: [ControlPacket] = []
+        model.connection.inputPacketSenderForTesting = { outgoing.append($0); return true }
+        try prepareInput(model, outgoing: { outgoing }, session: "phone-cancel-hold")
+        model.drag()
+        let hold = try XCTUnwrap(outgoing.last { $0.action.action == "dragDown" }?.action.interaction?.hold)
+        XCTAssertTrue(model.dragging)
+        XCTAssertTrue(model.gesture(.move(CGSize(width: 5, height: 0))))
+        XCTAssertTrue(model.gesture(.move(CGSize(width: 6, height: 0))))
+        model.cancelInput()
+        XCTAssertFalse(model.dragging)
+        let releases = outgoing.filter { $0.action.action == "release" }
+        XCTAssertEqual(releases.count, 1)
+        XCTAssertEqual(releases.first?.action.interaction?.hold, hold)
+        XCTAssertEqual(releases.first?.action.interaction?.token, "t")
+        XCTAssertEqual(releases.first?.action.epoch, 7)
+        XCTAssertFalse(releases.flatMap { $0.input?.segments ?? [] }.contains { $0.action.x == 6 })
+        let afterRelease = outgoing.count
+        pump.tick()
+        XCTAssertEqual(outgoing.count, afterRelease)
+    }
+
+    private func prepareInput(_ model: PhoneRemoteModel, outgoing: () -> [ControlPacket], session: String) throws {
+        func deliver(_ action: RemoteAction) throws { model.connection.onControl?(try JSONEncoder().encode(action)) }
+        try deliver(RemoteAction(action: "geometry", x: 200, y: 200, epoch: 7))
+        try deliver(RemoteAction(action: "viewing", x: 1, epoch: 7))
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 7,
+            interaction: NativeInteraction(token: "t", doubleClickInterval: 0.5), features: SessionFeature.host, mode: "picture"))
+        model.frameReceived()
+        var context = try XCTUnwrap(outgoing().first { $0.input?.kind == "offer" }?.input)
+        context.kind = "accept"; context.anchor = String(repeating: "a", count: 32)
+        try model.connection.receiveInputFixtureForTesting(ControlPacket(session: session, sequence: 1,
+            action: RemoteAction(action: "heartbeat", epoch: 7), input: context))
+        XCTAssertTrue(model.canControl)
+    }
+
     func testActualModelAnchorCancelsPendingMotionAndHoldBeforeGeometryArrives() throws {
         let model = PhoneRemoteModel(background: FakeBackgroundExecution())
         model.prepareConnection(mode: .couch)

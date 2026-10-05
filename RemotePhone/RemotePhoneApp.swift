@@ -1984,6 +1984,14 @@ final class PhoneRemoteModel: ObservableObject {
 
     private lazy var displayTickInput = PhoneDisplayTickInputPump()
 
+    #if DEBUG
+    /// Keep model cancellation tests on the real transmission path with a deterministic display clock.
+    func setDisplayTickInputForTesting(_ pump: PhoneDisplayTickInputPump) {
+        displayTickInput.cancel()
+        displayTickInput = pump
+    }
+    #endif
+
     /// Every control message leaves through here, so the offline probe sees the same actions.
     private func transmit(_ action: RemoteAction) -> Bool {
         VideoPresentationProbe.noteUserActivity()
@@ -2574,6 +2582,9 @@ let now = ProcessInfo.processInfo.systemUptime
     func cancelInput() {
         textFocusProbe.invalidate()
         pointerLocator.clear()
+        // Unsent motion belongs to the cancelled gesture even when no button is held.
+        // Native release() only sends cleanup for a hold, so it cannot retire this queue alone.
+        displayTickInput.cancel()
         release()
         inputRevision &+= 1
     }
