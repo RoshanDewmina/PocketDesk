@@ -13,6 +13,7 @@ struct HostGuestRow: Identifiable, Equatable {
     let status: String
     let pending: Bool
     let linkReady: Bool
+    var remainingSeconds: Int = 0
 }
 
 

@@ -767,6 +767,7 @@ final class PhoneRemoteModel: ObservableObject {
         usefulPicture.invalidate()
         inlinePresentationAdmission?.lifetime.retire()
         if !keepingPiP { pipAdmission?.lifetime.retire() }
+        FrozenTextController.cancelActive()
         VideoPresentationSession.invalidateActive()
         if !keepingPiP { connection.media?.videoFeedback.configure(allowed: false, geometry: geometryEpoch, scope: sharedCaptureScope?.epoch ?? 1) }
         inlinePresentationAdmission = nil
@@ -947,6 +948,7 @@ final class PhoneRemoteModel: ObservableObject {
     private var lastCaptureHealth = 0.0
     private var pendingText: PendingText?
     private var textFocusProbe = TextFocusProbeGate()
+    var textRecognitionAvailable: Bool { sceneIsActive && canControl && !passwordFieldFocused && !contentConcealed && !privacyShield && !captureScopeViewOnly }
     private var sceneIsActive = false
     private var timer: Timer?
     /// Stream statistics: Mac ↔ phone clock offset from probes on every other heartbeat.

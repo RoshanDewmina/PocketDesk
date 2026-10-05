@@ -3496,8 +3496,10 @@ final class RemoteHostModel: ObservableObject {
             allowBigText: !captureScopeViewOnly && preferences.allowBigText,
             accessibility: inputAccess.accessibility.isGranted,
             peerFeatures: connection.peerFeatures, requestedMode: connection.peerRequestedMode), kind: captureScopeKind)
-        return ShortcutChips.advertised(addingTo: existing, enabled: ShortcutChips.isEnabled() && !captureScopeViewOnly,
+        let withShortcuts = ShortcutChips.advertised(addingTo: existing, enabled: ShortcutChips.isEnabled() && !captureScopeViewOnly,
             peerFeatures: connection.peerFeatures)
+        return WorkspaceUtilities.advertised(addingTo: withShortcuts, peerFeatures: connection.peerFeatures,
+            enabled: WorkspaceUtilities.isEnabled() && !captureScopeViewOnly)
     }
 
     private func sendCaptureHealth(_ requestedHealthy: Bool, presence: HostPresence? = nil, viewOnlyRequestID: String? = nil) {

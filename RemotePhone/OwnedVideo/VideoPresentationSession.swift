@@ -1,3 +1,4 @@
+import CoreGraphics
 import WebRTC
 
 /// A renderer registration is immutable for one track/authorization epoch. Never reuse it for another track.
@@ -130,12 +131,27 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
                 originalSource: source != nil, promptDraw: source?.id == receivingReceiptID && source != nil, decodeTrace: source?.decodeTrace, videoTag: source?.tag))
         }
     }
+    /// One request, consumed by a real public presentation receipt under the existing fence.
+    /// Copy synchronously before releasing the envelope, then pass only owned pixels to Vision.
+    func requestTextSnapshot(crop: CGRect, completion: @escaping (CGImage?) -> Void) {
+        _ = fence.withAdmission(admissionIdentity, at: ProcessInfo.processInfo.systemUptime) {
+            view.textSnapshotPresented = { [weak self] envelope in
+                guard let self else { return }
+                self.view.textSnapshotPresented = nil
+                completion(FrozenTextSnapshot.copy(envelope.frame, crop: crop))
+            }
+        }
+    }
+    func cancelTextSnapshot() {
+        _ = fence.withAdmission(admissionIdentity, at: ProcessInfo.processInfo.systemUptime) { view.textSnapshotPresented = nil }
+    }
     /// Main thread: immediately cover/clear; only then detach and drain the old motion pipeline.
     func invalidate() {
         precondition(Thread.isMainThread)
         fence.invalidate()
         guard !stopped else { return }; stopped = true
         expiryTimer?.invalidate(); expiryTimer = nil
+        view.textSnapshotPresented = nil
         view.invalidate(); track.remove(self)
         motionGate.close { smoothMotion.deactivate() } // Late presenter flush callbacks see a closed fence.
         legibility.configure(enabled: false, counters: nil, sourceSize: .zero, displayedPixelWidth: 0)

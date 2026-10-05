@@ -52,6 +52,7 @@ extension PhoneRemoteModel: DraftPublicationOwner {
         if wasActive && !state.active {
             draft = state.end(draft: draft)
         }
+        if state.active { FrozenTextController.cancelActive() }
         secureTextFocus = state
         // The owner retires composition even if its UIKit editor has already disappeared.
         // A repeated focus reply belongs to the same context and must leave current IME alone.

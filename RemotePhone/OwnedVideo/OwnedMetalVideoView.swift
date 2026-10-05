@@ -25,6 +25,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     var videoFeedback: VideoFeedbackContext?
     /// Only an actual original source drawable presentation may report this receipt.
     /// Consumers enqueue owner-validated work; they must not synchronously hop to main.
+    var textSnapshotPresented: ((VideoFrameEnvelope) -> Void)?
     private var originalSourcePresented: ((VideoPresentationIdentity, UUID) -> Void)?
     var onOriginalSourcePresented: ((VideoPresentationIdentity, UUID) -> Void)? {
         get { fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) { originalSourcePresented } ?? nil }
@@ -406,6 +407,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
                     self.videoFeedback?.presentedTiming(envelope.videoTag, originalSource: envelope.originalSource,
                         newSubmission: true, presentedTime: presentedTime,
                         clock: clock?.estimate, observedAtMs: clock?.atMs)
+                    if envelope.originalSource { self.textSnapshotPresented?(envelope) }
                     if envelope.originalSource { callback?(envelope.identity, envelope.receiptID) }
                 }
             }

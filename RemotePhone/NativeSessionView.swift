@@ -53,6 +53,7 @@ struct NativeSessionView: View {
     @State private var revision: UInt64 = 0
     @State private var keyboardBarFrame: CGRect = .zero
     @State private var manualViewportRevision: UInt64 = 0
+    @StateObject private var frozenText = FrozenTextController()
     @State private var readingLensOpen = false
     @StateObject private var precisionTap = PrecisionTapController()
     @AppStorage(PrecisionTapTrigger.key) private var precisionTrigger: PrecisionTapTrigger = .off
@@ -246,6 +247,8 @@ struct NativeSessionView: View {
     private var sessionPresentation: AnyView {
         AnyView(sessionChrome
         .sheet(isPresented: controlsSheetPresented) { controlsSheet }
+        .sheet(isPresented: $frozenText.isPresented, onDismiss: { frozenText.cancel() }) { FrozenTextSheet(controller: frozenText) }
+        .onDisappear { frozenText.cancel() }
         .onChange(of: controlsAsOverlay) { _, _ in if showControls { closeControls() } }
         .onChange(of: controlsBlockInput) { _, blocked in
             // A Hold click starts in the key panel, outside NativeTrackpadSurface. Settings and
@@ -2526,6 +2529,15 @@ struct NativeSessionView: View {
         case .view:
             settingsForm("View") {
                 zoomSection
+                Section {
+                    Button("Select text from picture") {
+                        let visible = viewport.visibleSourceRect
+                        closeControls()
+                        frozenText.start(model: model, visible: visible)
+                    }
+                    .disabled(!model.canControl || model.passwordFieldFocused || model.contentConcealed)
+                    .accessibilityIdentifier("remote.selectText")
+                } footer: { Text("Freeze the visible picture and recognize text on this device.") }
                 KeyboardViewSettingsSection()
                 miniMapSection
             }
