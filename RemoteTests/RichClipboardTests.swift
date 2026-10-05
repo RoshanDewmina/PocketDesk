@@ -37,6 +37,24 @@ final class RichClipboardTests: XCTestCase {
         var corrupt = png.data; corrupt[corrupt.count / 2] ^= 1
         XCTAssertThrowsError(try RichClipboardPNG.validateIncoming(corrupt, expected: png.metadata))
     }
+    func testOversizedPNGHeaderIsRejectedBeforeRasterDecode() throws {
+        var data = try richClipboardFixture()
+        func write32(_ value: UInt32, at offset: Int) {
+            for index in 0..<4 { data[offset + index] = UInt8(truncatingIfNeeded: value >> (24 - index * 8)) }
+        }
+        write32(5000, at: 16); write32(5000, at: 20)
+        var crc: UInt32 = 0xffffffff
+        for byte in data[12..<29] {
+            crc ^= UInt32(byte)
+            for _ in 0..<8 { crc = (crc >> 1) ^ (crc & 1 == 1 ? 0xedb88320 : 0) }
+        }
+        write32(crc ^ 0xffffffff, at: 29)
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary))
+        let properties = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+        XCTAssertEqual(properties[kCGImagePropertyPixelWidth] as? Int, 5000)
+        XCTAssertEqual(properties[kCGImagePropertyPixelHeight] as? Int, 5000)
+        XCTAssertThrowsError(try RichClipboardPNG.normalize(data))
+    }
     func testSixteenBitSourceIsRejectedBeforeRasterDecode() throws {
         let provider = try XCTUnwrap(CGDataProvider(data: Data([0, 0]) as CFData))
         let image = try XCTUnwrap(CGImage(width: 1, height: 1, bitsPerComponent: 16, bitsPerPixel: 16, bytesPerRow: 2,
@@ -138,6 +156,29 @@ final class RichClipboardEndpointTests: XCTestCase {
         host.allowed = { false }
         phone.requestImage()
         XCTAssertFalse(phone.busy); XCTAssertEqual(writes, 0)
+    }
+    func testPrematureCommitAndRetiredStoreCallbackCannotReportSuccess() async throws {
+        let (host, phone, toHost, _) = endpoints()
+        let png = try RichClipboardPNG.normalize(richClipboardFixture())
+        toHost.holding = true
+        var id: String?, committed = false, writes = 0
+        phone.transport = { [weak host] frame in id = try? RichClipboardMessage.decode(frame).transfer; host?.receive(frame); return true }
+        phone.finishExplicit = { _, value in committed = committed || value }
+        host.storeImage = { _, _, _, completion in writes += 1; completion(true) }
+        phone.sendImage(RichClipboardSource(png: png, stillCurrent: { true }))
+        try await wait { !toHost.held.isEmpty }
+        phone.receive(try WorkspaceFrame(kind: .richClipboard, requestID: InputCausalEnvelope.identity(), value: RichClipboardMessage(operation: .committed, transfer: try XCTUnwrap(id), revision: 10)))
+        XCTAssertFalse(committed); XCTAssertEqual(writes, 0); XCTAssertFalse(phone.busy); XCTAssertFalse(host.busy)
+
+        let (sender, receiver, _, _) = endpoints()
+        var delayed: ((Bool) -> Void)?, receiverCommitted = false
+        sender.readImage = { _, completion in completion(.success(RichClipboardSource(png: png, stillCurrent: { true }))) }
+        receiver.storeImage = { _, _, _, completion in delayed = completion }
+        receiver.finishExplicit = { _, value in receiverCommitted = receiverCommitted || value }
+        receiver.requestImage(); try await wait { delayed != nil }
+        receiver.reset(); delayed?(true)
+        XCTAssertFalse(receiverCommitted); XCTAssertFalse(receiver.busy)
+        sender.reset()
     }
     func testUnsolicitedRichOfferAndSourceReplacementAreRejected() async throws {
         let (host, phone, _, _) = endpoints()
