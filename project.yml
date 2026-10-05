@@ -320,16 +320,12 @@ targets:
     sources:
       - HostUITests
       - RemotePhone/Fonts
-      - RemoteShared/Pairing.swift
-      - RemoteShared/HostIdentityStore.swift
-      - RemoteShared/FarsideTheme.swift
-      - RemoteShared/FarsideHalftone.swift
+      - RemoteShared
       - RemoteHost/HostReadiness.swift
       - RemoteHost/HostViewState.swift
       - RemoteHost/AwayModeMachine.swift
       - RemoteHost/HostAwayEnvironment.swift
       - RemoteHost/HostAwayPresentation.swift
-      - RemoteShared/AwayModeProtocol.swift
       - RemoteHost/HostPresentation.swift
       - RemoteHost/HostPermissionState.swift
       - RemoteHost/HostStyle.swift
@@ -340,23 +336,19 @@ targets:
       - RemoteHost/HostLiveStrip.swift
       - RemoteHost/HostActivity.swift
       - RemoteHost/HostMenuBarGlyph.swift
-      - RemoteShared/ConnectMotionModel.swift
       - RemoteHost/HostSetupView.swift
       - RemoteHost/HostConsentView.swift
       - RemoteHost/HostSettingsView.swift
       - RemoteHost/HostGuestSettingsView.swift
-      - RemoteShared/WakeRequest.swift
       - RemoteHost/Availability/HostLANWake.swift
       - RemoteHost/Availability/LANMagicPacketSender.swift
       - RemoteHost/Availability/WakeTargetRegistrationView.swift
-      - RemoteShared/SessionDiagnosticReport.swift
-      - RemoteShared/CrashDiagnostics.swift
       - RemoteHost/TransportPreferenceRows.swift
-      - RemoteShared/HEVC444Policy.swift
-      - RemoteShared/LegalNoticesView.swift
-      - RemoteShared/ThirdPartyNotices.txt
+    dependencies:
+      - package: WebRTC
     settings:
       base:
+        SWIFT_OBJC_BRIDGING_HEADER: RemoteShared/SystemAudio-Bridging-Header.h
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGNING_ALLOWED: YES
         CODE_SIGN_IDENTITY: '-'
