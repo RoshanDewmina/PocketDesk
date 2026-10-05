@@ -399,6 +399,16 @@ enum HostSetupPage: Int, CaseIterable, Comparable, Identifiable {
 }
 
 enum HostSetupFlow {
+    static func first60PairingIsDeferred(_ state: HostViewState) -> Bool {
+        state.first60SetupPending && state.pairingDeferred && !state.hasPairedPhone
+    }
+
+    /// Skipping pairing may open the final page without making the Mac ready to try.
+    static func first60CanTryMac(_ state: HostViewState) -> Bool {
+        state.first60SetupPending && state.hasPairedPhone && !state.pairingRequested
+            && first60Page(for: state) == .ready
+    }
+
     static func first60Page(for state: HostViewState) -> HostSetupPage {
         if !state.hasPairedPhone || state.pairingRequested {
             return state.pairingDeferred ? .ready : .pair
@@ -489,6 +499,7 @@ enum HostSetupFlow {
 
     static func progressCaption(page: HostSetupPage, state: HostViewState) -> String {
         if state.first60SetupPending && page == .ready {
+            if first60PairingIsDeferred(state) { return "Continue from the menu bar" }
             return state.first60RemoteDoneAvailable ? "Click Done from your device" : "Finish here when you’re ready"
         }
         switch page {

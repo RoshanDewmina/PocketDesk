@@ -81,7 +81,7 @@ struct HostSetupView: View {
                     .accessibilityIdentifier("farside.setup.back")
             }
             if page == .ready {
-                Button("Done", action: actions.finishSetup)
+                Button(HostSetupFlow.first60PairingIsDeferred(state) ? "Close for now" : "Done", action: actions.finishSetup)
                     .buttonStyle(HostButtonStyle(kind: .primary, height: 34))
                     .keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier("farside.setup.done")
@@ -121,7 +121,8 @@ struct HostSetupRail: View {
                     HostRailStep(step: step, isCurrent: step == page,
                                  isComplete: HostSetupFlow.isComplete(step, state: state, current: page),
                                  number: state.first60SetupPending ? (pages.firstIndex(of: step) ?? 0) + 1 : nil,
-                                 titleOverride: state.first60SetupPending && step == .ready ? "Try it" : nil)
+                                 titleOverride: state.first60SetupPending && step == .ready
+                                    ? (HostSetupFlow.first60PairingIsDeferred(state) ? "Later" : "Try it") : nil)
                 }
             }
             .padding(18)
@@ -680,7 +681,15 @@ struct HostReadyPage: View {
     var body: some View {
         let checks = HostReadyCheck.checks(for: state)
         VStack(alignment: .leading, spacing: 0) {
-            if state.first60SetupPending {
+            if HostSetupFlow.first60PairingIsDeferred(state) {
+                HostHeading(parts: [.display("Finish setup"), .accent(" later"), .plain(".")])
+                HostSetupText.body(deferredPairingMessage)
+                    .padding(.top, 12)
+                Button("Pair now", action: actions.pairNewPhone)
+                    .buttonStyle(HostButtonStyle(kind: .plate))
+                    .accessibilityIdentifier("farside.setup.resumePairing")
+                    .padding(.top, 20)
+            } else if HostSetupFlow.first60CanTryMac(state) {
                 HostHeading(parts: [.display("Your Mac"), .accent(" is ready"), .plain(".")])
                 HostSetupText.body(state.first60RemoteDoneAvailable
                     ? "Move the pointer from your phone or iPad, then click Done below to finish setup."
@@ -722,6 +731,11 @@ struct HostReadyPage: View {
         .onChange(of: state.consentPending, initial: true) { _, pending in
             if pending && !First60.isEnabled() { choosing = true }
         }
+    }
+
+    private var deferredPairingMessage: String {
+        let permission = state.screenRecording.isGranted ? "" : " and allow Screen Recording"
+        return "Pair your iPhone or iPad using Farside\(permission) before you can see this Mac. You can continue from the menu bar."
     }
 }
 

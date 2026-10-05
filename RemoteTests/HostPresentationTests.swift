@@ -321,6 +321,76 @@ final class HostPresentationTests: XCTestCase {
 
     // MARK: Ready check
 
+    func testFirst60SkippedPairingCanCloseWithoutClaimingReadiness() {
+        var skipped = HostViewState()
+        skipped.first60SetupPending = true
+        skipped.pairingDeferred = true
+        skipped.screenRecording = .denied
+        skipped.accessibility = .denied
+        XCTAssertEqual(HostSetupFlow.first60Page(for: skipped), .ready, "Skip stays permissive")
+        XCTAssertTrue(HostSetupFlow.first60PairingIsDeferred(skipped))
+        XCTAssertFalse(HostSetupFlow.first60CanTryMac(skipped), "The final page is not proof of readiness")
+        XCTAssertEqual(HostSetupFlow.progressCaption(page: .ready, state: skipped), "Continue from the menu bar")
+
+        skipped.screenRecording = .granted
+        skipped.accessibility = .granted
+        skipped.first60RemoteDoneAvailable = true
+        XCTAssertFalse(HostSetupFlow.first60CanTryMac(skipped), "Permissions alone cannot replace pairing")
+        XCTAssertEqual(HostSetupFlow.progressCaption(page: .ready, state: skipped), "Continue from the menu bar",
+                       "A stale remote-Done flag must not send an unpaired user to their device")
+    }
+
+    func testFirst60TryMacNeedsAnApprovedPairAndScreenPermission() {
+        var setup = state(.ready) { $0.first60SetupPending = true }
+        XCTAssertTrue(HostSetupFlow.first60CanTryMac(setup))
+
+        setup.hasPairedPhone = false
+        XCTAssertFalse(HostSetupFlow.first60CanTryMac(setup))
+        XCTAssertFalse(HostSetupFlow.first60PairingIsDeferred(setup), "An unpaired device need not have been skipped")
+
+        setup.hasPairedPhone = true
+        setup.pairingRequested = true
+        setup.pairingDeferred = true
+        XCTAssertFalse(HostSetupFlow.first60CanTryMac(setup), "An existing pairing does not approve a new request")
+
+        setup.pairingRequested = false
+        setup.screenRecording = .denied
+        XCTAssertFalse(HostSetupFlow.first60CanTryMac(setup))
+        XCTAssertFalse(HostSetupFlow.first60PairingIsDeferred(setup), "A paired device needs the permission page")
+    }
+
+    func testFirst60TryMacPreservesViewOnlyChoices() {
+        var setup = state(.ready) {
+            $0.first60SetupPending = true
+            $0.accessibility = .denied
+        }
+        XCTAssertFalse(HostSetupFlow.first60CanTryMac(setup), "The control choice still needs attention")
+
+        setup.accessibilitySkipped = true
+        XCTAssertTrue(HostSetupFlow.first60CanTryMac(setup), "Explicit view-only setup remains ready to try")
+        setup.accessibilitySkipped = false
+        setup.allowControl = false
+        XCTAssertTrue(HostSetupFlow.first60CanTryMac(setup), "Turning control off is also a valid choice")
+        setup.captureScopeViewOnly = true
+        XCTAssertTrue(HostSetupFlow.first60CanTryMac(setup))
+    }
+
+    func testFirst60ReadyPresentationEndsWhenSetupFinishes() {
+        var setup = state(.ready) {
+            $0.first60SetupPending = true
+            $0.pairingDeferred = true
+        }
+        XCTAssertFalse(HostSetupFlow.first60PairingIsDeferred(setup), "A remembered Skip does not hide an approved pairing")
+        XCTAssertTrue(HostSetupFlow.first60CanTryMac(setup))
+        setup.first60RemoteDoneAvailable = true
+        XCTAssertEqual(HostSetupFlow.progressCaption(page: .ready, state: setup), "Click Done from your device")
+
+        setup.first60SetupPending = false
+        XCTAssertFalse(HostSetupFlow.first60CanTryMac(setup))
+        setup.hasPairedPhone = false
+        XCTAssertFalse(HostSetupFlow.first60PairingIsDeferred(setup), "Legacy setup keeps its existing ready check")
+    }
+
     func testReadyCheckPassesOnlyWhatIsTrueNow() {
         var ready = state(.ready) {
             $0.openAtLogin = true

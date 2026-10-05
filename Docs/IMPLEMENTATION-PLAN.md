@@ -1,3 +1,9 @@
+# Production setup candidate8 — 5 October 2026
+
+The deferred first-minute setup page now distinguishes “Finish setup later” from “Your Mac is ready.” Readiness requires an approved pairing, no pending new request, and the existing permission/view-only choices. Pair now, Close for now and menu-bar resume use the existing actions. The three-file source is independently approved; 30 presentation and 11 onboarding tests pass. Actual window rendering is pending while the Mac is locked. Both signed candidate8 builds pass. Actual production IDs, build20261004.8, team39HM2X8GS6, deep/strict signatures, both extension versions and installed Mac identity continuity verify (`work/overnight/signatures8/verification.json`). No installation or physical acceptance is claimed.
+
+Candidate7 (`199b5dc`) is integrated into primary and pushed to the private backup. Corrected157 core and93 phone tests, meaningful duplicate/discontinuity negatives and exact-source restoration pass. Both signed7 builds and Mac installed-identity continuity pass; primary's11 feedback-window tests pass. Production devices remain20261004.6 because the phone is unavailable. These source corrections do not establish a physical60fps, sharpness or latency improvement. The Workspace/private-display beta stays separate.
+
 # Candidate7 verified source checkpoint —5October2026
 
 Phone-load publication/cache/inbox/monitor/authenticatedopt-in package is sourceapproved after bounded sticky-discontinuity and geometry-echo correction. Exactfreeze/report in initiatingchatoutputs; contractDocs/perf/PHONE-LOAD-SAMPLE-IDENTITY.md. Native157corePASS (`work/overnight/sample-identity-corrected-core`),93phonePASS (`sample-identity-phone`), duplicateRED8assertfails/restored1PASS, boundaryRED18assertfailswith2controlsPASS/restored10PASS. No negative-control modification touched the actual checkout.
