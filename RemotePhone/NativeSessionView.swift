@@ -2532,8 +2532,12 @@ struct NativeSessionView: View {
                 Section {
                     Button("Select text from picture") {
                         let visible = viewport.visibleSourceRect
+                        let identity = model.inlinePresentationAdmission?.identity
                         closeControls()
-                        frozenText.start(model: model, visible: visible)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                            guard identity != nil, model.inlinePresentationAdmission?.identity == identity else { return }
+                            frozenText.start(model: model, visible: visible)
+                        }
                     }
                     .disabled(!model.canControl || model.passwordFieldFocused || model.contentConcealed)
                     .accessibilityIdentifier("remote.selectText")

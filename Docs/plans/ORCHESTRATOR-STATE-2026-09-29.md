@@ -201,3 +201,11 @@ Authorized worker lanes, both GPT-6.1-Sol/high:
 A third worker and revival of a completed worker both returned “agent thread limit reached”; use staged delivery and reuse available lanes. Workers must notify before taking the shared Xcode lock. No worker may install or deploy. Isolated builds use external DerivedData and the shared lock.
 
 Evidence: glass source and earlier 51 native / 2 UI checks passed; no physical acceptance or main integration. Ten-feature packages currently in implementation, not reviewed or accepted. Each lane returns commits plus actual scoped checks. Root integrates, reviews exact final source, runs integrated checks, records unsupported/external/device gaps explicitly, and obtains fresh independent review.
+
+### 5 October checkpoint, about 08:50 EDT
+
+Root integration commits: b71b17d frozen OCR/guest UX, 775e988 OCR fixtures/virtual support gate, 8832e96 8KiB workspace payload budget (base64 inside16KiB control message). Root Debug phone build passed; five selected OCR/presentation tests passed on CCBF6137-D6A8-439A-B84E-776E04F2D45B. Root core workspace/guest policy/consent/real ICE transport selected tests passed21; backend guest fixtures passed5. Last root NativeSessionView sheet presentation sequencing edit still needs final integrated build. Generated project changes remain pending final regeneration/membership integration.
+
+Reusing completed `/root/glass_review` succeeded for feature7 implementation (independent lane `codex/ten-notifications` from b71b17d). Three workers now active. The earlier third-spawn failure did not prevent staged fan-out. Notification worker owns notification-only model/settings/preferences/host actions and backend hook/push paths. It does not own workspace contracts. Navigation: scoped17+3 initial checks/Mac build, final budget tests pending; files: scoped28 andMac build/phone build-for-testing passed, final budget/pre-open dataless hardening pending. Neither lane merged yet.
+
+Feature9 remains unresolved: no supported distributable provider established. Features1–8/10 continue; do not label feature9 built. Guest integration/deployment, physical AX/picture/OCR, hosted push and device acceptance remain separate outstanding checks. No main merge/install/deploy occurred.
