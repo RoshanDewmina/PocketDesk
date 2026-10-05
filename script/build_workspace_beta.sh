@@ -17,10 +17,6 @@ bundle_id='com.roshan.PocketDesk.WorkspaceBetaHost'
 # A failed build leaves the installed app running. Production identity guard stays unchanged.
 xcodegen generate > "$receipt/project-generation.log" 2>&1
 lockf -k /tmp/farside-xcodebuild.lock xcodebuild -project PocketDesktop.xcodeproj -scheme PocketDeskRemoteHost -configuration Debug -derivedDataPath "$derived" build > "$receipt/host-build.log" 2>&1
-if [[ "$mode" == --build ]]; then
-  print "Mac build passed. Receipts: $receipt"
-  exit 0
-fi
 
 verify_bundle() {
   local candidate="$1"
@@ -42,6 +38,13 @@ if [[ -e "$installed" || -L "$installed" ]]; then
     cat "$receipt/identity-continuity.log" >&2
     exit 1
   fi
+fi
+# Fail closed without the existing beta identity baseline. A fresh install needs
+# a separate review; this lane must not infer a new identity or touch permissions.
+[[ -d "$installed" && ! -L "$installed" ]] || { print -u2 'Installed beta identity baseline is required.'; exit 1; }
+if [[ "$mode" == --build ]]; then
+  print "Mac build and read-only identity/UUID preflight passed. Receipts: $receipt"
+  exit 0
 fi
 [[ -w /Applications ]] || { print -u2 '/Applications is not writable; installation stopped.'; exit 1; }
 install_record="$(mktemp -d "$receipt/host-install.XXXXXX")"
