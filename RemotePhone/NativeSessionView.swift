@@ -2540,8 +2540,14 @@ struct NativeSessionView: View {
         case .view:
             settingsForm("View") {
                 zoomSection
+                // Simple surface: the defaults (Pinned, no phone mini map) stay; the choices are for testing.
+                #if DEBUG
                 KeyboardViewSettingsSection()
-                miniMapSection
+                #endif
+                if UIDevice.current.userInterfaceIdiom == .pad { miniMapSection }
+                #if DEBUG
+                if UIDevice.current.userInterfaceIdiom != .pad { miniMapSection }
+                #endif
             }
         case .clipboard: settingsForm("Clipboard") { clipboardSettingsSection }
         case .keyboard: settingsForm("Keyboard and pointer") { hardwareSection }
@@ -2602,6 +2608,7 @@ struct NativeSessionView: View {
                 summaryRow("Keyboard and pointer", "keyboard",
                            value: peripherals.keyboardConnected ? "Keyboard connected" : "", page: .keyboard)
             }
+            #if DEBUG
             if session {
                 Section {
                     NavigationLink { LANWakeView(model: model) } label: {
@@ -2610,6 +2617,7 @@ struct NativeSessionView: View {
                     }
                 }
             }
+            #endif
             Section {
                 summaryRow("How to steer", "hand.draw", value: "", page: .steer)
                 summaryRow("Diagnostics", "waveform.path.ecg", value: streamStatsEnabled ? "Statistics on" : "", page: .diagnostics)
@@ -2824,10 +2832,12 @@ struct NativeSessionView: View {
                 Text(model.pencilSupported ? "Pencil places the pointer, presses with pressure and ignores resting fingers during contact. Drawing support depends on the Mac app." : "Pencil input needs a compatible Mac and a live picture session.")
                     .font(.footnote)
             }
+            if UIDevice.current.userInterfaceIdiom == .pad {
             Toggle("Use ⌃⌥ for shortcuts iPadOS keeps", isOn: $remapShortcuts)
                 .toggleStyle(FarsideSwitchStyle())
                 .listRowBackground(Farside.Palette.panel)
                 .accessibilityIdentifier("remote.hardware.remap")
+            }
             if remapShortcuts {
                 DisclosureGroup("Shortcuts") {
                     ForEach(ShortcutRemap.defaults) { remap in
@@ -2957,7 +2967,9 @@ struct NativeSessionView: View {
             pictureQualitySection
         }
         bigTextSection
+        #if DEBUG
         Section { FullColorSettingRows() } header: { sectionHeader("Experimental full color") }
+        #endif
     }
 
     private var macAudioSection: some View {
@@ -3141,6 +3153,7 @@ struct NativeSessionView: View {
         Section {
             DiagnosticReportRows(model: model)
 
+            #if DEBUG
             if !offlineLayoutCheck {
                 Text(codecDiagnostics)
                     .font(.footnote).foregroundStyle(Farside.Palette.ash)
@@ -3163,6 +3176,7 @@ struct NativeSessionView: View {
                     .font(.footnote).foregroundStyle(Farside.Palette.ash)
                     .listRowBackground(Farside.Palette.panel)
             }
+            #endif
             if let tip = model.wifiStallTip, let extra = tip.secondary(device: UIDevice.current.model) {
                 Text(extra).font(.footnote).foregroundStyle(Farside.Palette.ash)
                     .listRowBackground(Farside.Palette.panel)
@@ -3198,7 +3212,11 @@ struct NativeSessionView: View {
             }
             #endif
         } header: {
+            #if DEBUG
             sectionHeader("For testing")
+            #else
+            sectionHeader("Help with problems")
+            #endif
         }
     }
 
