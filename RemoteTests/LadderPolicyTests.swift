@@ -1359,8 +1359,10 @@ final class LadderPolicyTests: XCTestCase {
         slowReport.decodeMs = 9
         var slowSample = sample
         slowSample.phoneLoad = PhoneLoadFeedback(report: slowReport)
+        slowSample.phoneLoad?.window = PhoneLoadWindow(sequence: 1, epoch: 7, age: 0)
         var slowMonitor = HostLoadMonitor(targetFPS: 120)
         XCTAssertNil(slowMonitor.tick(sample: slowSample, at: 0).ladder)
+        slowSample.phoneLoad?.window?.sequence = 2 // A second actual measurement, even with equal values.
         XCTAssertEqual(slowMonitor.tick(sample: slowSample, at: 1).ladder, rung(1, "phone"))
 
         slowReport.decodeMs = nil
@@ -2159,5 +2161,308 @@ private extension LadderState {
         var state = self
         state.reason = reason
         return state
+    }
+}
+
+
+final class PhoneLoadWindowAttributionTests: XCTestCase {
+    private func report(decode: Double = 20, superseded: Double = 0) -> StreamStatsReport {
+        var value = StreamStatsReport(role: "phone", previous: nil, current: StreamStatsSample(entries: []), counters: nil)
+        value.decodeMs = decode; value.supersededPerSecond = superseded; value.presentedFPS = 60 - superseded
+        value.thermalState = 0; value.lowPowerMode = false; value.route = "local"; value.routeDetail = "lan"
+        return value
+    }
+    private func host(_ load: PhoneLoadFeedback?) -> HostLoadSample {
+        HostLoadSample(targetFPS: 60, longEdge: 2560, captureFPS: 60, captureLatencyP90Ms: 1,
+            encodedFPS: 60, encodeLatencyP90Ms: 10, encodeInFlightMax: 1, droppedBeforeEncode: 0,
+            pacerDelayMs: 1, targetKbps: 10_000, availableKbps: 30_000, qualityLimitation: "none",
+            hostThermalState: "nominal", lowPowerMode: false, phoneLoad: load, sentFPS: 60,
+            encoderSessionAgeS: 30, sourceFPS: 60, lanTrusted: true)
+    }
+    private func heartbeat(_ cache: PhoneLoadFeedbackCache, at now: TimeInterval) throws -> RemoteAction {
+        let action = RemoteAction(action: "heartbeat", epoch: 7,
+            phoneLoad: cache.current(epoch: 7, identified: true, at: now))
+        let decoded = try JSONDecoder().decode(RemoteAction.self, from: JSONEncoder().encode(action))
+        try decoded.validate()
+        return decoded
+    }
+    private func consume(_ inbox: inout HostPhoneLoadInbox, at now: TimeInterval) -> HostLoadSample {
+        let observation = inbox.consume(epoch: 7, at: now)
+        var sample = host(observation.feedback)
+        sample.phoneLoadInterrupted = observation.continuityInterrupted
+        return sample
+    }
+    func testInterveningNilUnqualifiedAndExpiredReportsRetirePhoneStreakBeforeReplacementIsConsumed() throws {
+        for boundary in ["nil", "unqualified", "expired", "invalidation"] {
+            var publisher = PhoneLoadSamplePublisher(), cache = PhoneLoadFeedbackCache()
+            var inbox = HostPhoneLoadInbox(), monitor = HostLoadMonitor(targetFPS: 60)
+            var measured = report()
+            publisher.publish(&measured, counterInterval: 1, at: 10)
+            cache.accept(measured, epoch: 7, at: 10)
+            let first = try heartbeat(cache, at: 10.1)
+            inbox.receive(first, epoch: 7, identified: true, at: 10.1)
+            XCTAssertNil(monitor.tick(sample: consume(&inbox, at: 10.2), at: 10.2).ladder, boundary)
+
+            // No host tick may observe the boundary before a newer qualified report replaces it.
+            switch boundary {
+            case "nil":
+                cache.invalidate(at: 10.5)
+                let cleared = try heartbeat(cache, at: 10.6)
+                XCTAssertNil(cleared.phoneLoad)
+                inbox.receive(cleared, epoch: 7, identified: true, at: 10.6)
+                inbox.receive(first, epoch: 7, identified: true, at: 10.7)
+                XCTAssertNil(inbox.current(epoch: 7, at: 10.7), "Clearing retains the replay high-water mark")
+            case "unqualified":
+                cache.invalidate(at: 10.5)
+                publisher.publish(&measured, counterInterval: 1, at: 11)
+                cache.accept(measured, epoch: 7, at: 11)
+                let spanning = try heartbeat(cache, at: 11.1)
+                XCTAssertNotNil(spanning.phoneLoad)
+                XCTAssertNil(spanning.phoneLoad?.window)
+                inbox.receive(spanning, epoch: 7, identified: true, at: 11.1)
+            case "invalidation":
+                inbox.invalidate()
+            default:
+                break // The old deadline expires before receive; there is no intervening read/tick.
+            }
+            let replacementTime = boundary == "expired" ? 13.0 : 12.0
+            publisher.publish(&measured, counterInterval: 1, at: replacementTime)
+            cache.accept(measured, epoch: 7, at: replacementTime)
+            inbox.receive(try heartbeat(cache, at: replacementTime + 0.1), epoch: 7,
+                          identified: true, at: replacementTime + 0.1)
+            let replacement = consume(&inbox, at: replacementTime + 0.2)
+            XCTAssertTrue(replacement.phoneLoadInterrupted, boundary)
+            XCTAssertNotNil(replacement.phoneLoad?.window, boundary)
+            XCTAssertNil(monitor.tick(sample: replacement, at: replacementTime + 0.2).ladder,
+                         "\(boundary): the first fresh report after a known gap is only vote one")
+            XCTAssertEqual(monitor.ladder.state.rung, 0, boundary)
+            XCTAssertFalse(consume(&inbox, at: replacementTime + 0.3).phoneLoadInterrupted,
+                           "The sticky indication is consumed once")
+
+            publisher.publish(&measured, counterInterval: 1, at: replacementTime + 1)
+            cache.accept(measured, epoch: 7, at: replacementTime + 1)
+            inbox.receive(try heartbeat(cache, at: replacementTime + 1.1), epoch: 7,
+                          identified: true, at: replacementTime + 1.1)
+            let move = monitor.tick(sample: consume(&inbox, at: replacementTime + 1.2),
+                                    at: replacementTime + 1.2).ladder
+            XCTAssertEqual(move?.rung, 1, boundary)
+            XCTAssertEqual(move?.reason, "phone", boundary)
+        }
+    }
+    func testInterveningPhoneGapPreservesIndependentHostOverload() throws {
+        var publisher = PhoneLoadSamplePublisher(), cache = PhoneLoadFeedbackCache()
+        var inbox = HostPhoneLoadInbox(), monitor = HostLoadMonitor(targetFPS: 60)
+        var healthy = report(decode: 3)
+        publisher.publish(&healthy, counterInterval: 1, at: 10)
+        cache.accept(healthy, epoch: 7, at: 10)
+        inbox.receive(try heartbeat(cache, at: 10.1), epoch: 7, identified: true, at: 10.1)
+        var first = consume(&inbox, at: 10.2); first.encodeLatencyP90Ms = 40
+        XCTAssertNil(monitor.tick(sample: first, at: 10.2).ladder)
+        cache.invalidate(at: 10.5)
+        inbox.receive(try heartbeat(cache, at: 10.6), epoch: 7, identified: true, at: 10.6)
+        publisher.publish(&healthy, counterInterval: 1, at: 12)
+        cache.accept(healthy, epoch: 7, at: 12)
+        inbox.receive(try heartbeat(cache, at: 12.1), epoch: 7, identified: true, at: 12.1)
+        var second = consume(&inbox, at: 12.2); second.encodeLatencyP90Ms = 40
+        XCTAssertTrue(second.phoneLoadInterrupted)
+        let move = monitor.tick(sample: second, at: 12.2).ladder
+        XCTAssertEqual(move?.rung, 1)
+        XCTAssertEqual(move?.reason, "encoding", "A phone-only boundary cannot discard independent host pressure")
+    }
+    func testAuxiliaryReceiptsAndReplacementAtExactDeadlineDoNotCreatePhoneGap() throws {
+        var publisher = PhoneLoadSamplePublisher(), cache = PhoneLoadFeedbackCache()
+        var inbox = HostPhoneLoadInbox(), monitor = HostLoadMonitor(targetFPS: 60)
+        var measured = report()
+        publisher.publish(&measured, counterInterval: 1, at: 10)
+        cache.accept(measured, epoch: 7, at: 10)
+        inbox.receive(try heartbeat(cache, at: 10), epoch: 7, identified: true, at: 10)
+        XCTAssertNil(monitor.tick(sample: consume(&inbox, at: 10.1), at: 10.1).ladder)
+        let video = VideoFeedback(operation: .refresh, generation: String(repeating: "a", count: 32),
+                                  nonce: String(repeating: "b", count: 32), token: nil, scopeEpoch: 1)
+        let auxiliary = [
+            RemoteAction(action: "heartbeat", epoch: 7, videoFeedback: video),
+            RemoteAction(action: "heartbeat", epoch: 7, pointerProbe: "pointer"),
+            RemoteAction(action: "heartbeat", epoch: 7, textFocusProbe: String(repeating: "c", count: 32)),
+            RemoteAction(action: "heartbeat", epoch: 6)
+        ]
+        for action in auxiliary {
+            let decoded = try JSONDecoder().decode(RemoteAction.self, from: JSONEncoder().encode(action))
+            try decoded.validate()
+            inbox.receive(decoded, epoch: 7, identified: true, at: 11)
+        }
+        XCTAssertNotNil(inbox.current(epoch: 7, at: 12.5), "The existing deadline is inclusive")
+        publisher.publish(&measured, counterInterval: 1, at: 12.5)
+        cache.accept(measured, epoch: 7, at: 12.5)
+        inbox.receive(try heartbeat(cache, at: 12.5), epoch: 7, identified: true, at: 12.5)
+        let replacement = consume(&inbox, at: 12.5)
+        XCTAssertFalse(replacement.phoneLoadInterrupted, "Probes, stale epochs and the exact age limit are not gaps")
+        XCTAssertEqual(monitor.tick(sample: replacement, at: 12.5).ladder?.reason, "phone")
+    }
+    func testInterveningPhoneGapCannotBorrowEarlierRecoveryTime() throws {
+        var publisher = PhoneLoadSamplePublisher(), cache = PhoneLoadFeedbackCache()
+        var inbox = HostPhoneLoadInbox(), monitor = HostLoadMonitor(targetFPS: 60)
+        var measured = report()
+        func receive(_ now: TimeInterval) throws {
+            publisher.publish(&measured, counterInterval: 1, at: now)
+            cache.accept(measured, epoch: 7, at: now)
+            inbox.receive(try heartbeat(cache, at: now + 0.1), epoch: 7, identified: true, at: now + 0.1)
+        }
+        try receive(10)
+        XCTAssertNil(monitor.tick(sample: consume(&inbox, at: 10.2), at: 10.2).ladder)
+        try receive(11)
+        XCTAssertEqual(monitor.tick(sample: consume(&inbox, at: 11.2), at: 11.2).ladder?.rung, 1)
+        measured = report(decode: 3)
+        for second in 12...20 {
+            try receive(Double(second))
+            XCTAssertNil(monitor.tick(sample: consume(&inbox, at: Double(second) + 0.2),
+                                     at: Double(second) + 0.2).ladder)
+        }
+        cache.invalidate(at: 20.5)
+        inbox.receive(try heartbeat(cache, at: 20.6), epoch: 7, identified: true, at: 20.6)
+        // The first fully post-boundary report arrives after the previous climb timer matured.
+        try receive(22)
+        let afterGap = consume(&inbox, at: 22.2)
+        XCTAssertTrue(afterGap.phoneLoadInterrupted)
+        XCTAssertNil(monitor.tick(sample: afterGap, at: 22.2).ladder)
+        for second in 23...31 {
+            try receive(Double(second))
+            XCTAssertNil(monitor.tick(sample: consume(&inbox, at: Double(second) + 0.2),
+                                     at: Double(second) + 0.2).ladder)
+        }
+        try receive(32)
+        XCTAssertEqual(monitor.tick(sample: consume(&inbox, at: 32.2), at: 32.2).ladder?.rung, 0,
+                       "Recovery still succeeds after the existing ten-second clean interval")
+    }
+    func testPublishedWindowAcrossEncodedHeartbeatReceiptsVotesOnlyOnceAndEqualNewWindowVotesAgain() throws {
+        // Exercise both default phone triggers through the actual publication/cache/wire/inbox/monitor helpers.
+        for (decode, superseded) in [(20.0, 0.0), (10.0, 20.0)] {
+            var publisher = PhoneLoadSamplePublisher(), cache = PhoneLoadFeedbackCache()
+            var inbox = HostPhoneLoadInbox(), monitor = HostLoadMonitor(targetFPS: 60)
+            var measured = report(decode: decode, superseded: superseded)
+            publisher.publish(&measured, counterInterval: 1, at: 10)
+            cache.accept(measured, epoch: 7, at: 10.1)
+            let first = try heartbeat(cache, at: 10.25)
+            inbox.receive(first, epoch: 7, identified: true, at: 10.3)
+            XCTAssertNil(monitor.tick(sample: host(inbox.current(epoch: 7, at: 10.5)), at: 10.5).ladder)
+            let repeatReceipt = try heartbeat(cache, at: 11.25)
+            XCTAssertEqual(first.phoneLoad?.window?.sequence, repeatReceipt.phoneLoad?.window?.sequence)
+            inbox.receive(repeatReceipt, epoch: 7, identified: true, at: 11.3)
+            XCTAssertNil(monitor.tick(sample: host(inbox.current(epoch: 7, at: 11.5)), at: 11.5).ladder,
+                         "A second host statistics window cannot turn one phone measurement into two bad observations")
+            XCTAssertEqual(monitor.ladder.state.rung, 0)
+
+            var next = report(decode: decode, superseded: superseded) // Equal values, genuinely new measurement.
+            publisher.publish(&next, counterInterval: 1.6, at: 11.6)
+            cache.accept(next, epoch: 7, at: 11.7)
+            XCTAssertEqual(first.phoneLoad?.decodeMs, try heartbeat(cache, at: 11.8).phoneLoad?.decodeMs)
+            XCTAssertNotEqual(first.phoneLoad?.window?.sequence, try heartbeat(cache, at: 11.8).phoneLoad?.window?.sequence)
+            inbox.receive(try heartbeat(cache, at: 11.8), epoch: 7, identified: true, at: 11.9)
+            let move = monitor.tick(sample: host(inbox.current(epoch: 7, at: 12)), at: 12).ladder
+            XCTAssertEqual(move?.rung, 1); XCTAssertEqual(move?.reason, "phone")
+        }
+    }
+    func testDuplicateCannotRenewAgeOrResurrectAfterNilInvalidationAndOutOfOrderReceipt() throws {
+        var publisher = PhoneLoadSamplePublisher(), cache = PhoneLoadFeedbackCache(), inbox = HostPhoneLoadInbox()
+        let lifetime = UUID(); inbox.beginLifetime(lifetime)
+        var measured = report(); publisher.publish(&measured, counterInterval: 1, at: 10)
+        cache.accept(measured, epoch: 7, at: 10.2)
+        let first = try heartbeat(cache, at: 11) // One second old before its first receipt.
+        inbox.receive(first, epoch: 7, identified: true, at: 20)
+        inbox.receive(try heartbeat(cache, at: 12), epoch: 7, identified: true, at: 21)
+        XCTAssertNotNil(inbox.current(epoch: 7, at: 21.5))
+        XCTAssertNil(inbox.current(epoch: 7, at: 21.501), "Repeating the ID must not restart its remaining lifetime")
+        inbox.receive(first, epoch: 7, identified: true, at: 22)
+        XCTAssertNil(inbox.current(epoch: 7, at: 22))
+        inbox.receive(RemoteAction(action: "heartbeat", epoch: 7), epoch: 7, identified: true, at: 23)
+        inbox.invalidate(); inbox.beginLifetime(lifetime)
+        inbox.receive(first, epoch: 7, identified: true, at: 24)
+        XCTAssertNil(inbox.current(epoch: 7, at: 24), "Same-session capture restart retains the replay high-water mark")
+        inbox.beginLifetime(UUID())
+        inbox.receive(first, epoch: 7, identified: true, at: 25)
+        XCTAssertNotNil(inbox.current(epoch: 7, at: 25), "Only a verified new lifetime can reuse a sequence")
+        XCTAssertNil(inbox.current(epoch: 8, at: 25), "Stored evidence is bound to the received geometry too")
+        var next = first; next.phoneLoad?.window?.sequence = 3
+        inbox.receive(next, epoch: 7, identified: true, at: 25.1)
+        var older = first; older.phoneLoad?.window?.sequence = 2; older.phoneLoad?.decodeMs = 999
+        inbox.receive(older, epoch: 7, identified: true, at: 25.2)
+        XCTAssertEqual(inbox.current(epoch: 7, at: 25.2)?.window?.sequence, 3)
+        XCTAssertEqual(inbox.current(epoch: 7, at: 25.2)?.decodeMs, 20)
+        inbox.receive(next, epoch: 7, identified: true, at: .nan)
+        XCTAssertNil(inbox.current(epoch: 7, at: 25.3))
+    }
+    func testHeldPhonePressureDoesNotSuppressNewHostLoadOrBecomeRecoveryEvidence() throws {
+        var publisher = PhoneLoadSamplePublisher(), cache = PhoneLoadFeedbackCache()
+        var measured = report(); publisher.publish(&measured, counterInterval: 1, at: 10)
+        cache.accept(measured, epoch: 7, at: 10)
+        let feedback = try XCTUnwrap(cache.current(epoch: 7, identified: true, at: 10))
+        var monitor = HostLoadMonitor(targetFPS: 60)
+        XCTAssertNil(monitor.tick(sample: host(feedback), at: 10).ladder)
+        var loaded = host(feedback); loaded.encodeLatencyP90Ms = 40
+        XCTAssertEqual(monitor.tick(sample: loaded, at: 11).ladder?.reason, "encoding",
+                       "A genuinely new host overload can complete the existing mixed-cause bad streak")
+        // At 30 FPS the old 20 ms phone value no longer fires, but is not new phone headroom.
+        var reduced = host(feedback); reduced.encodedFPS = 30; reduced.sourceFPS = 30; reduced.sentFPS = 30
+        for second in 12...25 {
+            XCTAssertNil(monitor.tick(sample: reduced, at: Double(second)).ladder)
+        }
+        // Unknown breaks the old streak and starts host-only recovery from this boundary, not 10 s ago.
+        reduced.phoneLoad = nil
+        XCTAssertNil(monitor.tick(sample: reduced, at: 26).ladder)
+        XCTAssertNil(monitor.tick(sample: reduced, at: 35).ladder)
+        XCTAssertEqual(monitor.tick(sample: reduced, at: 36).ladder?.rung, 0)
+    }
+    func testLegacyRateFeedbackIsUnknownButThermalPowerAndHostAdaptationRemain() {
+        var legacy = PhoneLoadFeedback(report: report(decode: 999))
+        var monitor = HostLoadMonitor(targetFPS: 60)
+        for time in 0...4 { XCTAssertNil(monitor.tick(sample: host(legacy), at: Double(time)).ladder) }
+        var loaded = host(legacy); loaded.encodeLatencyP90Ms = 40
+        XCTAssertNil(monitor.tick(sample: loaded, at: 5).ladder)
+        XCTAssertEqual(monitor.tick(sample: loaded, at: 6).ladder?.reason, "encoding")
+        legacy.thermalState = 2
+        XCTAssertEqual(monitor.tick(sample: host(legacy), at: 7).ladder?.reason, "phone")
+        var power = HostLoadMonitor(targetFPS: 120), sample = host(legacy)
+        legacy.thermalState = 0; legacy.lowPowerMode = true; sample.targetFPS = 120; sample.phoneLoad = legacy
+        XCTAssertEqual(power.tick(sample: sample, at: 0).ladder?.reason, "phonePower")
+    }
+    func testPublicationAgeSurvivesHopAndTransitionsNeutralizeSpanningWindows() throws {
+        var publisher = PhoneLoadSamplePublisher(), cache = PhoneLoadFeedbackCache()
+        var value = report(); publisher.publish(&value, counterInterval: 1, at: 10)
+        cache.accept(value, epoch: 7, at: 11) // MainActor hop was delayed by one second.
+        XCTAssertEqual(cache.current(epoch: 7, identified: true, at: 11.5)?.window?.age, 1.5)
+        XCTAssertNil(cache.current(epoch: 7, identified: true, at: 12.501))
+        XCTAssertNil(cache.current(epoch: 8, identified: true, at: 11.5))
+        cache.invalidate(at: 10.5)
+        publisher.publish(&value, counterInterval: 1, at: 11)
+        cache.accept(value, epoch: 8, at: 11)
+        XCTAssertNil(cache.current(epoch: 8, identified: true, at: 11)?.window)
+        XCTAssertNil(cache.current(epoch: 8, identified: true, at: 11)?.decodeMs)
+        publisher.publish(&value, counterInterval: 1, at: 12)
+        cache.accept(value, epoch: 8, at: 12)
+        XCTAssertNotNil(cache.current(epoch: 8, identified: true, at: 12)?.window)
+        value.routeDetail = "relay"
+        publisher.publish(&value, counterInterval: 1, at: 13)
+        cache.accept(value, epoch: 8, at: 13)
+        XCTAssertNil(cache.current(epoch: 8, identified: true, at: 13)?.window)
+        publisher.publish(&value, counterInterval: 1, at: 14)
+        cache.accept(value, epoch: 8, at: 14)
+        XCTAssertNotNil(cache.current(epoch: 8, identified: true, at: 14)?.window)
+    }
+    func testInvalidAgeClockAndSequenceWrapFailClosed() throws {
+        var value = report(), publisher = PhoneLoadSamplePublisher(sequence: UInt64.max - 1)
+        publisher.publish(&value, counterInterval: 1, at: 10)
+        XCTAssertEqual(value.phoneLoadSample?.sequence, UInt64.max)
+        publisher.publish(&value, counterInterval: 1, at: 11)
+        XCTAssertNil(value.phoneLoadSample, "Wrap cannot create another window with an already used ID")
+        var restarted = PhoneLoadSamplePublisher()
+        restarted.publish(&value, counterInterval: 1, at: 12)
+        XCTAssertEqual(value.phoneLoadSample?.sequence, 1)
+        for age in [-1.0, .nan, .infinity, 2.501] {
+            XCTAssertThrowsError(try PhoneLoadWindow(sequence: 1, epoch: 7, age: age).validate())
+        }
+        XCTAssertNoThrow(try PhoneLoadWindow(sequence: 1, epoch: 7, age: 0).validate())
+        XCTAssertThrowsError(try PhoneLoadWindow(sequence: 0, epoch: 7, age: 0).validate())
+        var cache = PhoneLoadFeedbackCache(); cache.accept(value, epoch: 7, at: 12)
+        XCTAssertNil(cache.current(epoch: 7, identified: true, at: 11))
+        XCTAssertNil(cache.current(epoch: 7, identified: true, at: .nan))
     }
 }

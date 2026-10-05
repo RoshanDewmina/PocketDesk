@@ -270,6 +270,7 @@ final class PeerMedia: NSObject {
     private var cadenceRenderer: StreamCadenceRenderer?
     private var observedTrack: RTCVideoTrack?
     private var statisticsTimer: Timer?
+    private var phoneLoadPublisher = PhoneLoadSamplePublisher()
     private var statisticsPending = false
     private static let codecRuntime: Void = {
         StreamTuning.prepareRuntime()
@@ -1452,7 +1453,8 @@ final class PeerMedia: NSObject {
         let sample = StreamStatsSample(entries: entries)
         recoverUndecodableFirstPicture(entries)
         guard !closed else { return }
-        let counts = counters.drain(inputBufferedBytes: controlBufferedAmount)
+        let completedAt = ProcessInfo.processInfo.systemUptime
+        let counts = counters.drain(inputBufferedBytes: controlBufferedAmount, at: completedAt)
         var stats = StreamStatsReport(role: isHost ? "host" : "phone", previous: previousSample,
                                       current: sample, counters: previousSample == nil ? nil : counts)
         stats.captureMaximumDimension = captureMaximumDimension
@@ -1519,6 +1521,7 @@ final class PeerMedia: NSObject {
             stats.hostSummaryAgeMs = remoteHostSummaryAt.map { ((ProcessInfo.processInfo.systemUptime - $0) * 10_000).rounded() / 10 }
         }
         previousSample = sample
+        if !isHost { phoneLoadPublisher.publish(&stats, counterInterval: counts.interval, at: completedAt) }
         if isHost || onStreamStatistics == nil { StreamDebug.record(stats) }
         onStreamStatistics?(stats)
         if isHost { onSenderStatistics?(stats) }

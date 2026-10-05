@@ -129,6 +129,7 @@ final class PairEnrollmentCryptoTests: XCTestCase {
         let phoneKeys = try a.keys(isHost: false)
         var proof = PairEnrollment.Proof(reveal: a.phone.reveal, confirmation: phoneKeys.confirmation(role: "phone"))
         proof.first60 = true
+        proof.phoneLoadWindows = true
         let legacyProof = try JSONDecoder().decode(LegacyProof.self, from: PairEnrollment.encoded(proof))
         XCTAssertNil(a.request.handshake.first60, "New first60 opt-in never enters the enrollment transcript")
         let legacyHostKeys = try a.keys(isHost: true, reveal: legacyProof.reveal)
@@ -136,6 +137,26 @@ final class PairEnrollmentCryptoTests: XCTestCase {
         XCTAssertEqual(legacyHostKeys.sessionKey, phoneKeys.sessionKey)
         XCTAssertEqual(legacyHostKeys.trustKey, phoneKeys.trustKey)
         XCTAssertEqual(legacyHostKeys.comparisonCode, phoneKeys.comparisonCode)
+    }
+
+    func testOldPhoneTypedRequestAndProofStillDeriveNewHostKeysWithoutWindowOptIn() throws {
+        struct OldHandshake: Codable { let features: [String]; let mode: String?; let options: [String]? }
+        struct OldRequest: Codable { let version: Int; let commitment: Data; let handshake: OldHandshake; let phoneName: String? }
+        struct OldProof: Codable { let reveal: PairEnrollment.Reveal; let confirmation: Data }
+        let a = try agreement()
+        let oldRequest = try JSONDecoder().decode(OldRequest.self, from: PairEnrollment.encoded(a.request))
+        let decoded = try PairEnrollment.decode(PairEnrollment.Request.self, body: PairEnrollment.encoded(oldRequest))
+        XCTAssertNil(decoded.handshake.phoneLoadWindows)
+        XCTAssertEqual(try PairEnrollment.encoded(decoded), try PairEnrollment.encoded(a.request))
+        let phoneKeys = try a.keys(isHost: false)
+        let oldProof = OldProof(reveal: a.phone.reveal, confirmation: phoneKeys.confirmation(role: "phone"))
+        let proof = try PairEnrollment.decode(PairEnrollment.Proof.self, body: PairEnrollment.encoded(oldProof))
+        XCTAssertNil(proof.phoneLoadWindows)
+        let hostKeys = try a.keys(isHost: true, request: decoded, reveal: proof.reveal)
+        XCTAssertTrue(hostKeys.confirms(proof.confirmation, role: "phone"))
+        XCTAssertEqual(hostKeys.sessionKey, phoneKeys.sessionKey)
+        XCTAssertEqual(hostKeys.trustKey, phoneKeys.trustKey)
+        XCTAssertEqual(hostKeys.comparisonCode, phoneKeys.comparisonCode)
     }
 
     func testVersionExpiryBoundsAndInvalidCurvePointsFailClosed() throws {
@@ -409,6 +430,7 @@ final class ComparisonEnrollmentCoordinatorTests: XCTestCase {
         let actualRequest = try PairEnrollment.decode(PairEnrollment.Request.self, body: requestMessage.body)
         XCTAssertNil(actualRequest.handshake.first60)
         XCTAssertNil(actualRequest.handshake.shortcutChips, "Opt-in must stay outside the legacy crypto transcript")
+        XCTAssertNil(actualRequest.handshake.phoneLoadWindows, "Window opt-in must also stay outside the typed legacy transcript")
         let legacy = try PairEnrollment.decode(LegacyRequest.self, body: requestMessage.body)
         let request = try PairEnrollment.decode(PairEnrollment.Request.self, body: PairEnrollment.encoded(legacy))
         XCTAssertEqual(try PairEnrollment.encoded(request), try PairEnrollment.encoded(actualRequest),
@@ -422,6 +444,7 @@ final class ComparisonEnrollmentCoordinatorTests: XCTestCase {
         let actualProof = try PairEnrollment.decode(PairEnrollment.Proof.self, body: proofMessage.body)
         XCTAssertEqual(actualProof.first60, true)
         XCTAssertEqual(actualProof.shortcutChips, ShortcutChips.isEnabled() ? true : nil)
+        XCTAssertEqual(actualProof.phoneLoadWindows, true)
         let proof = try PairEnrollment.decode(LegacyProof.self, body: proofMessage.body)
         let keys = try PairEnrollment.derive(invitation: invitation, requestID: requestMessage.request, sessionID: session,
             request: request, challenge: challenge, phone: proof.reveal, ephemeral: ephemeral, isHost: true)
@@ -434,6 +457,16 @@ final class ComparisonEnrollmentCoordinatorTests: XCTestCase {
         var saved = invitation; saved.version = 1; saved.key = keys.trustKey; saved.token = keys.trustToken; saved.expires = .distantFuture
         let accepted = ProtectedMessage(kind: "accepted", request: requestMessage.request, session: session, sequence: 1, body: nil)
         return (phone, store, signal, derived, accepted, saved)
+    }
+
+    func testPhoneLoadWindowOptInComesOnlyFromTheConfirmedEnrollmentProof() throws {
+        let rig = try ComparisonEnrollmentRig(); defer { rig.stop() }
+        try rig.beginRequestOnly()
+        XCTAssertFalse(rig.host.phoneLoadWindowsRequested)
+        rig.pump()
+        XCTAssertTrue(rig.host.phoneLoadWindowsRequested)
+        rig.stop()
+        XCTAssertFalse(rig.host.phoneLoadWindowsRequested)
     }
 
     func testNewEnrollmentNegotiatesShortcutIdentityOnlyAfterConfirmedProof() throws {

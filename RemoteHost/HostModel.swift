@@ -2935,7 +2935,9 @@ final class RemoteHostModel: ObservableObject {
                 connection.media?.captureSharpness = capture.deliveredSharpness
             }
             if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value {
-                phoneLoad.receive(action, epoch: inputEpoch.value, at: ProcessInfo.processInfo.systemUptime)
+                phoneLoad.beginLifetime(connection.presentationSessionID)
+                phoneLoad.receive(action, epoch: inputEpoch.value, identified: connection.phoneLoadWindowsRequested,
+                                  at: ProcessInfo.processInfo.systemUptime)
             }
             if let probe = action.clock, !probe.isEcho, (try? probe.validate()) != nil {
                 let received = min(MachClock.nowMs(), connection.media?.controlArrivalMs ?? .infinity)
@@ -3357,7 +3359,8 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Ladder and busy state (G12)
 
     private func beginLoadMonitor(peer: PeerMedia) {
-        phoneLoad.reset()
+        phoneLoad.beginLifetime(connection.presentationSessionID)
+        phoneLoad.invalidate()
         ladderState = nil
         busyState = nil
         let tuning = StreamTuning.current
@@ -3372,7 +3375,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func endLoadMonitor() {
-        phoneLoad.reset()
+        phoneLoad.invalidate()
         loadMonitor = nil
         connection.media?.senderQueueGovernorStatus = nil
         connection.media?.senderQueueGovernorShedding = false
@@ -3395,7 +3398,9 @@ final class RemoteHostModel: ObservableObject {
                                     hostThermalState: HostLoadMonitor.thermalName(process.thermalState),
                                     lowPowerMode: process.isLowPowerModeEnabled)
         var sampleWithPhone = sample
-        sampleWithPhone.phoneLoad = phoneLoad.current(at: process.systemUptime)
+        let phoneObservation = phoneLoad.consume(epoch: inputEpoch.value, at: process.systemUptime)
+        sampleWithPhone.phoneLoad = phoneObservation.feedback
+        sampleWithPhone.phoneLoadInterrupted = phoneObservation.continuityInterrupted
         sampleWithPhone.provenLocalLink = peer.provenLocalLinkActive
         let change = monitor.tick(sample: sampleWithPhone, at: process.systemUptime)
         loadMonitor = monitor
@@ -3529,7 +3534,8 @@ final class RemoteHostModel: ObservableObject {
             captureRegion: capture.appliedCaptureRegion, ladder: ladderState, busy: busyState,
             macVitals: vitalsMonitor?.current(now: ProcessInfo.processInfo.systemUptime),
             mode: sessionState.wireMode, modeReason: pendingModeReason?.rawValue ?? sessionState.wireReason,
-            captureScope: captureScopeStatus
+            captureScope: captureScopeStatus,
+            phoneLoadWindows: connection.phoneLoadWindowsRequested && StreamTuning.current.ladder ? true : nil
         ))
         if sent && event != nil { recoveryNoticeDelivered = true }
         if sent && alert != nil { agentAlertOutbox.removeFirst() }

@@ -492,8 +492,8 @@ final class PhoneRemoteModel: ObservableObject {
     #endif
     private(set) var ladder: LadderState?
     private var viewportReporter = ViewportReporter()
-    private var phoneLoad: PhoneLoadFeedback?
-    private var phoneLoadReportedAt: TimeInterval?
+    private var phoneLoadCache = PhoneLoadFeedbackCache()
+    private var hostPhoneLoadWindows = false
     private var viewportSendTask: Task<Void, Never>?
     private var viewportSendAt: TimeInterval?
     private var nativeScreenPixels: PixelSize?
@@ -757,6 +757,7 @@ final class PhoneRemoteModel: ObservableObject {
         finishPiPRestore(false)
     }
     private func invalidatePresentation(keepingPiP: Bool = false, requestHostExit: Bool = true) {
+        phoneLoadCache.invalidate()
         PhoneIdleTimer.shared.endSession()
         if pendingWake != nil { wakeStatus = "The helper session changed. No new wake result can be confirmed." }
         pendingWake = nil; wakeTimeout?.cancel(); wakeTimeout = nil
@@ -1110,8 +1111,9 @@ final class PhoneRemoteModel: ObservableObject {
             self.lastDeparture = nil
             self.sessionEndReason = nil
             self.backgroundHoldEndsAt = nil
-            self.phoneLoad = nil
-            self.phoneLoadReportedAt = nil
+            self.phoneLoadCache = PhoneLoadFeedbackCache()
+            self.phoneLoadCache.invalidate()
+            self.hostPhoneLoadWindows = false
             self.viewportResume = nil
             self.resumeResolved = self.resumeCapsule == nil
             self.resumeStartedAt = ProcessInfo.processInfo.systemUptime
@@ -1861,8 +1863,9 @@ final class PhoneRemoteModel: ObservableObject {
             supported: hostFeatures.contains(SessionFeature.lowDataPolicy), enabled: LowDataPolicy.isEnabled(preferences), at: now)
         connection.media?.applyLowDataPolicy(constrained == true)
         let viewport = viewportCaptureSupported ? viewportReporter.region(forDisplay: sourceSize) : nil
-        let load = hostFeatures.contains(SessionFeature.ladder) &&
-            phoneLoadReportedAt.map({ now >= $0 && now - $0 <= 2.5 }) == true ? phoneLoad : nil
+        let load = hostFeatures.contains(SessionFeature.ladder)
+            ? phoneLoadCache.current(epoch: geometryEpoch,
+                identified: hostPhoneLoadWindows && connection.phoneLoadWindowsRequested, at: now) : nil
         return RemoteAction(action: "heartbeat", macAudioRequested: phoneAudioRequestSupported ? currentMacAudioConsent() && !macAudioSuspended : nil, lowDataMode: constrained, epoch: geometryEpoch, pointerSync: pointerOverlay.advertisement(),
                             streamQuality: appliedStreamQuality == nil ? nil : streamQuality, clock: clock,
                             screenPixels: screenPixels(), viewport: viewport, phoneLoad: load)
@@ -1871,8 +1874,7 @@ final class PhoneRemoteModel: ObservableObject {
     /// Statistics run on every live media connection, including when the overlay is hidden.
     func acceptPhoneStats(_ report: StreamStatsReport, at now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         guard report.role == "phone" else { return }
-        phoneLoad = PhoneLoadFeedback(report: report)
-        phoneLoadReportedAt = now
+        phoneLoadCache.accept(report, epoch: geometryEpoch, at: now)
     }
 
     /// The phone's screen in device pixels, read once a window scene exists.
@@ -2823,8 +2825,8 @@ let now = ProcessInfo.processInfo.systemUptime
         let now = ProcessInfo.processInfo.systemUptime
         // A held connection can resume before the age limit. Require a new statistics sample
         // after pause so a pre-background report cannot become new ladder evidence.
-        phoneLoad = nil
-        phoneLoadReportedAt = nil
+        phoneLoadCache.invalidate()
+        hostPhoneLoadWindows = false
         contentConcealed = true
         resumeState = .backgrounded
         persistResume()
@@ -3101,6 +3103,7 @@ let now = ProcessInfo.processInfo.systemUptime
             if let scope = action.captureScope {
                 guard (try? scope.validate()) != nil,
                       sharedCaptureScope.map({ scope.epoch >= $0.epoch }) ?? true else { return }
+                if sharedCaptureScope != scope { phoneLoadCache.invalidate() }
                 sharedCaptureScope = scope
                 if scope.viewOnly {
                     controlAllowed = false
@@ -3135,6 +3138,7 @@ let now = ProcessInfo.processInfo.systemUptime
                 }
             }
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
+            hostPhoneLoadWindows = action.epoch == geometryEpoch && action.phoneLoadWindows == true
             hostFeatures = Set(SharedCaptureScopePolicy.features(action.features ?? [], kind: sharedCaptureScope?.kind ?? .display))
             if !hostFeatures.contains(SessionFeature.shortcutChips) { frontmostApp = nil }
             if action.features != nil { firstPictureCaptureObserved = true }
@@ -3218,6 +3222,7 @@ let now = ProcessInfo.processInfo.systemUptime
                 sessionVitals = (vitals, Date(), connection.invitation?.room)
             }
             if let notice = vitalsNotices.observe(vitals, pill: busy, now: now) { announce(notice) }
+            if ladder != action.ladder { phoneLoadCache.invalidate() }
             ladder = action.ladder
             connection.media?.observeLadder(action.ladder)
             sendViewportChange(settled: false, at: ProcessInfo.processInfo.systemUptime)
@@ -3233,6 +3238,8 @@ let now = ProcessInfo.processInfo.systemUptime
             }
             pointerOverlay.reset(sourceSize: sourceSize)
             displayTickInput.cancel()
+            phoneLoadCache.invalidate()
+            hostPhoneLoadWindows = false
             geometryEpoch = action.epoch
             couchAck.reset()
             couchStalled = false
@@ -3571,8 +3578,8 @@ let now = ProcessInfo.processInfo.systemUptime
         viewportSendTask = nil
         viewportSendAt = nil
         viewportReporter.sessionEnded()
-        phoneLoad = nil
-        phoneLoadReportedAt = nil
+        phoneLoadCache.invalidate()
+        hostPhoneLoadWindows = false
         qualityRequestedAt = nil
         pointerLocator.clear()
         pointerOverlay.reset(sourceSize: sourceSize)

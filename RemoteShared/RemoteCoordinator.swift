@@ -83,6 +83,8 @@ final class RemoteCoordinator: ObservableObject {
     @Published private(set) var setupInProgress: Bool?
     @Published private(set) var permissionWait: First60PermissionWait?
     private var first60Negotiated = false
+    /// Phone offer / host authenticated request; the host echoes support in current capture status.
+    private(set) var phoneLoadWindowsRequested = false
     private var first60WaitingForMedia = false
     private var lastFirst60Status: First60SetupStatus?
 
@@ -283,7 +285,8 @@ final class RemoteCoordinator: ObservableObject {
     #if DEBUG
     // Input-only fixture seam: no sockets, pairing store mutations or authorization bypass in release.
     var inputPacketSenderForTesting: ((ControlPacket) -> Bool)?
-    func startInputFixtureForTesting(session: String) {
+    func startInputFixtureForTesting(session: String, phoneLoadWindows: Bool = false) {
+        phoneLoadWindowsRequested = phoneLoadWindows
         self.session = session; connected = true; stopped = false; hostRegistered = isHost
         peerFeatures = [SessionFeature.extendedFeatureList, SessionFeature.causalInput]
     }
@@ -1213,6 +1216,7 @@ final class RemoteCoordinator: ObservableObject {
         enrollmentEphemeral = nil; enrollmentRequest = nil; enrollmentChallenge = nil; enrollmentKeys = nil
         pairingComparisonCode = nil; pendingPairingPhoneName = nil; enrollmentPending = false
         first60Negotiated = false; first60WaitingForMedia = false
+        phoneLoadWindowsRequested = false
         setupInProgress = nil; permissionWait = nil; lastFirst60Status = nil
         peerFeatures = []
         requestedFeatures = []
@@ -1283,6 +1287,7 @@ final class RemoteCoordinator: ObservableObject {
                                                                                mode: sessionModeRequest == .couch ? SessionMode.couch.rawValue : nil)
                         requestedFeatures = handshake.requested
                         first60Negotiated = handshake.first60 == true
+                        phoneLoadWindowsRequested = handshake.phoneLoadWindows == true
                         if let scannedEnrollment {
                             let ephemeral = try PairEnrollment.Ephemeral()
                             let name = localDisplayName.flatMap(PhoneIdentity.sanitized)
@@ -1291,6 +1296,7 @@ final class RemoteCoordinator: ObservableObject {
                             var enrollmentHandshake = handshake
                             enrollmentHandshake.first60 = nil
                             enrollmentHandshake.shortcutChips = nil
+                            enrollmentHandshake.phoneLoadWindows = nil
                             let commit = try PairEnrollment.commitment(invitation: scannedEnrollment, requestID: request,
                                 reveal: ephemeral.reveal, handshake: enrollmentHandshake, phoneName: name)
                             let enrollment = PairEnrollment.Request(commitment: commit, handshake: enrollmentHandshake, phoneName: name)
@@ -1375,6 +1381,7 @@ final class RemoteCoordinator: ObservableObject {
             request = message.request; session = try SecureRandom.token()
             guardState = SessionReplayGuard(request: request, session: session)
             peerFeatures = MacShareBlocker.Handshake.features(in: message.body)
+            phoneLoadWindowsRequested = MacShareBlocker.Handshake.supportsPhoneLoadWindows(in: message.body)
             first60Negotiated = First60.isEnabled() && first60SetupStatus != nil && MacShareBlocker.Handshake.supportsFirst60(in: message.body)
             peerRequestedMode = MacShareBlocker.Handshake.requestedMode(in: message.body)
             first60Negotiated = first60Negotiated && peerRequestedMode == .picture
@@ -1511,6 +1518,7 @@ final class RemoteCoordinator: ObservableObject {
             let handshakeBody = try PairEnrollment.encoded(incoming.handshake)
             peerFeatures = MacShareBlocker.Handshake.features(in: handshakeBody)
             peerFeatures.remove(SessionFeature.shortcutChips) // Enrollment opt-in comes only from a confirmed proof.
+            phoneLoadWindowsRequested = false // This opt-in also comes only from the confirmed proof.
             first60Negotiated = First60.isEnabled() && first60SetupStatus != nil && MacShareBlocker.Handshake.supportsFirst60(in: handshakeBody)
             peerRequestedMode = MacShareBlocker.Handshake.requestedMode(in: handshakeBody)
             first60Negotiated = first60Negotiated && peerRequestedMode == .picture
@@ -1529,6 +1537,7 @@ final class RemoteCoordinator: ObservableObject {
             var proof = PairEnrollment.Proof(reveal: ephemeral.reveal, confirmation: keys.confirmation(role: "phone"))
             proof.first60 = first60Negotiated ? true : nil
             proof.shortcutChips = requestedFeatures.contains(SessionFeature.shortcutChips) ? true : nil
+            proof.phoneLoadWindows = phoneLoadWindowsRequested ? true : nil
             #if DEBUG
             proof.e2eApproval = e2eEnrolling ? e2eEnrollmentProof : nil
             #endif
@@ -1546,6 +1555,7 @@ final class RemoteCoordinator: ObservableObject {
                 request: enrollmentRequest, challenge: enrollmentChallenge, phone: proof.reveal, ephemeral: ephemeral, isHost: true)
             guard keys.confirms(proof.confirmation, role: "phone") else { throw RemoteError.invalidMessage }
             if proof.shortcutChips == true { peerFeatures.insert(SessionFeature.shortcutChips) }
+            phoneLoadWindowsRequested = proof.phoneLoadWindows == true
             first60Negotiated = First60.isEnabled() && first60SetupStatus != nil && proof.first60 == true && peerRequestedMode == .picture
             enrollmentKeys = keys; enrollmentEphemeral = nil; proofReceived = true
             cipher = try SignalCipher(key: keys.sessionKey, room: pair.invitation.room)

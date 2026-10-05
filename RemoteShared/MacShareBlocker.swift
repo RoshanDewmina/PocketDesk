@@ -30,6 +30,8 @@ enum MacShareBlocker: String, Codable, Equatable {
         var first60: Bool? = nil
         /// A separate opt-in preserves old Macs’ eight-feature/four-option decoder bounds.
         var shortcutChips: Bool? = nil
+        /// Separate from the historical eight features/four options and enrollment transcript.
+        var phoneLoadWindows: Bool? = nil
         /// Opt-in requests outside the eight-name feature bound. Older Macs ignore the key, and too
         /// many options are dropped on their own without touching `features`.
         var options: [String]? = nil
@@ -46,9 +48,16 @@ enum MacShareBlocker: String, Codable, Equatable {
                 + (!defaults.bool(forKey: "phoneAudioRequestDisabled") ? [SessionFeature.phoneAudio] : [])
                 + (DeliberateSessionEnd.isEnabled(defaults) ? [SessionFeature.deliberateEnd] : [])
             return Handshake(features: phone.features + (optional.contains(SessionFeature.videoRefinement) ? [SessionFeature.videoRefinement] : []),
-                             mode: mode, first60: First60.isEnabled(defaults) ? true : nil, shortcutChips: ShortcutChips.isEnabled(defaults) ? true : nil, options: options.isEmpty ? nil : options)
+                             mode: mode, first60: First60.isEnabled(defaults) ? true : nil, shortcutChips: ShortcutChips.isEnabled(defaults) ? true : nil, phoneLoadWindows: true, options: options.isEmpty ? nil : options)
         }
         var requested: Set<String> { Set(features + (options ?? []) + (shortcutChips == true ? [SessionFeature.shortcutChips] : [])) }
+
+        static func supportsPhoneLoadWindows(in body: Data?) -> Bool {
+            guard let body, body.count <= 1024,
+                  let decoded = try? JSONDecoder().decode(Handshake.self, from: body),
+                  decoded.features.count <= 8 else { return false }
+            return decoded.phoneLoadWindows == true
+        }
 
         static func requestedMode(in body: Data?) -> SessionMode {
             guard let body, body.count <= 1024,

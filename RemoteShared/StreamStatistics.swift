@@ -369,6 +369,8 @@ struct HostStreamSummary: Codable, Equatable {
 }
 
 struct StreamStatsReport: Codable, Equatable {
+    /// Phone-local provenance survives the MainActor callback hop; never used as a Mac clock.
+    var phoneLoadSample: PhoneLoadSampleStamp? = nil
     var role: String
     var route: String?
     var routeDetail: String?

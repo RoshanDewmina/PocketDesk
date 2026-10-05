@@ -328,6 +328,7 @@ enum PairEnrollment {
         var first60: Bool? = nil
         /// App-identity opt-in also stays outside the historical request/key transcript.
         var shortcutChips: Bool? = nil
+        var phoneLoadWindows: Bool? = nil
         #if DEBUG
         /// Existing private E2E enrollment authorization; absent from Release wire encoding.
         var e2eApproval: Data? = nil

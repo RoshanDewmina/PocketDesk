@@ -361,3 +361,29 @@ final class ShortcutChipsProtocolTests: XCTestCase {
         XCTAssertEqual(ShortcutChips.advertised(addingTo: old, enabled: true, peerFeatures: []), old)
     }
 }
+
+
+final class PhoneLoadWindowNegotiationTests: XCTestCase {
+    func testBooleanOptInKeepsOldFeatureOptionBoundsAndOldSchemas() throws {
+        let request = MacShareBlocker.Handshake.phoneRequest([SessionFeature.videoRefinement, SessionFeature.textClarity])
+        let bytes = try JSONEncoder().encode(request)
+        XCTAssertEqual(request.features.count, 8)
+        XCTAssertLessThanOrEqual(request.options?.count ?? 0, 4)
+        XCTAssertTrue(MacShareBlocker.Handshake.supportsPhoneLoadWindows(in: bytes))
+        struct OldRequest: Codable { let features: [String]; let mode: String?; let options: [String]? }
+        let old = try JSONDecoder().decode(OldRequest.self, from: bytes)
+        XCTAssertEqual(old.features, request.features); XCTAssertEqual(old.options, request.options)
+        XCTAssertFalse(MacShareBlocker.Handshake.supportsPhoneLoadWindows(in: try JSONEncoder().encode(old)))
+        for flag in [Bool?.none, Bool?.some(false)] {
+            var disabled = request; disabled.phoneLoadWindows = flag
+            XCTAssertFalse(MacShareBlocker.Handshake.supportsPhoneLoadWindows(in: try JSONEncoder().encode(disabled)))
+        }
+        var overflow = request; overflow.features.append("overflow")
+        XCTAssertFalse(MacShareBlocker.Handshake.supportsPhoneLoadWindows(in: try JSONEncoder().encode(overflow)))
+        XCTAssertNoThrow(try RemoteAction(action: "capture", phoneLoadWindows: true).validate())
+        XCTAssertThrowsError(try RemoteAction(action: "heartbeat", phoneLoadWindows: true).validate())
+        struct OldAction: Codable { let action: String; let epoch: UInt64 }
+        let capture = RemoteAction(action: "capture", epoch: 1, phoneLoadWindows: true)
+        XCTAssertEqual(try JSONDecoder().decode(OldAction.self, from: JSONEncoder().encode(capture)).epoch, 1)
+    }
+}

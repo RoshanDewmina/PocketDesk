@@ -83,8 +83,11 @@ struct RemoteAction: Codable {
 
     var inputRequestID: String? = nil
     var inputAppliedReceipt: InputAppliedReceipt? = nil
+    /// Host echo for the authenticated phone's independent statistics-window opt-in.
+    var phoneLoadWindows: Bool? = nil
 
     func validate() throws {
+        guard phoneLoadWindows == nil || action == "capture" else { throw RemoteError.invalidMessage }
         guard lowDataMode == nil || isRegularPhoneHeartbeat else { throw RemoteError.invalidMessage }
         guard macAudioRequested == nil || action == "heartbeat" else { throw RemoteError.invalidMessage }
 try pencil?.validate(action: action, interaction: interaction)

@@ -96,6 +96,8 @@ struct HostLoadSample: Equatable {
     var hostThermalState: String?
     var lowPowerMode: Bool?
     var phoneLoad: PhoneLoadFeedback? = nil
+    /// A receiver-observed gap must survive a newer report arriving before the next host tick.
+    var phoneLoadInterrupted = false
     var sentKbps: Double? = nil
     var senderQueueMs: Double? = nil
     var networkQueueMs: Double? = nil
@@ -131,17 +133,68 @@ extension HostLoadSample {
 struct HostPhoneLoadInbox {
     private var feedback: PhoneLoadFeedback?
     private var receivedAt: TimeInterval?
+    private var deadline: TimeInterval?
+    private var acceptedEpoch: UInt64?
+    private var newestSequence: UInt64 = 0
+    private var lastReceipt: TimeInterval?
+    private var lifetime: UUID?
+    private var continuityInterrupted = false
 
-    mutating func receive(_ action: RemoteAction, epoch: UInt64, at now: TimeInterval) {
-        guard action.isRegularPhoneHeartbeat, action.epoch == epoch else { return }
-        feedback = action.phoneLoad
-        receivedAt = feedback == nil ? nil : now
+    struct Observation {
+        let feedback: PhoneLoadFeedback?
+        let continuityInterrupted: Bool
     }
 
-    mutating func reset() { feedback = nil; receivedAt = nil }
+    mutating func beginLifetime(_ id: UUID) {
+        guard lifetime != id else { return }
+        self = HostPhoneLoadInbox()
+        lifetime = id
+    }
 
-    func current(at now: TimeInterval) -> PhoneLoadFeedback? {
-        HostLoadMonitor.currentPhoneLoad(feedback, receivedAt: receivedAt, now: now)
+    mutating func receive(_ action: RemoteAction, epoch: UInt64, identified: Bool = false, at now: TimeInterval) {
+        guard action.isRegularPhoneHeartbeat, action.epoch == epoch else { return }
+        guard now.isFinite, now >= 0, lastReceipt.map({ now >= $0 }) ?? true else { clear(); return }
+        lastReceipt = now
+        if deadline.map({ now > $0 }) == true || acceptedEpoch.map({ $0 != epoch }) == true { clear() }
+        guard var incoming = action.phoneLoad, (try? incoming.validate()) != nil else { clear(); return }
+        if identified, let window = incoming.window {
+            guard window.epoch == epoch, window.sequence > newestSequence else { return }
+            newestSequence = window.sequence
+            deadline = now + PhoneLoadFeedbackCache.maximumAge - window.age
+        } else {
+            // Legacy messages cannot prove a new rate window. Preserve only bounded state inputs.
+            incoming.window = nil
+            deadline = now + PhoneLoadFeedbackCache.maximumAge
+        }
+        if incoming.window == nil || !incoming.hasDynamicMeasurement(falseLoadRules: LadderFalseLoadSwitch.isOn) {
+            continuityInterrupted = true
+        }
+        feedback = incoming
+        acceptedEpoch = epoch
+        receivedAt = now
+    }
+
+    private mutating func clear() {
+        feedback = nil; receivedAt = nil; deadline = nil; acceptedEpoch = nil
+        continuityInterrupted = true
+    }
+    mutating func invalidate() { clear() } // Preserve replay identity across capture/presentation changes.
+    mutating func reset() { self = HostPhoneLoadInbox() }
+
+    func current(epoch: UInt64? = nil, at now: TimeInterval) -> PhoneLoadFeedback? {
+        guard now.isFinite, let deadline, now <= deadline,
+              epoch == nil || epoch == acceptedEpoch else { return nil }
+        return HostLoadMonitor.currentPhoneLoad(feedback, receivedAt: receivedAt, now: now)
+    }
+
+    /// Atomically consume the latest value and every intervening receiver-observed gap, once.
+    /// A later valid receipt may replace the value, but cannot erase this bounded sticky bit.
+    mutating func consume(epoch: UInt64, at now: TimeInterval) -> Observation {
+        let value = current(epoch: epoch, at: now)
+        if value == nil, feedback != nil { clear() }
+        let observation = Observation(feedback: value, continuityInterrupted: continuityInterrupted)
+        continuityInterrupted = false
+        return observation
     }
 }
 
@@ -157,6 +210,7 @@ struct HostLoadMonitor {
     private(set) var governor: SenderQueueGovernor?
     let applyGovernor: Bool
     private(set) var applied: LadderState
+    private var consumedPhoneSequence: UInt64 = 0
 
     init(targetFPS: Int, senderQueueGovernor: Bool = false, applyGovernor: Bool = false) {
         ladder = LadderPolicy(targetFPS: targetFPS)
@@ -172,7 +226,7 @@ struct HostLoadMonitor {
 
     static func currentPhoneLoad(_ feedback: PhoneLoadFeedback?, receivedAt: TimeInterval?,
                                  now: TimeInterval) -> PhoneLoadFeedback? {
-        guard let feedback, let receivedAt, now >= receivedAt,
+        guard let feedback, let receivedAt, now.isFinite, receivedAt.isFinite, receivedAt >= 0, now >= receivedAt,
               now - receivedAt <= phoneFeedbackMaxAge else { return nil }
         return feedback
     }
@@ -197,7 +251,19 @@ struct HostLoadMonitor {
     /// The new rung to apply and the new busy state to send, each nil when unchanged.
     mutating func tick(sample: HostLoadSample, at time: TimeInterval) -> (ladder: LadderState?, busy: BusyState?) {
         if let edge = sample.longEdge, edge > 0 { longEdge = edge }
-        let inputs = Self.inputs(from: sample)
+        if sample.phoneLoadInterrupted {
+            ladder.retirePhoneEvidence(at: time)
+            busy.retirePhoneEvidence()
+        }
+        var inputs = Self.inputs(from: sample)
+        let rateMeasured = sample.phoneLoad?.hasDynamicMeasurement(falseLoadRules: ladder.falseLoadRules) == true
+        if let window = sample.phoneLoad?.window, (try? window.validate()) != nil, rateMeasured {
+            inputs.phoneSampleState = window.sequence > consumedPhoneSequence ? .fresh : .held
+            consumedPhoneSequence = max(consumedPhoneSequence, window.sequence)
+        } else {
+            inputs.phoneSampleState = .unknown
+            inputs.phoneSupersededPerSecond = nil; inputs.phoneDecodeMs = nil; inputs.phonePresentedFPS = nil
+        }
         _ = ladder.evaluate(inputs, at: time)
         _ = governor?.observe(SenderQueueGovernor.Window(route: sample.routeDetail, availableKbps: sample.availableKbps,
             sentKbps: sample.sentKbps, senderQueueMs: sample.senderQueueMs, networkQueueMs: sample.networkQueueMs,

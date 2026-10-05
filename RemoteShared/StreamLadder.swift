@@ -37,11 +37,18 @@ struct LadderState: Codable, Equatable {
 /// Optional phone-side load on a heartbeat. An older peer sends no field and leaves these inputs
 /// unknown. Values are bounded before transmission and again at the host's protocol boundary.
 struct PhoneLoadFeedback: Codable, Equatable {
+    /// Present only after both peers opt in. Identity is minted at statistics publication,
+    /// never at heartbeat serialization. Age is relative to the phone's local report completion.
+    var window: PhoneLoadWindow? = nil
     var supersededPerSecond: Int?
     var decodeMs: Double?
     var presentedFPS: Double?
     var thermalState: Int?
     var lowPowerMode: Bool?
+
+    func hasDynamicMeasurement(falseLoadRules: Bool) -> Bool {
+        decodeMs != nil || (!falseLoadRules && supersededPerSecond != nil && presentedFPS != nil)
+    }
 
     init(report: StreamStatsReport) {
         // The heartbeat carries whole frames/s. Never substitute the raw window count when
@@ -56,6 +63,7 @@ struct PhoneLoadFeedback: Codable, Equatable {
     }
 
     func validate() throws {
+        try window?.validate()
         guard supersededPerSecond.map({ (0...1_000).contains($0) }) ?? true,
               decodeMs.map({ $0.isFinite && (0...1_000).contains($0) }) ?? true,
               presentedFPS.map({ $0.isFinite && (0...240).contains($0) }) ?? true,
@@ -64,6 +72,87 @@ struct PhoneLoadFeedback: Codable, Equatable {
         }
     }
 }
+
+struct PhoneLoadWindow: Codable, Equatable {
+    var sequence: UInt64
+    var epoch: UInt64
+    var age: TimeInterval
+
+    func validate() throws {
+        guard sequence > 0, epoch > 0, age.isFinite, age >= 0, age <= PhoneLoadFeedbackCache.maximumAge else {
+            throw RemoteError.invalidMessage
+        }
+    }
+}
+
+/// Local publication provenance; these clocks never cross the control protocol.
+/// This identifies the composite report, not a common RTP/presentation frame interval.
+struct PhoneLoadSampleStamp: Codable, Equatable {
+    let sequence: UInt64
+    let startedAt: TimeInterval
+    let completedAt: TimeInterval
+}
+
+struct PhoneLoadSamplePublisher {
+    private var sequence: UInt64 = 0
+    init(sequence: UInt64 = 0) { self.sequence = sequence }
+
+    mutating func publish(_ report: inout StreamStatsReport, counterInterval: TimeInterval, at now: TimeInterval) {
+        guard report.role == "phone", sequence < UInt64.max else { report.phoneLoadSample = nil; return }
+        sequence += 1
+        guard now.isFinite, counterInterval.isFinite, counterInterval > 0, counterInterval <= now else {
+            report.phoneLoadSample = nil; return
+        }
+        report.phoneLoadSample = PhoneLoadSampleStamp(sequence: sequence, startedAt: now - counterInterval, completedAt: now)
+    }
+}
+
+/// Shared by the actual phone model and the end-to-end host feedback fixture.
+struct PhoneLoadFeedbackCache {
+    static let maximumAge: TimeInterval = 2.5
+    private var value: PhoneLoadFeedback?
+    private var stamp: PhoneLoadSampleStamp?
+    private var acceptedAt: TimeInterval?
+    private var epoch: UInt64 = 0
+    private var invalidatedAt: TimeInterval = 0
+    private var route: String?
+
+    mutating func invalidate(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        value = nil; stamp = nil; acceptedAt = nil
+        invalidatedAt = now.isFinite ? max(invalidatedAt, now) : .infinity
+    }
+
+    mutating func accept(_ report: StreamStatsReport, epoch: UInt64, at now: TimeInterval) {
+        guard report.role == "phone", now.isFinite, now >= 0 else { return }
+        let nextRoute = "\(report.route ?? "?")/\(report.routeDetail ?? "?")"
+        if let route, route != nextRoute { invalidate(at: report.phoneLoadSample?.completedAt ?? now) }
+        route = nextRoute
+        value = PhoneLoadFeedback(report: report)
+        acceptedAt = now
+        self.epoch = epoch
+        stamp = report.phoneLoadSample.flatMap {
+            $0.sequence > 0 && $0.startedAt.isFinite && $0.completedAt.isFinite &&
+            $0.startedAt >= invalidatedAt && $0.completedAt >= $0.startedAt && $0.completedAt <= now ? $0 : nil
+        }
+    }
+
+    func current(epoch: UInt64, identified: Bool, at now: TimeInterval) -> PhoneLoadFeedback? {
+        guard now.isFinite, epoch == self.epoch, var value, let acceptedAt else { return nil }
+        let completed = stamp?.completedAt ?? acceptedAt
+        guard now >= completed, now - completed <= Self.maximumAge else { return nil }
+        if identified {
+            if let stamp, epoch > 0 {
+                value.window = PhoneLoadWindow(sequence: stamp.sequence, epoch: epoch, age: now - stamp.completedAt)
+            } else {
+                // A spanning/legacy report supplies held states only, not independent rate evidence.
+                value.supersededPerSecond = nil; value.decodeMs = nil; value.presentedFPS = nil
+            }
+        }
+        return value
+    }
+}
+
+enum PhoneLoadSampleState: Equatable { case fresh, held, unknown }
 
 /// What the ladder policy reads once per statistics second. Everything comes from
 /// `StreamStatsReport` (host) and the phone's report forwarded on its heartbeat; nil means unknown.
@@ -99,6 +188,8 @@ struct LadderInputs: Equatable {
     var lanTrusted = false
     /// Local owned-encoder time at its admission cap / statistics window. No wire field.
     var encodeAtCapShare: Double? = nil
+    /// Direct policy callers supply independent samples; the host monitor always overrides this.
+    var phoneSampleState: PhoneLoadSampleState = .fresh
 
     var frameIntervalMs: Double { 1000 / Double(max(1, targetFPS)) }
 }

@@ -32,6 +32,7 @@ enum LadderTrigger: CaseIterable {
 
     /// Three frames in VideoToolbox's queue already cost ~40 ms at 2560 px: step on the first sample.
     var isImmediate: Bool { self == .encodeBacklog }
+    var isPhoneWindow: Bool { self == .phoneDecode || self == .phoneSuperseded }
 
     var isNetwork: Bool { reason == .network }
 
@@ -233,6 +234,9 @@ struct LadderPolicy: LadderEngine {
     let lowPowerRung: Int
     private(set) var climbWait = LadderPolicy.upAfter
     private var loadSamples = 0
+    private var loadSamplesIncludePhone = false
+    private var phonePressurePending = false
+    private var hadPhoneWindow = false
     private var calmSince: TimeInterval?
     private var lastMoveAt: TimeInterval?
     private var lastClimbAt: TimeInterval?
@@ -279,6 +283,14 @@ struct LadderPolicy: LadderEngine {
         return state == previous ? nil : state
     }
 
+    /// Retire only phone-dependent evidence when the inbox observed a gap between host ticks.
+    /// Keep independent host overload and the phone sequence/replay ledger owned by the caller.
+    mutating func retirePhoneEvidence(at time: TimeInterval) {
+        if loadSamplesIncludePhone { loadSamples = 0; loadSamplesIncludePhone = false }
+        phonePressurePending = false
+        if hadPhoneWindow { calmSince = time; hadPhoneWindow = false }
+    }
+
     private mutating func step(_ inputs: LadderInputs, at time: TimeInterval) {
         if let lastMoveAt, time - lastMoveAt >= Self.stableReset { climbWait = Self.upAfter }
         let lowPower = inputs.hostLowPowerMode == true || inputs.phoneLowPowerMode == true
@@ -293,11 +305,28 @@ struct LadderPolicy: LadderEngine {
                                       encoderPipelining: encoderPipelining)
         let firing = raw.filter { !warming || $0.isThermal || $0.isImmediate }
         let thermal = firing.first { $0.isThermal }
-        let load = firing.first { !$0.isThermal }
+        let phoneLoad = firing.first { $0.isPhoneWindow }
+        let load = firing.first { !$0.isThermal && (!$0.isPhoneWindow || inputs.phoneSampleState == .fresh) }
         // A warm-up sample with load neither counts nor clears: load on both sides of a restart still
         // steps, so restarts every few seconds cannot hide a real overload.
-        if load != nil || !raw.contains(where: { !$0.isThermal }) || !warming {
-            loadSamples = load == nil ? 0 : loadSamples + 1
+        switch inputs.phoneSampleState {
+        case .fresh:
+            hadPhoneWindow = true
+            if !warming {
+                phonePressurePending = phoneLoad != nil
+            }
+        case .held:
+            break // Neither another bad observation nor evidence of recovery.
+        case .unknown:
+            retirePhoneEvidence(at: time)
+        }
+        if let load {
+            loadSamples += 1
+            loadSamplesIncludePhone = loadSamplesIncludePhone || load.isPhoneWindow
+        } else if !(inputs.phoneSampleState == .held && phonePressurePending),
+                  !warming || !raw.contains(where: { !$0.isThermal }) {
+            loadSamples = 0
+            loadSamplesIncludePhone = false
         }
         let atFloor = state.rung >= rungs.count - 1
         if let thermal, !atFloor, thermalMoveAt.map({ time - $0 >= Self.thermalStepEvery }) ?? true {
@@ -325,7 +354,7 @@ struct LadderPolicy: LadderEngine {
             } ?? false
             : !falseLoadRules || state.rung == 0
             || inputs.encodeLatencyP90Ms.map { $0 < Self.frameIntervalMs(rungs[state.rung - 1]) } ?? true
-        guard firing.isEmpty, !warming, fitsAbove,
+        guard firing.isEmpty, !phonePressurePending, !warming, fitsAbove,
               Self.isClean(inputs, at: state, falseLoadRules: falseLoadRules, encoderPipelining: pipelined) else {
             calmSince = time
             return
@@ -372,6 +401,7 @@ struct LadderPolicy: LadderEngine {
         next.reason = index == 0 ? nil : reason
         state = next
         loadSamples = 0
+        loadSamplesIncludePhone = false
         calmSince = time
         lastMoveAt = time
     }
@@ -672,6 +702,10 @@ struct BusyPolicy {
     private var busyAt: TimeInterval?
     private var busyReason: LadderReason?
 
+    mutating func retirePhoneEvidence() {
+        floorSince.removeValue(forKey: .phone)
+    }
+
     mutating func evaluate(ladder: LadderState, inputs: LadderInputs, at time: TimeInterval) -> BusyState? {
         evaluate(ladder: ladder, inputs: inputs, longEdge: 0, at: time)
     }
@@ -699,7 +733,8 @@ struct BusyPolicy {
         encodeSlowSince = encodeSlow ? encodeSlowSince ?? time : nil
 
         let floorHeld = firing.first { trigger in
-            atFloor && (trigger.isThermal || Self.held(floorSince[trigger.reason], at: time))
+            atFloor && (!trigger.isPhoneWindow || inputs.phoneSampleState == .fresh)
+                && (trigger.isThermal || Self.held(floorSince[trigger.reason], at: time))
         }
         let liveReason: LadderReason? = floorHeld?.reason
             ?? (Self.held(captureBehindSince, at: time) ? .capture : nil)
@@ -707,7 +742,9 @@ struct BusyPolicy {
         if let liveReason {
             busyAt = time
             busyReason = liveReason
-        } else if state.level == .busy, let busyReason, firing.contains(where: { $0.reason == busyReason }) {
+        } else if state.level == .busy, let busyReason, firing.contains(where: {
+            $0.reason == busyReason && (!$0.isPhoneWindow || inputs.phoneSampleState == .fresh)
+        }) {
             busyAt = time
         }
 

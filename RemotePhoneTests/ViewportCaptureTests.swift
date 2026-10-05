@@ -392,6 +392,59 @@ final class ViewportCaptureTests: XCTestCase {
         XCTAssertNil(model.heartbeatAction(at: 14.1).phoneLoad, "an old Mac receives no new field")
     }
 
+    func testActualModelPublishesOneWindowAcrossHeartbeatSerializationOnlyAfterBothOptIns() throws {
+        let model = connectedModel()
+        model.connection.startInputFixtureForTesting(session: "phone-window", phoneLoadWindows: true)
+        try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 4), to: model)
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 4, features: [SessionFeature.ladder],
+                                 phoneLoadWindows: true), to: model)
+        let start = ProcessInfo.processInfo.systemUptime + 1
+        var publisher = PhoneLoadSamplePublisher()
+        var report = StreamStatsReport(role: "phone", previous: nil, current: StreamStatsSample(entries: []), counters: nil)
+        report.decodeMs = 20; report.presentedFPS = 40; report.supersededPerSecond = 20
+        publisher.publish(&report, counterInterval: 1, at: start + 1)
+        model.acceptPhoneStats(report, at: start + 1.2)
+        func wire(_ time: TimeInterval) throws -> RemoteAction {
+            let action = try JSONDecoder().decode(RemoteAction.self, from: JSONEncoder().encode(model.heartbeatAction(at: time)))
+            try action.validate()
+            return action
+        }
+        let first = try wire(start + 1.25), repeated = try wire(start + 2.25)
+        XCTAssertEqual(first.phoneLoad?.window?.sequence, 1)
+        XCTAssertEqual(repeated.phoneLoad?.window?.sequence, 1)
+        XCTAssertEqual(first.phoneLoad?.window?.age, 0.25)
+        XCTAssertEqual(repeated.phoneLoad?.window?.age, 1.25)
+        XCTAssertEqual(first.phoneLoad?.decodeMs, repeated.phoneLoad?.decodeMs)
+        publisher.publish(&report, counterInterval: 1, at: start + 2)
+        model.acceptPhoneStats(report, at: start + 2.3)
+        XCTAssertEqual(try wire(start + 2.5).phoneLoad?.window?.sequence, 2)
+        // Missing and explicit false echoes restore old-host wire shape, not a pretend new window.
+        for echo in [Bool?.none, Bool?.some(false)] {
+            try deliver(RemoteAction(action: "capture", x: 1, epoch: 4, features: [SessionFeature.ladder],
+                                     phoneLoadWindows: echo), to: model)
+            XCTAssertNil(try wire(start + 2.5).phoneLoad?.window)
+        }
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 4, features: [SessionFeature.ladder],
+                                 phoneLoadWindows: true), to: model)
+        model.connection.startInputFixtureForTesting(session: "old-phone-window", phoneLoadWindows: false)
+        XCTAssertNil(try wire(start + 2.5).phoneLoad?.window, "Host echo alone cannot opt the phone in")
+        model.connection.startInputFixtureForTesting(session: "new-geometry-phone-window", phoneLoadWindows: true)
+        try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 5), to: model)
+        XCTAssertNil(try wire(start + 2.5).phoneLoad, "Geometry cannot relabel a cached report")
+        publisher.publish(&report, counterInterval: 1, at: start + 3)
+        model.acceptPhoneStats(report, at: start + 3.1)
+        XCTAssertNotNil(try wire(start + 3.25).phoneLoad)
+        XCTAssertNil(try wire(start + 3.25).phoneLoad?.window,
+                     "Even a fresh post-geometry publication needs this geometry's host echo")
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 4, features: [SessionFeature.ladder],
+                                 phoneLoadWindows: true), to: model)
+        XCTAssertNil(try wire(start + 3.25).phoneLoad?.window, "An older geometry's echo cannot enroll the new one")
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 5, features: [SessionFeature.ladder],
+                                 phoneLoadWindows: true), to: model)
+        XCTAssertEqual(try wire(start + 3.25).phoneLoad?.window?.sequence, 3)
+        XCTAssertEqual(try wire(start + 3.25).phoneLoad?.window?.epoch, 5)
+    }
+
     func testAHeartbeatWithAViewportPassesTheMacsValidation() throws {
         let model = try sessionModel(features: [SessionFeature.viewportCapture])
         model.viewportChanged(request())

@@ -1,3 +1,7 @@
+# Candidate7 feedback and actual6 installation —5October2026
+
+Production00b2b9d/20261004.6 was rebuilt from integrated primary, guardedMacidentitycontinuitypassed, phoneinstallation/inventorypassed, privateprimarypushcompleted. Physical6acceptance deferred afterMaclock. Candidate7 feedback correctness is independently sourceapproved;157core/93phonePASS, duplicate8assertionRED/exactrestore1PASS, stickyboundary18assertionRED/twoPASScontrols/exactrestore10PASS. Sourcecontract and frozenhashes retained. Signed7builds are queued; no7installationyet. Currentphoneunavailable. No sustainedphysical60FPS/sharpness/latency/M1 claim.
+
 # Overnight quality candidate — 4 October 2026
 
 Candidate **20261004.6**, isolated quality branch from production005fc78. User authorized autonomous reliability/performance fixes and strong GPT review while asleep. This checkpoint contains no Workspace/private display code or new quality default.
