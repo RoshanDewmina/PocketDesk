@@ -274,6 +274,7 @@
 		37FA39BCDCC97C0D1ED7E4C4 /* HostCaptureScope.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EFD77B70C98D8028979E1B4 /* HostCaptureScope.swift */; };
 		37FF2732C4EC75FF437837A3 /* HEVCDecodeWatchdog.swift in Sources */ = {isa = PBXBuildFile; fileRef = E400720F8E60A6C94CDCB82C /* HEVCDecodeWatchdog.swift */; };
 		3845E94787A1619B22FEBE75 /* FileTransfer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE1B4E4C6A4BC777773EE887 /* FileTransfer.swift */; };
+		3846454CD3BFA3DB70FA42B7 /* CaptureStartupTicket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F8E2D4203A36E6746A3A0AC /* CaptureStartupTicket.swift */; };
 		384DE0D344103F95B0ECC714 /* AgentAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0675CE1974FD239B86F4A520 /* AgentAlert.swift */; };
 		38891120CB8769393279D30C /* VideoEncoderEvidence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334646035E5D44969AE6ED46 /* VideoEncoderEvidence.swift */; };
 		38BC6370DF269AF14B501A92 /* BenchMarker.swift in Sources */ = {isa = PBXBuildFile; fileRef = D03425079F7912BA639EC982 /* BenchMarker.swift */; };
@@ -330,6 +331,7 @@
 		4247B5441D4DC9E5B7A4FAE8 /* LocalOwnerAdmissionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC6A9187447D35A31D5552D5 /* LocalOwnerAdmissionTests.swift */; };
 		428323EBEB3A2B720CE7F4C3 /* TextClarity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A21890870FD3A66F23DBB918 /* TextClarity.swift */; };
 		42C9EA8EB7BE0521A71B904E /* FarsideDesignTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DD8A198867F1E3881AF6815 /* FarsideDesignTests.swift */; };
+		43709B1348EC232E5327871A /* CaptureStartupTicketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8196C1741DC14B9991D33775 /* CaptureStartupTicketTests.swift */; };
 		437334C65D9971D57D6FB17D /* DataUseEstimate.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1CBBF823F587F08E7E83A3D /* DataUseEstimate.swift */; };
 		437FA109CDAAFF8F297B969E /* HostAwayPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DCF5A97F636841C001A7394 /* HostAwayPresentation.swift */; };
 		439323D9CDA3B605B7B1B9CF /* AnywhereEntitlementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D24D8450DD763CD08A744B6C /* AnywhereEntitlementTests.swift */; };
@@ -545,6 +547,7 @@
 		6C90944AC346E19DB74B00D5 /* OwnedVTEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A778344FDB6D5E4D28AF376F /* OwnedVTEncoder.swift */; };
 		6CA64D27F603C3A7F2CFEE57 /* MacWidgetSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D736C998A4397667AE2B6C4 /* MacWidgetSnapshotTests.swift */; };
 		6CAB7F4323C2A7211D48FB43 /* WakeRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75EACFC2C35B9E0C224FA902 /* WakeRequest.swift */; };
+		6CCC8318897924C775444B8A /* CaptureStartupTicket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F8E2D4203A36E6746A3A0AC /* CaptureStartupTicket.swift */; };
 		6CFF529478C3783BB8FFB9E2 /* AwayLockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6F4C4DD89F2398B242327CD /* AwayLockTests.swift */; };
 		6D533C85632806093EF5F60A /* HardwareInputTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE3B23B7943C8B5AB9208153 /* HardwareInputTests.swift */; };
 		6D78A314AB8A2269B7BAA7F0 /* EndSessionIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F64BDD0CE387C3E7FFC7A53B /* EndSessionIntent.swift */; };
@@ -678,6 +681,7 @@
 		86B0BCE4B16D1F6E7548DB6A /* SmoothMotionPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 357598ED739579289BD2AD0D /* SmoothMotionPolicy.swift */; };
 		86B5E52ADD6AF035D7B53F6A /* NetworkLinkHint.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9C5456BB0D9A926EA202AFF /* NetworkLinkHint.swift */; };
 		86DC84A8063BAED8239C76B6 /* E2EMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E609125CE2A4A1E42653D11 /* E2EMedia.swift */; };
+		87228DFBBBCB8C41B12DBE61 /* CaptureStartupTicket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F8E2D4203A36E6746A3A0AC /* CaptureStartupTicket.swift */; };
 		873138D90037F30FD9863A69 /* VideoFeedbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 028FD35F407A8DBAE590AC15 /* VideoFeedbackTests.swift */; };
 		874DF28083BDE83075BA833D /* AwayModeProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00F0DF441D246AB09E49CA88 /* AwayModeProtocol.swift */; };
 		8799BF7F83518A353C6EA9EE /* BigTextStepsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A5FB0C9811E3CF1FE0A612D /* BigTextStepsTests.swift */; };
@@ -844,6 +848,7 @@
 		AA6416B709625CDAADE972B3 /* ScrollMomentum.swift in Sources */ = {isa = PBXBuildFile; fileRef = C16AA219E1CCB031BA940799 /* ScrollMomentum.swift */; };
 		AA6E7E411B1BDF6D30C11D92 /* PhoneE2E.swift in Sources */ = {isa = PBXBuildFile; fileRef = 422AD8614A5B863A7FEA397A /* PhoneE2E.swift */; };
 		AA805402F78286185E94FD73 /* BrowserCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA9B09F48D37728D1E9AF553 /* BrowserCrypto.swift */; };
+		AA91F083664A6CC152C80089 /* CaptureStartupTicket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F8E2D4203A36E6746A3A0AC /* CaptureStartupTicket.swift */; };
 		AAA175B1520A3A637B8ABAC4 /* CaptureRateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8A77F41833DB0D19DBDBFC8 /* CaptureRateTests.swift */; };
 		AB09BB68E242576DFDD419B1 /* HostE2EInputFence.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0D3322BAED26602BE46F4B4 /* HostE2EInputFence.swift */; };
 		AB17FF01D4F307889A660181 /* SessionResumeCapsule.swift in Sources */ = {isa = PBXBuildFile; fileRef = D789EA724D330A9ED4B742AC /* SessionResumeCapsule.swift */; };
@@ -1011,6 +1016,7 @@
 		D0902E07FD4AA7792376BE1D /* PacketRepairPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7FB21B6BC9FD24A39B82907 /* PacketRepairPolicy.swift */; };
 		D0AD2705736742BD497CE9C6 /* VideoPresentationSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41D87AB64659D121B6EAE885 /* VideoPresentationSession.swift */; };
 		D0F9F10E9C3D506507E522BE /* LiveViewOnlyRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1485D0F8CAD3A8B7A6BD0EF /* LiveViewOnlyRequest.swift */; };
+		D12B9482358780FECC50A80B /* CaptureStartupTicket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F8E2D4203A36E6746A3A0AC /* CaptureStartupTicket.swift */; };
 		D1309C6476D94718070B3A5A /* HostFeatureList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8074364D25ED6458A4421B11 /* HostFeatureList.swift */; };
 		D196840B7B21F1FA736F484C /* CouchProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88CC3C2F95FAF7F1192B8273 /* CouchProtocol.swift */; };
 		D1ED32A1C58B585ACAD6817C /* HostRestartIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFE866C37F98027AD3619846 /* HostRestartIntegrationTests.swift */; };
@@ -1666,6 +1672,7 @@
 		8109323AD008107F29224257 /* ConnectMotion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectMotion.swift; sourceTree = "<group>"; };
 		8133C275FA11793AF24286F5 /* HostPairingPreflight.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostPairingPreflight.swift; sourceTree = "<group>"; };
 		814A385578D4E65EC471D4A4 /* SendToMacInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendToMacInbox.swift; sourceTree = "<group>"; };
+		8196C1741DC14B9991D33775 /* CaptureStartupTicketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureStartupTicketTests.swift; sourceTree = "<group>"; };
 		819D174BF501BA6CCEB6DF8E /* ExactVideoTimingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExactVideoTimingTests.swift; sourceTree = "<group>"; };
 		825FCDED142BDFA57EBE4B23 /* PhoneFileTransfer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneFileTransfer.swift; sourceTree = "<group>"; };
 		832921518B7EB1FCE3502274 /* WatchGlanceSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchGlanceSessionTests.swift; sourceTree = "<group>"; };
@@ -1704,6 +1711,7 @@
 		8F28D4E17D1028952D0B9733 /* RemoteE2ETests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = RemoteE2ETests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8F36AA8B0DB04E7E253D2B77 /* BigTextWindows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BigTextWindows.swift; sourceTree = "<group>"; };
 		8F3994558043A0D771F0487E /* MacVitalsNotices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacVitalsNotices.swift; sourceTree = "<group>"; };
+		8F8E2D4203A36E6746A3A0AC /* CaptureStartupTicket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureStartupTicket.swift; sourceTree = "<group>"; };
 		8FE53ED98843F5A8A096B176 /* HostOnboardingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostOnboardingTests.swift; sourceTree = "<group>"; };
 		9055A61DA58F74FAE0883EDC /* StillTextQPBenchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StillTextQPBenchTests.swift; sourceTree = "<group>"; };
 		908169FFD3D57426CE04BCDD /* HEVCProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HEVCProbeTests.swift; sourceTree = "<group>"; };
@@ -2040,6 +2048,7 @@
 				9A3E2750D58B12A1C8B8D835 /* BusyPresentation.swift */,
 				FC1918C6B5ADA67679BD4464 /* BusyState.swift */,
 				3F429A7B8DFDA9B124D6F267 /* CaptureRatePolicy.swift */,
+				8F8E2D4203A36E6746A3A0AC /* CaptureStartupTicket.swift */,
 				F73AE673E6754C476D3A34C5 /* ClipboardTransfer.swift */,
 				711D8412A6A174565628DA0E /* ClockSync.swift */,
 				3ACFFF1A44E98A3A402E00CD /* ConnectionQuality.swift */,
@@ -2401,6 +2410,7 @@
 				72DE368D956186BDF569C427 /* BrowserRelayPolicyTests.swift */,
 				BC67ADA31A10E31726BBCEA5 /* BusyPresentationTests.swift */,
 				C8A77F41833DB0D19DBDBFC8 /* CaptureRateTests.swift */,
+				8196C1741DC14B9991D33775 /* CaptureStartupTicketTests.swift */,
 				7485A47A6290AA2F83D600A9 /* ClipboardTransferTests.swift */,
 				A39F6C34FCD735936A12A317 /* ClockSyncTests.swift */,
 				436E6503D551F307042D2E71 /* ConnectionQualityTests.swift */,
@@ -3556,6 +3566,7 @@
 				2BC042A851E03C7E863D9E0E /* BusyPresentation.swift in Sources */,
 				4468B66F998C0F74F7BCA47C /* BusyState.swift in Sources */,
 				2CF0C0D6F29240F2D677A881 /* CaptureRatePolicy.swift in Sources */,
+				6CCC8318897924C775444B8A /* CaptureStartupTicket.swift in Sources */,
 				164768FCC1B233F3C03CFF65 /* ClipboardTransfer.swift in Sources */,
 				1473C0FD0AB447CF3056B66E /* ClockSync.swift in Sources */,
 				B0EBF9F8461C4DD93743F859 /* ConnectMotionModel.swift in Sources */,
@@ -3749,6 +3760,7 @@
 				3746ADC88B62D883DC0C729C /* BusyPresentation.swift in Sources */,
 				FE7A53E807308794570B4CD2 /* BusyState.swift in Sources */,
 				0CDE89BF1DAE0BFC8F09C2E6 /* CaptureRatePolicy.swift in Sources */,
+				D12B9482358780FECC50A80B /* CaptureStartupTicket.swift in Sources */,
 				5B8DFC386C0A491C7013867F /* ClipboardTransfer.swift in Sources */,
 				FA533877103F4E466340A658 /* ClockSync.swift in Sources */,
 				CBD0698E46D45CB9F9E30444 /* ConnectMotionModel.swift in Sources */,
@@ -3905,6 +3917,7 @@
 				A373DAFF8795B767158CA3D9 /* BusyPresentation.swift in Sources */,
 				A373EA48A7DFA707C68CB7C5 /* BusyState.swift in Sources */,
 				556AB11093E5136DBA8B8DB1 /* CaptureRatePolicy.swift in Sources */,
+				3846454CD3BFA3DB70FA42B7 /* CaptureStartupTicket.swift in Sources */,
 				E6748F759B5616552F7A1816 /* ClipboardTransfer.swift in Sources */,
 				4BFFA90CFFF4824F216A8771 /* ClockSync.swift in Sources */,
 				9CE006540560FFA7FC13EBCD /* ConnectMotionModel.swift in Sources */,
@@ -4206,6 +4219,8 @@
 				2DDE4B32394326DA9C6F8C73 /* BusyState.swift in Sources */,
 				23BA44AA1CA8377837EF2F11 /* CaptureRatePolicy.swift in Sources */,
 				AAA175B1520A3A637B8ABAC4 /* CaptureRateTests.swift in Sources */,
+				87228DFBBBCB8C41B12DBE61 /* CaptureStartupTicket.swift in Sources */,
+				43709B1348EC232E5327871A /* CaptureStartupTicketTests.swift in Sources */,
 				890832638ED9E892E72ED894 /* ClipboardTransfer.swift in Sources */,
 				52F237103173A65310D1DA73 /* ClipboardTransferTests.swift in Sources */,
 				B223E9B74D83BE1BF3D378DC /* ClockSync.swift in Sources */,
@@ -4518,6 +4533,7 @@
 				78A8BC48B3E0F53E4FDA4F3E /* BusyPresentation.swift in Sources */,
 				246578A6857C5F82B85BE137 /* BusyState.swift in Sources */,
 				867F54313D2D0FAFCFCE5548 /* CaptureRatePolicy.swift in Sources */,
+				AA91F083664A6CC152C80089 /* CaptureStartupTicket.swift in Sources */,
 				624C11AFC27A8F7B8B444B19 /* ClipboardTransfer.swift in Sources */,
 				769C241C4F5CE237FDE0C0C0 /* ClockSync.swift in Sources */,
 				409BD36CB206E65D3C19353B /* CommerceLocalization.swift in Sources */,
@@ -4972,7 +4988,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = FarsideShare/FarsideShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20261004.3;
+				CURRENT_PROJECT_VERSION = 20261004.4;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FarsideShare/Info.plist;
@@ -4998,7 +5014,7 @@
 				CODE_SIGN_ENTITLEMENTS = "$(FARSIDE_ENTITLEMENTS_$(FARSIDE_ENABLE_PUSH))";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20261004.3;
+				CURRENT_PROJECT_VERSION = 20261004.4;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				FARSIDE_APNS_ENVIRONMENT = development;
 				FARSIDE_ENABLE_PUSH = NO;
@@ -5042,7 +5058,7 @@
 				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 20261004.3;
+				CURRENT_PROJECT_VERSION = 20261004.4;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				ENABLE_HARDENED_RUNTIME = YES;
 				EXCLUDED_ARCHS = x86_64;
@@ -5246,7 +5262,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = FarsideShare/FarsideShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20261004.3;
+				CURRENT_PROJECT_VERSION = 20261004.4;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FarsideShare/Info.plist;
@@ -5295,7 +5311,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 20261004.3;
+				CURRENT_PROJECT_VERSION = 20261004.4;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				ENABLE_HARDENED_RUNTIME = YES;
 				EXCLUDED_ARCHS = x86_64;
@@ -5361,7 +5377,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = FarsideWidgets/FarsideWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20261004.3;
+				CURRENT_PROJECT_VERSION = 20261004.4;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FarsideWidgets/Info.plist;
@@ -5388,7 +5404,7 @@
 				CODE_SIGN_ENTITLEMENTS = "$(FARSIDE_ENTITLEMENTS_$(FARSIDE_ENABLE_PUSH))";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20261004.3;
+				CURRENT_PROJECT_VERSION = 20261004.4;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				FARSIDE_APNS_ENVIRONMENT = production;
 				FARSIDE_ENABLE_PUSH = YES;
@@ -5608,7 +5624,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = FarsideWidgets/FarsideWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20261004.3;
+				CURRENT_PROJECT_VERSION = 20261004.4;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FarsideWidgets/Info.plist;
