@@ -1057,3 +1057,65 @@ Parent owns the small coupled UI/DEBUG fixture/test diff. Bounded GPT inventory 
 Test-first receipts establish the missing-button RED on the pre-implementation app. The first test fixture incorrectly searched for a target hidden by quiet mode and was corrected. AX5's pre-implementation focus path did not expose the editor, so no automatic-policy RED is claimed; the final matched normal-size NO/YES test verifies that policy. The first full phone run recorded 836 tests: 833 passed, 2 skipped, 1 StoreKit billing-retry timeout at 120 s. Diagnostic spindump and exact clean-base archive are retained; StoreKit source is unchanged and no persistent base failure or environmental cause is claimed. The full untouched-base phone suite passes 836 tests/2 skipped/0 failures; billing retry passes in 1.076 s. This timeout is not a proven persistent base defect. Full lane core passes 2,113 tests/14 skipped/0 failures; host and generic iOS device compilation pass. Final full lane phone rerun passes 836 tests/2 skipped/0 failures, exit 0, without exclusions; billing retry passes in 1.634 s. Its initial timeout cause remains unconfirmed. Receipts in the lane directory: `logs/green-ui.log` (6/0), `core-full.log` (2,113/14 skips/0 failures), `phone-final.log` and `phone-final-summary.json` (836/2 skips/0 failures), `core-build.log`, `host-build.log`, `device-build.log`; all builds/tests used the gated two-slot farside-lock and isolated DerivedData. `base-phone.log`, archive verification and timeout attachments preserve the comparison. The lane simulator was shut down after checks; shared simulators/installed host were untouched.
 
 Real Mac focus/caret following, secure input, text delivery, older installed peers, OS26 behavior and physical edge-target usability remain integration/device gates. Follow the exact NEEDS ORCHESTRATOR recipe in NOTES after integration/install from the main checkout.
+
+
+## Preserved 30 September Codex continuation notes
+
+# Active Claude Code continuation — 30 September 2026
+
+Roshan authorized Codex to continue unfinished Farside engineering from the recovered Claude Code conversations, with as much useful native-agent delegation as needed. iPhone Duo work and marketing/social conversations are reserved for Roshan and the parent to continue together. Preserve original Claude worktrees and uncommitted documents; source work proceeds in isolated Codex worktrees. Account submissions, spending, production publication and physical experimental lock tests remain separate gates.
+
+Runtime: parent plus three worker slots. Supported routes are GPT 6.1 Sol, 6 Sol, 6 Luna, 5.6 Sol/Luna and Astra; repository policy excludes Astra workers/reviewers. Sensitive display restoration, lock recovery and integrated input/network/commerce use GPT 6.1 Sol at high effort. Native collaboration only; no external coding-agent CLI. Builds are serialized with `/usr/bin/lockf -k /tmp/farside-xcodebuild.lock`, pinned to `/Applications/Xcode.app/Contents/Developer`; beta results are not accepted as stable evidence.
+
+| Package | Owner / isolated branch | Current state | Verification / next action |
+|---|---|---|---|
+| Big Text D50 | `/root/big_text`, `codex/continue-big-text` from `9561760` | Recovering dirty controller/phone patches without modifying originals; completing whole-branch review findings | Author checks, fresh GPT review, then integration; physical display/curtain acceptance remains open |
+| Away D52 | `/root/away_mode`, `codex/continue-away` from `edbcaa4` | Repairing final review F1–F5; release gate remains off | Mocked lock/recovery checks, fresh GPT review; real S1/S2 experiments require Roshan |
+| Native integration, Couch/Watch/Vitals | `/root/integration`, `codex/continue-integration` from `b1417a0` | Recovering wave-one receipts, assembling branch-ready packages and their dependencies | Initial sole Xcode build owner; root reviews exact final diff before landing |
+| Performance pack, connection quality D42, keyboard/clipboard D43 | Parent, worktrees to be assigned after recovery | Recovering plans, independent review and dirty interrupted sources | Reuse existing evidence; finish missing implementation and meaningful acceptance |
+| Main checkout and external gates | Parent | `pocketdesk-remote-chat` at `a567310`; existing untracked ASC/Anywhere/research files preserved | Root owns contracts, independent reviews, final landing, checkpoint backup and this ledger |
+
+Completion means reviewed source plus passing applicable integrated checks. A branch commit, parse/typecheck, simulator check, physical session and production/provider acceptance are recorded separately. No installed-build or release-readiness claim follows from this kickoff.
+
+
+## Prototype and simultaneous simulator follow-through — 30 September 2026
+
+Roshan renewed implementation and hands-on testing authorization: continue fixes and test
+with simulators or his phone through iPhone Mirroring. This permits scoped test execution
+and normal app testing; it does not remove signing identity, permission, ownership or
+private-API distribution gates. Physical Mac input remains a serial stage.
+
+The1× portrait prototype at7ebb7d6 passed creation, exact own-window capture and removal
+with19 policy tests. Its2× default selected860×1864 logical points at scale1 and was
+correctly rejected. Bounded offered-mode selection is committed at8def8af in the isolated
+portrait worktree; independent review and parent build/runtime are pending. It selects
+only an exact offered430×932-point/860×1864-pixel mode on its retained owned non-main,
+non-mirrored display. The normal phone session remains separate from this experiment.
+
+Parallel runner78fd164 passed independent review,25 native lane/launch tests and21 runner
+fixtures. Actual owned provisioning/preparation passed, but native assertions never began
+when strict resource admission refused warning pressure. Every previous exact clone/daemon
+was cleaned up; stable missing-manifest and process lifetime recovery are documented.
+Root's reviewed resource plan introduces stable-normal no-child settling and a bounded
+shared functional warning budget;25 parent helper checks pass, final source review remains
+a gate. No successful simultaneous native overlap is claimed until both xcresults and
+both directional input-isolation controls pass with final owned cleanup.
+
+A paired physical iPhone currently has Farside1.0 build20260930.4. Mirroring shows the
+phone-side unlock prompt; root requested that action while continuing independent work.
+Existing installed host permissions/identity and user apps are preserved. Both previous
+reviewed source checkpoints have private origin backups; source is not installed or shipped
+merely because a build/test branch is saved.
+
+### Reviewed fix/test follow-through checkpoint —30September2026
+
+Portrait64abf6a: independently reviewed bounded2× raster/logical mode-list experiment; Debug host/core/Release builds pass,25 policy XCTest methods pass, five portrait markers absent from Release host/watchdog. Source privately backed up. Earlier0ed022e1× smoke passed with verified removal;0ed2× refused absent exact offered mode. New64ab2× runtime pending user unlock of Mac; no new2×/phone/latency acceptance.
+
+Parallel e0c139b: exact independently reviewed resource-helper bytes and25 passing fixtures now durable beside approved78fd164 runner, private branch backed up. Native Swift/project remains compiled4ded584; receipt preserves this distinction. Latest2157 initialpreflight observed88 warning samples across89.54s then refused before daemon/lease/device/native test. Native2-lane overlap and negative controls still pending stable-normal resources. Mac Mirroring control reports locked; paired-phone installed build20260930.4 is inventory only. No source install, TCC/trust reset or release. User-facing receipts:ca/outputs/farside-fix-and-test-update-2026-09-30.md and detailed prototype/simulator reports.
+
+
+### Pinch jitter and phone-busy correction — 30 September 2026
+
+User video/screenshot prompted scoped gesture and load diagnosis. Independently reviewed seven-file source `3cafa64` integrated onto main as `07eebca`, preserving concurrent committed worktrees and existing dirty main documents. Continuous Control pinch now maps the prior/original midpoint plus centroid translation like View mode; immediate viewport changes suppress inherited animation; queued settling is invalidated by gesture/input/display/lifecycle changes. Raw replacement counts are normalized by the actual counter window before existing bounded phone feedback; diagnostics retain raw counts and legacy/invalid rates stay unknown.
+
+Final source checks: core rebuild 2.591s, 152 actual native XCTest methods / zero failures, phone SDK build 3.509s. Independent review binds all seven hashes. Signed main physical-phone build passed 17.250s; strict team/bundle/signature verification passed, normal development update and launch succeeded, inventory confirms Farside 1.0 build 20260930.7. Source/main checkpoints have private backups. Mac host unchanged. Mirroring reconnect currently requires the phone to be locked; real two-finger comfort is requested from Roshan and remains unverified. Crop-status/video alignment is a separate open mechanism; no crop-hold change or performance/latency claim. Durable receipt: Docs/perf/ZOOM-JITTER-FIX-2026-09-30.md; this chat outputs/farside-zoom-jitter-source-manifest.json.
