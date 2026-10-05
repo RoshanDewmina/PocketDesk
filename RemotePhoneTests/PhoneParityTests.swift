@@ -60,6 +60,21 @@ final class HardwareKeyboardRouterTests: XCTestCase {
         XCTAssertEqual(sent, ["escape shift"])
     }
 
+    func testMinimizeSubstitutePreservesShiftAndCanBeDisabled() {
+        let router = makeRouter()
+        _ = router.pressBegan(usage: 0x10, flags: [.control, .alternate], at: 1)
+        _ = router.pressEnded(usage: 0x10, flags: [])
+        _ = router.pressBegan(usage: 0x10, flags: [.control, .alternate, .shift], at: 2)
+        _ = router.pressEnded(usage: 0x10, flags: [])
+        XCTAssertEqual(sent, ["m command", "m command shift"])
+
+        let plain = makeRouter(remap: false)
+        sent = []
+        _ = plain.pressBegan(usage: 0x10, flags: [.control, .alternate], at: 3)
+        _ = plain.pressEnded(usage: 0x10, flags: [])
+        XCTAssertEqual(sent, ["m option control"], "Disabling the substitute restores the original Mac chord")
+    }
+
     func testARepeatStopsWhenTheModifiersChangeAndShortcutsNeverRepeat() {
         let router = makeRouter()
         _ = router.pressBegan(usage: 0xE1, flags: .shift, at: 1)
@@ -143,6 +158,47 @@ final class CanvasKeyCommandTests: XCTestCase {
         view.performClose(nil)
         XCTAssertEqual(sent, ["w command"], "Nothing reaches the Mac once keys stop going there")
     }
+
+    func testCloseActionRoutesThroughTheResponderChainAndPreservesModifiers() throws {
+        let local = LocalCloseResponder()
+        let view = NativeTrackpadInputView()
+        local.addSubview(view)
+        var sent: [String] = []
+        view.keyboard.send = { key, modifiers in sent.append(([key] + modifiers).joined(separator: " ")); return true }
+        let close = #selector(UIResponderStandardEditActions.performClose(_:))
+
+        view.hardwareKeys = true
+        let variants: [UIKeyModifierFlags] = [.command, [.command, .shift], [.command, .alternate]]
+        for flags in variants {
+            let command = UIKeyCommand(input: "w", modifierFlags: flags, action: close)
+            let target = try XCTUnwrap(view.target(forAction: close, withSender: command) as? UIResponder)
+            XCTAssertTrue(target === view)
+            XCTAssertTrue(UIApplication.shared.sendAction(close, to: target, from: command, for: nil))
+        }
+        let target = try XCTUnwrap(view.target(forAction: close, withSender: nil) as? UIResponder)
+        XCTAssertTrue(UIApplication.shared.sendAction(close, to: target, from: nil, for: nil))
+        XCTAssertEqual(sent, ["w command", "w command shift", "w command option", "w command"])
+        XCTAssertEqual(local.closes, 0, "The session handles the action before the local window responder")
+
+        view.hardwareKeys = false
+        let fallback = try XCTUnwrap(view.target(forAction: close, withSender: nil) as? UIResponder)
+        XCTAssertTrue(fallback === local, "Outside the canvas's key mode the local responder gets Close")
+        XCTAssertTrue(UIApplication.shared.sendAction(close, to: fallback, from: nil, for: nil))
+        XCTAssertEqual(local.closes, 1)
+        XCTAssertEqual(sent.count, 4, "Closing a local window cannot also close a Mac window")
+    }
+}
+
+@MainActor
+private final class LocalCloseResponder: UIView {
+    private(set) var closes = 0
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        action == #selector(UIResponderStandardEditActions.performClose(_:))
+            || super.canPerformAction(action, withSender: sender)
+    }
+
+    override func performClose(_ sender: Any?) { closes += 1 }
 }
 
 @MainActor
@@ -171,7 +227,7 @@ final class MacShortcutMenuTests: XCTestCase {
             XCTAssertEqual(command.title, title)
             XCTAssertEqual(command.action, closeAction)
         }
-        XCTAssertFalse(released.children[1] is UIKeyCommand, "⌘M goes to the Mac")
+        XCTAssertFalse(released.children[1] is UIKeyCommand, "Release the app menu's ⌘M without claiming to override iPadOS")
         XCTAssertEqual((released.children[2] as? UIKeyCommand)?.input, "c", "Other shortcuts are untouched")
         XCTAssertEqual((released.children[3] as? UIKeyCommand)?.modifierFlags, [.command, .control])
     }

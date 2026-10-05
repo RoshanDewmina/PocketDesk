@@ -103,10 +103,9 @@ final class HardwareKeyboardRouter {
     }
 }
 
-/// iPadOS 26 gives Farside a menu bar whose Close Window (⌘W), Minimize (⌘M), Quit (⌘Q), New
-/// Window (⌘N) and Settings (⌘,) shortcuts are resolved before any key command, so a Mac user's
-/// ⌘W would close Farside. While a session canvas sends hardware keys to the Mac, those menu items
-/// stay in the menu bar but give up their shortcuts, which then reach the canvas and the Mac.
+/// Release the app menu's window shortcuts while the session canvas sends keys to the Mac.
+/// Menu items remain available. Removing a menu shortcut does not override iPadOS shortcuts:
+/// iPadOS 27 still owns ⌘M, so the Mac's Minimize uses the ⌃⌥M substitute.
 @MainActor
 enum MacShortcutMenu {
     static let inputs = ["w", "m", "q", "n", ","]

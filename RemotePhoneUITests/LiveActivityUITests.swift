@@ -177,20 +177,37 @@ final class LiveActivityUITests: XCTestCase {
     /// The button runs `EndSessionIntent` for a phone that is locked and an app that is in the background.
     @MainActor
     func testTheEndButtonEndsTheActivityFromTheLockScreen() throws {
-        try skipOnSimulator("the simulator's Lock Screen has no passcode, so it cannot show End working on a locked phone, and it did not reliably wake the app for the intent")
         start("live")
         showLockScreen()
         attach("end-before")
+        attachTree("end-before-tree")
         let end = springboard.buttons["End session"]
-        XCTAssertTrue(end.waitForExistence(timeout: 5), "the Lock Screen offers End session")
-        end.tap()
-        // The intent runs in the app, which the system may have to wake first: give it time on a busy machine.
-        XCTAssertTrue(springboard.staticTexts["Session ended"].waitForExistence(timeout: 20),
-                      "one tap ends the session and shows the closing state")
+        guard end.waitForExistence(timeout: 10) else {
+            XCTFail("the Lock Screen offers End session")
+            return
+        }
+        let hittable = NSPredicate(format: "exists == true AND hittable == true")
+        let hittableExpectation = expectation(for: hittable, evaluatedWith: end)
+        guard XCTWaiter.wait(for: [hittableExpectation], timeout: 10) == .completed else {
+            XCTFail("End session becomes hittable after the Lock Screen settles")
+            attachTree("end-not-hittable-tree")
+            return
+        }
+
+        // Re-query after the Lock Screen animation settles so the tap is sent to the current system
+        // element rather than a stale accessibility snapshot. The required behavior stays one tap.
+        XCTAssertFalse(springboard.staticTexts["Session ended"].exists,
+                       "the closing state is not already present before the End tap")
+        springboard.buttons["End session"].tap()
+        let ended = springboard.staticTexts["Session ended"]
+        XCTAssertTrue(ended.waitForExistence(timeout: 30),
+                      "one End tap ends the session and shows the closing state")
         attach("end-after")
+        attachTree("end-after-tree")
         XCTAssertFalse(springboard.buttons["End session"].exists, "the kill switch does not outlive the session")
-        XCTAssertTrue(springboard.staticTexts["Session ended"].waitForNonExistence(timeout: 20),
+        XCTAssertTrue(ended.waitForNonExistence(timeout: 30),
                       "the ended activity leaves the Lock Screen on its own")
         attach("end-gone")
+        attachTree("end-gone-tree")
     }
 }

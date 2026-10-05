@@ -8,7 +8,7 @@
 #   steps  device host core host-ui unit routing springboard ui-all   (default: all, in that order)
 #   SIM    a dedicated iPhone simulator (needed by unit, routing, springboard and ui-all)
 #   DD     derived data, kept outside ~/Documents (default /tmp/farside-integrations-dd)
-#   OUT    logs and result bundles (default /tmp/farside-verify)
+#   OUT    receipt root (default work/system-acceptance); every invocation gets a unique subdirectory
 #
 # Every xcodebuild is wrapped in the shared lock, so it queues behind other agents' runs. macOS tests run
 # with `xcrun xctest` on the built bundle: under xcodebuild, with derived data outside ~/Documents, the
@@ -20,7 +20,9 @@
 set -u
 cd "${0:A:h:h}" || exit 1
 DD=${DD:-/tmp/farside-integrations-dd}
-OUT=${OUT:-/tmp/farside-verify}
+OUT_ROOT=${OUT:-work/system-acceptance}
+RUN_ID=${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}
+OUT="$OUT_ROOT/$RUN_ID"
 SIM=${SIM:-}
 mkdir -p "$OUT"
 summary=$OUT/summary.txt
@@ -48,15 +50,20 @@ step_host() {
 }
 step_core() {
   xb core-build -scheme RemoteCoreTests -destination platform=macOS -derivedDataPath "$DD" build-for-testing || return
-  xcrun xctest "$DD/Build/Products/Debug/RemoteCoreTests.xctest" > "$OUT/core-tests.log" 2>&1
-  print "core tests (xctest) exit=$?" >> "$summary"
+  lockf -k /tmp/farside-xcodebuild.lock xcrun xctest \
+    "$DD/Build/Products/Debug/RemoteCoreTests.xctest" > "$OUT/core-tests.log" 2>&1
+  local rc=$?
+  print "core tests (xctest) exit=$rc" >> "$summary"
   grep -E "Executed [0-9]+ tests?, with" "$OUT/core-tests.log" | tail -1 >> "$summary"
+  return $rc
 }
 step_host_ui() {
   mkdir -p "$OUT/host-snapshots"
   export TEST_RUNNER_POCKETDESK_SNAPSHOT_DIR="$OUT/host-snapshots"
   xb host-ui -scheme HostUISnapshotTests -destination platform=macOS -derivedDataPath "$DD" test
+  local rc=$?
   unset TEST_RUNNER_POCKETDESK_SNAPSHOT_DIR
+  return $rc
 }
 step_unit() {
   need_sim
@@ -66,17 +73,21 @@ step_unit() {
 step_routing() {
   need_sim
   xb build-for-testing -scheme PocketDeskRemote -destination "id=$SIM" -derivedDataPath "$DD" build-for-testing || return
-  zsh script/push-samples/verify-routing.sh "$SIM" "$DD" agent-needs-you agent-needs-you-unknown-agent \
-    agent-malformed-id agent-wrong-category agent-needs-you:actions > "$OUT/routing.log" 2>&1
-  print "routing exit=$?" >> "$summary"
+  FARSIDE_PUSH_OUT="$OUT/routing-results" zsh script/push-samples/verify-routing.sh "$SIM" "$DD" \
+    > "$OUT/routing.log" 2>&1
+  local rc=$?
+  print "routing exit=$rc" >> "$summary"
   grep -E "^==|   ok|FAILED|failures:|never became ready" "$OUT/routing.log" >> "$summary"
+  return $rc
 }
 step_springboard() {
   need_sim
   export TEST_RUNNER_FARSIDE_SPRINGBOARD=1
   xb springboard -scheme PocketDeskRemote -destination "id=$SIM" -derivedDataPath "$DD" \
     -only-testing:RemotePhoneUITests/LiveActivityUITests -resultBundlePath "$OUT/springboard.xcresult" test
+  local rc=$?
   unset TEST_RUNNER_FARSIDE_SPRINGBOARD
+  return $rc
 }
 step_ui_all() {
   need_sim
@@ -86,17 +97,20 @@ step_ui_all() {
 
 steps=("$@")
 [ ${#steps[@]} -gt 0 ] || steps=(device host core host-ui unit routing springboard ui-all)
+failures=0
 for step in $steps; do
   case $step in
-    device) step_device ;;
-    host) step_host ;;
-    core) step_core ;;
-    host-ui) step_host_ui ;;
-    unit) step_unit ;;
-    routing) step_routing ;;
-    springboard) step_springboard ;;
-    ui-all) step_ui_all ;;
+    device) step_device || failures=$((failures + 1)) ;;
+    host) step_host || failures=$((failures + 1)) ;;
+    core) step_core || failures=$((failures + 1)) ;;
+    host-ui) step_host_ui || failures=$((failures + 1)) ;;
+    unit) step_unit || failures=$((failures + 1)) ;;
+    routing) step_routing || failures=$((failures + 1)) ;;
+    springboard) step_springboard || failures=$((failures + 1)) ;;
+    ui-all) step_ui_all || failures=$((failures + 1)) ;;
     *) print "unknown step: $step" >&2; exit 2 ;;
   esac
 done
-print "done: see $summary"
+print "failures: $failures" >> "$summary"
+print "done: see $summary (failures: $failures)"
+exit $failures

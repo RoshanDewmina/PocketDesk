@@ -175,10 +175,9 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
         return super.resignFirstResponder()
     }
 
-    /// iOS gives Escape to the focus and dismissal systems before any press handler; key commands
-    /// with priority on the first responder get it first. The same goes for ⌘W, ⌘M, ⌘Q, ⌘N and ⌘,
-    /// once `MacShortcutMenu` has taken them off Farside's iPad menu bar, so they reach the Mac
-    /// instead of closing Farside. Shortcuts the system keeps (⌘Tab, ⌘Space, ⌘H) use the ⌃⌥ stand-ins.
+    /// Priority lets Escape precede text input and focus handling. App-menu window shortcuts are
+    /// also offered here after `MacShortcutMenu` releases them. iPadOS can still keep a shortcut
+    /// (including ⌘M on iPadOS 27); those use the ⌃⌥ substitutes. Close also has a responder action.
     override var keyCommands: [UIKeyCommand]? {
         hardwareKeys ? Self.priorityCommands : nil
     }

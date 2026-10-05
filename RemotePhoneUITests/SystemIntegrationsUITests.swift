@@ -170,3 +170,162 @@ final class SystemIntegrationsUITests: XCTestCase {
         XCTAssertTrue(banner.waitForNonExistence(timeout: 5))
     }
 }
+
+/// Invalid agent payloads still produce a system notification, but tapping it must never create an
+/// in-app alert route. This separate env-gated test also proves the banner tap landed before accepting
+/// the absence of a sheet, so a missed SpringBoard tap cannot be mistaken for correct rejection.
+final class AgentAlertInvalidPushUITests: XCTestCase {
+    private var environment: [String: String] { ProcessInfo.processInfo.environment }
+    private var springboard: XCUIApplication { XCUIApplication(bundleIdentifier: "com.apple.springboard") }
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        try XCTSkipUnless(environment["FARSIDE_PUSH_INJECTED"] == "1",
+                          "Run through script/push-samples/verify-routing.sh")
+        continueAfterFailure = false
+    }
+
+    @MainActor
+    func testAnInvalidPushedAlertDismissesButRoutesNowhere() throws {
+        let tapText = try XCTUnwrap(environment["FARSIDE_PUSH_TAP_TEXT"])
+        let app = try launchWithAlertsOnAndSignalReady()
+        let banner = springboard.staticTexts[tapText]
+        XCTAssertTrue(banner.waitForExistence(timeout: 60),
+                      "The pushed notification did not arrive: \(springboard.debugDescription.prefix(300))")
+
+        let hittable = NSPredicate(format: "exists == true AND hittable == true")
+        let hittableExpectation = expectation(for: hittable, evaluatedWith: banner)
+        XCTAssertEqual(XCTWaiter.wait(for: [hittableExpectation], timeout: 5), .completed,
+                       "The invalid notification becomes tappable")
+        attach("Invalid notification before tap")
+        springboard.staticTexts[tapText].tap()
+
+        XCTAssertTrue(banner.waitForNonExistence(timeout: 5), "The banner tap was handled")
+        let sheet = app.descendants(matching: .any)["agent.alert.sheet"].firstMatch
+        let unexpectedSheet = expectation(for: NSPredicate(format: "exists == true"), evaluatedWith: sheet)
+        unexpectedSheet.isInverted = true
+        wait(for: [unexpectedSheet], timeout: 4)
+        XCTAssertFalse(sheet.exists, "An invalid payload must not create an agent alert route")
+        attach("Invalid notification routed nowhere")
+    }
+
+    @MainActor
+    private func launchWithAlertsOnAndSignalReady() throws -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-seed-pairing=Studio Mac", "--ui-x", "--ui-request-notifications",
+                               "-agentAlerts.enabled", "YES", "-agentAlerts.declinedIDs", "()",
+                               "-agentAlerts.snoozedIDs", "()"]
+        addUIInterruptionMonitor(withDescription: "Notification permission") { alert in
+            for label in ["Allow", "Allow While Using App", "OK"] where alert.buttons[label].exists {
+                alert.buttons[label].tap()
+                return true
+            }
+            return false
+        }
+        app.launch()
+        XCTAssertTrue(app.buttons["home.agentAlerts"].waitForExistence(timeout: 10), "Home is showing")
+        let allow = springboard.buttons["Allow"]
+        if allow.waitForExistence(timeout: 8) { allow.tap() }
+        Thread.sleep(forTimeInterval: 1.0)
+
+        let ready = environment["FARSIDE_PUSH_READY_FILE"] ?? "/tmp/farside-push-ready"
+        try "ready".write(toFile: ready, atomically: true, encoding: .utf8)
+        return app
+    }
+
+    private func attach(_ name: String) {
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+}
+
+/// Exercises each notification-category action through the real SpringBoard notification UI. The
+/// routing harness launches one test at a time, waits for the ready-file handshake, then delivers a
+/// sample with `simctl push`. Keeping these checks in their own env-gated class prevents ordinary UI
+/// runs from waiting for a push that will never arrive.
+final class AgentAlertActionPushUITests: XCTestCase {
+    private var environment: [String: String] { ProcessInfo.processInfo.environment }
+    private var springboard: XCUIApplication { XCUIApplication(bundleIdentifier: "com.apple.springboard") }
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        try XCTSkipUnless(environment["FARSIDE_PUSH_ACTION_INJECTED"] == "1",
+                          "Run through script/push-samples/verify-routing.sh")
+        continueAfterFailure = false
+    }
+
+    @MainActor
+    func testTheSelectedBannerActionDismissesWithoutOpeningTheAlert() throws {
+        let tapText = try XCTUnwrap(environment["FARSIDE_PUSH_TAP_TEXT"])
+        let action = try XCTUnwrap(environment["FARSIDE_PUSH_ACTION"])
+        let actionLabel: String
+        switch action {
+        case "snooze": actionLabel = "Snooze 15 min"
+        case "not-now": actionLabel = "Not now"
+        default:
+            XCTFail("Unknown push action: \(action)")
+            return
+        }
+
+        let app = try launchWithAlertsOnAndSignalReady()
+        let banner = springboard.staticTexts[tapText]
+        XCTAssertTrue(banner.waitForExistence(timeout: 60),
+                      "The pushed notification did not arrive: \(springboard.debugDescription.prefix(300))")
+        banner.press(forDuration: 1.2)
+
+        let snooze = springboard.buttons["Snooze 15 min"]
+        let notNow = springboard.buttons["Not now"]
+        XCTAssertTrue(snooze.waitForExistence(timeout: 10), "The category offers Snooze 15 min")
+        XCTAssertTrue(notNow.waitForExistence(timeout: 5), "The category offers Not now")
+        attach("Actions before \(actionLabel)")
+
+        let selected = springboard.buttons[actionLabel]
+        let hittable = NSPredicate(format: "exists == true AND hittable == true")
+        let hittableExpectation = expectation(for: hittable, evaluatedWith: selected)
+        XCTAssertEqual(XCTWaiter.wait(for: [hittableExpectation], timeout: 5), .completed,
+                       "\(actionLabel) becomes tappable")
+        springboard.buttons[actionLabel].tap()
+
+        let sheet = app.descendants(matching: .any)["agent.alert.sheet"].firstMatch
+        XCTAssertTrue(banner.waitForNonExistence(timeout: 5),
+                      "\(actionLabel) removes the handled notification")
+        let unexpectedSheet = expectation(for: NSPredicate(format: "exists == true"), evaluatedWith: sheet)
+        unexpectedSheet.isInverted = true
+        wait(for: [unexpectedSheet], timeout: 4)
+        XCTAssertFalse(sheet.exists, "\(actionLabel) must not behave like a tap on the notification")
+        attach("After \(actionLabel)")
+    }
+
+    @MainActor
+    private func launchWithAlertsOnAndSignalReady() throws -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-seed-pairing=Studio Mac", "--ui-x", "--ui-request-notifications",
+                               "-agentAlerts.enabled", "YES", "-agentAlerts.declinedIDs", "()",
+                               "-agentAlerts.snoozedIDs", "()"]
+        addUIInterruptionMonitor(withDescription: "Notification permission") { alert in
+            for label in ["Allow", "Allow While Using App", "OK"] where alert.buttons[label].exists {
+                alert.buttons[label].tap()
+                return true
+            }
+            return false
+        }
+        app.launch()
+        XCTAssertTrue(app.buttons["home.agentAlerts"].waitForExistence(timeout: 10), "Home is showing")
+        let allow = springboard.buttons["Allow"]
+        if allow.waitForExistence(timeout: 8) { allow.tap() }
+        Thread.sleep(forTimeInterval: 1.0)
+
+        let ready = environment["FARSIDE_PUSH_READY_FILE"] ?? "/tmp/farside-push-ready"
+        try "ready".write(toFile: ready, atomically: true, encoding: .utf8)
+        return app
+    }
+
+    private func attach(_ name: String) {
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+}

@@ -168,47 +168,76 @@ final class PhoneParityUITests: XCTestCase {
         app.typeKey("h", modifierFlags: [.control, .option])
         app.typeKey("4", modifierFlags: [.control, .option])
         app.typeKey("m", modifierFlags: [.control, .option])
+        app.typeKey("m", modifierFlags: [.control, .option, .shift])
+        app.typeKey("w", modifierFlags: [.control, .option])
         app.typeKey("z", modifierFlags: [.command, .shift])
         let entries = probeEntries(app, after: mark)
         for expected in ["key tab command", "key space command", "key h command", "key 4 command+shift",
-                         "key m command", "key z command+shift"] {
+                         "key m command", "key m command+shift", "key w command", "key z command+shift"] {
             XCTAssertTrue(entries.contains(expected), "\(expected) missing from \(entries)")
         }
+        XCTAssertTrue(app.buttons["Show controls"].exists, "Substitutes operate on the Mac while Farside stays open")
     }
 
-    /// iPadOS 26 uses ⌘W and ⌘M for Farside's own window; Farside must send them to the Mac and
-    /// stay open. Each key gets a fresh launch so a failure names the key that closed the window.
+    /// The public Close responder action must keep a remote-control session open and close on
+    /// the Mac exactly once. ⌘M is characterized separately because iPadOS can reserve it.
     @MainActor
     func testWindowShortcutsGoToTheMacAndKeepFarsideOpen() {
-        continueAfterFailure = true
         let app = XCUIApplication()
         app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit"]
-        var report: [String] = []
-        for key in ["w", "m"] {
-            launchOffline(app)
-            primeHardwareKeyboard(app)
-            let setup = rawProbe(app).map(\.text).filter { $0.contains("menu") }
+        launchOffline(app)
+        primeHardwareKeyboard(app)
+        let variants: [XCUIElement.KeyModifierFlags] = [.command, [.command, .shift], [.command, .option]]
+        for modifiers in variants {
             let mark = probeMark(app)
-            app.typeKey(key, modifierFlags: .command)
+            app.typeKey("w", modifierFlags: modifiers)
             let stayed = app.buttons["Show controls"].waitForExistence(timeout: 3)
             let after = stayed ? probeEntries(app, after: mark) : []
-            report.append("⌘\(key.uppercased()): \(stayed ? "Farside stayed open" : "Farside left the screen"); menu \(setup); after \(after)")
-            let check = {
-                XCTAssertTrue(stayed, "⌘\(key.uppercased()) must not close or minimize Farside; menu \(setup)")
-                if stayed { XCTAssertTrue(after.contains("key \(key) command"), "⌘\(key.uppercased()) reaches the Mac: \(after)") }
-            }
-            if key == "m" && UIDevice.current.userInterfaceIdiom == .pad {
-                // Strict: the day iPadOS lets an app have ⌘M, this reports an unexpected pass.
-                XCTExpectFailure("iPadOS 27 minimizes Farside on ⌘M before the app sees the key (no key command is even asked, while ⌘W is), so it is system-owned like ⌘H; ⌃⌥M sends ⌘M to the Mac",
-                                 failingBlock: check)
-            } else {
-                check()
-            }
+            let expected = "key w command" + (modifiers.contains(.shift) ? "+shift" : "")
+                + (modifiers.contains(.option) ? "+option" : "")
+            XCTAssertTrue(stayed, "Close must leave Farside open: \(after)")
+            XCTAssertEqual(after.filter { $0.hasPrefix("key ") }, [expected], "Close must reach the Mac exactly once")
         }
-        let note = XCTAttachment(string: report.joined(separator: "\n"))
-        note.name = "Window shortcut probe"
+        attachScreenshot("Close shortcuts keep the session open")
+    }
+
+    /// A platform observation, not a direct-⌘M forwarding requirement. The required Minimize
+    /// path is ⌃⌥M above. Recover explicitly after any system window action and verify input.
+    @MainActor
+    func testSystemCommandMCharacterizationAndRecovery() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "iPad window shortcut observation")
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit"]
+        launchOffline(app)
+        primeHardwareKeyboard(app)
+        let mark = probeMark(app)
+        app.typeKey("m", modifierFlags: .command)
+        let state = app.state
+        guard let recovery = recoverActionableFixtureAfterSystemWindowAction(app) else { return }
+        let after = probeEntries(app, after: mark)
+        let note = XCTAttachment(string: "iPadOS \(UIDevice.current.systemVersion): direct ⌘M; "
+            + "immediate app state: \(state.rawValue); recovery: \(recovery); "
+            + "delivered entries after recovery: \(after)")
+        note.name = "System Command-M characterization"
         note.lifetime = .keepAlways
         add(note)
+        let recovered = probeMark(app)
+        app.typeKey("m", modifierFlags: [.control, .option])
+        XCTAssertEqual(probeEntries(app, after: recovered).filter { $0.hasPrefix("key ") }, ["key m command"])
+        XCTAssertTrue(app.buttons["Show controls"].exists)
+    }
+
+    @MainActor
+    func testReservedShortcutSubstitutesCanBeTurnedOff() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit",
+                               "-remapReservedShortcuts", "NO"]
+        launchOffline(app)
+        primeHardwareKeyboard(app)
+        let mark = probeMark(app)
+        app.typeKey("m", modifierFlags: [.control, .option])
+        XCTAssertEqual(probeEntries(app, after: mark).filter { $0.hasPrefix("key ") }, ["key m control+option"])
+        XCTAssertTrue(app.buttons["Show controls"].exists)
     }
 
     @MainActor
@@ -519,6 +548,48 @@ final class PhoneParityUITests: XCTestCase {
             _ = alert.waitForNonExistence(timeout: 3)
         }
         removeUIInterruptionMonitor(monitor)
+    }
+
+    /// iPadOS can complete a system window action after the previous accessibility snapshot.
+    /// Never use a cached controls element as foreground evidence, and never relaunch a process
+    /// that the system ended. An ended offline fixture is labeled separately from a resumed view.
+    @MainActor
+    private func recoverActionableFixtureAfterSystemWindowAction(_ app: XCUIApplication) -> String? {
+        let controls = app.buttons["Show controls"]
+        let probe = app.descendants(matching: .any)["remote.inputProbe"].firstMatch
+        let concealed = app.descendants(matching: .any)["remote.concealed"].firstMatch
+        let returnButton = app.buttons["Return to Farside"]
+        var explicitReturn: String?
+
+        // Allow the deferred scene transition from the system shortcut to become observable.
+        Thread.sleep(forTimeInterval: 3)
+        guard app.state != .notRunning else {
+            XCTFail("The system ended Farside; recovery must not silently relaunch the fixture")
+            return nil
+        }
+        // `activate` brings a still-running minimized/background scene forward without resetting it.
+        app.activate()
+
+        let deadline = Date().addingTimeInterval(12)
+        while Date() < deadline {
+            guard app.state != .notRunning else {
+                XCTFail("Farside ended while recovering from the system window action")
+                return nil
+            }
+            if explicitReturn == nil, returnButton.exists, returnButton.isHittable {
+                let ended = app.staticTexts["Session ended"].exists
+                explicitReturn = ended ? "explicit Return after Session ended (not same-session recovery)"
+                                       : "explicit Return after concealment"
+                returnButton.tap()
+            }
+            if app.state == .runningForeground, !concealed.exists,
+               controls.exists, controls.isHittable, probe.exists {
+                return explicitReturn ?? "foreground fixture remained actionable"
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTFail("Farside never became foreground, non-concealed, and actionable after the system window action")
+        return nil
     }
 
     /// Raw probe entries: "`sequence` description".
