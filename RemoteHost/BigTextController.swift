@@ -132,10 +132,12 @@ final class BigTextController {
         grace?.cancel()
         grace = nil
         pending = nil
+        let inFlight = recognizer?.target
         recognizer = nil
         guard let display, let baseline else { return }
         let live = switcher.currentMode(of: display)?.ioModeID
-        let stillOurs = current.map { live == $0.ioModeID } ?? true
+        // The worker may be suspended mid-change, with the mode already switched to a target it has not recognised yet.
+        let stillOurs = live.map { live in [current, inFlight].contains { $0?.ioModeID == live } } ?? false
         forget()
         if stillOurs, live != baseline.ioModeID { _ = switcher.apply(baseline, to: display) }
     }
@@ -204,17 +206,21 @@ final class BigTextController {
             current = mode
             restorePending = false
             phase = .applied
-            _ = await host?.bigTextResume(display: target)
-            reply(target, nil)
+            // A refreshed display list that cannot be verified is handled by the host as a foreign change.
+            let resumed = await host?.bigTextResume(display: target) ?? false
+            reply(target, resumed ? nil : .failed)
         case .failed:
             if first { forget() } else { phase = .applied }
             _ = await host?.bigTextResume(display: target)
             reply(target, .failed)
         case .foreign:
-            // Something else changed too (say, a monitor was plugged in). If the display still took our
-            // mode, keep the baseline so the session end restores it; otherwise the new mode is not ours to undo.
-            if switcher.currentMode(of: target)?.ioModeID == mode.ioModeID {
+            // Something else changed too (say, a monitor was plugged in). If the display still has our new or
+            // previous mode, keep the baseline so the session end restores it; any other mode is not ours to undo.
+            let live = switcher.currentMode(of: target)?.ioModeID
+            if live == mode.ioModeID {
                 current = mode
+                phase = .applied
+            } else if let current, live == current.ioModeID {
                 phase = .applied
             } else {
                 forget()
@@ -251,7 +257,14 @@ final class BigTextController {
             restorePending = restorePending || !sessionContinues
             phase = restorePending ? .idle : .applied
         case .foreign:
-            forget()
+            // A monitor plugged in mid-restore can leave our mode in place; keep the baseline so the
+            // session-end retry, wake or unlock restores it. Any other mode was restored or chosen.
+            if let current, switcher.currentMode(of: target)?.ioModeID == current.ioModeID {
+                restorePending = true
+                phase = .idle
+            } else {
+                forget()
+            }
             if sessionContinues {
                 host?.bigTextForeignChange()
                 host?.bigTextStateChanged()
@@ -260,7 +273,7 @@ final class BigTextController {
         case .cancelled:
             return
         }
-        if sessionContinues { _ = await host?.bigTextResume(display: target) }
+        if sessionContinues, await host?.bigTextResume(display: target) != true { failed = true }
         if let replyTo { reply(replyTo, failed ? .failed : nil) }
         host?.bigTextStateChanged()
     }
