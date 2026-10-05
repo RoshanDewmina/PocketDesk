@@ -3,6 +3,107 @@ import UIKit
 
 final class SessionLayoutTests: XCTestCase {
     @MainActor
+    func testTransferProgressCancelTargetAcrossLayouts() {
+        defer { XCUIDevice.shared.orientation = .portrait }
+        XCUIDevice.shared.orientation = .portrait
+        let control = XCUIApplication()
+        control.launchArguments = ["--ui-first60", "--ui-layout-check", "--ui-viewport-fill"]
+        launchOfflineFixture(control)
+        guard waitForLayout(control, orientation: .portrait) else { control.terminate(); return }
+        guard !control.buttons["remote.files.cancel"].exists else {
+            control.terminate()
+            return XCTFail("Ordinary offline layout must not create a transfer without the fixture flag")
+        }
+        control.terminate()
+        checkTransferCancelAcrossLayouts(mode: "progress")
+    }
+
+    @MainActor
+    func testTransferPickerWaitCancelTargetAcrossLayouts() {
+        defer { XCUIDevice.shared.orientation = .portrait }
+        checkTransferCancelAcrossLayouts(mode: "picker-wait")
+    }
+
+    @MainActor
+    private func checkTransferCancelAcrossLayouts(mode: String) {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        let fileName = "Native layout fixture with a deliberately long file name.txt"
+        let waitingText = "Choose a file on your Mac…"
+        for category in [UIContentSizeCategory.large, .accessibilityExtraExtraExtraLarge] {
+            for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+                XCUIDevice.shared.orientation = orientation
+                app.launchArguments = ["--ui-first60", "--ui-layout-check", "--ui-viewport-fill",
+                                       "--ui-file-transfer=\(mode)", "-UIPreferredContentSizeCategoryName", category.rawValue,
+                                       "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+                launchOfflineFixture(app)
+                guard waitForLayout(app, orientation: orientation) else { return }
+                let name = "Transfer \(mode) \(orientation) \(category.rawValue)"
+                if mode == "progress" {
+                    guard app.staticTexts[fileName].firstMatch.waitForExistence(timeout: 5) else {
+                        return XCTFail("\(name): the real progress branch must show its file name")
+                    }
+                    let halfway = app.progressIndicators.matching(NSPredicate(format: "value CONTAINS %@", "50")).firstMatch
+                    guard halfway.waitForExistence(timeout: 5) else {
+                        return XCTFail("\(name): wait for the ordinary asynchronous 50% progress publication")
+                    }
+                    guard !app.staticTexts[waitingText].exists else {
+                        return XCTFail("\(name): picker-wait cannot substitute for progress")
+                    }
+                } else {
+                    guard app.staticTexts[waitingText].firstMatch.waitForExistence(timeout: 5) else {
+                        return XCTFail("\(name): the real picker-wait branch must be visible")
+                    }
+                    guard !app.staticTexts[fileName].exists else {
+                        return XCTFail("\(name): progress cannot substitute for picker-wait")
+                    }
+                }
+                let matches = app.buttons.matching(identifier: "remote.files.cancel")
+                let cancel = matches.firstMatch
+                guard cancel.waitForExistence(timeout: 5), matches.count == 1 else {
+                    return XCTFail("\(name): expected exactly one semantic Cancel button")
+                }
+                guard cancel.label == "Cancel transfer", cancel.isEnabled, cancel.isHittable else {
+                    return XCTFail("\(name): Cancel must have its real label and be enabled/hittable")
+                }
+                let frame = cancel.frame
+                let window = app.windows.firstMatch.frame
+                guard frame.minX.isFinite, frame.minY.isFinite, frame.width.isFinite, frame.height.isFinite,
+                      frame.width >= 44, frame.height >= 44, window.contains(frame) else {
+                    return XCTFail("\(name): semantic target must be at least 44×44 and fully visible; \(frame) in \(window)")
+                }
+                for label in ["Show controls", "Hide controls", "End session"] {
+                    let action = app.buttons[label].firstMatch
+                    if action.exists && action.isHittable && action.frame.intersects(frame) {
+                        return XCTFail("\(name): Cancel overlaps \(label)")
+                    }
+                }
+                attachScreenshot(name)
+                let layoutValue = app.descendants(matching: .any)["remote.layout.state"].firstMatch.value
+                let geometry = XCTAttachment(string: "\(name)\nCancel: \(frame)\nWindow: \(window)\nLayout: \(String(describing: layoutValue))")
+                geometry.name = name + " semantic bounds"
+                geometry.lifetime = .keepAlways
+                add(geometry)
+                // Two points inside the rectangle, outside the centered original 34-point icon box.
+                cancel.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
+                guard cancel.waitForNonExistence(timeout: 5) else {
+                    return XCTFail("\(name): the added corner hit region must invoke real cancellation")
+                }
+                let notice = app.descendants(matching: .any)["remote.files.notice"].firstMatch
+                let cancelled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    notice.exists && notice.label == "Transfer cancelled."
+                }, object: nil)
+                guard XCTWaiter().wait(for: [cancelled], timeout: 5) == .completed else {
+                    return XCTFail("\(name): real local cancellation must finish with its notice")
+                }
+                XCTAssertFalse(app.staticTexts[fileName].exists)
+                XCTAssertFalse(app.staticTexts[waitingText].exists)
+                app.terminate()
+            }
+        }
+    }
+
+    @MainActor
     func testShortcutChipsScrollAtAccessibilityXXXLAndNoRestoresOldBar() {
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication()
@@ -823,7 +924,8 @@ final class SessionLayoutTests: XCTestCase {
     }
 
     @MainActor
-    private func waitForLayout(_ app: XCUIApplication, orientation: UIDeviceOrientation) {
+    @discardableResult
+    private func waitForLayout(_ app: XCUIApplication, orientation: UIDeviceOrientation) -> Bool {
         // Device and interface landscape names are inverse in UIKit. Window aspect ratio
         // does not establish orientation on Duo's nearly square inner display.
         let expected: String
@@ -832,7 +934,9 @@ final class SessionLayoutTests: XCTestCase {
         case .portraitUpsideDown: expected = "portraitUpsideDown"
         case .landscapeLeft: expected = "landscapeRight"
         case .landscapeRight: expected = "landscapeLeft"
-        default: return XCTFail("A layout check requires an interface orientation")
+        default:
+            XCTFail("A layout check requires an interface orientation")
+            return false
         }
         let probe = app.descendants(matching: .any)["remote.layout.state"].firstMatch
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
@@ -841,8 +945,10 @@ final class SessionLayoutTests: XCTestCase {
                   let state = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
             return state["orientation"] as? String == expected && state["ready"] as? Bool == true
         }, object: nil)
-        XCTAssertEqual(XCTWaiter().wait(for: [ready], timeout: 5), .completed,
+        let result = XCTWaiter().wait(for: [ready], timeout: 5)
+        XCTAssertEqual(result, .completed,
                        "The app must settle its layout in \(expected); probe: \(String(describing: probe.value))")
+        return result == .completed
     }
 
     @MainActor

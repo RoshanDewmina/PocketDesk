@@ -1,3 +1,11 @@
+# Candidate10 native fixture source checkpoint — 2026-10-05T12:03:58.366927+00:00
+
+Independent reviewAPPROVE for4file bounded fixture/tests package: forcedalready-paired nativeMacpage; DEBUG offline-only independent in-memory transfer engine/progress/pickerwait; eight simulatorlayout/cornerCancel flows plus noflagabsencecontrol. No livewire/disk/modelauthority change. ProtectedHostSetupView92fa1dd8…/FileTransferViews9c3eb888… remainunchanged. Compilation/nativeexecution/PNG inspection/negative/signing/integration/install remainpending. Production9 remainsinstalledboth with3ownerfunctionalpasses and parkedKeyboardcheck. Sourcecheckpointonly; no10versionbump or readyreleaseclaim.
+
+# Current owner-session checkpoint — 2026-10-05T11:43:21.969305+00:00
+
+Production20261004.9 is installed on both devices from main4524689 with verified versions/signatures/identity continuity. Owner reports first Connect/20seconds/noReconnect, Home20seconds/automaticreturn and PiP60seconds/live scrolling/return PASS. Slight PiP lag remains. Keyboard Unicode/draft/Hide/reopen/explicitSend-once is PARKED at the owner’s request; no input result claimed. Owner asked to continue remaining authorized work. Serial builds/native checks resume; no timed diagnostic acquisition started yet and phone UI testing remains parked. Renewed improvement-loop authorization was independently verified from original direct userMessage records (thread01a109dc-a000-70d1-b4b3-ffa03e2a4966); original keep-awake still expires15:05:50Z with no extension. Current receipt: initiating chat outputs/farside-owner-manual-session-2026-10-05.md. Physical original60FPS/sharpness/latency/M1/8GB/competitor/release gates remain.
+
 # Production polish follow-up candidate10 — 5 October 2026
 
 Owner is present for manual testing; matching production9 is now installed and version/signature verified on both devices. All heavy builds, simulator work and diagnostic acquisitions are paused during the trial. First Connect/20-second/no-Reconnect passes by owner observation; Home20-second/return withoutReconnect is pending. Current M4/phone behavior remains distinct from M1/8GB and App Store acceptance.

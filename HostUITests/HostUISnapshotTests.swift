@@ -228,6 +228,13 @@ final class HostUISnapshotTests: XCTestCase {
         }, actions: .preview))
     }
 
+    func testAlreadyPairedSetupPage() throws {
+        // A ready state normally opens the final page. Force Pair to render its already-paired branch.
+        try render("setup-3f-already-paired",
+                   HostSetupView(state: ready(.ready), actions: .preview, page: .pair),
+                   fixedSize: HostTheme.setupSize)
+    }
+
     func testConsentChoices() throws {
         let fresh = ready(.ready) {
             $0.consentPending = true

@@ -1,6 +1,8 @@
 import Foundation
 
 #if DEBUG
+import SwiftUI
+
 /// Launch switches for UI tests and simulator captures. They keep a paired Mac in memory, so a test
 /// never touches the Keychain item a real pairing lives in and nothing outlives the run.
 ///
@@ -85,6 +87,62 @@ final class InMemoryPairStore: PairPersistence {
     }
 
     func delete() throws { data = nil }
+}
+
+/// Offline capsule layout only. This owns a separate engine; it never changes the session model.
+@MainActor
+final class DebugFileTransferFixture: ObservableObject {
+    enum Mode: String { case progress, pickerWait = "picker-wait" }
+    static let fileName = "Native layout fixture with a deliberately long file name.txt"
+    let files: PhoneFileTransfer
+    let inbox: SendToMacInbox
+
+    init(mode: Mode) {
+        let files = PhoneFileTransfer(destination: { nil }, idleTimer: PhoneIdleTimer { _ in }, clock: { 0 })
+        self.files = files
+        inbox = SendToMacInbox(root: nil, useBackgroundIO: false)
+        // No transport is attached. A local sink consumes one bounded chunk without touching disk.
+        files.engine.sendControl = { _ in true }
+        files.engine.admit = { _, answer in answer(.success(DebugFileTransferSink())) }
+        files.requestFromMac()
+        guard mode == .progress else { return }
+        guard let request = files.engine.pendingRequest,
+              let chunk = FileChunk.encode(transfer: request, offset: 0, payload: Data(repeating: 0, count: 512)) else {
+            files.reset()
+            files.postUnavailable("Offline transfer fixture could not start.")
+            return
+        }
+        files.engine.receive(.offer(request, name: Self.fileName, bytes: 1024, type: "public.data"))
+        // The ordinary I/O callback publishes 50%; UI tests wait for that rendered progress value.
+        files.engine.receiveChunk(chunk)
+    }
+
+    func stop() { files.reset() }
+}
+
+private final class DebugFileTransferSink: FileByteSink {
+    func write(_ data: Data) throws {
+        guard data.count <= 1024 else { throw FileTransferStatus.tooLarge }
+    }
+    func commit() throws -> URL { throw FileTransferStatus.unsupported }
+    func discard() {}
+}
+
+/// StateObject keeps the one fixture alive through rotation; disappearance retires its engine.
+@MainActor
+struct DebugFileTransferCapsule: View {
+    @StateObject private var fixture: DebugFileTransferFixture
+    let hidesNotice: Bool
+
+    init(mode: DebugFileTransferFixture.Mode, hidesNotice: Bool) {
+        _fixture = StateObject(wrappedValue: DebugFileTransferFixture(mode: mode))
+        self.hidesNotice = hidesNotice
+    }
+
+    var body: some View {
+        FileTransferCapsule(files: fixture.files, inbox: fixture.inbox, hidesNotice: hidesNotice)
+            .onDisappear { fixture.stop() }
+    }
 }
 #endif
 

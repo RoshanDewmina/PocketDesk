@@ -969,7 +969,16 @@ struct NativeSessionView: View {
                 .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.96), stroke: Farside.Palette.line2)
                 .transition(.opacity)
             }
+            #if DEBUG
+            if offlineLayoutCheck,
+               let mode = DebugFileTransferFixture.Mode(rawValue: LaunchOptions.value("--ui-file-transfer=") ?? "") {
+                DebugFileTransferCapsule(mode: mode, hidesNotice: showControls)
+            } else {
+                FileTransferCapsule(files: model.files, inbox: model.sendToMac, hidesNotice: showControls)
+            }
+            #else
             FileTransferCapsule(files: model.files, inbox: model.sendToMac, hidesNotice: showControls)
+            #endif
             clipboardStatus
             if !regularSessionLayout { bigTextStatus }
             if !offlineLayoutCheck, !panMode, !keyboardOpen, !showControls,
