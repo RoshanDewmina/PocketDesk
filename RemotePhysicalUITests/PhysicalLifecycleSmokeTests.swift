@@ -4,7 +4,7 @@ import XCTest
 /// No fixture, pairing reset, remote clicks/typing, or Mac permission change.
 final class PhysicalLifecycleSmokeTests: XCTestCase {
     @MainActor
-    private func pairedSession() throws -> XCUIApplication {
+    private func pairedSession(launchArguments: [String] = []) throws -> XCUIApplication {
         guard ProcessInfo.processInfo.environment["FARSIDE_PHYSICAL_LIFECYCLE_SMOKE"] == "1" else {
             throw XCTSkip("Requires explicit physical-device lifecycle testing with a ready paired Mac")
         }
@@ -13,6 +13,7 @@ final class PhysicalLifecycleSmokeTests: XCTestCase {
         #else
         continueAfterFailure = false
         let app = XCUIApplication()
+        app.launchArguments = launchArguments
         app.launch()
         let connect = app.buttons["home.connect"].firstMatch
         XCTAssertTrue(connect.waitForExistence(timeout: 10), "Preserve the existing pairing")
@@ -76,6 +77,50 @@ final class PhysicalLifecycleSmokeTests: XCTestCase {
         record("Physical manual PiP after 12 seconds", app)
         XCTAssertTrue(stop.exists, "Manual PiP must survive the two-second admission deadline")
         stop.tap()
+    }
+
+    /// Observation acquisition only. The owner supplies the same continuous Mac scene externally;
+    /// screenshots/submission counts do not establish sharper text or smoother actual presentation.
+    @MainActor
+    func testRendererPacingMatchedSessions() throws {
+        guard ProcessInfo.processInfo.environment["FARSIDE_PHYSICAL_RENDER_PACING"] == "1" else {
+            throw XCTSkip("Requires explicit renderer A/B capture, a quiet Mac and externally matched moving content")
+        }
+        #if targetEnvironment(simulator)
+        throw XCTSkip("A simulator is not physical renderer performance evidence")
+        #else
+        let runs = [("A1 baseline", 2), ("B drawable variant", 3), ("A2 repeated baseline", 2)]
+        for (label, count) in runs {
+            let arguments = ["-PocketDeskStreamStats", "YES",
+                             "-farsidePhoneRendererPacingDiagnostics", "YES",
+                             "-farsidePhoneRendererDrawableCount", String(count),
+                             "-phoneImmediateSourceDrawDisabled", "NO"]
+            let app = try pairedSession(launchArguments: arguments)
+            defer { app.terminate() }
+            let started = Date(), startedUptime = ProcessInfo.processInfo.systemUptime
+            // No remote click/typing, foreground transition or quality setting during acquisition.
+            Thread.sleep(forTimeInterval: 60)
+            let ended = Date(), endedUptime = ProcessInfo.processInfo.systemUptime
+            record("Renderer pacing " + label + " after 60-second dwell", app)
+            let format = ISO8601DateFormatter()
+            format.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let boundaries = XCTAttachment(string: """
+            Renderer pacing observation: \(label)
+            Drawable pool requested: \(count); renderer frame flights remain capped at two.
+            Launch arguments: \(arguments.joined(separator: " "))
+            Acquisition UTC start: \(format.string(from: started))
+            Acquisition UTC end: \(format.string(from: ended))
+            Test-runner uptime start: \(startedUptime)
+            Test-runner uptime end: \(endedUptime)
+            Connected dwell seconds: \(endedUptime - startedUptime)
+            Match the same externally controlled Mac content and isolate logs to these windows.
+            No performance or sharpness verdict is asserted by this observation test.
+            """)
+            boundaries.name = "Renderer pacing " + label + " acquisition boundaries"
+            boundaries.lifetime = .keepAlways
+            add(boundaries)
+        }
+        #endif
     }
 
     @MainActor
