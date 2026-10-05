@@ -44,6 +44,26 @@ final class PhysicalLifecycleSmokeTests: XCTestCase {
         try requireHomeReturn(app, backgroundSeconds: 10, label: "default automatic PiP")
     }
 
+    /// Exercise real producer retirement and fresh starts without sending remote input.
+    /// Fresh enabled Controls is the readiness gate; chrome alone can exist with zero frames.
+    @MainActor
+    func testRepeatedFreshFirstPictures() throws {
+        guard ProcessInfo.processInfo.environment["FARSIDE_PHYSICAL_CAPTURE_START_REPEAT"] == "1" else {
+            throw XCTSkip("Requires explicit repeated physical capture-start testing")
+        }
+        for cycle in 1...5 {
+            let app = try pairedSession()
+            defer { app.terminate() }
+            record("Physical first picture cycle \(cycle) fresh controls", app)
+            let end = app.buttons["End session"].firstMatch
+            XCTAssertTrue(end.waitForExistence(timeout: 5))
+            XCTAssertTrue(end.isHittable)
+            end.tap()
+            XCTAssertTrue(app.buttons["home.connect"].firstMatch.waitForExistence(timeout: 10),
+                          "End must return to the existing paired Home")
+        }
+    }
+
     @MainActor
     func testHomeReturnWithoutAutomaticPiPRestoresFreshSession() throws {
         let app = try pairedSession(launchArguments: ["-farsideAutoPiPDisabled", "YES"])
