@@ -43,7 +43,14 @@ final class PhysicalLifecycleSmokeTests: XCTestCase {
         XCUIDevice.shared.press(.home)
         Thread.sleep(forTimeInterval: 10)
         app.activate()
-        XCTAssertTrue(app.buttons["Show controls"].waitForExistence(timeout: 20), "Return must restore the session without tapping Connect")
+        // Closing the Controls sheet leaves the session dock expanded. Either chrome
+        // state is valid on return; fresh control admission below is the actual gate.
+        let restored = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            app.buttons["Show controls"].exists || app.buttons["Hide controls"].exists
+        }, object: nil)
+        let result = XCTWaiter.wait(for: [restored], timeout: 20)
+        record("Physical Home-return before readiness assertion", app)
+        XCTAssertEqual(result, .completed, "Return must restore the session without tapping Connect")
         XCTAssertFalse(app.buttons["home.connect"].exists)
         try requireFreshControls(app)
         record("Physical Home-return fresh controls", app)
