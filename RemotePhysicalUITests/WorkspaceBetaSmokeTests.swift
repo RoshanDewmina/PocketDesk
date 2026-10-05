@@ -42,11 +42,10 @@ final class WorkspaceBetaSmokeTests: XCTestCase {
                     "Workspace ready must follow the model's current geometry, authority and actual original-source presentation gate")
         record("Workspace beta admitted fitted picture", app)
         try requireFreshControls(app)
-        try closeControls(app)
-        let view = app.buttons["Move view"].firstMatch
+        let view = element("remote.controls.content", in: app).buttons["Move view"].firstMatch
         try require(view.waitForExistence(timeout: 5) && view.isHittable, "The View selector must be reachable")
         view.tap()
-        try require(wait(timeout: 5) { view.exists && view.isSelected }, "View must be selected before any picture gesture")
+        try require(wait(timeout: 5) { !app.buttons["Done"].firstMatch.isHittable }, "Choosing View must close More")
         let canvas = element("remote.canvas", in: app)
         try require(wait(timeout: 5) { canvas.exists && canvas.label == "Remote desktop view" }, "The native surface must confirm View mode")
         let zoom = app.buttons["Zoom in"].firstMatch
@@ -60,8 +59,8 @@ final class WorkspaceBetaSmokeTests: XCTestCase {
         settleLocalGesture()
         record("Workspace beta button return", app)
 
-        // Keep the View selection visible. Use only a picture point above the expanded dock
-        // and below beta chrome; do not double-tap a guessed point underneath controls.
+        // View closes More and the dock. Confirm the current native View label and derive
+        // a fresh picture point below beta chrome and clear of any remaining controls.
         if let point = safeViewPoint(in: app) {
             point.doubleTap()
             try require(wait(timeout: 5) { app.buttons["Back to view"].firstMatch.isHittable }, "A real View double tap must expose return")
@@ -81,7 +80,7 @@ final class WorkspaceBetaSmokeTests: XCTestCase {
             settleLocalGesture()
             record("Workspace beta View gesture return", app)
         } else {
-            recordDoubleTapLimitation("Double-tap branch not exercised: no safe hittable picture area with the current View selector visible. Button focus/return was exercised.")
+            recordDoubleTapLimitation("Double-tap branch not exercised: no safe hittable picture area with the native surface currently confirming View. Button focus/return was exercised.")
         }
 
         try workspaceAction("Use normal desktop", in: app)
@@ -101,11 +100,20 @@ final class WorkspaceBetaSmokeTests: XCTestCase {
     @MainActor
     private func safeViewPoint(in app: XCUIApplication) -> XCUICoordinate? {
         let canvas = element("remote.canvas", in: app), picture = element("remote.picture", in: app)
-        let zoomBar = element("remote.beta.smartZoom", in: app), view = app.buttons["Move view"].firstMatch
-        guard canvas.exists, picture.exists, zoomBar.exists, view.exists, canvas.isHittable, canvas.isEnabled,
-              canvas.label == "Remote desktop view", view.isSelected, view.isHittable else { return nil }
+        let zoomBar = element("remote.beta.smartZoom", in: app)
+        guard canvas.exists, picture.exists, zoomBar.exists, canvas.isHittable, canvas.isEnabled,
+              canvas.label == "Remote desktop view", !app.keyboards.firstMatch.exists,
+              !app.buttons["remote.keyboard.hide"].firstMatch.exists,
+              !app.textViews["remote.text"].firstMatch.exists,
+              !element("remote.privacyShield", in: app).exists,
+              !app.buttons["Done"].firstMatch.isHittable else { return nil }
         let bounds = canvas.frame.intersection(picture.frame)
-        let top = max(bounds.minY, zoomBar.frame.maxY + 16), bottom = min(bounds.maxY, view.frame.minY - 16)
+        let top = max(bounds.minY, zoomBar.frame.maxY + 16)
+        var bottom = bounds.maxY
+        for obstruction in [element("remote.dock", in: app), element("remote.minimap", in: app),
+                            app.buttons["Show controls"].firstMatch, app.buttons["Hide controls"].firstMatch] {
+            if obstruction.exists && !obstruction.frame.isEmpty { bottom = min(bottom, obstruction.frame.minY - 16) }
+        }
         guard !bounds.isNull, bounds.width > 80, bottom - top > 80 else { return nil }
         let offset = CGVector(dx: bounds.midX - canvas.frame.minX, dy: (top + bottom) / 2 - canvas.frame.minY)
         return canvas.coordinate(withNormalizedOffset: .zero).withOffset(offset)
@@ -122,16 +130,15 @@ final class WorkspaceBetaSmokeTests: XCTestCase {
     private func requireFreshControls(_ app: XCUIApplication) throws {
         let handle = app.buttons["Show controls"].firstMatch
         if handle.exists && handle.isHittable { handle.swipeUp() }
-        // View deliberately disables Mac-action buttons; select Control locally for the
-        // fresh-authority observation, without activating any Mac-action button.
-        let control = app.buttons["Control desktop"].firstMatch
-        try require(control.waitForExistence(timeout: 5) && control.isHittable, "The local Control selector must be reachable")
+        let more = app.buttons["More"].firstMatch
+        try require(more.waitForExistence(timeout: 10) && more.isHittable, "More must be reachable")
+        more.tap()
+        // Choosing Control inside More changes only the local input mode. Never tap a Mac action.
+        let control = element("remote.controls.content", in: app).buttons["Control desktop"].firstMatch
+        try require(control.waitForExistence(timeout: 5) && control.isHittable, "More must expose its local Control selector")
         if !control.isSelected { control.tap() }
-        let controls = app.buttons["Controls"].firstMatch
-        try require(controls.waitForExistence(timeout: 10) && controls.isHittable, "Controls must be reachable")
-        controls.tap()
         let click = app.buttons["Double-click"].firstMatch
-        try require(wait(timeout: 20) { click.exists && click.isEnabled }, "Fresh authenticated frames must enable Controls; never tap a Mac input action")
+        try require(wait(timeout: 20) { click.exists && click.isEnabled }, "Fresh authenticated frames must enable More actions; never tap a Mac input action")
     }
 
     @MainActor

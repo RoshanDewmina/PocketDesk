@@ -29,9 +29,12 @@ final class PhysicalLifecycleSmokeTests: XCTestCase {
     private func requireFreshControls(_ app: XCUIApplication) throws {
         let handle = app.buttons["Show controls"].firstMatch
         if handle.exists && handle.isHittable { handle.swipeUp() }
-        let controls = app.buttons["Controls"].firstMatch
+        let controls = app.buttons.matching(NSPredicate(format: "label IN %@", ["More", "Controls"])).firstMatch
         XCTAssertTrue(controls.waitForExistence(timeout: 10))
         controls.tap()
+        let panel = app.descendants(matching: .any).matching(identifier: "remote.controls.content").firstMatch
+        let control = panel.buttons["Control desktop"].firstMatch
+        if control.exists && control.isHittable && !control.isSelected { control.tap() }
         let click = app.buttons["Double-click"].firstMatch
         let fresh = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: click)
         XCTAssertEqual(XCTWaiter.wait(for: [fresh], timeout: 20), .completed,

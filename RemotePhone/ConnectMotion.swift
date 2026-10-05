@@ -288,12 +288,13 @@ struct SessionRouteToast: View {
     let macName: String
     let diagnostics: String
     let pictureReady: Bool
+    var plain = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var shown = false
     @State private var played = false
 
-    private var caption: String? { SessionRouteCaption.parse(diagnostics).text }
+    private var caption: String? { plain ? "Connected" : SessionRouteCaption.parse(diagnostics).text }
 
     var body: some View {
         ZStack {
@@ -366,12 +367,13 @@ struct ReconnectWatcher: View {
 struct ReconnectBackPill: View {
     let macName: String
     let diagnostics: String
+    var plain = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 10) {
             LiveDot(state: .live)
-            Text(verbatim: "Back · \(SessionRouteCaption.parse(diagnostics).text ?? macName)")
+            Text(verbatim: "Back · \((plain ? nil : SessionRouteCaption.parse(diagnostics).text) ?? macName)")
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(Farside.Palette.bone)
                 .lineLimit(1)
