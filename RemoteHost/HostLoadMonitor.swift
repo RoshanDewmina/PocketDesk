@@ -126,6 +126,25 @@ extension HostLoadSample {
     }
 }
 
+/// Auxiliary heartbeats carry independent probes, not a statement that phone load is absent.
+/// The host owner still checks connected picture authority before offering a message here.
+struct HostPhoneLoadInbox {
+    private var feedback: PhoneLoadFeedback?
+    private var receivedAt: TimeInterval?
+
+    mutating func receive(_ action: RemoteAction, epoch: UInt64, at now: TimeInterval) {
+        guard action.isRegularPhoneHeartbeat, action.epoch == epoch else { return }
+        feedback = action.phoneLoad
+        receivedAt = feedback == nil ? nil : now
+    }
+
+    mutating func reset() { feedback = nil; receivedAt = nil }
+
+    func current(at now: TimeInterval) -> PhoneLoadFeedback? {
+        HostLoadMonitor.currentPhoneLoad(feedback, receivedAt: receivedAt, now: now)
+    }
+}
+
 /// Runs the ladder and the busy policy on each host statistics sample. Create one per capture
 /// session; a change of `targetFPS` inside a session restarts both at the top. The X17 governor, when
 /// computed, runs in shadow (reported only) unless `applyGovernor`; then the rung applied is the

@@ -223,8 +223,7 @@ final class RemoteHostModel: ObservableObject {
     private var criticalThermalPause = CriticalThermalPausePolicy()
     private var criticalThermalRecoveryTask: Task<Void, Never>?
     private var vitalsMonitor: MacVitalsMonitor?
-    private var phoneLoad: PhoneLoadFeedback?
-    private var phoneLoadReceivedAt: TimeInterval?
+    private var phoneLoad = HostPhoneLoadInbox()
     private var ladderState: LadderState?
     private var busyState: BusyState?
     private let wakeTargets = HostWakeTargetStore()
@@ -2936,8 +2935,7 @@ final class RemoteHostModel: ObservableObject {
                 connection.media?.captureSharpness = capture.deliveredSharpness
             }
             if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value {
-                phoneLoad = action.phoneLoad
-                phoneLoadReceivedAt = action.phoneLoad == nil ? nil : ProcessInfo.processInfo.systemUptime
+                phoneLoad.receive(action, epoch: inputEpoch.value, at: ProcessInfo.processInfo.systemUptime)
             }
             if let probe = action.clock, !probe.isEcho, (try? probe.validate()) != nil {
                 let received = min(MachClock.nowMs(), connection.media?.controlArrivalMs ?? .infinity)
@@ -3359,8 +3357,7 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Ladder and busy state (G12)
 
     private func beginLoadMonitor(peer: PeerMedia) {
-        phoneLoad = nil
-        phoneLoadReceivedAt = nil
+        phoneLoad.reset()
         ladderState = nil
         busyState = nil
         let tuning = StreamTuning.current
@@ -3375,8 +3372,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func endLoadMonitor() {
-        phoneLoad = nil
-        phoneLoadReceivedAt = nil
+        phoneLoad.reset()
         loadMonitor = nil
         connection.media?.senderQueueGovernorStatus = nil
         connection.media?.senderQueueGovernorShedding = false
@@ -3399,8 +3395,7 @@ final class RemoteHostModel: ObservableObject {
                                     hostThermalState: HostLoadMonitor.thermalName(process.thermalState),
                                     lowPowerMode: process.isLowPowerModeEnabled)
         var sampleWithPhone = sample
-        sampleWithPhone.phoneLoad = HostLoadMonitor.currentPhoneLoad(phoneLoad, receivedAt: phoneLoadReceivedAt,
-                                                                    now: process.systemUptime)
+        sampleWithPhone.phoneLoad = phoneLoad.current(at: process.systemUptime)
         sampleWithPhone.provenLocalLink = peer.provenLocalLinkActive
         let change = monitor.tick(sample: sampleWithPhone, at: process.systemUptime)
         loadMonitor = monitor

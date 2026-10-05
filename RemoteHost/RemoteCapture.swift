@@ -319,6 +319,34 @@ enum CaptureStopReason: Equatable {
     }
 }
 
+/// The active session may already be nil while its OS producer is still stopping. Keep that
+/// cleanup obligation across every stop/start, including a newer start superseding a waiting one.
+@MainActor
+final class CaptureRetirementBarrier {
+    private var pending: CaptureStartupTicket?
+
+    func retire(_ ticket: CaptureStartupTicket) {
+        guard !ticket.retirementConfirmed else { return }
+        // The producer reservation admits only one unretired ticket. A late caller must never
+        // overwrite a newer ticket's cleanup obligation if it retires an older session again.
+        if pending == nil || pending === ticket || pending?.retirementConfirmed == true {
+            pending = ticket
+        }
+        ticket.requestStop() // Synchronous picture/audio fence; confirmation remains asynchronous.
+    }
+
+    func waitForRetirement(timeout: TimeInterval = 3, whileCurrent: () -> Bool) async throws {
+        try Task.checkCancellation()
+        guard whileCurrent() else { throw CancellationError() }
+        guard let ticket = pending else { return }
+        let retired = await ticket.waitForRetirement(timeout: timeout)
+        try Task.checkCancellation()
+        guard whileCurrent() else { throw CancellationError() }
+        guard retired else { throw CaptureStartupTicket.Failure.cleanupPending }
+        if pending === ticket { pending = nil }
+    }
+}
+
 @MainActor
 final class RemoteCapture {
     var onFailure: ((Error) -> Void)?
@@ -356,6 +384,7 @@ final class RemoteCapture {
 
     private var ownership = ScopedCaptureOwner()
     private var session: RemoteCaptureSession?
+    private let retirement = CaptureRetirementBarrier()
     private weak var streamPeer: PeerMedia?
     private var requestedQuality: StreamQuality = .balanced
     private var requestedShowsCursor = true
@@ -441,9 +470,8 @@ final class RemoteCapture {
         let previous = session
         previous?.fenceCapture()
         session = nil
-        if let previous, !(await previous.stop()) { throw CaptureStartupTicket.Failure.cleanupPending }
-        try Task.checkCancellation()
-        guard ownership.owns(owner) else { throw CancellationError() }
+        if let previous { retirement.retire(previous.retirementTicket) }
+        try await retirement.waitForRetirement(whileCurrent: { self.ownership.owns(owner) })
         var excluding: [SCWindow] = []
         if keepingExclusions {
             excluding = await keptExclusionWindows()
@@ -507,7 +535,10 @@ final class RemoteCapture {
                 self.publishCaptureRegion(region)
             }
         }
-        guard beforeStart?(next.geometry) != false else { next.requestStop(); throw CancellationError() }
+        guard beforeStart?(next.geometry) != false else {
+            retirement.retire(next.retirementTicket)
+            throw CancellationError()
+        }
         session = next
         if let target {
             scopeMonitor = Task { [weak self, weak next] in
@@ -553,7 +584,7 @@ final class RemoteCapture {
             return owner
         } catch {
             if ownership.owns(owner), session === next { scopeMonitor?.cancel(); scopeMonitor = nil; session = nil }
-            next.requestStop()
+            retirement.retire(next.retirementTicket)
             throw error
         }
     }
@@ -588,7 +619,7 @@ final class RemoteCapture {
         streamPeer = nil
         scopeMonitor?.cancel(); scopeMonitor = nil
         let previous = session
-        previous?.requestStop()
+        if let previous { retirement.retire(previous.retirementTicket) }
         session = nil
         guard let previous else { return nil }
         return Task { _ = await previous.stop() }
@@ -1263,6 +1294,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     }
 
     func requestStop() { startup.requestStop() }
+
+    var retirementTicket: CaptureStartupTicket { startup }
 
     func stop() async -> Bool {
         requestStop()
