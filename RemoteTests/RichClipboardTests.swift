@@ -49,11 +49,19 @@ final class RichClipboardTests: XCTestCase {
             for _ in 0..<8 { crc = (crc >> 1) ^ (crc & 1 == 1 ? 0xedb88320 : 0) }
         }
         write32(crc ^ 0xffffffff, at: 29)
-        let source = try XCTUnwrap(CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary))
-        let properties = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
-        XCTAssertEqual(properties[kCGImagePropertyPixelWidth] as? Int, 5000)
-        XCTAssertEqual(properties[kCGImagePropertyPixelHeight] as? Int, 5000)
+        XCTAssertThrowsError(try RichClipboardPNG.preflightPNG(data))
         XCTAssertThrowsError(try RichClipboardPNG.normalize(data))
+    }
+    func testPNGPreflightRejectsMalformedMandatoryHeaderWithoutImageIO() throws {
+        let png = try richClipboardFixture()
+        try RichClipboardPNG.preflightPNG(png)
+        for offset in [8, 12, 26, 27, 28] {
+            var changed = png; changed[offset] = 0xff
+            XCTAssertThrowsError(try RichClipboardPNG.preflightPNG(changed))
+        }
+        XCTAssertThrowsError(try RichClipboardPNG.preflightPNG(Data(png.prefix(20))))
+        var unsupported = png; unsupported[25] = 1
+        XCTAssertThrowsError(try RichClipboardPNG.preflightPNG(unsupported))
     }
     func testSixteenBitSourceIsRejectedBeforeRasterDecode() throws {
         let provider = try XCTUnwrap(CGDataProvider(data: Data([0, 0]) as CFData))
