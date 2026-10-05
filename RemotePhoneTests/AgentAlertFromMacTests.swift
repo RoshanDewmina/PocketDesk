@@ -38,6 +38,23 @@ final class AgentAlertFromMacTests: XCTestCase {
         return fake.added
     }
 
+    func testOutcomesNeedSeparateOptInAndCannotSnooze() async {
+        let complete = AgentAlertFrame(id: "h_112233445566", kind: .other, event: .completed, raisedAt: clock, runHash: "11223344")
+        center.receive(fromMac: complete)
+        XCTAssertNil(center.banner)
+        center.preferences.completedEnabled = true
+        center.receive(fromMac: complete)
+        XCTAssertEqual(center.banner?.payload.event, .completed)
+        let payload = AgentAlertPayload(helpRequestID: complete.id, kind: .other,
+            pairingIdentity: center.currentPairingIdentity?(), event: .completed)
+        await center.respond(.snooze, to: payload, deliveredAt: clock, notificationIdentifier: nil)
+        XCTAssertTrue(fake.added.isEmpty)
+        XCTAssertFalse(center.wasSnoozed(complete.id))
+        let failed = AgentAlertFrame(id: "h_112233445567", kind: .other, event: .failed, raisedAt: clock)
+        center.receive(fromMac: failed)
+        XCTAssertEqual(center.banner?.id, complete.id)
+    }
+
     func testWithTheAppInFrontTheAlertIsOneQuietBannerOverThePicture() {
         center.receive(fromMac: frame())
         XCTAssertEqual(center.banner?.id, "h_0a1b2c3d4e5f")

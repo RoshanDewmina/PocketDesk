@@ -255,9 +255,11 @@ final class AgentAlertBridge: @unchecked Sendable {
             struct Agent: Decodable {
                 var kind: String?
                 var sessionHash: String?
+                var runHash: String?
             }
             var agent: Agent?
             var type: String
+            var id: String?
         }
 
         private func route(_ request: AgentBridgeHTTP.Request) {
@@ -295,11 +297,19 @@ final class AgentAlertBridge: @unchecked Sendable {
                 return finish(.ok, json: AgentBridgeHTTP.body("state", AgentAlertDisposition.ignored.rawValue))
             }
             let hash = body.agent?.sessionHash ?? "00000000"
-            guard AgentAlert.isSessionHash(hash) else {
+            guard AgentAlert.isSessionHash(hash),
+                  body.agent?.runHash == nil || body.agent?.runHash.map(AgentAlert.isSessionHash) == true else {
                 return finish(.badRequest, json: AgentBridgeHTTP.body("error", "invalid_session"))
             }
-            let alert = AgentAlert(id: AgentAlert.makeID(), kind: AgentKind(wire: body.agent?.kind), event: event,
-                                   sessionHash: hash, raisedAt: Date())
+            guard event.isAttention || (body.id.map { $0.hasPrefix("h_") && $0.count == 14 && $0.dropFirst(2).allSatisfy { "0123456789abcdef".contains($0) } } == true &&
+                body.agent?.runHash.map(AgentAlert.isSessionHash) == true) else {
+                return finish(.badRequest, json: AgentBridgeHTTP.body("error", "invalid_run"))
+            }
+            if let id = body.id, !(id.hasPrefix("h_") && id.count == 14 && id.dropFirst(2).allSatisfy { "0123456789abcdef".contains($0) }) {
+                return finish(.badRequest, json: AgentBridgeHTTP.body("error", "invalid_id"))
+            }
+            let alert = AgentAlert(id: body.id ?? AgentAlert.makeID(), kind: AgentKind(wire: body.agent?.kind), event: event,
+                                   sessionHash: hash, raisedAt: Date(), runHash: body.agent?.runHash)
             guard let handler = bridge?.handler else {
                 return finish(.serviceUnavailable, json: AgentBridgeHTTP.body("state", AgentAlertDisposition.disabled.rawValue))
             }

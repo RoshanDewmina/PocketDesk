@@ -223,6 +223,28 @@ final class HostAgentAlertsTests: XCTestCase {
         XCTAssertTrue(diary.contains { $0.contains("too many this hour") })
     }
 
+    func testOutcomeChoicesAreIndependentAndAttentionThenCompletionBothForward() async {
+        let alerts = turnOnWithoutListening()
+        let outcome = AgentAlert(id: "h_112233445566", kind: .other, event: .completed,
+                                 sessionHash: "aaaaaaaaaaaa", raisedAt: now, runHash: "bbbbbbbbbbbb")
+        let result9766 = await alerts.receive(outcome)
+        XCTAssertEqual(result9766, .disabled)
+        await alerts.setOutcome(.completed, enabled: true)
+        let result9890 = await alerts.receive(alert("aaaaaaaaaaaa"))
+        XCTAssertEqual(result9890, .forwarded)
+        let result9970 = await alerts.receive(outcome)
+        XCTAssertEqual(result9970, .forwarded)
+        await alerts.setEnabled(false)
+        let result10075 = await alerts.receive(alert("cccccccccccc"))
+        XCTAssertEqual(result10075, .disabled)
+        var next = outcome; next.id = "h_112233445567"; next.runHash = "cccccccccccc"
+        let result10240 = await alerts.receive(next)
+        XCTAssertEqual(result10240, .forwarded)
+        next.event = .failed; next.id = "h_112233445568"
+        let result10360 = await alerts.receive(next)
+        XCTAssertEqual(result10360, .disabled)
+    }
+
     // MARK: The line in Settings
 
     func testSettingsSaysWhatTheLastAlertDid() async {

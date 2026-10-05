@@ -87,7 +87,7 @@ final class AgentAlertCenterTests: XCTestCase {
 
     func testCategoriesAreRegisteredWithTheSystem() {
         center.registerCategories()
-        XCTAssertEqual(Set(fake.categories.map(\.identifier)), ["AGENT_HELP", "AGENT_HELP_REMINDER"])
+        XCTAssertEqual(Set(fake.categories.map(\.identifier)), ["AGENT_HELP", "AGENT_HELP_REMINDER", "AGENT_OUTCOME"])
     }
 
     // MARK: Test alert
@@ -402,6 +402,27 @@ final class PushRegistrarTests: XCTestCase {
             if rejects { return .rejected }
             return shouldConfirm ? .sent : .notSent("offline")
         }
+    }
+
+    func testCompletionOnlyRegistrationKeepsAttentionOffAndRefreshesPreferences() async throws {
+        let defaults = makeTestDefaults("PushOutcomeRegistration")
+        let prefs = AgentAlertPreferences(defaults: defaults)
+        prefs.completedEnabled = true
+        let registrar = PushRegistrar(defaults: defaults, environmentOverride: "sandbox", removalStore: PendingStore())
+        let sink = RetrySink(); registrar.sinkForTarget = { _ in sink }
+        registrar.configure(invitation: invitation())
+        registrar.received(token: Data([0xab]))
+        await registrar.submit()
+        let registration = try XCTUnwrap(registrar.registration())
+        XCTAssertFalse(registration.alertsEnabled)
+        XCTAssertTrue(registration.completedEnabled)
+        XCTAssertFalse(registration.failedEnabled)
+        prefs.failedEnabled = true
+        XCTAssertTrue(try XCTUnwrap(registrar.registration()).failedEnabled)
+        prefs.completedEnabled = false; prefs.failedEnabled = false
+        await registrar.submit()
+        XCTAssertNil(registrar.deviceToken)
+        XCTAssertGreaterThan(sink.disables, 0)
     }
 
     func testOnlyHTTPSOriginFromExactPairedServerIsAccepted() {

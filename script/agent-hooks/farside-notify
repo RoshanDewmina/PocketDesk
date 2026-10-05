@@ -13,7 +13,7 @@
 # 0 whatever happens, so it can never block or steer an agent. --strict changes only the exit status.
 #
 # Usage: farside-notify [--agent claude-code|codex|cursor|other] [--session ID] [--bridge-file PATH]
-#                       [--dry-run] [--verbose] [--strict] [--no-stdin] [--print-hooks claude-code|codex]
+#                       [--run OPAQUE_ID --exit-status 0..255] [--dry-run] [--verbose] [--strict] [--no-stdin] [--print-hooks claude-code|codex]
 #
 # The bridge file (default: ~/Library/Application Support/Farside/agent-bridge.json, or $FARSIDE_BRIDGE_FILE)
 # holds the port and token Farside wrote when Agent alerts are on. It is read on every call.
@@ -28,6 +28,8 @@ verbose=0
 strict=0
 use_stdin=1
 print_hooks=""
+run_id=""
+exit_status=""
 
 usage() {
   sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
@@ -41,6 +43,10 @@ while [ $# -gt 0 ]; do
     --session=*) session=${1#--session=}; shift ;;
     --bridge-file) bridge_file=${2:-$bridge_file}; shift; [ $# -gt 0 ] && shift ;;
     --bridge-file=*) bridge_file=${1#--bridge-file=}; shift ;;
+    --run) run_id=${2:-}; shift; [ $# -gt 0 ] && shift ;;
+    --run=*) run_id=${1#--run=}; shift ;;
+    --exit-status) exit_status=${2:-invalid}; shift; [ $# -gt 0 ] && shift ;;
+    --exit-status=*) exit_status=${1#--exit-status=}; shift ;;
     --dry-run) dry_run=1; shift ;;
     --verbose|-v) verbose=1; shift ;;
     --strict) strict=1; shift ;;
@@ -106,6 +112,19 @@ if [ -n "$print_hooks" ]; then
   exit 0
 fi
 
+# An owner-installed local wrapper captures its own job's status and chooses a fresh run id.
+# Farside receives this report; it never starts or executes the job. Stop/idle never means success.
+event=needs_user
+if [ -n "$exit_status" ]; then
+  case "$exit_status" in
+    *[!0-9]*|"") finish "invalid exit status: no alert" 1 ;;
+  esac
+  [ "${#exit_status}" -le 3 ] && [ "$exit_status" -le 255 ] || finish "invalid exit status: no alert" 1
+  [ -n "$run_id" ] && [ "${#run_id}" -le 1024 ] || finish "an exit-status report needs a run id" 1
+  use_stdin=0
+  if [ "$exit_status" -eq 0 ]; then event=completed; else event=failed; fi
+fi
+
 # Read at most 64 KiB of hook JSON. The sentinel preserves trailing newlines so an oversized input
 # cannot lose its extra byte through command substitution. No agent words are printed or forwarded.
 payload=""
@@ -166,7 +185,18 @@ case "$hash" in
   *[!0-9a-f]*|"") finish "could not hash the session" 1 ;;
 esac
 
-body="{\"agent\":{\"kind\":\"$agent\",\"sessionHash\":\"$hash\"},\"type\":\"needs_user\"}"
+run_field=""
+id_field=""
+if [ -n "$run_id" ]; then
+  [ "${#run_id}" -le 1024 ] || finish "run id is too large: no alert" 1
+  run_hash=$(printf '%s' "farside-run|$agent|$seed|$run_id" | shasum -a 256 | cut -c1-12)
+  run_field=",\"runHash\":\"$run_hash\""
+  if [ "$event" != needs_user ]; then
+    event_id=$(printf '%s' "farside-event|$run_hash|$event" | shasum -a 256 | cut -c1-12)
+    id_field=",\"id\":\"h_$event_id\""
+  fi
+fi
+body="{\"agent\":{\"kind\":\"$agent\",\"sessionHash\":\"$hash\"$run_field},\"type\":\"$event\"$id_field}"
 
 [ -r "$bridge_file" ] || finish "no bridge file at $bridge_file: is Agent alerts on in Farside's Settings?" 3
 discovery=$(tr -d '\n\r' < "$bridge_file" 2>/dev/null)

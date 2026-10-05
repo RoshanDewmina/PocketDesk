@@ -7,6 +7,8 @@ import UserNotifications
 struct AgentAlertPreferences {
     enum Key {
         static let alerts = "agentAlerts.enabled"
+        static let completed = "agentAlerts.completed"
+        static let failed = "agentAlerts.failed"
         static let breakThroughFocus = "agentAlerts.breakThroughFocus"
         static let showMacName = "lockScreen.showMacName"
         static let sessionActivity = "lockScreen.sessionActivity"
@@ -22,6 +24,30 @@ struct AgentAlertPreferences {
     var alertsEnabled: Bool {
         get { flag(Key.alerts, default: false) }
         nonmutating set { defaults.set(newValue, forKey: Key.alerts) }
+    }
+
+    var completedEnabled: Bool {
+        get { flag(Key.completed, default: false) }
+        nonmutating set { defaults.set(newValue, forKey: Key.completed) }
+    }
+    var failedEnabled: Bool {
+        get { flag(Key.failed, default: false) }
+        nonmutating set { defaults.set(newValue, forKey: Key.failed) }
+    }
+    var anyEnabled: Bool { alertsEnabled || completedEnabled || failedEnabled }
+    func allows(_ event: AgentAlertEvent) -> Bool {
+        switch event {
+        case .needsUser: alertsEnabled
+        case .completed: completedEnabled
+        case .failed: failedEnabled
+        }
+    }
+    func set(_ event: AgentAlertEvent, enabled: Bool) {
+        switch event {
+        case .needsUser: alertsEnabled = enabled
+        case .completed: completedEnabled = enabled
+        case .failed: failedEnabled = enabled
+        }
     }
 
     /// Time Sensitive delivery: lights the screen through Focus. iOS lets the person turn it off.
@@ -48,6 +74,7 @@ enum AgentNotification {
     /// opens Agent alerts here.
     static let authorizationOptions: UNAuthorizationOptions = [.alert, .sound, .providesAppNotificationSettings]
 
+    static let openAction = "OPEN_FARSIDE"
     static let snoozeAction = "SNOOZE_15"
     static let notNowAction = "NOT_NOW"
     static let titleKey = "AGENT_NEEDS_YOU_TITLE"
@@ -81,7 +108,12 @@ enum AgentNotification {
             hiddenPreviewsBodyPlaceholder: hiddenPreviewPlaceholder,
             options: [.customDismissAction, .hiddenPreviewsShowTitle]
         )
-        return [help, reminder]
+        let outcome = UNNotificationCategory(
+            identifier: AgentAlertPayload.outcomeCategoryIdentifier,
+            actions: [UNNotificationAction(identifier: openAction, title: "Open Farside", options: [.foreground])],
+            intentIdentifiers: [], hiddenPreviewsBodyPlaceholder: hiddenPreviewPlaceholder,
+            options: [.customDismissAction, .hiddenPreviewsShowTitle])
+        return [help, reminder, outcome]
     }
 
     /// The notification for the Settings "Send test alert" button. It looks and routes like a real
@@ -105,16 +137,16 @@ enum AgentNotification {
     /// background: the local twin of the push the service would send. Same fixed words, same routing.
     static func alertContent(for payload: AgentAlertPayload, preferences: AgentAlertPreferences) -> UNMutableNotificationContent {
         var shown = payload
-        shown.interruption = preferences.breakThroughFocus ? .timeSensitive : .active
+        shown.interruption = payload.event.isAttention && preferences.breakThroughFocus ? .timeSensitive : .active
         let content = UNMutableNotificationContent()
-        content.title = NSLocalizedString(titleKey, comment: "")
-        content.body = NSLocalizedString(bodyKey, comment: "")
-        content.categoryIdentifier = AgentAlertPayload.categoryIdentifier
+        content.title = NSLocalizedString(payload.event.titleKey, comment: "")
+        content.body = NSLocalizedString(payload.event.bodyKey, comment: "")
+        content.categoryIdentifier = payload.event.isAttention ? AgentAlertPayload.categoryIdentifier : AgentAlertPayload.outcomeCategoryIdentifier
         content.threadIdentifier = payload.threadID ?? "mac-agent"
         content.userInfo = shown.userInfo
         content.sound = .default
         content.relevanceScore = 1
-        content.interruptionLevel = preferences.breakThroughFocus ? .timeSensitive : .active
+        content.interruptionLevel = payload.event.isAttention && preferences.breakThroughFocus ? .timeSensitive : .active
         return content
     }
 
