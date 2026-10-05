@@ -6,6 +6,8 @@ private final class FakePasteboard: HostPasteboardAccess, @unchecked Sendable {
     private var count = 0
     private var result: HostPasteboardRead = .refused(.empty)
     private var stored: [ClipboardPayload] = []
+    private var imageStored: [Data] = []
+    var imageWrites: [Data] { lock.lock(); defer { lock.unlock() }; return imageStored }
     private var readCount = 0
     private var countReadCount = 0
     var reads: Int { lock.lock(); defer { lock.unlock() }; return readCount }
@@ -23,6 +25,10 @@ private final class FakePasteboard: HostPasteboardAccess, @unchecked Sendable {
         readGate?.wait()
         lock.lock(); defer { lock.unlock() }
         return result
+    }
+
+    func writeImage(_ png: Data) -> Bool {
+        lock.lock(); defer { lock.unlock() }; imageStored.append(png); count += 1; return true
     }
 
     func write(_ payload: ClipboardPayload) -> Bool {
@@ -68,6 +74,59 @@ final class HostClipboardServiceTests: XCTestCase {
         let done = expectation(description: "clipboard settled")
         DispatchQueue.main.asyncAfter(deadline: .now() + interval) { done.fulfill() }
         wait(for: [done], timeout: interval + 1)
+    }
+
+    func testRichQueuedWriteRechecksEffectPolicyAndRetiredLease() throws {
+        let pasteboard = FakePasteboard(), queue = DispatchQueue(label: "fixture.rich-effect")
+        let clipboard = HostClipboardService(pasteboard: pasteboard, queue: queue)
+        let png = try RichClipboardPNG.normalize(richClipboardFixture())
+        let gate = DispatchSemaphore(value: 0); queue.async { gate.wait() }
+        clipboard.richEffectAllowed = { false }
+        let lease = TransferEffectLease(), refused = expectation(description: "effect refused")
+        clipboard.storeRichImage(png, lease: lease) { stored in XCTAssertFalse(stored); refused.fulfill() }
+        gate.signal(); wait(for: [refused], timeout: 2)
+        XCTAssertTrue(pasteboard.imageWrites.isEmpty)
+        let retired = TransferEffectLease(); retired.closeAdmission()
+        clipboard.richEffectAllowed = { true }
+        clipboard.storeRichImage(png, lease: retired) { _ in XCTFail("Retired write must not commit") }
+        queue.sync {}; settle(); XCTAssertTrue(pasteboard.imageWrites.isEmpty)
+        clipboard.reset()
+    }
+
+    func testRichTransactionRetiresBackpressuredTextAndResumesAtFreshBaselineWithNewRevision() {
+        let pasteboard = FakePasteboard(), clipboard = service(pasteboard)
+        clipboard.richOrderingEnabled = true; clipboard.automaticPolicy = { true }
+        clipboard.reconcileAutomaticSync(allowed: true, peerSupports: true)
+        waitUntil("baseline sampled") { pasteboard.countReads > 0 }
+        buffered = ClipboardLimits.bufferedHighWater
+        pasteboard.set(.text(ClipboardPayload(text: "stale paced text"))); pasteboard.bump()
+        waitUntil("old text read") { pasteboard.reads == 1 }; settle()
+        let barrier = clipboard.beginRichTransaction()
+        buffered = 0
+        pasteboard.set(.text(ClipboardPayload(text: "clipboard at rich commit"))); pasteboard.bump()
+        clipboard.finishRichTransaction()
+        let baselineReads = pasteboard.countReads
+        waitUntil("fresh baseline") { pasteboard.countReads > baselineReads }; settle()
+        XCTAssertTrue(sent.isEmpty, "A retired outbox and rich-copy echo must never be sent")
+        pasteboard.set(.text(ClipboardPayload(text: String(repeating: "new copy", count: 1000)))); pasteboard.bump()
+        waitUntil("new text sent") { !self.sent.isEmpty }; settle()
+        let revision = sent.first?.sourceRevision
+        XCTAssertGreaterThan(revision ?? 0, barrier)
+        XCTAssertTrue(sent.allSatisfy { $0.sourceRevision == revision && $0.automatic == true })
+        clipboard.reset()
+    }
+
+    func testRichTransactionRetiresBlockedAutomaticRead() {
+        let pasteboard = FakePasteboard(), clipboard = service(pasteboard)
+        clipboard.richOrderingEnabled = true; clipboard.automaticPolicy = { true }
+        clipboard.reconcileAutomaticSync(allowed: true, peerSupports: true)
+        waitUntil("baseline sampled") { pasteboard.countReads > 0 }
+        let gate = DispatchSemaphore(value: 0); pasteboard.readGate = gate; defer { gate.signal() }
+        pasteboard.set(.text(ClipboardPayload(text: "old lazy provider"))); pasteboard.bump()
+        waitUntil("read entered") { pasteboard.reads == 1 }
+        _ = clipboard.beginRichTransaction(); pasteboard.bump(); clipboard.finishRichTransaction()
+        gate.signal(); settle(0.2)
+        XCTAssertTrue(sent.isEmpty); clipboard.reset()
     }
 
     func testAutomaticWatchBaselinesThenExportsOnlyChangedTextWithEveryChunkMarked() {
@@ -478,6 +537,33 @@ final class SystemHostPasteboardTests: XCTestCase {
             }
             XCTAssertEqual(access.read(limit: ClipboardLimits.maximumBytes), .refused(.concealed), marker)
         }
+    }
+
+    private final class LazyImage: NSObject, NSPasteboardItemDataProvider {
+        var reads = 0
+        func pasteboard(_ pasteboard: NSPasteboard?, item: NSPasteboardItem, provideDataForType type: NSPasteboard.PasteboardType) {
+            reads += 1; item.setData(Data([1, 2, 3]), forType: type)
+        }
+    }
+    func testImagePrivacyUnionRejectsBeforeAnyLazyRepresentationIsRead() {
+        for marker in ["org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType", "org.nspasteboard.AutoGeneratedType", "com.agilebits.onepassword"] {
+            let board = NSPasteboard.withUniqueName(); defer { board.releaseGlobally() }
+            let provider = LazyImage(), image = NSPasteboardItem(), privateItem = NSPasteboardItem()
+            image.setDataProvider(provider, forTypes: [.png])
+            privateItem.setData(Data(), forType: NSPasteboard.PasteboardType(marker))
+            board.writeObjects([image, privateItem])
+            if case .failure(.concealed) = SystemHostPasteboard(board).readImage() {} else { XCTFail(marker) }
+            XCTAssertEqual(provider.reads, 0, "A marker on any item prevents lazy image reads")
+        }
+    }
+    func testImageWritesAreSinglePNGWithPocketDeskMarker() throws {
+        let png = try RichClipboardPNG.normalize(richClipboardFixture())
+        let board = NSPasteboard.withUniqueName(); defer { board.releaseGlobally() }
+        let access = SystemHostPasteboard(board)
+        XCTAssertTrue(access.writeImage(png.data))
+        XCTAssertEqual(board.pasteboardItems?.count, 1)
+        XCTAssertTrue(board.types?.contains(NSPasteboard.PasteboardType(ClipboardPrivacy.pocketDeskMarker)) == true)
+        if case .success(let data) = access.readImage() { XCTAssertEqual(data, png.data) } else { XCTFail("PNG unavailable") }
     }
 
     func testPlainTextURLAndLimits() {

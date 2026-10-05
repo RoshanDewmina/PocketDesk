@@ -8,6 +8,8 @@ struct PushRegistration: Codable, Equatable {
     var deviceToken: String
     var environment: String
     var alertsEnabled: Bool
+    var completedEnabled = false
+    var failedEnabled = false
     var timeSensitive: Bool
     /// Always false: alerts never name an agent (Guideline 4.5.4). Kept on the wire for the service's schema.
     var showAgentName = false
@@ -153,7 +155,7 @@ final class PushRegistrar: ObservableObject {
     }
 
     func received(token: Data) {
-        guard AgentAlertPreferences(defaults: defaults).alertsEnabled else {
+        guard AgentAlertPreferences(defaults: defaults).anyEnabled else {
             Task { await submit() }
             return
         }
@@ -207,6 +209,8 @@ final class PushRegistrar: ObservableObject {
             deviceToken: deviceToken,
             environment: environment,
             alertsEnabled: preferences.alertsEnabled,
+            completedEnabled: preferences.completedEnabled,
+            failedEnabled: preferences.failedEnabled,
             timeSensitive: preferences.breakThroughFocus,
             locale: Locale.current.identifier,
             appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0",
@@ -246,7 +250,7 @@ final class PushRegistrar: ObservableObject {
         }
         // Re-enabling the same pairing supersedes an offline opt-out. Remove its retry before a
         // fresh registration so an old retry can never erase the newly enabled address.
-        if AgentAlertPreferences(defaults: defaults).alertsEnabled, let target {
+        if AgentAlertPreferences(defaults: defaults).anyEnabled, let target {
             let keep = saved.filter { $0.target != target }
             if keep.count != saved.count {
                 do {
@@ -283,7 +287,7 @@ final class PushRegistrar: ObservableObject {
         if let removalFailureMessage { status = .failed(removalFailureMessage) }
         else if !removals.isEmpty { status = .idle }
         guard let deviceToken else { return }
-        guard AgentAlertPreferences(defaults: defaults).alertsEnabled else {
+        guard AgentAlertPreferences(defaults: defaults).anyEnabled else {
             forget()
             return
         }
@@ -293,8 +297,12 @@ final class PushRegistrar: ObservableObject {
         }
         guard let target else { return }
         let result = await sinkForTarget(target).submit(registration)
-        guard self.target == target, self.currentToken == deviceToken,
-              AgentAlertPreferences(defaults: defaults).alertsEnabled else { return }
+        let currentPreferences = AgentAlertPreferences(defaults: defaults)
+        guard self.target == target, self.currentToken == deviceToken, currentPreferences.anyEnabled,
+              registration.alertsEnabled == currentPreferences.alertsEnabled,
+              registration.completedEnabled == currentPreferences.completedEnabled,
+              registration.failedEnabled == currentPreferences.failedEnabled,
+              registration.timeSensitive == currentPreferences.breakThroughFocus else { return }
         lastSubmission = result
         switch result {
         case .sent: status = removalFailed ? .failed("An older pairing still needs alert opt-out.") : .registered
@@ -312,7 +320,7 @@ final class AgentPushIntegration {
     private weak var model: PhoneRemoteModel?
     private var observers: Set<AnyCancellable> = []
     private var currentTarget: PushPairingTarget?
-    private var previousPreferences: (enabled: Bool, timeSensitive: Bool)?
+    private var previousPreferences: (enabled: Bool, timeSensitive: Bool, completed: Bool, failed: Bool, attention: Bool)?
 
     func attach(_ model: PhoneRemoteModel) {
         guard self.model !== model else { return }
@@ -356,9 +364,12 @@ final class AgentPushIntegration {
             AgentAlertReports.shared.configure(target: next)
         }
         let preferences = AgentAlertPreferences()
-        let current = (enabled: preferences.alertsEnabled, timeSensitive: preferences.breakThroughFocus)
+        let current = (enabled: preferences.anyEnabled, timeSensitive: preferences.breakThroughFocus,
+                       completed: preferences.completedEnabled, failed: preferences.failedEnabled, attention: preferences.alertsEnabled)
         let changed = previousPreferences.map {
-            $0.enabled != current.enabled || $0.timeSensitive != current.timeSensitive
+            $0.enabled != current.enabled || $0.timeSensitive != current.timeSensitive ||
+            $0.completed != current.completed || $0.failed != current.failed ||
+            $0.attention != current.attention
         } ?? true
         let firstPreferenceRead = previousPreferences == nil
         let wasEnabled = previousPreferences?.enabled ?? false

@@ -174,6 +174,8 @@ extension HostActions {
             dismissLockWarning: model.dismissLockWarning,
             openLockScreenSettings: model.openLockScreenSettings,
             setAgentAlerts: model.setAgentAlerts,
+            setCompletedAlerts: model.setCompletedAlerts,
+            setFailedAlerts: model.setFailedAlerts,
             copyAgentHookSetup: model.copyAgentHookSetup,
             resetAgentAlertLink: model.resetAgentAlertLink,
             copyDiagnostics: model.copyDiagnostics,

@@ -13,6 +13,7 @@ import Foundation
 /// text from the payload, and ignores `title-loc-args` an older service may still send.
 struct AgentAlertPayload: Equatable {
     static let categoryIdentifier = "AGENT_HELP"
+    static let outcomeCategoryIdentifier = "AGENT_OUTCOME"
     static let reminderCategoryIdentifier = "AGENT_HELP_REMINDER"
 
     enum Interruption: String, Equatable {
@@ -23,6 +24,7 @@ struct AgentAlertPayload: Equatable {
     /// Full opaque identity of the pairing that produced this alert. Missing legacy alerts cannot
     /// report an answer or open the currently paired Mac.
     var pairingIdentity: String?
+    var event: AgentAlertEvent
     var kind: AgentKind
     var threadID: String?
     var interruption: Interruption?
@@ -33,7 +35,8 @@ struct AgentAlertPayload: Equatable {
 
     init(helpRequestID: String, kind: AgentKind, pairingIdentity: String? = nil,
          threadID: String? = nil, interruption: Interruption? = nil,
-         isReminder: Bool = false, isTest: Bool = false) {
+         isReminder: Bool = false, isTest: Bool = false, event: AgentAlertEvent = .needsUser) {
+        self.event = event
         self.helpRequestID = helpRequestID
         self.pairingIdentity = pairingIdentity
         self.kind = kind
@@ -46,8 +49,16 @@ struct AgentAlertPayload: Equatable {
     init?(userInfo: [AnyHashable: Any]) {
         guard let aps = userInfo["aps"] as? [String: Any],
               let category = aps["category"] as? String,
-              category == Self.categoryIdentifier || category == Self.reminderCategoryIdentifier,
+              [Self.categoryIdentifier, Self.reminderCategoryIdentifier, Self.outcomeCategoryIdentifier].contains(category),
               let id = userInfo["hid"] as? String, FarsideRoute.isValidID(id) else { return nil }
+        if category == Self.outcomeCategoryIdentifier {
+            guard let value = userInfo["event"] as? String, let understood = AgentAlertEvent(rawValue: value),
+                  !understood.isAttention else { return nil }
+            event = understood
+        } else {
+            guard userInfo["event"] == nil || userInfo["event"] as? String == AgentAlertEvent.needsUser.rawValue else { return nil }
+            event = .needsUser
+        }
         helpRequestID = id
         pairingIdentity = (userInfo["pairing"] as? String).flatMap { SecureRandom.isToken($0) ? $0 : nil }
         isReminder = category == Self.reminderCategoryIdentifier
@@ -62,12 +73,13 @@ struct AgentAlertPayload: Equatable {
     /// travels as its wire spelling outside `alert`, so the system never displays it.
     var userInfo: [AnyHashable: Any] {
         var aps: [String: Any] = [
-            "category": isReminder ? Self.reminderCategoryIdentifier : Self.categoryIdentifier,
-            "alert": ["title-loc-key": "AGENT_NEEDS_YOU_TITLE", "loc-key": "AGENT_NEEDS_YOU_BODY"] as [String: Any]
+            "category": event.isAttention ? (isReminder ? Self.reminderCategoryIdentifier : Self.categoryIdentifier) : Self.outcomeCategoryIdentifier,
+            "alert": ["title-loc-key": event.titleKey, "loc-key": event.bodyKey] as [String: Any]
         ]
         if let threadID { aps["thread-id"] = threadID }
         if let interruption { aps["interruption-level"] = interruption.rawValue }
         var result: [AnyHashable: Any] = ["aps": aps, "hid": helpRequestID]
+        if !event.isAttention { result["event"] = event.rawValue }
         if kind != .other { result["kind"] = kind.rawValue }
         if let pairingIdentity { result["pairing"] = pairingIdentity }
         if isTest { result["test"] = true }

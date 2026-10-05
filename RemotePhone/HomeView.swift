@@ -706,7 +706,7 @@ struct HomeView: View {
             let bigTextHost = connection.presentationHostTrust
             model.disconnect()
             guard connection.revoke(expectedInvitation: intendedInvitation) else { return }
-            if let bigTextHost { model.bigTextMemory.forget(host: bigTextHost) }
+            if let bigTextHost { model.bigTextMemory.forget(host: bigTextHost); model.forgetWorkspacePreferences(host: bigTextHost) }
             else { model.bigTextMemory.forget(room: room) }
             model.refreshSendToMac(force: true)
             model.vitalsMemory.forget(room: room)

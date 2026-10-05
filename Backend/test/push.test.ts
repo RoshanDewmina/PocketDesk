@@ -305,3 +305,79 @@ describe("pairing-scoped generic APNs alerts", () => {
       ] });
   });
 });
+
+describe("explicit job outcome notifications", () => {
+  it("keeps legacy registrations attention-only and rejects malformed outcome reports", async () => {
+    const env = await configuredEnv(); const p = await livePair();
+    expect((await register(env, p, registration())).status).toBe(200);
+    expect((await event(env, p, undefined, { kind: "other", event: "completed", runHash: "11223344" })).status).toBe(409);
+    expect((await event(env, p, undefined, { kind: "other", event: "completed" })).status).toBe(400);
+    expect((await event(env, p, undefined, { kind: "other", event: "completed", runHash: 11223344 })).status).toBe(400);
+    expect((await event(env, p, undefined, { kind: "other", event: ["completed"], runHash: "11223344" })).status).toBe(400);
+    expect((await event(env, p, undefined, { event: "idle", runHash: "11223344" })).status).toBe(400);
+    expect((await register(env, p, { ...registration(), completedEnabled: "true" })).status).toBe(400);
+    expect((await register(env, p, { ...registration(), completedEnabled: true })).status).toBe(200);
+    expect((await register(env, p, registration())).status).toBe(200);
+    expect(await testEnv.DB.prepare("SELECT completed_enabled,failed_enabled FROM push_registrations WHERE room=?1").bind(p.room).first())
+      .toEqual({ completed_enabled: 0, failed_enabled: 0 });
+  });
+
+  it("admits attention then completion, separates runs and copy, and rejects attention actions for outcomes", async () => {
+    const env = await configuredEnv(); const p = await livePair();
+    expect((await register(env, p, { ...registration(), timeSensitive: true, completedEnabled: true, failedEnabled: true })).status).toBe(200);
+    const sent: { payload: Record<string, any>; collapse: string | null }[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      sent.push({ payload: JSON.parse(String(init.body)), collapse: new Headers(init.headers).get("apns-collapse-id") });
+      return new Response(null, { status: 200 });
+    });
+    expect(await (await event(env, p, undefined, { runHash: "11223344" })).json()).toEqual({ state: "accepted" });
+    const id = `h_${randomHex(6)}`;
+    const complete = { kind: "other", event: "completed", runHash: "11223344", title: "SECRET_PATH" };
+    expect(await (await event(env, p, id, complete)).json()).toEqual({ state: "accepted" });
+    expect(await (await event(env, p, id, complete)).json()).toEqual({ state: "held" });
+    expect(await (await event(env, p, undefined, complete)).json()).toEqual({ state: "held" });
+    expect(await (await event(env, p, undefined, { ...complete, runHash: "55667788" })).json()).toEqual({ state: "accepted" });
+    expect(await (await event(env, p, undefined, { kind: "other", event: "failed", runHash: "55667788" })).json()).toEqual({ state: "accepted" });
+    expect(sent).toHaveLength(4);
+    expect(sent[0]!.payload.aps["interruption-level"]).toBe("time-sensitive");
+    expect(sent[1]!.payload).toMatchObject({ event: "completed", aps: { category: "AGENT_OUTCOME", "interruption-level": "active",
+      alert: { "title-loc-key": "AGENT_COMPLETED_TITLE", "loc-key": "AGENT_COMPLETED_BODY" } } });
+    expect(sent[3]!.payload.aps.alert["title-loc-key"]).toBe("AGENT_FAILED_TITLE");
+    expect(JSON.stringify(sent)).not.toContain("SECRET_PATH");
+    expect(new Set(sent.map(x => x.collapse)).size).toBe(4);
+    expect((await handlePushReport(req("report", { room: p.room, token: p.clientToken,
+      helpRequestID: id, action: "snoozed", at: Math.floor(Date.now() / 1000) }), env)).status).toBe(400);
+  });
+
+  it("reserves two attention admissions and retains the hourly budget after history purge", async () => {
+    const env = await configuredEnv(); const p = await livePair();
+    await register(env, p, { ...registration(), completedEnabled: true, failedEnabled: true });
+    vi.stubGlobal("fetch", async () => new Response(null, { status: 200 }));
+    for (let i = 0; i < 4; i++) {
+      expect(await (await event(env, p, undefined, { kind: "other", event: "completed", runHash: i.toString(16).padStart(8, "0") })).json())
+        .toEqual({ state: "accepted" });
+    }
+    expect(await (await event(env, p, undefined, { kind: "other", event: "failed", runHash: "ffffffff" })).json()).toEqual({ state: "held" });
+    expect(await (await event(env, p, undefined, { sessionHash: "bbbbbbbb" })).json()).toEqual({ state: "accepted" });
+    expect(await (await event(env, p, undefined, { sessionHash: "cccccccc" })).json()).toEqual({ state: "accepted" });
+    await purgePushRetention(testEnv.DB, Date.now() + 16 * 60_000);
+    expect(await testEnv.DB.prepare("SELECT id FROM push_events WHERE room=?1").bind(p.room).first()).toBeNull();
+    expect(await (await event(env, p, undefined, { sessionHash: "dddddddd" })).json()).toEqual({ state: "held" });
+    const count = await testEnv.DB.prepare("SELECT COUNT(*) AS count FROM push_admissions WHERE room=?1").bind(p.room).first<{ count: number }>();
+    expect(count?.count).toBe(6);
+    await forgetPushRoom(testEnv.DB, p.room);
+    expect(await testEnv.DB.prepare("SELECT id FROM push_admissions WHERE room=?1").bind(p.room).first()).toBeNull();
+  });
+
+  it("keeps an outcome-only opt-in and token rotation but removes all-off registrations", async () => {
+    const env = await configuredEnv(); const p = await livePair(); const old = randomHex(); const next = randomHex();
+    expect((await register(env, p, { ...registration(old, false), completedEnabled: true })).status).toBe(200);
+    expect((await register(env, p, { ...registration(next, false), failedEnabled: true })).status).toBe(200);
+    expect((await event(env, p, undefined, { event: "completed", runHash: "aabbccdd" })).status).toBe(409);
+    expect((await event(env, p)).status).toBe(409);
+    expect(await testEnv.DB.prepare("SELECT device_token,completed_enabled,failed_enabled FROM push_registrations WHERE room=?1").bind(p.room).first())
+      .toEqual({ device_token: next, completed_enabled: 0, failed_enabled: 1 });
+    expect((await register(env, p, registration(next, false))).status).toBe(200);
+    expect(await testEnv.DB.prepare("SELECT room FROM push_registrations WHERE room=?1").bind(p.room).first()).toBeNull();
+  });
+});

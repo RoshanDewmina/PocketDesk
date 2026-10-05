@@ -48,6 +48,27 @@ final class AgentAlertCenterTests: XCTestCase {
 
     // MARK: Permission
 
+    func testAttentionOffOnDuringSnoozeAddCannotReviveTheCancelledReminder() async throws {
+        fake.accessValue = .allowed
+        center.preferences.alertsEnabled = true
+        let entered = expectation(description: "snooze add suspended")
+        var continuation: CheckedContinuation<Void, Never>?
+        fake.beforeAdd = { _ in
+            await withCheckedContinuation { resume in
+                continuation = resume
+                entered.fulfill()
+            }
+        }
+        let scheduling = Task { await center.respond(.snooze, to: payload(), deliveredAt: clock, notificationIdentifier: nil) }
+        await fulfillment(of: [entered], timeout: 3)
+        _ = await center.setEventEnabled(.needsUser, on: false)
+        _ = await center.setEventEnabled(.needsUser, on: true)
+        try XCTUnwrap(continuation).resume()
+        await scheduling.value
+        XCTAssertEqual(fake.added.map(\.identifier), ["agent-snooze-h_20af"])
+        XCTAssertEqual(fake.removedPending.filter { $0 == "agent-snooze-h_20af" }.count, 2)
+    }
+
     func testTurningAlertsOnAsksIOSOnlyAfterExplaining() async {
         fake.accessValue = .notDetermined
         let result = await center.setAlertsEnabled(true)
@@ -87,7 +108,7 @@ final class AgentAlertCenterTests: XCTestCase {
 
     func testCategoriesAreRegisteredWithTheSystem() {
         center.registerCategories()
-        XCTAssertEqual(Set(fake.categories.map(\.identifier)), ["AGENT_HELP", "AGENT_HELP_REMINDER"])
+        XCTAssertEqual(Set(fake.categories.map(\.identifier)), ["AGENT_HELP", "AGENT_HELP_REMINDER", "AGENT_OUTCOME"])
     }
 
     // MARK: Test alert
@@ -404,6 +425,29 @@ final class PushRegistrarTests: XCTestCase {
         }
     }
 
+    func testCompletionOnlyRegistrationKeepsAttentionOffAndRefreshesPreferences() async throws {
+        let defaults = makeTestDefaults("PushOutcomeRegistration")
+        let prefs = AgentAlertPreferences(defaults: defaults)
+        prefs.completedEnabled = true
+        let registrar = PushRegistrar(defaults: defaults, environmentOverride: "sandbox", removalStore: PendingStore())
+        let sink = RetrySink(); registrar.sinkForTarget = { _ in sink }
+        registrar.configure(invitation: invitation())
+        registrar.received(token: Data([0xab]))
+        await registrar.submit()
+        let registration = try XCTUnwrap(registrar.registration())
+        XCTAssertFalse(registration.alertsEnabled)
+        XCTAssertTrue(registration.completedEnabled)
+        XCTAssertFalse(registration.failedEnabled)
+        prefs.failedEnabled = true
+        XCTAssertTrue(try XCTUnwrap(registrar.registration()).failedEnabled)
+        prefs.completedEnabled = false; prefs.failedEnabled = false
+        await registrar.submit()
+        // The first sync retires the address and stages durable opt-out; drain that staged work.
+        await registrar.submit()
+        XCTAssertNil(registrar.deviceToken)
+        XCTAssertGreaterThan(sink.disables, 0)
+    }
+
     func testOnlyHTTPSOriginFromExactPairedServerIsAccepted() {
         let expected = PushPairingTarget(invitation: invitation(server: "wss://signal.example.test/signal"))
         XCTAssertEqual(expected?.origin.absoluteString, "https://signal.example.test")
@@ -478,13 +522,15 @@ final class PushRegistrarTests: XCTestCase {
         let record = try XCTUnwrap(registrar.registration(preferences: preferences, now: Date(timeIntervalSince1970: 1_790_000_000)))
         XCTAssertEqual(record.deviceToken, "010203")
         XCTAssertTrue(record.alertsEnabled)
+        XCTAssertFalse(record.completedEnabled, "Completion needs its own opt-in")
+        XCTAssertFalse(record.failedEnabled, "Failure needs its own opt-in")
         XCTAssertTrue(record.timeSensitive)
         XCTAssertFalse(record.showAgentName, "Alerts never name an agent, so the service is never asked to")
         XCTAssertEqual(record.updatedAt, 1_790_000_000)
         XCTAssertEqual(record.environment, "sandbox", "The environment comes from signed-build configuration")
         let keys = Set(try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any]).keys)
         XCTAssertEqual(keys, ["deviceToken", "environment", "alertsEnabled", "timeSensitive", "showAgentName",
-                              "locale", "appBuild", "osMajor", "updatedAt"], "No Mac name, agent text or screen content")
+                              "locale", "appBuild", "osMajor", "updatedAt", "completedEnabled", "failedEnabled"], "No Mac name, agent text or screen content")
     }
 
     func testNothingIsSentUntilAServiceExists() async {

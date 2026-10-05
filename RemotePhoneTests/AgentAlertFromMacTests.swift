@@ -38,6 +38,91 @@ final class AgentAlertFromMacTests: XCTestCase {
         return fake.added
     }
 
+    func testDisablingAnOutcomeCancelsOnlyItsLocalNotificationsAndPreservesAttentionSnooze() async {
+        appInFront = false
+        center.preferences.completedEnabled = true
+        center.preferences.failedEnabled = true
+        let attention = frame("h_attention")
+        let completed = AgentAlertFrame(id: "h_completed", kind: .other, event: .completed, raisedAt: clock)
+        let failed = AgentAlertFrame(id: "h_failed", kind: .other, event: .failed, raisedAt: clock)
+        await center.respond(.snooze, to: AgentAlertPayload(helpRequestID: "h_snoozed", kind: .codex,
+            pairingIdentity: center.currentPairingIdentity?()), deliveredAt: clock, notificationIdentifier: nil)
+        for item in [attention, completed, failed] { center.receive(fromMac: item) }
+        for _ in 0..<100 where fake.added.count < 4 { await Task.yield() }
+        XCTAssertEqual(fake.added.count, 4)
+        _ = await center.setEventEnabled(.completed, on: false)
+        XCTAssertEqual(Set(fake.removedPending), ["agent-mac-h_completed"])
+        _ = await center.setEventEnabled(.failed, on: false)
+        XCTAssertEqual(Set(fake.removedPending), ["agent-mac-h_completed", "agent-mac-h_failed"])
+        XCTAssertTrue(center.preferences.alertsEnabled)
+        _ = await center.setEventEnabled(.needsUser, on: false)
+        XCTAssertEqual(Set(fake.removedPending), ["agent-mac-h_completed", "agent-mac-h_failed", "agent-mac-h_attention", "agent-snooze-h_snoozed"])
+    }
+
+    func testOutcomeOffOnBeforeQueuedSchedulingCannotReviveOldNotification() async {
+        appInFront = false
+        fake.accessValue = .allowed
+        center.preferences.completedEnabled = true
+        center.receive(fromMac: AgentAlertFrame(id: "h_queued", kind: .other, event: .completed, raisedAt: clock))
+        _ = await center.setEventEnabled(.completed, on: false)
+        _ = await center.setEventEnabled(.completed, on: true)
+        for _ in 0..<50 { await Task.yield() }
+        XCTAssertTrue(fake.added.isEmpty)
+        center.receive(fromMac: AgentAlertFrame(id: "h_fresh", kind: .other, event: .completed, raisedAt: clock))
+        let fresh = await scheduled()
+        XCTAssertEqual(fresh.map(\.identifier), ["agent-mac-h_fresh"])
+    }
+
+    func testOutcomeOffOnDuringSystemAddRemovesTheOldRequestAfterAddReturns() async throws {
+        appInFront = false
+        fake.accessValue = .allowed
+        center.preferences.completedEnabled = true
+        let entered = expectation(description: "system add suspended")
+        var continuation: CheckedContinuation<Void, Never>?
+        fake.beforeAdd = { _ in
+            await withCheckedContinuation { resume in
+                continuation = resume
+                entered.fulfill()
+            }
+        }
+        center.receive(fromMac: AgentAlertFrame(id: "h_inflight", kind: .other, event: .completed, raisedAt: clock))
+        await fulfillment(of: [entered], timeout: 3)
+        _ = await center.setEventEnabled(.completed, on: false)
+        _ = await center.setEventEnabled(.completed, on: true)
+        try XCTUnwrap(continuation).resume()
+        for _ in 0..<100 where fake.removedPending.filter({ $0 == "agent-mac-h_inflight" }).count < 2 { await Task.yield() }
+        XCTAssertEqual(fake.added.map(\.identifier), ["agent-mac-h_inflight"])
+        XCTAssertEqual(fake.removedPending.filter { $0 == "agent-mac-h_inflight" }.count, 2,
+                       "The late add completion must retire the old generation even though the choice is on again")
+    }
+
+    func testDisablingOutcomeAfterCenterRelaunchRemovesRememberedPendingIdentifier() async {
+        appInFront = false
+        center.preferences.failedEnabled = true
+        center.receive(fromMac: AgentAlertFrame(id: "h_saved", kind: .other, event: .failed, raisedAt: clock))
+        _ = await scheduled()
+        let relaunched = AgentAlertCenter(center: fake, defaults: defaults, reports: AgentAlertReports())
+        _ = await relaunched.setEventEnabled(.failed, on: false)
+        XCTAssertTrue(fake.removedPending.contains("agent-mac-h_saved"))
+    }
+
+    func testOutcomesNeedSeparateOptInAndCannotSnooze() async {
+        let complete = AgentAlertFrame(id: "h_112233445566", kind: .other, event: .completed, raisedAt: clock, runHash: "11223344")
+        center.receive(fromMac: complete)
+        XCTAssertNil(center.banner)
+        center.preferences.completedEnabled = true
+        center.receive(fromMac: complete)
+        XCTAssertEqual(center.banner?.payload.event, .completed)
+        let payload = AgentAlertPayload(helpRequestID: complete.id, kind: .other,
+            pairingIdentity: center.currentPairingIdentity?(), event: .completed)
+        await center.respond(.snooze, to: payload, deliveredAt: clock, notificationIdentifier: nil)
+        XCTAssertTrue(fake.added.isEmpty)
+        XCTAssertFalse(center.wasSnoozed(complete.id))
+        let failed = AgentAlertFrame(id: "h_112233445567", kind: .other, event: .failed, raisedAt: clock)
+        center.receive(fromMac: failed)
+        XCTAssertEqual(center.banner?.id, complete.id)
+    }
+
     func testWithTheAppInFrontTheAlertIsOneQuietBannerOverThePicture() {
         center.receive(fromMac: frame())
         XCTAssertEqual(center.banner?.id, "h_0a1b2c3d4e5f")

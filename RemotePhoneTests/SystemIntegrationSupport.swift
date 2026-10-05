@@ -73,6 +73,7 @@ final class FakeNotificationCenter: AgentNotificationScheduling {
     private(set) var removedPending: [String] = []
     private(set) var removedDelivered: [String] = []
     private(set) var authorizationRequests = 0
+    var beforeAdd: ((UNNotificationRequest) async -> Void)?
 
     func setCategories(_ categories: Set<UNNotificationCategory>) { self.categories = categories }
 
@@ -87,6 +88,7 @@ final class FakeNotificationCenter: AgentNotificationScheduling {
     }
 
     func add(_ request: UNNotificationRequest) async -> Bool {
+        await beforeAdd?(request)
         added.append(request)
         return true
     }

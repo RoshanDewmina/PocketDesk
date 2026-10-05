@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import CryptoKit
 
 extension FileTransferStatus: Error {}
@@ -112,6 +113,45 @@ final class FileHandleByteSource: FileByteSource {
         onClose()
     }
 
+    deinit { close() }
+}
+
+/// Owns the exact descriptor validated by the browser; never reopens a URL. A concurrent edit
+/// invalidates the transfer. Revocation serializes with reads and closes the retained descriptor.
+final class DescriptorFileByteSource: FileByteSource {
+    let byteCount: Int64
+    private let lock = NSLock()
+    private var descriptor: Int32
+    private let initial: stat
+    private let authorized: () -> Bool
+    var isClosed: Bool { lock.lock(); defer { lock.unlock() }; return descriptor < 0 }
+    init(descriptor: Int32, authorized: @escaping () -> Bool) throws {
+        var value = stat()
+        guard descriptor >= 0, fstat(descriptor, &value) == 0,
+              value.st_mode & S_IFMT == S_IFREG, value.st_flags & 0x40000000 == 0 else { throw FileTransferStatus.unsupported }
+        self.descriptor = descriptor; initial = value; byteCount = Int64(value.st_size)
+        self.authorized = authorized
+    }
+    func read(upTo count: Int) throws -> Data {
+        lock.lock(); defer { lock.unlock() }
+        guard descriptor >= 0, authorized(), count > 0 else { throw FileTransferStatus.notAllowed }
+        try checkUnchanged()
+        var data = Data(count: min(count, FileTransferLimits.maximumOutgoingMessageBytes))
+        let result = data.withUnsafeMutableBytes { Darwin.read(descriptor, $0.baseAddress, $0.count) }
+        guard result >= 0 else { throw FileTransferStatus.unreadable }
+        try checkUnchanged()
+        guard authorized() else { throw FileTransferStatus.notAllowed }
+        data.count = result; return data
+    }
+    private func checkUnchanged() throws {
+        var value = stat()
+        guard fstat(descriptor, &value) == 0, value.st_flags & 0x40000000 == 0, value.st_dev == initial.st_dev, value.st_ino == initial.st_ino,
+              value.st_size == initial.st_size, value.st_mtimespec.tv_sec == initial.st_mtimespec.tv_sec,
+              value.st_mtimespec.tv_nsec == initial.st_mtimespec.tv_nsec,
+              value.st_ctimespec.tv_sec == initial.st_ctimespec.tv_sec,
+              value.st_ctimespec.tv_nsec == initial.st_ctimespec.tv_nsec else { throw FileTransferStatus.invalid }
+    }
+    func close() { lock.lock(); defer { lock.unlock() }; if descriptor >= 0 { Darwin.close(descriptor); descriptor = -1 } }
     deinit { close() }
 }
 
@@ -281,6 +321,15 @@ final class FileTransferEngine {
         startWatchdog()
         onChange?()
         return .success(id)
+    }
+
+    /// Register an explicit browser request before sending its workspace control frame. The host's
+    /// later offer must match this ID, preserving the unsolicited-offer rejection.
+    func requestBrowserDownload(_ id: String, send: () -> Bool) -> Bool {
+        guard FileTransferID.isValid(id), pendingRequest == nil, incoming == nil else { return false }
+        pendingRequest = id; requestSince = clock()
+        guard send() else { pendingRequest = nil; return false }
+        startWatchdog(); onChange?(); return true
     }
 
     /// Host: the phone's request ended without a file (the picker was cancelled or refused).

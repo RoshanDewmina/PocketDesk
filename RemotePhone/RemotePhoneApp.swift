@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import WebRTC
 import AVFoundation
 import Combine
@@ -147,6 +148,7 @@ final class PhoneRemoteModel: ObservableObject {
     let pointerLocator = PointerLocator()
     let pointerOverlay = PointerOverlayModel()
     let clipboard = PhoneClipboard()
+    let richClipboard = RichClipboardEndpoint(isHost: false)
     let linkHints = PhoneLinkHintMonitor()
     private var lowDataState = LowDataPolicyState()
     @Published private(set) var linkHint: NetworkLinkHint?
@@ -249,6 +251,7 @@ final class PhoneRemoteModel: ObservableObject {
         preferences.set(stage.rawValue, forKey: Self.first60HintStageKey)
     }
     let files = PhoneFileTransfer()
+    let fileBrowser = PhoneFileBrowser()
     let sendToMac = SendToMacInbox()
     private var shareLiveSessionID: String?
     private var shareDestination: SendToMacDestination?
@@ -606,14 +609,14 @@ final class PhoneRemoteModel: ObservableObject {
     private var hasBeenActive = false
     @Published var draft = "" { didSet { secureTextFocus.draftChanged(draft) } }
     @Published private(set) var frontmostApp: FrontmostApp?
-    @Published var secureTextFocus = SecureTextFocus()
+    @Published var secureTextFocus = SecureTextFocus() { didSet { if secureTextFocus.active { richClipboard.reset() } } }
     @Published var isComposingText = false
     @Published var dragging = false
     @Published var modifiers: Set<String> = []
     @Published var controlAllowed = false
     @Published var fresh = false
     @Published var captureHealthy = false { willSet { if !newValue { invalidatePresentation() } } }
-    @Published var geometryEpoch: UInt64 = 0 { willSet { if newValue != geometryEpoch { retireContentPresentation() } } }
+    @Published var geometryEpoch: UInt64 = 0 { willSet { if newValue != geometryEpoch { windowWorkspace.retire(); retireContentPresentation() } } }
     @Published var textStatus = ""
     @Published private(set) var voiceDeliveryStatus: VoiceDeliveryStatus = .idle
     @Published private(set) var voiceRetryTranscript = ""
@@ -749,6 +752,8 @@ final class PhoneRemoteModel: ObservableObject {
         presentationHost = host
     }
     private func retireContentPresentation() {
+        shortcutWorkspace.retire()
+        windowWorkspace.retire()
         diagnostics.cancel()
         pipTransitional = false
         invalidatePresentation()
@@ -757,6 +762,9 @@ final class PhoneRemoteModel: ObservableObject {
         finishPiPRestore(false)
     }
     private func invalidatePresentation(keepingPiP: Bool = false, requestHostExit: Bool = true) {
+        shortcutWorkspace.retire()
+        windowWorkspace.retire()
+        fileBrowser.reset(); richClipboard.reset()
         phoneLoadCache.invalidate()
         PhoneIdleTimer.shared.endSession()
         if pendingWake != nil { wakeStatus = "The helper session changed. No new wake result can be confirmed." }
@@ -767,6 +775,7 @@ final class PhoneRemoteModel: ObservableObject {
         usefulPicture.invalidate()
         inlinePresentationAdmission?.lifetime.retire()
         if !keepingPiP { pipAdmission?.lifetime.retire() }
+        FrozenTextController.cancelActive()
         VideoPresentationSession.invalidateActive()
         if !keepingPiP { connection.media?.videoFeedback.configure(allowed: false, geometry: geometryEpoch, scope: sharedCaptureScope?.epoch ?? 1) }
         inlinePresentationAdmission = nil
@@ -940,13 +949,14 @@ final class PhoneRemoteModel: ObservableObject {
     }
     private func releasePiPControl() {
         setMacAudioMuted(true); endSecureFocus(); cancelInput(); inputToken = nil
-        clipboard.cancel(); clipboard.clearNotice(); files.stopForBackground()
+        richClipboard.reset(); clipboard.cancel(); clipboard.clearNotice(); files.stopForBackground()
     }
 
     private var lastFrame = 0.0
     private var lastCaptureHealth = 0.0
     private var pendingText: PendingText?
     private var textFocusProbe = TextFocusProbeGate()
+    var textRecognitionAvailable: Bool { sceneIsActive && canControl && !passwordFieldFocused && !contentConcealed && !privacyShield && !captureScopeViewOnly }
     private var sceneIsActive = false
     private var timer: Timer?
     /// Stream statistics: Mac ↔ phone clock offset from probes on every other heartbeat.
@@ -1181,6 +1191,28 @@ final class PhoneRemoteModel: ObservableObject {
         clipboard.pressPaste = { [weak self] in self?.commandShortcut("v") ?? false }
         clipboardObserver = clipboard.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         wireFileTransfer()
+        shortcutWorkspace.authority = { [weak self] in
+            guard let self, self.scopedChordAllowed else { return nil }
+            return (self.connection.presentationSessionID, self.geometryEpoch)
+        }
+        shortcutWorkspace.transport = { [weak self] frame, epoch in
+            guard let self, self.scopedChordAllowed, epoch == self.geometryEpoch else { return false }
+            self.modifiers.removeAll(); self.cancelInput()
+            return self.connection.sendControl(.workspace(frame, epoch: epoch))
+        }
+        shortcutWorkspaceObserver = shortcutWorkspace.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        wireRichClipboard()
+        windowWorkspace.authority = { [weak self] in
+            guard let self, self.windowWorkspaceAllowed else { return nil }
+            return (self.connection.presentationSessionID, self.geometryEpoch)
+        }
+        windowWorkspace.transport = { [weak self] frame, epoch in
+            guard let self, self.windowWorkspaceAllowed, epoch == self.geometryEpoch else { return false }
+            self.cancelInput()
+            return self.connection.sendControl(.workspace(frame, epoch: epoch))
+        }
+        windowWorkspaceObserver = windowWorkspace.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+
         #if DEBUG
         PhoneE2E.active?.attach(self)
         #endif
@@ -1194,6 +1226,18 @@ final class PhoneRemoteModel: ObservableObject {
         return sendInput("key", key: key, modifiers: modifiers)
     }
     #endif
+
+    let shortcutWorkspace = ShortcutWorkspaceController()
+    private var shortcutWorkspaceObserver: AnyCancellable?
+    let windowWorkspace = WindowWorkspaceController()
+    private var windowWorkspaceObserver: AnyCancellable?
+    var scopedChordAllowed: Bool {
+        windowWorkspaceAllowed && ShortcutChips.negotiated(enabled: ShortcutChips.isEnabled(preferences), peerFeatures: hostFeatures)
+    }
+    var windowWorkspaceAllowed: Bool {
+        WorkspaceUtilities.isEnabled(preferences) && hostFeatures.contains(WorkspaceUtilities.feature) && canControl &&
+        sceneIsActive && sessionMode == .picture && !passwordFieldFocused && inlinePresentationAdmission != nil
+    }
 
     var canControl: Bool {
         guard pendingLockMac == nil else { return false }
@@ -1862,6 +1906,7 @@ final class PhoneRemoteModel: ObservableObject {
         let constrained = lowDataState.observe(constrained: linkHints.hint?.constrained == true,
             supported: hostFeatures.contains(SessionFeature.lowDataPolicy), enabled: LowDataPolicy.isEnabled(preferences), at: now)
         connection.media?.applyLowDataPolicy(constrained == true)
+        if constrained == true { richClipboard.reset() }
         let viewport = viewportCaptureSupported ? viewportReporter.region(forDisplay: sourceSize) : nil
         let load = hostFeatures.contains(SessionFeature.ladder)
             ? phoneLoadCache.current(epoch: geometryEpoch,
@@ -2101,6 +2146,41 @@ final class PhoneRemoteModel: ObservableObject {
 
     // MARK: File transfer
 
+    var richClipboardSupported: Bool { WorkspaceUtilities.isEnabled(preferences) && hostFeatures.contains(WorkspaceUtilities.feature) }
+    var richClipboardAvailable: Bool {
+        richClipboardSupported && fileTransferAvailable && sceneIsActive && canControl && sessionMode == .picture
+            && hostPresence == nil && !passwordFieldFocused && !lowDataState.active
+    }
+    private func wireRichClipboard() {
+        richClipboard.allowed = { [weak self] in self?.richClipboardAvailable == true }
+        richClipboard.transport = { [weak self] frame in
+            guard let self, self.connection.connected else { return false }
+            return self.transmit(.workspace(frame, epoch: self.geometryEpoch))
+        }
+        richClipboard.engine.link = { [weak self] in self?.connection.media.map(RichClipboardLink.init) }
+        richClipboard.engine.isRelayed = { [weak self] in self?.connection.media?.isRelayRoute ?? false }
+        connection.richClipboardTransfer = richClipboard.engine
+        richClipboard.beginExplicit = { [weak self] in self?.clipboard.beginRichTransaction(); return 1 }
+        richClipboard.finishExplicit = { [weak self] revision, committed in self?.clipboard.finishRichTransaction(revision: revision, committed: committed) }
+        richClipboard.storeImage = { [weak self] png, _, lease, completion in
+            guard let self, self.richClipboardAvailable, lease.isActive else { completion(false); return }
+            UIPasteboard.general.setItems([[UTType.png.identifier: png.data, ClipboardPrivacy.pocketDeskMarker: Data()]], options: [.localOnly: true])
+            completion(true)
+        }
+    }
+
+    var fileBrowserAvailable: Bool {
+        WorkspaceUtilities.isEnabled(preferences) && hostFeatures.contains(WorkspaceUtilities.feature)
+            && fileTransferAvailable && sceneIsActive && canControl && sessionMode == .picture && hostPresence == nil
+    }
+    func downloadBrowserFile(_ entry: String) {
+        guard fileBrowserAvailable, !files.isBusy else { files.postUnavailable("Folder downloads are unavailable right now."); return }
+        let transfer = FileTransferID.make()
+        let request = FileBrowserRequest(operation: .download, entry: entry, transfer: transfer)
+        guard let frame = try? WorkspaceFrame(kind: .files, requestID: InputCausalEnvelope.identity(), value: request) else { return }
+        files.requestBrowserDownload(transfer) { self.transmit(.workspace(frame, epoch: self.geometryEpoch)) }
+    }
+
     var fileTransferSupported: Bool { hostFeatures.contains(SessionFeature.fileTransfer) }
 
     /// Files need a live foreground session and the Mac's `file` channel. Control is not required:
@@ -2157,6 +2237,10 @@ final class PhoneRemoteModel: ObservableObject {
         }
         engine.link = { [weak self] in self?.connection.media }
         engine.isRelayed = { [weak self] in self?.connection.media?.isRelayRoute ?? false }
+        fileBrowser.send = { [weak self] frame in
+            guard let self, self.fileBrowserAvailable else { return false }
+            return self.transmit(.workspace(frame, epoch: self.geometryEpoch))
+        }
         connection.fileTransfer = engine
         files.receipts = { [weak self] transfer, snapshot, finish in self?.sendToMac.transferChanged(transfer, snapshot, finish) }
         files.onLinkResult = { [weak self] status in self?.sendToMac.linkFinished(status) }
@@ -2594,7 +2678,94 @@ let now = ProcessInfo.processInfo.systemUptime
     var shortcutChips: [ShortcutChip] {
         guard ShortcutChips.negotiated(enabled: ShortcutChips.isEnabled(preferences), peerFeatures: hostFeatures),
               !passwordFieldFocused, canControl else { return [] }
-        return ShortcutCatalog.chips(for: frontmostApp?.bundleID)
+        let catalog = ShortcutCatalog.chips(for: frontmostApp?.bundleID)
+        guard let host = connection.presentationHostTrust else { return catalog }
+        let bundle = frontmostApp?.bundleID ?? "global"
+        return ShortcutWorkspaceStore(defaults: preferences).visible(host: host, bundleID: bundle, catalog: catalog)
+    }
+
+    @Published var taskViewMessage = ""
+    var taskViewHostKey: String? { connection.presentationHostTrust.map(AwayMemory.macKey) }
+    var savedTaskViews: [SavedTaskView] {
+        guard let host = connection.presentationHostTrust else { return [] }
+        return TaskViewWorkspaceStore(defaults: preferences).all(host: host)
+    }
+    func saveTaskView(label: String, viewport: ResumeViewport) -> Bool {
+        guard windowWorkspaceAllowed, pendingDisplayID == nil, bigText.pendingTarget == nil,
+              let host = connection.presentationHostTrust, let display = displays.first(where: { $0.id == currentDisplayID }),
+              abs(display.width - sourceSize.width) < 0.5, abs(display.height - sourceSize.height) < 0.5,
+              let view = SavedTaskView(label: label, host: host, display: display, viewport: viewport) else { return false }
+        objectWillChange.send()
+        guard TaskViewWorkspaceStore(defaults: preferences).save(view, host: host) else { taskViewMessage = "Saved views are full."; return false }
+        taskViewMessage = "Saved on this phone."; return true
+    }
+    func renameTaskView(_ id: UUID, label: String) {
+        guard let host = connection.presentationHostTrust else { return }
+        objectWillChange.send(); TaskViewWorkspaceStore(defaults: preferences).rename(id, label: label, host: host)
+    }
+    func deleteTaskView(_ id: UUID) {
+        guard let host = connection.presentationHostTrust else { return }
+        objectWillChange.send(); TaskViewWorkspaceStore(defaults: preferences).delete(id, host: host)
+    }
+    func forgetWorkspacePreferences(host: PhoneHostTrust) {
+        TaskViewWorkspaceStore(defaults: preferences).forget(host: host)
+        ShortcutWorkspaceStore(defaults: preferences).forget(host: host)
+    }
+
+    @Published var personalShortcutEditingBundle: String?
+    var personalShortcutBundleID: String { personalShortcutEditingBundle ?? frontmostApp?.bundleID ?? "global" }
+    var personalShortcutCatalog: [ShortcutChip] {
+        let catalog = ShortcutCatalog.chips(for: personalShortcutBundleID == "global" ? nil : personalShortcutBundleID)
+        guard let profile = personalShortcutProfile else { return catalog }
+        return catalog.sorted { (profile.order.firstIndex(of: ShortcutWorkspaceStore.catalogID($0)) ?? 99) < (profile.order.firstIndex(of: ShortcutWorkspaceStore.catalogID($1)) ?? 99) }
+    }
+    var personalShortcutProfile: ShortcutWorkspaceProfile? {
+        guard let host = connection.presentationHostTrust else { return nil }
+        let bundle = personalShortcutBundleID
+        return ShortcutWorkspaceStore(defaults: preferences).profile(host: host, bundleID: bundle, catalog: ShortcutCatalog.chips(for: bundle))
+    }
+    @discardableResult
+    private func savePersonalShortcutProfile(_ value: ShortcutWorkspaceProfile) -> Bool {
+        guard let host = connection.presentationHostTrust else { return false }
+        let bundle = personalShortcutBundleID
+        objectWillChange.send()
+        return ShortcutWorkspaceStore(defaults: preferences).save(value, host: host, bundleID: bundle)
+    }
+    func togglePersonalShortcut(_ chip: ShortcutChip) {
+        guard var profile = personalShortcutProfile else { return }
+        let id = ShortcutWorkspaceStore.catalogID(chip)
+        if profile.hidden.contains(id) { profile.hidden.remove(id) } else { profile.hidden.insert(id) }
+        savePersonalShortcutProfile(profile)
+    }
+    func movePersonalShortcut(_ chip: ShortcutChip, direction: Int) {
+        guard var profile = personalShortcutProfile, let index = profile.order.firstIndex(of: ShortcutWorkspaceStore.catalogID(chip)) else { return }
+        let destination = index + direction
+        guard profile.order.indices.contains(destination) else { return }
+        profile.order.swapAt(index, destination); savePersonalShortcutProfile(profile)
+    }
+    func restorePersonalShortcuts() {
+        guard let host = connection.presentationHostTrust else { return }
+        let bundle = personalShortcutBundleID
+        objectWillChange.send(); ShortcutWorkspaceStore(defaults: preferences).restoreDefaults(host: host, bundleID: bundle)
+    }
+    func addPersonalChord(label: String, key: String, modifiers: [String]) -> Bool {
+        guard var profile = personalShortcutProfile, personalShortcutBundleID != "global", profile.custom.count < 12 else { return false }
+        let bundle = personalShortcutBundleID
+        let chord = PersonalShortcut(id: UUID(), label: label, bundleID: bundle, key: key, modifiers: modifiers)
+        guard chord.valid else { return false }
+        profile.custom.append(chord); return savePersonalShortcutProfile(profile)
+    }
+    func removePersonalChord(_ id: UUID) {
+        guard var profile = personalShortcutProfile else { return }
+        profile.custom.removeAll { $0.id == id }; savePersonalShortcutProfile(profile)
+    }
+    var activePersonalChords: [PersonalShortcut] {
+        guard let host = connection.presentationHostTrust, let bundle = frontmostApp?.bundleID, scopedChordAllowed else { return [] }
+        return ShortcutWorkspaceStore(defaults: preferences).profile(host: host, bundleID: bundle, catalog: ShortcutCatalog.chips(for: bundle)).custom
+    }
+    func runPersonalChord(_ chord: PersonalShortcut) {
+        guard scopedChordAllowed, personalShortcutProfile?.custom.contains(chord) == true || activePersonalChords.contains(chord) else { return }
+        modifiers.removeAll(); shortcutWorkspace.run(chord)
     }
 
     @discardableResult
@@ -2787,7 +2958,7 @@ let now = ProcessInfo.processInfo.systemUptime
         if !mayKeepLivePiP, autoPiPMayStart, !autoPiPGraceSpent, autoPiPBackgroundGrace == nil {
             LivePiPController.log.notice("pip background grace: waiting for the automatic start")
             // Background is terminal for clipboard replies and file I/O whether or not PiP then starts.
-            clipboard.cancel(); clipboard.clearNotice(); files.stopForBackground()
+            richClipboard.reset(); clipboard.cancel(); clipboard.clearNotice(); files.stopForBackground()
             privacyShield = true // The app-switcher snapshot stays shielded while the prepared PiP waits.
             pipTransitional = true
             autoPiPBackgroundGrace = Task { @MainActor [weak self] in
@@ -2835,7 +3006,7 @@ let now = ProcessInfo.processInfo.systemUptime
         suspendInputReadiness()
         clipboard.cancel()
         clipboard.clearNotice()
-        files.stopForBackground()
+        richClipboard.reset(); files.stopForBackground()
         resumeWatchdog?.cancel(); resumeWatchdog = nil
         var canHold = connection.connected && hostFeatures.contains(SessionFeature.backgroundPause)
         if canHold {
@@ -3058,6 +3229,21 @@ let now = ProcessInfo.processInfo.systemUptime
 
     private func receive(_ action: RemoteAction) {
         switch action.action {
+        case "workspace":
+            guard (try? action.validateWorkspace()) == true, let frame = action.workspace else { return }
+            switch frame.kind {
+            case .windows: windowWorkspace.receive(frame, epoch: action.epoch)
+            case .scopedChord:
+                guard scopedChordAllowed else { shortcutWorkspace.retire(); return }
+                shortcutWorkspace.receive(frame, epoch: action.epoch)
+            case .files:
+                guard action.epoch == geometryEpoch, fileBrowserAvailable else { return }
+                fileBrowser.receive(frame)
+            case .richClipboard:
+                guard action.epoch == geometryEpoch else { return }
+                richClipboard.receive(frame)
+            default: break
+            }
         case "wakeReply": receiveWakeReply(action)
         case "viewing":
             controlAllowed = !captureScopeViewOnly && action.x == 1
@@ -3139,7 +3325,11 @@ let now = ProcessInfo.processInfo.systemUptime
             }
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
             hostPhoneLoadWindows = action.epoch == geometryEpoch && action.phoneLoadWindows == true
-            hostFeatures = Set(SharedCaptureScopePolicy.features(action.features ?? [], kind: sharedCaptureScope?.kind ?? .display))
+            hostFeatures = WorkspaceUtilities.resolvedFeatures(
+                SharedCaptureScopePolicy.features(action.features ?? [], kind: sharedCaptureScope?.kind ?? .display),
+                statusVersion: action.workspaceUtilitiesVersion, current: action.epoch == geometryEpoch,
+                fullDisplay: !captureScopeViewOnly, shortcuts: action.workspaceUtilitiesShortcuts == true)
+            clipboard.richOrderingEnabled = richClipboardSupported
             if !hostFeatures.contains(SessionFeature.shortcutChips) { frontmostApp = nil }
             if action.features != nil { firstPictureCaptureObserved = true }
             if hostFeatures.contains(SessionFeature.causalInput) { connection.requestCausalInput(epoch: geometryEpoch) }
@@ -3147,6 +3337,7 @@ let now = ProcessInfo.processInfo.systemUptime
             sessionBlocker = action.hostState.flatMap(MacShareBlocker.init(rawValue:))
             if backgroundRecoveryBlocked { clearContinuity() }
             receiveAwayStatus(action)
+            if !richClipboardAvailable { richClipboard.reset() }
             if !connection.connected { return }
             let previousCurtain = curtainState
             curtainState = curtainSupported
@@ -3638,7 +3829,7 @@ let now = ProcessInfo.processInfo.systemUptime
         }
         departureReason = nil
         clipboard.cancel()
-        files.reset()
+        richClipboard.reset(); clipboard.resetRichSession(); files.reset(); fileBrowser.reset()
         refreshSendToMac(force: true)
         resumeWatchdog?.cancel(); resumeWatchdog = nil
         // couchRefusal, requestedMode and lastOnScreenMode outlive the session: Home explains and
@@ -3796,6 +3987,7 @@ struct RemoteVideoSurface: UIViewRepresentable {
     var videoFeedback: VideoFeedbackContext?
     var frameTiming: PhoneFrameTimingLog?
     var sourceCrop: CGRect?
+    var glassLens = false
     let onFrame: () -> Void
 
     static func contentMode(fillsFrame: Bool) -> UIView.ContentMode { fillsFrame ? .scaleToFill : .scaleAspectFit }
@@ -3830,7 +4022,7 @@ struct RemoteVideoSurface: UIViewRepresentable {
         context.coordinator.session?.onFrameDrawn = onFrameDrawn
         context.coordinator.session?.configure(admission: admission, counters: counters, statistics: statistics,
             sourceSize: sourceSize, displayedPixelWidth: displayedPixelWidth, fillsFrame: fillsFrame,
-            mode: smoothMotion, upscale: smoothMotionUpscale, onSourceFrame: onSourceFrame, videoFeedback: videoFeedback, sourceCrop: sourceCrop, frameTiming: frameTiming)
+            mode: smoothMotion, upscale: smoothMotionUpscale, onSourceFrame: onSourceFrame, videoFeedback: videoFeedback, sourceCrop: sourceCrop, frameTiming: frameTiming, glassLens: glassLens)
     }
     static func dismantleUIView(_ view: UIView, coordinator: Coordinator) { coordinator.invalidate(); view.subviews.forEach { $0.removeFromSuperview() } }
 }

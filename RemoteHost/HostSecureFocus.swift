@@ -58,6 +58,19 @@ enum HostSecureFocus {
         }
     }
 
+    /// Synchronous metadata query for the serial pasteboard queue immediately before an effect.
+    /// Never call on the main thread; unknown focus remains a refusal.
+    static func isSecureForClipboardTransfer() -> Bool {
+        let budget = HostAXBudget(total: budget)
+        return HostSecureFocusPolicy.resolve(
+            secureEventInput: secureEventInputEnabled(),
+            systemWide: { focusedSubrole(of: AXUIElementCreateSystemWide(), budget: budget) },
+            frontmost: {
+                guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return .unknown }
+                return focusedSubrole(of: AXUIElementCreateApplication(pid), budget: budget)
+            })
+    }
+
     /// Public CarbonEventsCore.h declares this API "Not thread safe", not main-thread-only.
     static func secureEventInputEnabled() -> Bool {
         guard let function = isSecureEventInputEnabled else { return false }

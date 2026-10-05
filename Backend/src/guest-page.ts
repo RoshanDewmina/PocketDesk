@@ -1,8 +1,8 @@
-export const guestHTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Farside guest viewing</title><script src="/guest.js" defer></script></head><body><main><h1>Guest viewing</h1><p>Video only. No audio, control, files or clipboard. Your Mac owner must approve your recipient key. Viewing ends when the session or shared content changes. Pixels already received may be recorded.</p><button id="connect">Connect and request approval</button><button id="end" disabled>End viewing</button><p id="status" role="status">Preparing link…</p><p id="fingerprint"></p><video id="video" autoplay muted playsinline aria-label="Shared Mac content, video only" style="max-width:100%;background:black"></video></main></body></html>`;
+export const guestHTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Farside guest viewing</title><script src="/guest.js" defer></script></head><body><main><h1>Guest viewing</h1><p>Video only. No audio, control, files or clipboard. Your Mac owner must approve your recipient key. Viewing ends when the session or shared content changes. Pixels already received may be recorded.</p><button id="connect">Connect and request approval</button><button id="end" disabled>End viewing</button><p id="status" role="status">Preparing link…</p><p id="fingerprint" tabindex="0" aria-label="Full recipient key fingerprint"></p><p id="lifetime" aria-live="off"></p><video id="video" autoplay muted playsinline aria-label="Shared Mac content, video only" style="max-width:100%;background:black"></video></main></body></html>`;
 export const guestJavaScript = String.raw`"use strict";
 (() => {
 const el = id => document.getElementById(id), status = el("status"), video = el("video"), connect = el("connect"), endButton = el("end"), encoder = new TextEncoder(), MAX = 9007199254740991n;
-let link, socket, peer, signing, agreement, recipientKey, recipientAgreement, nonce, grant, sessionID, key, expiry;
+let link, socket, peer, signing, agreement, recipientKey, recipientAgreement, nonce, grant, sessionID, key, expiry, lifetimeTimer;
 let sent = 0n, received = 0n, ended = false, started = false, pending = 0, outgoing = Promise.resolve(), incoming = Promise.resolve(), candidates = [];
 const token = v => typeof v === "string" && /^[a-f0-9]{64}$/.test(v);
 const epoch = v => typeof v === "string" && /^[1-9][0-9]{0,19}$/.test(v) && BigInt(v) <= 18446744073709551615n;
@@ -14,11 +14,19 @@ const hash = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest
 const random = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), n => n.toString(16).padStart(2,"0")).join("");
 const fields = g => ["grant",g.origin,g.hostID,g.grantID,g.ownerSessionID,g.scopeEpoch,g.geometryEpoch,g.scopeKind,g.mode,g.requestID,g.recipientPublicKey,g.recipientAgreementKey,g.hostAgreementKey,g.recipientNonce,g.hostNonce,String(g.issuedAt),String(g.expiresAt),g.ticketHash];
 function clear(message) {
- if (ended) return; ended = true; clearTimeout(expiry); status.textContent = message; connect.disabled = true; endButton.disabled = true;
+ if (ended) return; ended = true; clearTimeout(expiry); clearInterval(lifetimeTimer); el("lifetime").textContent = ""; status.textContent = message; connect.disabled = true; endButton.disabled = true;
  if (peer) { for (const r of peer.getReceivers()) r.track && r.track.stop(); peer.close(); peer = null; }
  if (video.srcObject) for (const t of video.srcObject.getTracks()) t.stop(); video.srcObject = null;
  if (socket) { socket.onclose = null; socket.close(); socket = null; }
  candidates = []; key = null; signing = null; agreement = null; link = null;
+}
+function showLifetime() {
+ clearInterval(lifetimeTimer);
+ const tick = () => { if (ended || !link) return; const deadline = grant ? grant.expiresAt : link.expiresAt;
+  const seconds = Math.max(0, Math.ceil((deadline-Date.now())/1000));
+  el("lifetime").textContent = (grant ? "Viewing ends in " : "Approval link expires in ") + Math.floor(seconds/60) + "m " + seconds%60 + "s";
+ };
+ tick(); lifetimeTimer = setInterval(tick,1000);
 }
 function send(value) { if (ended || !socket || socket.readyState !== WebSocket.OPEN || socket.bufferedAmount > 131072) throw Error(); socket.send(JSON.stringify(value)); }
 const sign = async f => encode(new Uint8Array(await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"},signing.privateKey,canonical(f))));
@@ -43,7 +51,7 @@ async function approved(f) {
  const bits = await crypto.subtle.deriveBits({name:"ECDH",public:other},agreement.privateKey,256), hkdf = await crypto.subtle.importKey("raw",bits,"HKDF",false,["deriveKey"]);
  const derived = await crypto.subtle.deriveKey({name:"HKDF",hash:"SHA-256",salt:await crypto.subtle.digest("SHA-256",canonical(fields(g))),info:encoder.encode("Farside/guest/1/signaling")},hkdf,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]);
  if (ended || g.expiresAt <= Date.now()) return;
- grant = g; sessionID = f.sessionID; key = derived; clearTimeout(expiry); expiry = setTimeout(() => clear("Guest viewing expired."),Math.max(0,Math.min(600000,g.expiresAt-now)));
+ grant = g; showLifetime(); sessionID = f.sessionID; key = derived; clearTimeout(expiry); expiry = setTimeout(() => clear("Guest viewing expired."),Math.max(0,Math.min(600000,g.expiresAt-now)));
  const signatureRedeem = await sign(["redeem",f.ticket,sessionID,g.hostNonce]);
  send({type:"guest",version:1,guest:{operation:"redeem",grantID:g.grantID,ticket:f.ticket,sessionID,signature:signatureRedeem}});
  status.textContent = "Approved for shared " + g.scopeKind + ". Video only; audio off.";
@@ -98,7 +106,7 @@ try {
  const fragment = location.hash.slice(1); history.replaceState(null,"",location.pathname); if (!isSecureContext || fragment.length > 4096 || !/^[A-Za-z0-9_-]+$/.test(fragment)) throw Error();
  const text = fragment.replace(/-/g,"+").replace(/_/g,"/"); link = JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(Uint8Array.from(atob(text+"=".repeat((4-text.length%4)%4)), c => c.charCodeAt(0))));
  if (link.version !== 1 || ![link.room,link.grantID,link.secret].every(token) || !keyValid(link.publicKey) || !Number.isSafeInteger(link.expiresAt) || link.expiresAt <= Date.now() || link.expiresAt-Date.now() > 120000) throw Error();
- status.textContent = "Ready. Connect generates a fresh recipient key and asks the owner for approval.";
+ showLifetime(); status.textContent = "Ready. Connect generates a fresh recipient key and asks the owner for approval.";
 } catch { clear("Invalid or expired guest link. Ask the Mac owner for a fresh link."); }
 })();`;
 export function guestPage(request: Request): Response {

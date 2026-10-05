@@ -12,7 +12,10 @@ struct HostGuestSettingsView: View {
                 ForEach(state.guestRows) { row in
                     VStack(alignment: .leading, spacing: 6) {
                         Text(row.status)
-                        if row.pending { Text("Recipient key: \(row.fingerprint)").font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
+                        Text(row.remainingSeconds > 0 ? "Ends in \(row.remainingSeconds / 60)m \(row.remainingSeconds % 60)s" : "Expired · create a fresh link")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .accessibilityLabel("Remaining guest lifetime: \(row.remainingSeconds) seconds")
+                        if row.pending { Text("Recipient key: \(row.fingerprint)").font(.system(.caption, design: .monospaced)).textSelection(.enabled).accessibilityLabel("Full recipient key fingerprint: \(row.fingerprint)") }
                         HStack {
                             if row.linkReady { Button("Copy link") { actions.copyGuestLink(row.id) } }
                             if row.pending { Button("Review approval") { confirming = row } }

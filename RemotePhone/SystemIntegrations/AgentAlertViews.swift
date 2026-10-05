@@ -25,15 +25,16 @@ struct AgentAlertSheet: View {
         if payload.isTest { return "Test alert received." }
         if originUnknown { return "This link doesn’t identify its Mac." }
         if pairingExpired { return "This alert has expired." }
-        return "A task on your Mac needs you."
+        return payload.event.genericTitle + "."
     }
 
-    private var accent: String? { payload.isTest ? "received" : "needs" }
+    private var accent: String? { payload.isTest ? "received" : (payload.event.isAttention ? "needs" : nil) }
 
     private var message: String {
         if payload.isTest { return "Notifications work. Nothing on your Mac is stuck." }
         if originUnknown { return "Open Farside from the original notification, or choose your Mac from Home to inspect it." }
         if pairingExpired { return "This alert belongs to a different or removed Mac pairing. It can’t open your current Mac." }
+        if !payload.event.isAttention { return old ? "This result was reported a while ago. Open your Mac to check its current state." : payload.event.genericBody }
         if declined { return "You said not now to this one. It may still be waiting." }
         if payload.isReminder { return "Still waiting on you." }
         if old { return "This was asked a while ago. It may have ended, but you can still take a look." }
@@ -41,7 +42,7 @@ struct AgentAlertSheet: View {
     }
 
     private var meta: String {
-        payload.isTest ? "TEST · NO AGENT INVOLVED" : "ASKED \(AgentAlertPresentation.ageText(center.now().timeIntervalSince(item.receivedAt)).uppercased())"
+        payload.isTest ? "TEST · NO AGENT INVOLVED" : "\(payload.event.isAttention ? "ASKED" : "REPORTED") \(AgentAlertPresentation.ageText(center.now().timeIntervalSince(item.receivedAt)).uppercased())"
     }
 
     var body: some View {
@@ -77,7 +78,7 @@ struct AgentAlertSheet: View {
                 Button(primaryTitle, action: primary)
                     .buttonStyle(FarsidePrimaryButtonStyle(height: 60))
                     .accessibilityIdentifier("agent.alert.open")
-                if !payload.isTest && !declined && !pairingExpired {
+                if payload.event.isAttention && !payload.isTest && !declined && !pairingExpired {
                     Button("Not now", action: notNow)
                         .buttonStyle(FarsideSecondaryButtonStyle())
                         .accessibilityIdentifier("agent.alert.notNow")
@@ -120,12 +121,12 @@ struct AgentAlertBanner: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            LiveDot(state: .attention)
+            LiveDot(state: item.payload.event.isAttention ? .attention : .idle)
             VStack(alignment: .leading, spacing: 1) {
-                Text("A task on your Mac needs you")
+                Text(item.payload.event.genericTitle)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Farside.Palette.bone)
-                Text("Stuck on something only a human can click.")
+                Text(item.payload.event.genericBody)
                     .font(.footnote)
                     .foregroundStyle(Farside.Palette.ash)
             }
@@ -159,6 +160,9 @@ struct AgentAlertsSettingsSheet: View {
     @AppStorage(AgentAlertPreferences.Key.breakThroughFocus) private var breakThroughFocus = false
     @AppStorage(AgentAlertPreferences.Key.sessionActivity) private var sessionActivity = true
     @AppStorage(AgentAlertPreferences.Key.showMacName) private var showMacName = false
+    @AppStorage(AgentAlertPreferences.Key.completed) private var completedOn = false
+    @AppStorage(AgentAlertPreferences.Key.failed) private var failedOn = false
+    @State private var primingEvent: AgentAlertEvent = .needsUser
     @State private var showPriming = false
     @State private var testStatus: String?
     @State private var watchTestStatus: String?
@@ -210,10 +214,20 @@ struct AgentAlertsSettingsSheet: View {
                     VStack(spacing: 0) {
                         row(divider: true) {
                             Toggle(isOn: alertsBinding) {
-                                label("Agent alerts", "Notifications from agents on your Mac.")
+                                label("Needs attention", "Notifications from agents that need a person.")
                             }
                             .toggleStyle(FarsideSwitchStyle())
                             .accessibilityIdentifier("agent.settings.alerts")
+                        }
+                        row(divider: true) {
+                            Toggle(isOn: Binding(get: { completedOn }, set: { turnEvent(.completed, $0) })) {
+                                label("Task completed", "Explicit local job reports. Does not break through Focus.")
+                            }.toggleStyle(FarsideSwitchStyle()).accessibilityIdentifier("agent.settings.completed")
+                        }
+                        row(divider: true) {
+                            Toggle(isOn: Binding(get: { failedOn }, set: { turnEvent(.failed, $0) })) {
+                                label("Task failed", "Explicit local job reports. Does not break through Focus.")
+                            }.toggleStyle(FarsideSwitchStyle()).accessibilityIdentifier("agent.settings.failed")
                         }
                         row(divider: true) {
                             Toggle(isOn: $breakThroughFocus) {
@@ -331,7 +345,7 @@ struct AgentAlertsSettingsSheet: View {
         .fullScreenCover(isPresented: $showPriming) {
             PermissionPrimingView(kind: .notifications) {
                 showPriming = false
-                Task { _ = await center.requestAndEnable() }
+                Task { _ = await center.requestAndEnable(event: primingEvent) }
             }
         }
         .accessibilityIdentifier("agent.settings")
@@ -356,13 +370,16 @@ struct AgentAlertsSettingsSheet: View {
             }
     }
 
-    private func turnAlerts(_ on: Bool) {
+    private func turnAlerts(_ on: Bool) { turnEvent(.needsUser, on) }
+
+    private func turnEvent(_ event: AgentAlertEvent, _ on: Bool) {
         Task {
-            switch await center.setAlertsEnabled(on) {
+            switch await center.setEventEnabled(event, on: on) {
             case .enabled: break
             case .needsPriming:
+                primingEvent = event
                 if PermissionPrimer.needsPriming(.notifications) { showPriming = true }
-                else { _ = await center.requestAndEnable() }
+                else { _ = await center.requestAndEnable(event: event) }
             case .deniedInSettings: break
             }
         }

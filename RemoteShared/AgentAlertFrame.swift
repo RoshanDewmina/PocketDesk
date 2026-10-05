@@ -13,8 +13,11 @@ struct AgentAlertFrame: Codable, Equatable {
     var event: String
     /// Unix seconds.
     var raisedAt: Int
+    /// Opaque per-run hash; absent on legacy attention frames.
+    var runHash: String?
 
-    init(id: String, kind: AgentKind, event: AgentAlertEvent, raisedAt: Date) {
+    init(id: String, kind: AgentKind, event: AgentAlertEvent, raisedAt: Date, runHash: String? = nil) {
+        self.runHash = runHash
         self.id = id
         self.kind = kind.rawValue
         self.event = event.rawValue
@@ -25,6 +28,7 @@ struct AgentAlertFrame: Codable, Equatable {
     /// by the phone: a newer Mac must not be able to end an older phone's session with a new word.
     func validate() throws {
         guard (1...16).contains(version), Self.isToken(id, max: 64), Self.isWord(kind), Self.isWord(event),
+              (runHash == nil || AgentAlert.isSessionHash(runHash!)),
               (0...4_102_444_800).contains(raisedAt) else { throw RemoteError.invalidMessage }
     }
 
@@ -55,9 +59,10 @@ struct AgentAlert: Equatable, Sendable {
     /// A short hash of the agent's session id, for collapsing repeats. Never the id itself.
     var sessionHash: String
     var raisedAt: Date
+    var runHash: String? = nil
 
     var frame: AgentAlertFrame {
-        AgentAlertFrame(id: id, kind: kind, event: event, raisedAt: raisedAt)
+        AgentAlertFrame(id: id, kind: kind, event: event, raisedAt: raisedAt, runHash: runHash)
     }
 
     static func isSessionHash(_ value: String) -> Bool {

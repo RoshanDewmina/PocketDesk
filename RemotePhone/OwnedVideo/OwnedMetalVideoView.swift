@@ -15,9 +15,17 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     var onFrameDrawn: ((VideoFrameEnvelope) -> Void)?
     private var drawnEnvelope: VideoFrameEnvelope?
     var fillsFrame = false
+    /// Main-thread only. The reading magnifier opts in; ordinary video remains unmodified.
+    var glassLensEnabled = false {
+        didSet {
+            assert(Thread.isMainThread)
+            if glassLensEnabled != oldValue { redraw = true }
+        }
+    }
     var videoFeedback: VideoFeedbackContext?
     /// Only an actual original source drawable presentation may report this receipt.
     /// Consumers enqueue owner-validated work; they must not synchronously hop to main.
+    var textSnapshotPresented: ((VideoFrameEnvelope) -> Void)?
     private var originalSourcePresented: ((VideoPresentationIdentity, UUID) -> Void)?
     var onOriginalSourcePresented: ((VideoPresentationIdentity, UUID) -> Void)? {
         get { fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) { originalSourcePresented } ?? nil }
@@ -302,6 +310,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
                         Float(crop.width / CGFloat(CVPixelBufferGetWidth(buffer))), Float(crop.height / CGFloat(CVPixelBufferGetHeight(buffer)))),
             color: SIMD4(pixels.conversion?.kr ?? 0, pixels.conversion?.kb ?? 0, pixels.conversion?.yOffset ?? 0, pixels.conversion?.yScale ?? 1),
             range: SIMD4(pixels.conversion?.uvScale ?? 1, Float(0.5 / Double(pixels.bgra ? CVPixelBufferGetWidth(buffer) : CVPixelBufferGetWidthOfPlane(buffer, 1))), Float(0.5 / Double(pixels.bgra ? CVPixelBufferGetHeight(buffer) : CVPixelBufferGetHeightOfPlane(buffer, 1))), pixels.transfer == .srgb ? 1 : 0))
+        var lens = SIMD2<Float>(glassLensEnabled ? 1 : 0, Float(view.bounds.width / max(view.bounds.height, 1)))
         var refinement = RefinementUniform(rect: .zero, options: .zero)
         var refinementPixels: CVPixelBuffer?
         var refinementTexture: MTLTexture?
@@ -318,6 +327,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             }
         }
         encoder.setFragmentBytes(&refinement, length: MemoryLayout<RefinementUniform>.stride, index: 1)
+        encoder.setFragmentBytes(&lens, length: MemoryLayout<SIMD2<Float>>.stride, index: 2)
         encoder.setFragmentTexture(refinementTexture ?? first, index: 2)
         encoder.setRenderPipelineState(pipeline)
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
@@ -397,6 +407,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
                     self.videoFeedback?.presentedTiming(envelope.videoTag, originalSource: envelope.originalSource,
                         newSubmission: true, presentedTime: presentedTime,
                         clock: clock?.estimate, observedAtMs: clock?.atMs)
+                    if envelope.originalSource { self.textSnapshotPresented?(envelope) }
                     if envelope.originalSource { callback?(envelope.identity, envelope.receiptID) }
                 }
             }
@@ -462,7 +473,30 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     using namespace metal;
     struct U { float2 extent; int rotation; int bgra; float4 crop; float4 color; float4 range; };
     struct R { float4 rect; float4 options; };
-    struct V { float4 position [[position]]; float2 uv; };
+    struct V { float4 position [[position]]; float2 uv; float2 displayUV; };
+    // Bend only the outer 30% of the circular picture. Coordinates are measured in
+    // the displayed view, so a rotated source bends at the visible rim as well.
+    float2 glassDisplayUV(float2 displayUV, float aspect) {
+        float safeAspect=max(aspect,0.0001);
+        float2 circleScale=float2(max(safeAspect,1.0),max(1.0/safeAspect,1.0));
+        float2 centered=displayUV-0.5;
+        float radius=length(centered*circleScale)*2.0;
+        float bend=0.10*smoothstep(0.70,1.0,radius);
+        return 0.5+centered*(1.0-bend);
+    }
+    // Used by SwiftUI's offline preview; the live renderer applies the same map
+    // before its source rotation and crop.
+    [[stitchable]] float2 readingGlassLens(float2 position, float2 size) {
+        float2 safeSize=max(size,float2(1.0));
+        return glassDisplayUV(position/safeSize,safeSize.x/safeSize.y)*safeSize;
+    }
+    float2 glassSourceUV(float2 displayUV, constant U &u, float aspect) {
+        float2 mapped=glassDisplayUV(displayUV,aspect);
+        if(u.rotation==1) mapped=float2(mapped.y,1.0-mapped.x);
+        if(u.rotation==2) mapped=1.0-mapped;
+        if(u.rotation==3) mapped=float2(1.0-mapped.y,mapped.x);
+        return u.crop.xy+mapped*u.crop.zw;
+    }
     float3 displayEncoded(float3 rgb, constant U &u) {
         if(u.range.w==0) return rgb;
         float3 v=max(rgb,float3(0));
@@ -485,20 +519,22 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         if(u.rotation==1) uv=float2(uv.y,1-uv.x);
         if(u.rotation==2) uv=1-uv;
         if(u.rotation==3) uv=float2(1-uv.y,uv.x);
-        V o; o.position=float4(p[i]*u.extent,0,1); o.uv=u.crop.xy+uv*u.crop.zw; return o;
+        V o; o.position=float4(p[i]*u.extent,0,1); o.uv=u.crop.xy+uv*u.crop.zw; o.displayUV=t[i]; return o;
     }
-    fragment float4 fragmentNV12(V v [[stage_in]], constant U &u [[buffer(0)]], texture2d<float> y [[texture(0)]], texture2d<float> uv [[texture(1)]], constant R &r [[buffer(1)]], texture2d<float> refinement [[texture(2)]]) {
+    fragment float4 fragmentNV12(V v [[stage_in]], constant U &u [[buffer(0)]], texture2d<float> y [[texture(0)]], texture2d<float> uv [[texture(1)]], constant R &r [[buffer(1)]], texture2d<float> refinement [[texture(2)]], constant float2 &lens [[buffer(2)]]) {
         constexpr sampler s(filter::linear,address::clamp_to_edge);
-        float2 t=clamp(v.uv,u.crop.xy+u.range.yz,u.crop.xy+u.crop.zw-u.range.yz);
+        float2 sampleUV=lens.x==0.0 ? v.uv : glassSourceUV(v.displayUV,u,lens.y);
+        float2 t=clamp(sampleUV,u.crop.xy+u.range.yz,u.crop.xy+u.crop.zw-u.range.yz);
         float l=(y.sample(s,t).r-u.color.z)*u.color.w;
         float2 c=(uv.sample(s,t).rg-float2(128.0/255.0))*u.range.x;
         float kr=u.color.x,kb=u.color.y,kg=1-kr-kb;
-        return float4(refined(displayEncoded(float3(l+2*(1-kr)*c.y,l-2*kb*(1-kb)/kg*c.x-2*kr*(1-kr)/kg*c.y,l+2*(1-kb)*c.x),u),v.uv,r,refinement),1);
+        return float4(refined(displayEncoded(float3(l+2*(1-kr)*c.y,l-2*kb*(1-kb)/kg*c.x-2*kr*(1-kr)/kg*c.y,l+2*(1-kb)*c.x),u),sampleUV,r,refinement),1);
     }
-    fragment float4 fragmentBGRA(V v [[stage_in]], constant U &u [[buffer(0)]], texture2d<float> image [[texture(0)]], constant R &r [[buffer(1)]], texture2d<float> refinement [[texture(2)]]) {
+    fragment float4 fragmentBGRA(V v [[stage_in]], constant U &u [[buffer(0)]], texture2d<float> image [[texture(0)]], constant R &r [[buffer(1)]], texture2d<float> refinement [[texture(2)]], constant float2 &lens [[buffer(2)]]) {
         constexpr sampler s(filter::linear,address::clamp_to_edge);
-        float2 t=clamp(v.uv,u.crop.xy+u.range.yz,u.crop.xy+u.crop.zw-u.range.yz);
-        return float4(refined(displayEncoded(image.sample(s,t).rgb,u),v.uv,r,refinement),1);
+        float2 sampleUV=lens.x==0.0 ? v.uv : glassSourceUV(v.displayUV,u,lens.y);
+        float2 t=clamp(sampleUV,u.crop.xy+u.range.yz,u.crop.xy+u.crop.zw-u.range.yz);
+        return float4(refined(displayEncoded(image.sample(s,t).rgb,u),sampleUV,r,refinement),1);
     }
     """
 }

@@ -75,7 +75,8 @@ final class HostGuestController {
             let publicKey = entry.request?.publicKey ?? entry.signing.publicKey.x963Representation.base64EncodedString()
             let fingerprint = GuestCrypto.hash(Data(base64Encoded: publicKey) ?? Data())
             return HostGuestRow(id: entry.id, fingerprint: fingerprint, status: entry.peer != nil ? "Viewing · video only" : entry.grant != nil ? "Approved · connecting" : entry.request != nil ? "Recipient requests viewing" : "Link expires in two minutes",
-                pending: entry.request != nil && entry.grant == nil, linkReady: entry.created && entry.request == nil)
+                pending: entry.request != nil && entry.grant == nil, linkReady: entry.created && entry.request == nil,
+                remainingSeconds: max(0, Int(ceil(min(entry.monotonicDeadline-clock(), Double(entry.expires)/1000-Date().timeIntervalSince1970)))))
         }
     }
     deinit { timer?.invalidate() }
@@ -220,6 +221,7 @@ final class HostGuestController {
         }
         samplingTick += 1
         if samplingTick % 4 == 0 {
+            if !entries.isEmpty { changed() }
             for entry in Array(entries.values) {
                 if entry.peer != nil, entry.proofNonce == nil, let session = entry.sessionID {
                     guard let nonce = try? SecureRandom.token() else { end(entry.id); continue }

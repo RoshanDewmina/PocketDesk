@@ -13,6 +13,7 @@ struct HostGuestRow: Identifiable, Equatable {
     let status: String
     let pending: Bool
     let linkReady: Bool
+    var remainingSeconds: Int = 0
 }
 
 
@@ -107,6 +108,8 @@ struct HostViewState: Equatable {
     var lockWarning: HostLockWarning?
     /// Agent alerts (beta): a hook on this Mac tells the phone an agent needs a person.
     var agentAlerts = false
+    var completedAlerts = false
+    var failedAlerts = false
     /// One line about the last agent alert, or that the Mac is listening.
     var agentAlertsStatus: String?
     /// Diagnostics: drop a frame waiting for the encoder instead of queueing it (efficiency audit P1).
@@ -181,6 +184,8 @@ struct HostActions {
     var dismissLockWarning: () -> Void = {}
     var openLockScreenSettings: () -> Void = {}
     var setAgentAlerts: (Bool) -> Void = { _ in }
+    var setCompletedAlerts: (Bool) -> Void = { _ in }
+    var setFailedAlerts: (Bool) -> Void = { _ in }
     var copyAgentHookSetup: () -> Void = {}
     var resetAgentAlertLink: () -> Void = {}
     var copyDiagnostics: () -> Void = {}

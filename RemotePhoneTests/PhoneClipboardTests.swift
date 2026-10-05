@@ -50,6 +50,42 @@ final class PhoneClipboardTests: XCTestCase {
         XCTAssertEqual(sent.count, count)
     }
 
+    func testRichCommitRetiresSeenAndUnseenOldAutomaticTextAndSuppressesEcho() throws {
+        let clipboard = makeClipboard(); clipboard.richOrderingEnabled = true
+        var count = 10; clipboard.pasteboardMetadata = { (count, true) }
+        func frames(_ text: String, revision: UInt64?) throws -> [ClipboardFrame] {
+            try ClipboardChunker.frames(for: ClipboardPayload(text: text), operation: "data", transfer: ClipboardTransferID.make()).map {
+                var frame = $0; frame.automatic = true; frame.sourceRevision = revision; return frame
+            }
+        }
+        let old = try frames(String(repeating: "old", count: 2000), revision: 4)
+        clipboard.receive(old[0]); clipboard.beginRichTransaction()
+        try frames("during image", revision: 5).forEach(clipboard.receive)
+        count = 11; clipboard.finishRichTransaction(revision: 8, committed: true)
+        old.dropFirst().forEach(clipboard.receive)
+        try frames("unseen delayed old", revision: 7).forEach(clipboard.receive)
+        try frames("missing revision", revision: nil).forEach(clipboard.receive)
+        XCTAssertTrue(written.isEmpty)
+        clipboard.refreshPasteChip(available: true); XCTAssertFalse(clipboard.showsPasteChip)
+        try frames("new copy", revision: 9).forEach(clipboard.receive)
+        XCTAssertEqual(written, [ClipboardPayload(text: "new copy")])
+        try frames("duplicate revision", revision: 9).forEach(clipboard.receive)
+        XCTAssertEqual(written.count, 1)
+    }
+
+    func testCanceledRichJobPreservesCommittedWatermarkAcrossAuthorityRotation() throws {
+        let clipboard = makeClipboard(); clipboard.richOrderingEnabled = true
+        clipboard.beginRichTransaction(); clipboard.finishRichTransaction(revision: 10, committed: true)
+        clipboard.beginRichTransaction(); clipboard.finishRichTransaction(revision: nil, committed: false)
+        var old = try ClipboardChunker.frames(for: ClipboardPayload(text: "old"), operation: "data", transfer: ClipboardTransferID.make())[0]
+        old.automatic = true; old.sourceRevision = 9; clipboard.receive(old)
+        XCTAssertTrue(written.isEmpty)
+        clipboard.beginRichTransaction(); clipboard.finishRichTransaction(revision: 12, committed: false)
+        old.sourceRevision = 11; clipboard.receive(old); XCTAssertTrue(written.isEmpty)
+        clipboard.resetRichSession(); clipboard.receive(old)
+        XCTAssertEqual(written.count, 1, "Only a new wire session resets the source clock")
+    }
+
     func testSessionInputRespondersDisableSystemThreeFingerEditing() {
         XCTAssertEqual(NativeTrackpadInputView().editingInteractionConfiguration, .none)
         XCTAssertEqual(CommittedTextField.InitialFocusTextView().editingInteractionConfiguration, .none)

@@ -150,9 +150,10 @@ struct LoupeVideo: View {
     let track: RTCVideoTrack
     let crop: CGRect
     let admission: VideoPresentationAdmission
+    var glassLens = false
     var body: some View {
         RemoteVideoSurface(track: track, fillsFrame: true, smoothMotion: .off, primary: false,
-            admission: admission, sourceCrop: crop, onFrame: {})
+            admission: admission, sourceCrop: crop, glassLens: glassLens, onFrame: {})
     }
 }
 
@@ -164,6 +165,7 @@ struct PrecisionLoupeOverlay: View {
     let track: RTCVideoTrack?
     let offline: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -196,10 +198,12 @@ struct PrecisionLoupeOverlay: View {
 
     private func loupe(_ geometry: LoupeGeometry, source: CGPoint, cancelling: Bool) -> some View {
         let diameter = LoupeGeometry.diameter
+        // Near a capture edge the click marker can fall in the rim. Preserve those target pixels.
+        let glass = !reduceTransparency && PrecisionGlassPolicy.permitsRefraction(crosshair: geometry.crosshair, diameter: diameter)
         return ZStack(alignment: .topLeading) {
             Farside.Palette.void2
             if let track, !model.contentConcealed, let admission = model.inlinePresentationAdmission {
-                LoupeVideo(track: track, crop: geometry.crop, admission: admission)
+                LoupeVideo(track: track, crop: geometry.crop, admission: admission, glassLens: glass)
                     .frame(width: diameter, height: diameter)
             } else if offline {
                 let zoom = diameter / geometry.span
@@ -208,12 +212,18 @@ struct PrecisionLoupeOverlay: View {
                     .scaleEffect(zoom, anchor: .topLeading)
                     .offset(x: -origin.x * zoom, y: -origin.y * zoom)
                     .frame(width: diameter, height: diameter, alignment: .topLeading)
+                    .clipped()
+                    .distortionEffect(ShaderLibrary.readingGlassLens(.float2(Float(diameter), Float(diameter))),
+                        maxSampleOffset: CGSize(width: diameter * 0.15, height: diameter * 0.15), isEnabled: glass)
             }
             crosshair.position(geometry.crosshair)
         }
         .frame(width: diameter, height: diameter)
         .clipShape(.circle)
-        .overlay { Circle().strokeBorder(Farside.Palette.bone.opacity(0.9), lineWidth: 2) }
+        .overlay {
+            Circle().strokeBorder(LinearGradient(colors: [.white.opacity(0.9), .white.opacity(0.15), .black.opacity(0.65), .white.opacity(0.6)],
+                                               startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 2)
+        }
         .overlay { Circle().strokeBorder(Farside.Palette.void.opacity(0.7), lineWidth: 1).padding(2) }
         .opacity(cancelling ? 0.45 : 1)
         .overlay(alignment: .bottom) {
@@ -268,5 +278,182 @@ struct PrecisionTapSettingsSection: View {
                  : "Precision Tap works with Direct touch, where your finger covers what you tap.")
                 .foregroundStyle(Farside.Palette.ash)
         }
+    }
+}
+
+/// Local reading aid. Coordinates stay on the phone; this view never sends pointer or click input.
+enum ReadingLensLayout {
+    static func diameter(in safe: CGRect) -> CGFloat {
+        max(0, min(220, safe.width - 24, safe.height - 76))
+    }
+
+    /// The lens may be wider than an edge capture. Keep its UI reachable while sampling
+    /// the nearest available point, as the existing loupe already clamps its crop at edges.
+    static func sampleTarget(_ target: CGPoint, region: CaptureRegion?, displaySize: CGSize) -> CGPoint {
+        let frame = region.map { $0.isWholeDisplay ? CGRect(origin: .zero, size: displaySize) : $0.rect }
+            ?? CGRect(origin: .zero, size: displaySize)
+        return CGPoint(x: min(max(target.x, frame.minX), frame.maxX),
+                       y: min(max(target.y, frame.minY), frame.maxY))
+    }
+
+    static func center(_ proposed: CGPoint?, in safe: CGRect, diameter: CGFloat) -> CGPoint {
+        let radius = diameter / 2
+        let initial = CGPoint(x: safe.midX, y: safe.midY - 28)
+        let value = proposed ?? initial
+        return CGPoint(x: min(max(value.x, safe.minX + radius + 12), safe.maxX - radius - 12),
+                       y: min(max(value.y, safe.minY + radius + 8), safe.maxY - radius - 64))
+    }
+}
+
+struct ReadingGlassLens: View {
+    @ObservedObject var model: PhoneRemoteModel
+    let viewport: ViewportTransform
+    let track: RTCVideoTrack?
+    let offline: Bool
+    let close: () -> Void
+    @State private var center: CGPoint?
+    @State private var dragOrigin: CGPoint?
+    @State private var zoom = 2
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    var body: some View {
+        let safe = viewport.safeRect.intersection(viewport.contentRect)
+        let diameter = ReadingLensLayout.diameter(in: safe)
+        let initial = model.placementRegion.flatMap { region -> CGPoint? in
+            guard !region.isWholeDisplay else { return nil }
+            return viewport.viewPoint(fromSource: CGPoint(x: region.rect.midX, y: region.rect.midY))
+        }
+        let position = ReadingLensLayout.center(center ?? initial, in: safe, diameter: diameter)
+        ZStack(alignment: .topLeading) {
+            if !safe.isNull, diameter >= 80 {
+                ZStack {
+                    if let canvasSource = viewport.sourcePoint(fromView: position),
+                       let source = Optional(ReadingLensLayout.sampleTarget(canvasSource, region: model.placementRegion,
+                                                                           displaySize: viewport.sourceSize)),
+                       let geometry = LoupeGeometry.make(target: source, scale: viewport.scale,
+                            region: model.placementRegion, displaySize: viewport.sourceSize,
+                            diameter: diameter, magnification: CGFloat(zoom)) {
+                        lensPicture(geometry, source: source, diameter: diameter)
+                    } else {
+                        Text("Move over the shared screen")
+                            .font(.callout).multilineTextAlignment(.center).padding(24)
+                            .frame(width: diameter, height: diameter)
+                            .background(Farside.Palette.void2, in: .circle)
+                            .foregroundStyle(Farside.Palette.bone)
+                    }
+                }
+                .frame(width: diameter, height: diameter)
+                    .contentShape(.circle)
+                    .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("readingLensCanvas"))
+                        .onChanged { value in
+                            if dragOrigin == nil { dragOrigin = position }
+                            if let origin = dragOrigin {
+                                center = ReadingLensLayout.center(
+                                    CGPoint(x: origin.x + value.translation.width, y: origin.y + value.translation.height),
+                                    in: safe, diameter: diameter)
+                            }
+                        }
+                        .onEnded { _ in dragOrigin = nil })
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Magnifier, \(zoom) times")
+                    .accessibilityHint("Drag to read another part of your Mac’s screen")
+                    .accessibilityIdentifier("remote.magnifier.lens")
+                    .position(position)
+                lensControls
+                    .position(x: position.x, y: position.y + diameter / 2 + 28)
+            } else {
+                closeControl
+                    .foregroundStyle(Farside.Palette.bone)
+                    .background(Farside.Palette.void2, in: .circle)
+                    .position(x: viewport.safeRect.midX, y: viewport.safeRect.midY)
+            }
+        }
+        .coordinateSpace(name: "readingLensCanvas")
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Only the lens and its controls consume touches; the surrounding picture remains usable.
+    }
+
+    private func lensPicture(_ geometry: LoupeGeometry, source: CGPoint, diameter: CGFloat) -> some View {
+        ZStack(alignment: .topLeading) {
+            Farside.Palette.void2
+            if let track, !model.contentConcealed, let admission = model.inlinePresentationAdmission {
+                LoupeVideo(track: track, crop: geometry.crop, admission: admission, glassLens: !reduceTransparency)
+                    .frame(width: diameter, height: diameter)
+            }
+            #if DEBUG
+            if offline && track == nil {
+                let scale = diameter / geometry.span
+                DesktopPreview(size: viewport.sourceSize)
+                    .scaleEffect(scale, anchor: .topLeading)
+                    .offset(x: -(source.x - geometry.crosshair.x / scale) * scale,
+                            y: -(source.y - geometry.crosshair.y / scale) * scale)
+                    .frame(width: diameter, height: diameter, alignment: .topLeading)
+                    .clipped()
+                    .distortionEffect(ShaderLibrary.readingGlassLens(.float2(Float(diameter), Float(diameter))),
+                        maxSampleOffset: CGSize(width: diameter * 0.15, height: diameter * 0.15),
+                        isEnabled: !reduceTransparency)
+            }
+            #endif
+        }
+        .frame(width: diameter, height: diameter)
+        .clipShape(.circle)
+        .overlay {
+            Circle().strokeBorder(
+                LinearGradient(colors: [.white.opacity(0.85), .white.opacity(0.12), .black.opacity(0.6), .white.opacity(0.5)],
+                               startPoint: .topLeading, endPoint: .bottomTrailing),
+                lineWidth: reduceTransparency ? 3 : 2)
+        }
+        .overlay {
+            Circle().strokeBorder(.white.opacity(0.16), lineWidth: 5).padding(3)
+                .allowsHitTesting(false)
+        }
+        .shadow(color: .black.opacity(0.4), radius: 14, y: 7)
+    }
+
+    private var lensControls: some View {
+        Group {
+            if #available(iOS 26, *), !reduceTransparency {
+                GlassEffectContainer(spacing: 8) {
+                    HStack(spacing: 8) {
+                        zoomControl.glassEffect(.regular.interactive(), in: .capsule)
+                        closeControl.glassEffect(.regular.interactive(), in: .circle)
+                    }
+                }
+            } else {
+                HStack(spacing: 8) {
+                    zoomControl.background(Farside.Palette.void2, in: .capsule)
+                    closeControl.background(Farside.Palette.void2, in: .circle)
+                }
+            }
+        }
+        .foregroundStyle(Farside.Palette.bone)
+    }
+
+    private var zoomControl: some View {
+        Button { zoom = zoom == 4 ? 2 : zoom + 1 } label: {
+            Label("\(zoom)×", systemImage: "plus.magnifyingglass")
+                .font(.body.weight(.semibold))
+                .padding(.horizontal, 16).frame(minHeight: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Magnification, \(zoom) times")
+        .accessibilityHint("Cycles through 2, 3 and 4 times magnification")
+        .accessibilityIdentifier("remote.magnifier.zoom")
+    }
+
+    private var closeControl: some View {
+        Button(action: close) {
+            Image(systemName: "xmark").font(.body.weight(.semibold)).frame(width: 44, height: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Close magnifier")
+        .accessibilityIdentifier("remote.magnifier.close")
+    }
+}
+
+/// The precise click marker must stay in the shader’s undistorted inner disk.
+enum PrecisionGlassPolicy {
+    static func permitsRefraction(crosshair: CGPoint, diameter: CGFloat) -> Bool {
+        diameter > 0 && hypot(crosshair.x - diameter / 2, crosshair.y - diameter / 2) <= diameter * 0.3
     }
 }

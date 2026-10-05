@@ -52,7 +52,15 @@ struct NativeSessionView: View {
     @State private var pinchRevision: UInt64 = 0
     @State private var revision: UInt64 = 0
     @State private var keyboardBarFrame: CGRect = .zero
+    @State private var pendingTaskView: TaskViewRestoreIntent?
+    @State private var pendingTaskViewFit = false
+    @State private var taskViewRestoreToken = 0
+    @State private var focusedWindowGeometry: FocusGeometry?
+    @State private var focusedWindowEpoch: UInt64 = 0
+    @State private var previousWindowViewport: ResumeViewport?
     @State private var manualViewportRevision: UInt64 = 0
+    @StateObject private var frozenText = FrozenTextController()
+    @State private var readingLensOpen = false
     @StateObject private var precisionTap = PrecisionTapController()
     @AppStorage(PrecisionTapTrigger.key) private var precisionTrigger: PrecisionTapTrigger = .off
     @AppStorage("pointerSensitivity") private var sensitivity = 1.0
@@ -121,6 +129,12 @@ struct NativeSessionView: View {
             if !couch { PrecisionLoupeOverlay(controller: precisionTap, model: model, viewport: viewport,
                                   track: connection.remoteVideo, offline: offlineLayoutCheck)
                 .ignoresSafeArea() }
+            if readingLensOpen && !couch && !model.contentConcealed && !model.privacyShield && !showControls && !keyboardOpen && precisionTap.tap == nil,
+               offlineLayoutCheck || (scenePhase == .active && connection.connected && model.inlinePresentationAdmission != nil) {
+                ReadingGlassLens(model: model, viewport: viewport, track: connection.remoteVideo,
+                                 offline: offlineLayoutCheck, close: { readingLensOpen = false })
+                    .ignoresSafeArea()
+            }
             ReconnectVeil(active: (!offlineLayoutCheck && !connection.connected && !lockVisible) || LaunchOptions.has("--ui-reconnecting"))
             Color.clear
                 .allowsHitTesting(false)
@@ -196,6 +210,13 @@ struct NativeSessionView: View {
                 .padding(.trailing, 8)
             }
         }
+        .overlay(alignment: .topTrailing) {
+            if previousWindowViewport != nil && !showControls && !keyboardOpen && !model.contentConcealed && model.windowWorkspaceAllowed {
+                Button("Whole desktop", systemImage: "arrow.up.left.and.arrow.down.right") { restoreWindowViewport() }
+                    .buttonStyle(.glass).padding(.top, 56).padding(.trailing, 12)
+                    .accessibilityIdentifier("remote.workspace.wholeDesktop")
+            }
+        }
         .overlay(alignment: .bottomTrailing) {
             if miniMap.shown && miniMapEligible {
                 sessionMiniMap
@@ -239,6 +260,8 @@ struct NativeSessionView: View {
     private var sessionPresentation: AnyView {
         AnyView(sessionChrome
         .sheet(isPresented: controlsSheetPresented) { controlsSheet }
+        .sheet(isPresented: $frozenText.isPresented, onDismiss: { frozenText.cancel() }) { FrozenTextSheet(controller: frozenText) }
+        .onDisappear { frozenText.cancel() }
         .onChange(of: controlsAsOverlay) { _, _ in if showControls { closeControls() } }
         .onChange(of: controlsBlockInput) { _, blocked in
             // A Hold click starts in the key panel, outside NativeTrackpadSurface. Settings and
@@ -251,6 +274,10 @@ struct NativeSessionView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { openVoiceInput() }
             }
         }
+        .onChange(of: model.privacyShield) { _, shielded in if shielded { readingLensOpen = false } }
+        .onChange(of: model.contentConcealed) { _, concealed in if concealed { readingLensOpen = false } }
+        .onChange(of: connection.connected) { _, connected in if !connected { readingLensOpen = false } }
+        .onChange(of: model.inlinePresentationAdmission?.identity) { _, _ in readingLensOpen = false }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { cancelGesture() }
             if phase == .background { cancelVoiceInput() }
@@ -259,17 +286,17 @@ struct NativeSessionView: View {
             }
         }
         .onChange(of: connection.connected) { _, connected in
-            if !connected { cancelGesture(); cancelVoiceInput() }
+            if !connected { cancelTaskView(); cancelGesture(); cancelVoiceInput() }
             if !offlineLayoutCheck && !model.fresh { lockVisible = true }
         }
         .onChange(of: model.contentConcealed) { _, concealed in
-            if concealed { cancelGesture(); cancelVoiceInput() }
+            if concealed { cancelTaskView(); cancelGesture(); cancelVoiceInput() }
         }
         .onChange(of: connection.inputRecovering) { _, recovering in
             if recovering { UIAccessibility.post(notification: .announcement, argument: "Input catching up") }
         }
         .onChange(of: model.privacyShield) { _, shielded in
-            if shielded { cancelGesture() }
+            if shielded { cancelTaskView(); cancelGesture() }
             if shielded && voiceInput.phase != .requestingPermission { voiceInput.pauseForInterruption() }
         }
         .onChange(of: model.canControl) { _, allowed in
@@ -361,11 +388,20 @@ struct NativeSessionView: View {
 
     var body: some View {
         sessionResume
-        .modifier(KeyboardFocusRevealModifier(model: model, viewport: $viewport, keyboardOpen: keyboardOpen,
+        .modifier(KeyboardFocusRevealModifier(model: model, viewport: $viewport, keyboardOpen: keyboardOpen && focusedWindowGeometry == nil,
                                               barFrame: keyboardBarFrame, canvasFrame: canvasFrame,
                                               manualViewportRevision: manualViewportRevision,
                                               preview: offlineLayoutCheck))
-        .onChange(of: model.sourceSize) { _, _ in scheduleGeometry() }
+        .onChange(of: model.sourceSize) { _, _ in scheduleGeometry(); settleTaskView() }
+        .onChange(of: model.currentDisplayID) { _, _ in settleTaskView() }
+        .onChange(of: model.controlAllowed) { _, allowed in if !allowed { cancelTaskView() } }
+        .onChange(of: model.captureScopeViewOnly) { _, narrow in if narrow { cancelTaskView() } }
+        .onChange(of: model.sessionMode) { _, mode in if mode != .picture { cancelTaskView() } }
+        .onChange(of: model.pendingDisplayID) { _, _ in settleTaskView() }
+        .onChange(of: model.bigText.pendingTarget) { _, _ in settleTaskView() }
+        .onChange(of: model.windowWorkspaceAllowed) { _, allowed in if allowed { settleTaskView() } }
+        .onChange(of: model.geometryEpoch) { _, _ in clearFocusedWindow() }
+        .onChange(of: model.windowWorkspaceAllowed) { _, allowed in if !allowed { clearFocusedWindow(); model.windowWorkspace.retire() } }
         .onChange(of: horizontalSizeClass, initial: true) { _, sizeClass in
             guard sizeClass != nil else { return }
             let mode = ViewportPreference.initialize(regularWidth: regularSessionLayout)
@@ -429,6 +465,7 @@ struct NativeSessionView: View {
                     model.previewHoldForTesting(explicit: hold == "explicit")
                 }
             }
+            if offlineLayoutCheck && LaunchOptions.has("--ui-reading-lens") { readingLensOpen = true }
             if offlineLayoutCheck && LaunchOptions.has("--ui-dock-open") { controlsCollapsed = false }
             if offlineLayoutCheck && LaunchOptions.has("--ui-clipboard-row") {
                 controlsCollapsed = false
@@ -443,7 +480,7 @@ struct NativeSessionView: View {
                 model.clipboard.stopPasteboardMonitoring()
             }
         }
-        .onDisappear { cancelGesture(); cancelVoiceInput(); model.clipboard.stopPasteboardMonitoring() }
+        .onDisappear { cancelTaskView(); cancelGesture(); cancelVoiceInput(); model.clipboard.stopPasteboardMonitoring() }
         .sensoryFeedback(.success, trigger: model.clipboard.automaticCopyRevision)
         .task(id: model.acceptedClicks) {
             guard model.acceptedClicks > 0 else { return }
@@ -1533,6 +1570,7 @@ struct NativeSessionView: View {
                 }
                 Divider().overlay(Farside.Palette.line)
             }
+            if model.richClipboardSupported { RichClipboardRow(model: model, clipboard: model.richClipboard) }
             FileTransferRow(model: model, files: model.files)
         }
         .padding(14)
@@ -1606,6 +1644,11 @@ struct NativeSessionView: View {
     private var shortcutChipRow: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
+                ForEach(model.activePersonalChords) { chord in
+                    Button(chord.label) { model.runPersonalChord(chord) }
+                        .font(.subheadline.weight(.semibold)).padding(.horizontal, 16).padding(.vertical, 10)
+                        .buttonStyle(.glass).disabled(!model.windowWorkspaceAllowed || model.shortcutWorkspace.busy)
+                }
                 ForEach(model.shortcutChips) { chip in
                     Button { model.tapShortcut(chip) } label: {
                         Text(chip.label)
@@ -1631,7 +1674,7 @@ struct NativeSessionView: View {
 
     private var keyboardBar: some View {
         VStack(spacing: 8) {
-            if !model.shortcutChips.isEmpty { shortcutChipRow }
+            if !model.shortcutChips.isEmpty || !model.activePersonalChords.isEmpty { shortcutChipRow }
             if SessionChromePolicy.keyboardBar(regular: regularSessionLayout, hardware: regularHardwareKeyboard) {
                 HStack(spacing: 8) {
                     Group {
@@ -2028,7 +2071,7 @@ struct NativeSessionView: View {
 
     /// Pages pushed inside Controls. The key panel is the root.
     private enum ControlsPage: String, Hashable, CaseIterable {
-        case settings, display, picture, pointer, touch, view, clipboard, keyboard, steer, diagnostics
+        case settings, workspace, shortcuts, taskViews, display, picture, pointer, touch, view, clipboard, keyboard, steer, diagnostics
 
         static func named(_ name: String) -> ControlsPage? { ControlsPage(rawValue: name) }
     }
@@ -2512,6 +2555,33 @@ struct NativeSessionView: View {
     @ViewBuilder private func controlsPage(_ page: ControlsPage) -> some View {
         switch page {
         case .settings: settingsPage(session: false)
+        case .workspace:
+            settingsForm("Workspace") {
+                WindowWorkspaceView(controller: model.windowWorkspace, allowed: model.windowWorkspaceAllowed)
+            }
+            .onAppear { if model.windowWorkspaceAllowed { model.windowWorkspace.list() } }
+            .onDisappear { model.windowWorkspace.close() }
+            .onChange(of: model.windowWorkspace.focus) { _, focus in
+                if let focus {
+                    guard focus.epoch == model.geometryEpoch,
+                          model.windowWorkspaceAllowed else { return }
+                    cancelGesture()
+                    if previousWindowViewport == nil { previousWindowViewport = viewport.resumeViewport(viewOnly: panMode) }
+                    focusedWindowGeometry = focus.geometry; focusedWindowEpoch = focus.epoch
+                    manualViewportRevision &+= 1
+                    closeControls()
+                    controlsCollapsed = true
+                    applyFocusedWindow()
+                }
+            }
+        case .shortcuts: settingsForm("Shortcut buttons") { ShortcutWorkspaceView(model: model) }
+        case .taskViews:
+            settingsForm("Saved task views") {
+                TaskViewWorkspaceView(model: model, viewport: recordableViewport, canSave: model.windowWorkspaceAllowed,
+                                      manualRevision: manualViewportRevision) { view, display, fit in
+                    startTaskView(view, display: display, fit: fit)
+                }
+            }.onAppear { model.requestDisplays() }
         case .display: settingsForm("Display") { displaySection }
         case .picture: settingsForm("Picture") { pictureSection }
         case .pointer: settingsForm("Pointer") { feelSection }
@@ -2523,6 +2593,19 @@ struct NativeSessionView: View {
         case .view:
             settingsForm("View") {
                 zoomSection
+                Section {
+                    Button("Select text from picture") {
+                        let visible = viewport.visibleSourceRect
+                        let identity = model.inlinePresentationAdmission?.identity
+                        closeControls()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                            guard identity != nil, model.inlinePresentationAdmission?.identity == identity else { return }
+                            frozenText.start(model: model, visible: visible)
+                        }
+                    }
+                    .disabled(!model.canControl || model.passwordFieldFocused || model.contentConcealed)
+                    .accessibilityIdentifier("remote.selectText")
+                } footer: { Text("Freeze the visible picture and recognize text on this device.") }
                 KeyboardViewSettingsSection()
                 miniMapSection
             }
@@ -2555,6 +2638,15 @@ struct NativeSessionView: View {
     /// One row per setting with its current value; each opens its own page.
     private func settingsPage(session: Bool) -> some View {
         settingsForm("Settings") {
+            if !couch && model.hostFeatures.contains(WorkspaceUtilities.feature) && WorkspaceUtilities.isEnabled() {
+                Section {
+                    summaryRow("Workspace", "macwindow", value: "Apps and focused view", page: .workspace)
+                    summaryRow("Saved task views", "bookmark", value: "Save and restore", page: .taskViews)
+                }
+            }
+            if !couch && WorkspaceUtilities.isEnabled() && connection.presentationHostTrust != nil {
+                Section { summaryRow("Shortcut buttons", "pin", value: "Choose and order", page: .shortcuts) }
+            }
             if session && showsCouchRow {
                 Section { couchPanelRow }
             }
@@ -2573,6 +2665,22 @@ struct NativeSessionView: View {
                         summaryRow("Display", "display", value: currentDisplayName, page: .display)
                     }
                 }
+            }
+            if !couch {
+                Section {
+                    Button {
+                        cancelGesture()
+                        closeControls()
+                        controlsCollapsed = true
+                        readingLensOpen = true
+                    } label: {
+                        Label("Magnifier", systemImage: "plus.magnifyingglass")
+                            .frame(minHeight: 44)
+                    }
+                    .disabled(!offlineLayoutCheck && (model.contentConcealed || model.privacyShield || !connection.connected || model.inlinePresentationAdmission == nil))
+                    .accessibilityHint("Open a movable glass lens to read small text")
+                    .accessibilityIdentifier("remote.magnifier.open")
+                } footer: { Text("Drag the lens to enlarge small text without moving your Mac’s pointer.") }
             }
             Section {
                 summaryRow("Picture", "photo", value: model.pictureMode.localizedTitle(), page: .picture)
@@ -2909,6 +3017,7 @@ struct NativeSessionView: View {
 
     private var zoomBinding: Binding<Double> {
         Binding(get: { Double(viewport.zoom) }, set: { value in
+            cancelTaskView(); focusedWindowGeometry = nil
             cancelGesture()
             let center = CGPoint(x: viewport.safeRect.midX, y: viewport.safeRect.midY)
             viewport.setZoom(CGFloat(value), anchoredAt: center)
@@ -3275,7 +3384,7 @@ struct NativeSessionView: View {
             }
             if !couchTouched { couchTouched = true }
         }
-        if command.movesViewport { manualViewportRevision &+= 1 }
+        if command.movesViewport { cancelTaskView(); focusedWindowGeometry = nil; manualViewportRevision &+= 1 }
         switch command {
         case .precision(let phase, let finger):
             return precisionTap.handle(phase, finger: finger, viewport: viewport, model: model)
@@ -3348,7 +3457,7 @@ struct NativeSessionView: View {
     }
 
     private var followAllowed: Bool {
-        !couch && followStyle.follows && model.canControl && !keyboardOpen && !controlsBlockInput && !panMode
+        !couch && focusedWindowGeometry == nil && followStyle.follows && model.canControl && !keyboardOpen && !controlsBlockInput && !panMode
             && !model.privacyShield && !model.contentConcealed
     }
 
@@ -3425,6 +3534,7 @@ struct NativeSessionView: View {
             MiniMapView(viewport: current, pointer: pointer, maxSize: miniMapSize, thumbnail: miniMapThumbnail,
                         onPan: { translation in
                             model.pointerLocator.clear()
+                            cancelTaskView(); focusedWindowGeometry = nil
                             viewport.pan(by: translation)
                             #if DEBUG
                             let visible = viewport.visibleSourceRect
@@ -3435,6 +3545,7 @@ struct NativeSessionView: View {
                         onJump: { point in
                             model.pointerLocator.clear()
                             withAnimation(reduceMotion ? nil : .smooth(duration: 0.28, extraBounce: 0)) {
+                                cancelTaskView(); focusedWindowGeometry = nil
                                 viewport.center(onSourcePoint: point)
                             }
                             #if DEBUG
@@ -3515,6 +3626,66 @@ struct NativeSessionView: View {
         } else if viewport.safeInsets != insets {
             withAnimation(reduceMotion ? nil : .snappy) { viewport.updateSafeInsets(insets) }
         }
+        applyFocusedWindow()
+        settleTaskView()
+    }
+
+    private func startTaskView(_ view: SavedTaskView, display: UInt32, fit: Bool) {
+        guard let hostKey = model.taskViewHostKey, view.hostKey == hostKey, model.savedTaskViews.contains(view),
+              model.windowWorkspaceAllowed, model.canChooseDisplay else { return }
+        cancelGesture(); clearFocusedWindow()
+        model.taskViewMessage = "Waiting for the current display…"
+        pendingTaskView = .init(id: UUID(), view: view, hostKey: hostKey, session: connection.presentationSessionID,
+            display: display, requestedEpoch: model.geometryEpoch, startedAt: ProcessInfo.processInfo.systemUptime)
+        pendingTaskViewFit = fit
+        if display != model.currentDisplayID, !model.selectDisplay(display) { cancelTaskView(); return }
+        closeControls(); controlsCollapsed = true
+        taskViewRestoreToken &+= 1
+        let token = taskViewRestoreToken
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(10))
+            guard token == taskViewRestoreToken, pendingTaskView != nil else { return }
+            cancelTaskView(); model.taskViewMessage = "The display didn’t settle. Choose a display again."
+        }
+        settleTaskView()
+    }
+    private func cancelTaskView() { pendingTaskView = nil; taskViewRestoreToken &+= 1 }
+    private func settleTaskView() {
+        guard let intent = pendingTaskView else { return }
+        guard !model.contentConcealed, !model.privacyShield, scenePhase == .active,
+              connection.connected, connection.presentationSessionID == intent.session else { cancelTaskView(); return }
+        let decision = intent.decision(hostKey: model.taskViewHostKey, session: connection.presentationSessionID,
+            epoch: model.geometryEpoch, display: model.currentDisplayID, size: model.sourceSize,
+            pendingDisplay: model.pendingDisplayID != nil, geometrySettled: model.bigText.pendingTarget == nil && !geometryPending &&
+                model.inlinePresentationAdmission != nil && viewport.sourceSize == model.sourceSize,
+            allowed: true, now: ProcessInfo.processInfo.systemUptime)
+        switch decision {
+        case .wait: return
+        case .cancel: cancelTaskView()
+        case .fit:
+            guard model.windowWorkspaceAllowed else { return }
+            viewport.setMode(.fit); cancelTaskView(); reportSettledViewport()
+            model.taskViewMessage = "Display size changed. Showing the whole display in Fit."
+        case .restore(let saved):
+            guard model.windowWorkspaceAllowed else { return }
+            if pendingTaskViewFit { viewport.setMode(.fit) } else { viewport.restore(saved) }
+            // A saved controlling view never changes the current input/view authority.
+            if saved.viewOnly { setInteractionMode(true) }
+            cancelTaskView(); reportSettledViewport(); model.taskViewMessage = "View restored on the display you chose."
+        }
+    }
+
+    private func applyFocusedWindow() {
+        guard focusedWindowEpoch == model.geometryEpoch, model.windowWorkspaceAllowed,
+              let geometry = focusedWindowGeometry, let fitted = WindowWorkspaceViewport.fit(geometry, viewport: viewport) else { return }
+        viewport = fitted
+        reportSettledViewport()
+    }
+    private func clearFocusedWindow() { focusedWindowGeometry = nil; previousWindowViewport = nil; focusedWindowEpoch = 0 }
+    private func restoreWindowViewport() {
+        cancelGesture()
+        if let previousWindowViewport { viewport.restore(previousWindowViewport) } else { viewport.setMode(.fit) }
+        clearFocusedWindow(); manualViewportRevision &+= 1; reportSettledViewport()
     }
 
     private func pictureAnchor(_ point: CGPoint) -> CGPoint {
@@ -3541,6 +3712,8 @@ struct NativeSessionView: View {
     }
 
     private func setMode(_ mode: ViewportMode) {
+        cancelTaskView()
+        focusedWindowGeometry = nil
         guard mode != viewport.mode || !viewport.isAtBaseline else { return }
         cancelGesture()
         withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) { viewport.setMode(mode) }
