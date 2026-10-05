@@ -1181,18 +1181,21 @@ struct NativeSessionView: View {
             !showControls && !showOverlaySettings && !showVoiceInput
     }
 
+    /// A tap gesture, like the controls handle beside it: the session defers vertical system
+    /// gestures, and in the bottom band that delay cancels an ordinary Button's tap.
     private var keyboardButton: some View {
-        Button(action: openKeyboard) {
-            Image(systemName: "keyboard")
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(Farside.Palette.bone)
-                .frame(width: 46, height: 46)
-                .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.97), stroke: Farside.Palette.line2)
-        .accessibilityLabel("Keyboard")
-        .accessibilityIdentifier("remote.keyboard.open")
+        Image(systemName: "keyboard")
+            .font(.system(size: 20, weight: .medium))
+            .foregroundStyle(Farside.Palette.bone)
+            .frame(width: 46, height: 46)
+            .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.97), stroke: Farside.Palette.line2)
+            .contentShape(.circle)
+            .onTapGesture(perform: openKeyboard)
+            .accessibilityElement(children: .ignore)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel("Keyboard")
+            .accessibilityIdentifier("remote.keyboard.open")
+            .accessibilityAction { openKeyboard() }
     }
 
     // MARK: - Dock
