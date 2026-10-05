@@ -7,7 +7,8 @@ import VideoToolbox
 /// Device-only HEVC spike probe (Docs/perf/HEVC-SPIKE.md): the phone's own hardware encoder produces H.264 and HEVC
 /// streams of scrolling code frames, then a hardware VTDecompressionSession configured like libwebrtc's H.264 decoder
 /// (NV12 full range, IOSurface, asynchronous) decodes them with one frame in flight. Reports decode p50/p90 per codec
-/// and size; only session creation is asserted. Run on the device with TEST_RUNNER_POCKETDESK_HEVC_PROBE=1 and
+/// and size; session creation and complete, error-free callbacks are required, with no latency pass threshold.
+/// Run on the device with TEST_RUNNER_POCKETDESK_HEVC_PROBE=1 and
 /// -only-testing:RemotePhoneTests/HEVCDecodeProbeTests.
 final class HEVCDecodeProbeTests: XCTestCase {
     private struct Codec {
@@ -27,7 +28,9 @@ final class HEVCDecodeProbeTests: XCTestCase {
     private static let bitrate = 25_000_000
 
     func testHardwareDecodeLatency() throws {
-        #if targetEnvironment(simulator)
+        #if !DEBUG
+        throw XCTSkip("HEVC probes require a Debug test configuration.")
+        #elseif targetEnvironment(simulator)
         throw XCTSkip("Device-only probe: the simulator has no hardware video codecs.")
         #else
         guard ProcessInfo.processInfo.environment["POCKETDESK_HEVC_PROBE"] == "1" else {
@@ -45,14 +48,8 @@ final class HEVCDecodeProbeTests: XCTestCase {
         for (width, height) in Self.sizes {
             let page = try PhonePage(width: width, height: height, frames: Self.frameCount)
             for codec in Self.codecs {
-                guard let encoded = Self.encode(codec, page: page) else {
-                    XCTFail("\(codec.name) \(width)x\(height): hardware encoder session not created")
-                    continue
-                }
-                guard let decoded = Self.decode(encoded.samples) else {
-                    XCTFail("\(codec.name) \(width)x\(height): hardware decoder session not created")
-                    continue
-                }
+                let encoded = try Self.encode(codec, page: page)
+                let decoded = try Self.decode(encoded.samples)
                 let deltaKB = encoded.bytes.dropFirst().reduce(0, +) / max(1, encoded.bytes.count - 1) / 1024
                 let fields = [
                     Self.pad(codec.name, 5), Self.pad("\(width)x\(height)", 10), "|",
@@ -63,7 +60,11 @@ final class HEVCDecodeProbeTests: XCTestCase {
                     Self.number(decoded.latencies.max() ?? .nan, 7), "|", Self.number(decoded.fps, 7), "|",
                     Self.pad("\(deltaKB)", 4, left: true),
                     Self.pad("\((encoded.bytes.first ?? 0) / 1024)", 6, left: true),
-                    "|", decoded.hardware + (decoded.failed > 0 ? " failed=\(decoded.failed)" : "")
+                    "|", decoded.hardware,
+                    "encode attempted=\(encoded.attempted) delivered=\(encoded.samples.count) " +
+                        "dropped=\(encoded.dropped) errors=\(encoded.errors)",
+                    "decode attempted=\(decoded.attempted) delivered=\(decoded.delivered) " +
+                        "dropped=\(decoded.dropped) errors=\(decoded.errors)"
                 ]
                 print("HEVC DECODE PROBE " + fields.joined(separator: " "))
             }
@@ -75,23 +76,45 @@ final class HEVCDecodeProbeTests: XCTestCase {
         var samples: [CMSampleBuffer] = []
         var latencies: [Double] = []
         var bytes: [Int] = []
+        var attempted = 0
+        var dropped = 0
+        var errors = 0
     }
 
     private struct Decoded {
         var latencies: [Double] = []
         var fps = Double.nan
         var hardware = "?"
-        var failed = 0
+        var attempted = 0
+        var delivered = 0
+        var dropped = 0
+        var errors = 0
     }
 
-    private static func encode(_ codec: Codec, page: PhonePage) -> Encoded? {
+    private struct EncodeOutcome {
+        let status: OSStatus
+        let dropped: Bool
+        let sample: CMSampleBuffer?
+        let completedAt: Double
+    }
+
+    private struct DecodeOutcome {
+        let status: OSStatus
+        let dropped: Bool
+        let imageDelivered: Bool
+        let completedAt: Double
+    }
+
+    private static func encode(_ codec: Codec, page: PhonePage) throws -> Encoded {
         let specification = [kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true] as CFDictionary
         var created: VTCompressionSession?
         guard VTCompressionSessionCreate(allocator: nil, width: Int32(page.width), height: Int32(page.height),
                                          codecType: codec.type, encoderSpecification: specification,
                                          imageBufferAttributes: nil, compressedDataAllocator: nil, outputCallback: nil,
                                          refcon: nil, compressionSessionOut: &created) == noErr,
-              let session = created else { return nil }
+              let session = created else {
+            throw HEVCDecodeProbeError(description: "\(codec.name) hardware encoder session not created")
+        }
         defer { VTCompressionSessionInvalidate(session) }
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
@@ -103,30 +126,43 @@ final class HEVCDecodeProbeTests: XCTestCase {
         let key = [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary
         var result = Encoded()
         for index in 0..<frameCount {
-            let box = SampleBox()
-            let done = DispatchSemaphore(value: 0)
+            let resultBox = PhoneProbeCallback<EncodeOutcome>()
+            let frame = page.frame(index)
             let started = CACurrentMediaTime()
+            result.attempted += 1
             let status = VTCompressionSessionEncodeFrame(
-                session, imageBuffer: page.frame(index),
+                session, imageBuffer: frame,
                 presentationTimeStamp: CMTime(value: CMTimeValue(index), timescale: CMTimeScale(fps)),
                 duration: CMTime(value: 1, timescale: CMTimeScale(fps)), frameProperties: index == 0 ? key : nil,
                 infoFlagsOut: nil
             ) { status, flags, sample in
-                if status == noErr, !flags.contains(.frameDropped) { box.sample = sample }
-                done.signal()
+                resultBox.complete(EncodeOutcome(status: status, dropped: flags.contains(.frameDropped),
+                                                  sample: sample, completedAt: CACurrentMediaTime()))
             }
-            guard status == noErr else { continue }
-            done.wait()
-            guard let sample = box.sample else { continue }
-            if index > 0 { result.latencies.append((CACurrentMediaTime() - started) * 1000) }
+            guard status == noErr else {
+                throw HEVCDecodeProbeError(description: "encode submit failed: \(status), " +
+                    "attempted=\(result.attempted) delivered=\(result.samples.count) errors=1")
+            }
+            let outcome = try resultBox.wait(until: Date(timeIntervalSinceNow: 5),
+                phase: "encode attempted=\(result.attempted) delivered=\(result.samples.count)")
+            if outcome.dropped { result.dropped += 1 }
+            if !outcome.dropped, outcome.status != noErr || outcome.sample == nil { result.errors += 1 }
+            guard outcome.status == noErr, !outcome.dropped, let sample = outcome.sample else {
+                throw HEVCDecodeProbeError(description: "encode callback failed: \(outcome.status), " +
+                    "attempted=\(result.attempted) delivered=\(result.samples.count) " +
+                    "dropped=\(result.dropped) errors=\(result.errors)")
+            }
+            if index > 0 { result.latencies.append((outcome.completedAt - started) * 1000) }
             result.samples.append(sample)
             result.bytes.append(CMSampleBufferGetDataBuffer(sample).map(CMBlockBufferGetDataLength) ?? 0)
         }
-        return result.samples.isEmpty ? nil : result
+        return result
     }
 
-    private static func decode(_ samples: [CMSampleBuffer]) -> Decoded? {
-        guard let first = samples.first, let format = CMSampleBufferGetFormatDescription(first) else { return nil }
+    private static func decode(_ samples: [CMSampleBuffer]) throws -> Decoded {
+        guard let first = samples.first, let format = CMSampleBufferGetFormatDescription(first) else {
+            throw HEVCDecodeProbeError(description: "decode has no encoded sample/format")
+        }
         let specification = [kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder: true] as CFDictionary
         let attributes = [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
                           kCVPixelBufferIOSurfacePropertiesKey: [:]] as [CFString: Any]
@@ -135,28 +171,47 @@ final class HEVCDecodeProbeTests: XCTestCase {
                                            decoderSpecification: specification,
                                            imageBufferAttributes: attributes as CFDictionary, outputCallback: nil,
                                            decompressionSessionOut: &created) == noErr,
-              let session = created else { return nil }
+              let session = created else {
+            throw HEVCDecodeProbeError(description: "hardware decoder session not created")
+        }
         defer { VTDecompressionSessionInvalidate(session) }
         var result = Decoded()
         var decodeStarted = 0.0
+        var lastDelivery = 0.0
+        var deliveredDeltas = 0
         for (index, sample) in samples.enumerated() {
-            let failed = FlagBox()
-            let done = DispatchSemaphore(value: 0)
+            let resultBox = PhoneProbeCallback<DecodeOutcome>()
             let started = CACurrentMediaTime()
             if index == 1 { decodeStarted = started }
+            result.attempted += 1
             let status = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample,
                                                            flags: ._EnableAsynchronousDecompression,
                                                            infoFlagsOut: nil) { status, flags, image, _, _ in
-                failed.value = status != noErr || flags.contains(.frameDropped) || image == nil
-                done.signal()
+                resultBox.complete(DecodeOutcome(status: status, dropped: flags.contains(.frameDropped),
+                    imageDelivered: image != nil, completedAt: CACurrentMediaTime()))
             }
-            guard status == noErr else { result.failed += 1; continue }
-            done.wait()
-            if failed.value { result.failed += 1 }
-            if index > 0 { result.latencies.append((CACurrentMediaTime() - started) * 1000) }
+            guard status == noErr else {
+                throw HEVCDecodeProbeError(description: "decode submit failed: \(status), " +
+                    "attempted=\(result.attempted) delivered=\(result.delivered) errors=1")
+            }
+            let outcome = try resultBox.wait(until: Date(timeIntervalSinceNow: 5),
+                phase: "decode attempted=\(result.attempted) delivered=\(result.delivered)")
+            if outcome.dropped { result.dropped += 1 }
+            if !outcome.dropped, outcome.status != noErr || !outcome.imageDelivered { result.errors += 1 }
+            guard outcome.status == noErr, !outcome.dropped, outcome.imageDelivered else {
+                throw HEVCDecodeProbeError(description: "decode callback failed: \(outcome.status), " +
+                    "attempted=\(result.attempted) delivered=\(result.delivered) " +
+                    "dropped=\(result.dropped) errors=\(result.errors)")
+            }
+            result.delivered += 1
+            lastDelivery = outcome.completedAt
+            if index > 0 {
+                deliveredDeltas += 1
+                result.latencies.append((outcome.completedAt - started) * 1000)
+            }
         }
-        if samples.count > 1, decodeStarted > 0 {
-            result.fps = Double(samples.count - 1) / (CACurrentMediaTime() - decodeStarted)
+        if deliveredDeltas > 0, lastDelivery > decodeStarted {
+            result.fps = Double(deliveredDeltas) / (lastDelivery - decodeStarted)
         }
         var value: CFTypeRef?
         let status = withUnsafeMutablePointer(to: &value) {
@@ -193,12 +248,31 @@ final class HEVCDecodeProbeTests: XCTestCase {
     }
 }
 
-private final class SampleBox: @unchecked Sendable {
-    var sample: CMSampleBuffer?
+private struct HEVCDecodeProbeError: Error, CustomStringConvertible {
+    let description: String
 }
 
-private final class FlagBox: @unchecked Sendable {
-    var value = false
+private final class PhoneProbeCallback<Value>: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var value: Value?
+
+    func complete(_ value: Value) {
+        condition.lock(); defer { condition.unlock() }
+        guard self.value == nil else { return }
+        self.value = value
+        condition.broadcast()
+    }
+
+    func wait(until deadline: Date, phase: String) throws -> Value {
+        condition.lock(); defer { condition.unlock() }
+        while value == nil {
+            if !condition.wait(until: deadline), value == nil {
+                throw HEVCDecodeProbeError(description: "\(phase): callback timeout")
+            }
+        }
+        guard let value else { throw HEVCDecodeProbeError(description: "\(phase): missing callback result") }
+        return value
+    }
 }
 
 /// A tall code page rendered once (CoreGraphics into BGRA, VTPixelTransferSession to NV12) and scrolled 12 px per

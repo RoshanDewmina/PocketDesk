@@ -6,8 +6,9 @@ import VideoToolbox
 
 /// Opt-in HEVC 4:2:0 feasibility spike (Docs/perf/HEVC-SPIKE.md): hardware encode latency of H.264 against HEVC at
 /// the stream sizes that matter for 120 fps, HEVC's low-latency mode, and bench-chart legibility per bitrate. The
-/// printed tables are the deliverable; only session creation is asserted. Encoding is unpaced: the next frame goes
-/// in as soon as a slot frees, so one frame in flight measures VideoToolbox's service time per frame.
+/// Printed tables are the deliverable; session creation and complete, error-free callbacks are required,
+/// while latency has no pass threshold. Encoding is unpaced: the next frame goes in as soon as a slot frees,
+/// so one frame in flight measures VideoToolbox's service time per frame.
 /// Run: TEST_RUNNER_POCKETDESK_HEVC_PROBE=1 xcodebuild test … -only-testing:RemoteCoreTests/HEVCProbeTests
 final class HEVCProbeTests: XCTestCase {
     struct Codec {
@@ -32,10 +33,14 @@ final class HEVCProbeTests: XCTestCase {
     static let frameCount = 120
 
     override func setUpWithError() throws {
+        #if DEBUG
         guard ProcessInfo.processInfo.environment["POCKETDESK_HEVC_PROBE"] == "1" else {
             throw XCTSkip("Set POCKETDESK_HEVC_PROBE=1 (TEST_RUNNER_POCKETDESK_HEVC_PROBE=1 with xcodebuild) to run.")
         }
         print("HEVC PROBE conditions: \(Self.conditions())")
+        #else
+        throw XCTSkip("HEVC probes require a Debug test configuration.")
+        #endif
     }
 
     func testEncodeLatencyOneFrameInFlight() throws {
@@ -54,12 +59,13 @@ final class HEVCProbeTests: XCTestCase {
         var lowLatency = standard
         lowLatency.lowLatency = true
         for (setup, inFlight) in [(standard, 1), (lowLatency, 1), (lowLatency, 3)] {
-            guard let encoder = ProbeEncoder(setup) ?? ProbeEncoder(setup, requireHardware: false) else {
+            guard let encoder = ProbeEncoder(setup) ??
+                (setup.lowLatency ? ProbeEncoder(setup, requireHardware: false) : nil) else {
                 print("HEVC PROBE \(Self.label(setup, inFlight: inFlight)): session not created")
                 if !setup.lowLatency { XCTFail("standard HEVC hardware session") }
                 continue
             }
-            let run = encoder.run(count: Self.frameCount, inFlight: inFlight, frame: source.frame)
+            let run = try encoder.run(count: Self.frameCount, inFlight: inFlight, frame: source.frame)
             print("HEVC PROBE " + Self.row(setup, inFlight: inFlight, encoder: encoder, run: run))
         }
     }
@@ -106,11 +112,8 @@ final class HEVCProbeTests: XCTestCase {
                     XCTFail("\(codec.name) hardware session at \(megabits) Mb/s")
                     continue
                 }
-                let run = encoder.run(count: 30, inFlight: 1, keepSamples: true) { _ in source }
-                guard let decoded = Frames.decodeLast(run.samples) else {
-                    print("HEVC PROBE \(codec.name) \(megabits) Mb/s: decode failed")
-                    continue
-                }
+                let run = try encoder.run(count: 30, inFlight: 1, keepSamples: true) { _ in source }
+                let decoded = try Frames.decodeLast(run.samples)
                 let cer = try score(decoded)
                 let deltaKB = Self.mean(run.deltaBytes.map(Double.init)) / 1024
                 let psnr = Frames.psnr(decoded, rgb, in: crop)
@@ -137,7 +140,7 @@ final class HEVCProbeTests: XCTestCase {
                             XCTFail("\(Self.label(setup, inFlight: inFlight)): hardware session not created")
                             continue
                         }
-                        let run = encoder.run(count: Self.frameCount, inFlight: inFlight, frame: source.frame)
+                        let run = try encoder.run(count: Self.frameCount, inFlight: inFlight, frame: source.frame)
                         print("HEVC PROBE " + Self.row(setup, inFlight: inFlight, encoder: encoder, run: run))
                     }
                 }
@@ -163,7 +166,7 @@ final class HEVCProbeTests: XCTestCase {
             number(run.throughputFPS, width: 7), "|",
             number(mean(run.deltaBytes.map(Double.init)) / 1024, width: 4, digits: 0),
             number(Double(run.keyBytes) / 1024, width: 6, digits: 0), "|", encoder.summary,
-            run.failed > 0 ? "failed=\(run.failed)" : ""
+            "attempted=\(run.attempted) delivered=\(run.delivered) dropped=\(run.dropped) errors=\(run.errors)"
         ]
         return fields.joined(separator: " ")
     }
@@ -215,7 +218,14 @@ private struct EncodeRun {
     var keyBytes = 0
     var deltaBytes: [Int] = []
     var samples: [CMSampleBuffer] = []
-    var failed = 0
+    var attempted = 0
+    var delivered = 0
+    var dropped = 0
+    var errors = 0
+}
+
+private struct HEVCProbeError: Error, CustomStringConvertible {
+    let description: String
 }
 
 private final class ProbeEncoder {
@@ -277,13 +287,15 @@ private final class ProbeEncoder {
     }
 
     /// At most `inFlight` frames inside VideoToolbox; frame 0 is a forced key frame and is reported on its own.
-    func run(count: Int, inFlight: Int, keepSamples: Bool = false, frame: (Int) -> CVPixelBuffer) -> EncodeRun {
+    func run(count: Int, inFlight: Int, keepSamples: Bool = false,
+             frame: (Int) -> CVPixelBuffer) throws -> EncodeRun {
         let recorder = EncodeRecorder(count: count, keepSamples: keepSamples)
-        let slots = DispatchSemaphore(value: inFlight)
         let timescale = CMTimeScale(setup.fps)
         let key = [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary
         for index in 0..<count {
-            slots.wait()
+            guard recorder.waitForCapacity(inFlight, until: Date(timeIntervalSinceNow: 5)) else {
+                throw HEVCProbeError(description: "encode callback timeout: \(recorder.counts)")
+            }
             let buffer = frame(index)
             recorder.submitted(index, at: CACurrentMediaTime())
             let status = VTCompressionSessionEncodeFrame(
@@ -292,27 +304,36 @@ private final class ProbeEncoder {
                 duration: CMTime(value: 1, timescale: timescale), frameProperties: index == 0 ? key : nil,
                 infoFlagsOut: nil
             ) { status, flags, sample in
-                let delivered = status == noErr && !flags.contains(.frameDropped) ? sample : nil
-                if recorder.completed(index, at: CACurrentMediaTime(), sample: delivered) { slots.signal() }
+                recorder.completed(index, at: CACurrentMediaTime(), status: status,
+                                   dropped: flags.contains(.frameDropped), sample: sample)
             }
-            if status != noErr, recorder.completed(index, at: CACurrentMediaTime(), sample: nil) { slots.signal() }
+            if status != noErr {
+                recorder.completed(index, at: CACurrentMediaTime(), status: status, dropped: false, sample: nil)
+            }
         }
-        VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
-        // A semaphore released below its initial value traps, so every slot is taken back and returned.
-        for _ in 0..<inFlight { slots.wait() }
-        for _ in 0..<inFlight { slots.signal() }
-        return recorder.result()
+        guard recorder.waitForCapacity(1, until: Date(timeIntervalSinceNow: 5)) else {
+            throw HEVCProbeError(description: "encode drain timeout: \(recorder.counts)")
+        }
+        let result = recorder.result()
+        guard result.delivered == count, result.dropped == 0, result.errors == 0 else {
+            throw HEVCProbeError(description: "incomplete encode probe: \(recorder.counts)")
+        }
+        return result
     }
 }
 
 private final class EncodeRecorder: @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = NSCondition()
     private let keepSamples: Bool
     private var submittedAt: [Double]
     private var latencies: [Double?]
     private var bytes: [Int]
     private var samples: [CMSampleBuffer?]
     private var lastCompletion = 0.0
+    private var pending = 0
+    private var attempted = 0
+    private var dropped = 0
+    private var errors = 0
 
     init(count: Int, keepSamples: Bool) {
         self.keepSamples = keepSamples
@@ -323,22 +344,43 @@ private final class EncodeRecorder: @unchecked Sendable {
     }
 
     func submitted(_ index: Int, at time: Double) {
-        lock.lock(); submittedAt[index] = time; lock.unlock()
+        lock.lock()
+        submittedAt[index] = time
+        attempted += 1
+        pending += 1
+        lock.unlock()
     }
 
-    /// False when the frame was already completed, so a slot is released once.
-    func completed(_ index: Int, at time: Double, sample: CMSampleBuffer?) -> Bool {
+    func waitForCapacity(_ maximumPending: Int, until deadline: Date) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard latencies[index] == nil else { return false }
+        while pending >= maximumPending {
+            if !lock.wait(until: deadline), pending >= maximumPending { return false }
+        }
+        return true
+    }
+
+    var counts: String {
+        lock.lock(); defer { lock.unlock() }
+        let delivered = bytes.filter { $0 > 0 }.count
+        return "attempted=\(attempted) delivered=\(delivered) dropped=\(dropped) errors=\(errors) pending=\(pending)"
+    }
+
+    func completed(_ index: Int, at time: Double, status: OSStatus,
+                   dropped wasDropped: Bool, sample: CMSampleBuffer?) {
+        lock.lock(); defer { lock.unlock() }
+        guard latencies[index] == nil else { return }
         latencies[index] = (time - submittedAt[index]) * 1000
-        lastCompletion = max(lastCompletion, time)
-        if let sample {
-            bytes[index] = CMSampleBufferGetDataBuffer(sample).map(CMBlockBufferGetDataLength) ?? 0
+        pending -= 1
+        if status == noErr, !wasDropped, let sample, let data = CMSampleBufferGetDataBuffer(sample),
+           CMBlockBufferGetDataLength(data) > 0 {
+            lastCompletion = max(lastCompletion, time)
+            bytes[index] = CMBlockBufferGetDataLength(data)
             if keepSamples { samples[index] = sample }
         } else {
             bytes[index] = -1
+            if wasDropped { dropped += 1 } else { errors += 1 }
         }
-        return true
+        lock.broadcast()
     }
 
     func result() -> EncodeRun {
@@ -348,10 +390,14 @@ private final class EncodeRecorder: @unchecked Sendable {
         run.keyBytes = max(0, bytes.first ?? 0)
         run.latencies = zip(latencies, bytes).dropFirst().compactMap { $1 >= 0 ? $0 : nil }
         run.deltaBytes = bytes.dropFirst().filter { $0 >= 0 }
-        run.failed = bytes.filter { $0 < 0 }.count
+        run.attempted = attempted
+        run.delivered = bytes.filter { $0 > 0 }.count
+        run.dropped = dropped
+        run.errors = errors
         run.samples = samples.compactMap { $0 }
         if submittedAt.count > 1, lastCompletion > submittedAt[1] {
-            run.throughputFPS = Double(submittedAt.count - 1) / (lastCompletion - submittedAt[1])
+            let deliveredDeltas = bytes.dropFirst().filter { $0 > 0 }.count
+            run.throughputFPS = Double(deliveredDeltas) / (lastCompletion - submittedAt[1])
         }
         return run
     }
@@ -491,25 +537,34 @@ private enum Frames {
     }
 
     /// Decodes every sample in order and returns the last picture as BGRA.
-    static func decodeLast(_ samples: [CMSampleBuffer]) -> CVPixelBuffer? {
-        guard let first = samples.first, let format = CMSampleBufferGetFormatDescription(first) else { return nil }
+    static func decodeLast(_ samples: [CMSampleBuffer]) throws -> CVPixelBuffer {
+        guard let first = samples.first, let format = CMSampleBufferGetFormatDescription(first) else {
+            throw HEVCProbeError(description: "legibility decode has no encoded sample/format")
+        }
         let attributes = [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
                           kCVPixelBufferIOSurfacePropertiesKey: [:]] as [CFString: Any]
         var created: VTDecompressionSession?
         guard VTDecompressionSessionCreate(allocator: nil, formatDescription: format, decoderSpecification: nil,
                                            imageBufferAttributes: attributes as CFDictionary, outputCallback: nil,
                                            decompressionSessionOut: &created) == noErr,
-              let decoder = created else { return nil }
+              let decoder = created else { throw HEVCProbeError(description: "legibility decoder session failed") }
         defer { VTDecompressionSessionInvalidate(decoder) }
-        let last = LastImage()
+        var last: CVPixelBuffer?
         for sample in samples {
-            VTDecompressionSessionDecodeFrame(decoder, sampleBuffer: sample, flags: [], infoFlagsOut: nil) {
-                status, _, image, _, _ in
-                if status == noErr, let image { last.set(image) }
+            let result = MacDecodeResult()
+            let status = VTDecompressionSessionDecodeFrame(decoder, sampleBuffer: sample,
+                                                           flags: ._EnableAsynchronousDecompression,
+                                                           infoFlagsOut: nil) {
+                status, flags, image, _, _ in
+                result.complete(status: status, image: flags.contains(.frameDropped) ? nil : image)
             }
+            guard status == noErr else {
+                throw HEVCProbeError(description: "legibility decode submit failed: \(status)")
+            }
+            last = try result.wait(until: Date(timeIntervalSinceNow: 5))
         }
-        VTDecompressionSessionWaitForAsynchronousFrames(decoder)
-        return last.value
+        guard let last else { throw HEVCProbeError(description: "legibility decode delivered no image") }
+        return last
     }
 
     /// An editor-like page: gutter numbers, keyword, string and comment colours, and a selection band every 11 lines,
@@ -568,9 +623,27 @@ private enum Frames {
     }
 }
 
-private final class LastImage: @unchecked Sendable {
-    private let lock = NSLock()
+private final class MacDecodeResult: @unchecked Sendable {
+    private let lock = NSCondition()
     private var stored: CVImageBuffer?
-    var value: CVImageBuffer? { lock.lock(); defer { lock.unlock() }; return stored }
-    func set(_ image: CVImageBuffer) { lock.lock(); stored = image; lock.unlock() }
+    private var status: OSStatus?
+    func complete(status: OSStatus, image: CVImageBuffer?) {
+        lock.lock(); defer { lock.unlock() }
+        guard self.status == nil else { return }
+        self.status = status
+        stored = image
+        lock.broadcast()
+    }
+    func wait(until deadline: Date) throws -> CVImageBuffer {
+        lock.lock(); defer { lock.unlock() }
+        while status == nil {
+            if !lock.wait(until: deadline), status == nil {
+                throw HEVCProbeError(description: "legibility decode callback timeout")
+            }
+        }
+        guard status == noErr, let stored else {
+            throw HEVCProbeError(description: "legibility decode callback failed: \(status ?? -1)")
+        }
+        return stored
+    }
 }

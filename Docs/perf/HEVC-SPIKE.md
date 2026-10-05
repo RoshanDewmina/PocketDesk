@@ -4,6 +4,34 @@ Worker W6, 29 Sep 2026, branch `perf-120fps` (base `5fdab5b`). Bounded spike: De
 
 **Why.** This morning's sessions put VideoToolbox H.264 at ≈ 13 ms per 2560×1656 frame on the M4 Air (LAB-NOTEBOOK §1), so 120 fps (8.3 ms per frame) at full phone pixels is out of reach with H.264 and one frame in flight. The fork's research puts HEVC standard mode at ≈ 1.8× H.264's throughput and HEVC low-latency mode at 0.5×.
 
+**Later source preparation, 29 Sep 2026.** These probes remain experiments, not a production codec change.
+Hands-on acceptance and hardware measurements are deferred. Neither probe was run for this preparation;
+the installed .11 apps and the uninstalled .12 development candidate are separate artifacts.
+Both test classes now require a Debug configuration and the exact `POCKETDESK_HEVC_PROBE=1` opt-in;
+the phone class always skips on a simulator. Default and Release suites do no probe hardware work.
+All callback waits have five-second deadlines. A timeout, encoder error/drop or decoder error/drop fails
+the probe explicitly; incomplete rows must not be used as performance evidence. Throughput counts only
+successful encoded sample or decoded-image callbacks, excluding the initial key frame. Attempted,
+delivered, dropped and error counts are reported separately. Decode-output rate is not display
+presentation rate, sustained playback, negotiated media flow or glass-to-glass latency.
+
+Original scope evidence: Claude Code session `ec632039-cbe8-4dc5-acc9-9bd5d44783a1`, user message
+`2026-09-29T13:41:04.579Z`, asks agents to finish display-refresh, phone-pixel-cap, viewport-capture and
+quality-ladder performance work. Fork `1433a11f-eb91-4433-8035-0e86b5b1824a`, user messages
+`2026-09-29T10:18:11.737Z` and `13:21:27.155Z`, prioritize performance and explicitly request
+competitor/performance investigation on Apple silicon and large displays. W6's delegated initial
+prompt in the `ec632039` subagent transcript `agent-a7b43c2748ef289af.jsonl` bounds this to two opt-in
+probe files and this report, with no product codec edits until measured. The current implementation
+ledger's hands-on deferral supersedes the earlier proposed immediate measurement schedule.
+
+Current-main dependencies are `RemoteShared/LegibilityChart.swift` (`layout`, `cells`),
+`RemoteShared/BenchRenderers.swift` (`LegibilityChartRenderer.draw`),
+`RemoteShared/LegibilityScore.swift` (`score`, `cerBySize`) and
+`RemoteShared/NativeCodecCapability.swift` (`systemAndModel`). Their APIs remain compatible with this
+additive package. `project.yml` includes `RemoteTests/` and `RemotePhoneTests/` by directory;
+the parent owns any generated project membership and compilation. Static review or compilation
+does not invoke these test methods and cannot establish their pending hardware results.
+
 ## Answers at a glance
 
 | # | Question | Answer | Evidence |
@@ -235,25 +263,33 @@ Limits: a static page shows converged quality, the best case; motion legibility 
 
 Record conditions first (power, load average, network, no builds, simulators or browsers; iPhone Mirroring closed). Both probes print their own conditions line.
 
-Mac (≈ 70–90 s of probe time after the build; every line is prefixed `HEVC PROBE`):
+Mac (runtime remains unmeasured; every result line is prefixed `HEVC PROBE`). Run only after explicitly
+resuming the quiet-machine experiment. Preserve the complete log and check the pipeline exit code:
 
 ```
 cd ~/Developer/PocketDesk   # or this worktree
+set -o pipefail
 TEST_RUNNER_POCKETDESK_HEVC_PROBE=1 /usr/bin/lockf -k /tmp/farside-xcodebuild.lock xcodebuild test \
   -project PocketDesktop.xcodeproj -scheme RemoteCoreTests -configuration Debug -destination 'platform=macOS' \
-  -derivedDataPath outputs/RemoteBuild -only-testing:RemoteCoreTests/HEVCProbeTests 2>&1 | grep -E 'HEVC PROBE|error:|Executed'
+  -derivedDataPath /Volumes/Studio/Development/Caches/Xcode/DerivedData/FarsideHEVCProbe \
+  -only-testing:RemoteCoreTests/HEVCProbeTests 2>&1 | tee work/hevc-mac-probe.log
 ```
 
 Single parts: `-only-testing:RemoteCoreTests/HEVCProbeTests/testEncodeLatencyOneFrameInFlight` (…`ThreeFramesInFlight`, `testHEVCLowLatencyModeOnce`, `testLegibilityPerBitrate`). Add `TEST_RUNNER_POCKETDESK_HEVC_TARGET_CER11=<percent>` to use a session's 11 pt CER as the target.
 
-iPhone 17 (installs the Debug test host on the phone, so run it from the integrated main checkout per AGENTS.md, bumping `CURRENT_PROJECT_VERSION` as for device builds):
+iPhone 17: this installs the Debug test host on the phone and requires coordinated human resumption
+of hands-on work first. Run it from the integrated main checkout per AGENTS.md, with the parent
+assigning the next `CURRENT_PROJECT_VERSION`. Never run this command as part of source preparation:
 
 ```
+set -o pipefail
 TEST_RUNNER_POCKETDESK_HEVC_PROBE=1 /usr/bin/lockf -k /tmp/farside-xcodebuild.lock xcodebuild test \
   -project PocketDesktop.xcodeproj -scheme PocketDeskRemote -configuration Debug \
-  -destination 'id=00008150-0001653C26F8401C' -derivedDataPath outputs/RemoteDeviceBuild \
+  -destination 'id=00008150-0001653C26F8401C' \
+  -derivedDataPath /Volumes/Studio/Development/Caches/Xcode/DerivedData/FarsideHEVCDeviceProbe \
   CODE_SIGNING_ALLOWED=YES CURRENT_PROJECT_VERSION=<next> \
-  -only-testing:RemotePhoneTests/HEVCDecodeProbeTests 2>&1 | grep -E 'HEVC DECODE PROBE|error:|Executed'
+  -only-testing:RemotePhoneTests/HEVCDecodeProbeTests 2>&1 | tee work/hevc-phone-probe.log
 ```
 
-Without `POCKETDESK_HEVC_PROBE=1` both classes skip, so the normal suites are unaffected.
+Without a Debug configuration and `POCKETDESK_HEVC_PROBE=1` both classes skip; the phone class also
+skips on all simulators. Keep these flags absent during ordinary tests and build-readiness checks.
