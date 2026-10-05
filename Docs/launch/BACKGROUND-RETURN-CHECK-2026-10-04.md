@@ -31,3 +31,20 @@ Candidate20261004.3 integrated at281f6e3 preserves normal/Release two-drawable d
 Native batch includes corrected default Home10seconds, no-automatic-PiP Home50seconds (beyond phone25second hold), manual PiP12seconds, and opt-in2→3→2 renderer60second observation sessions. The fixture is local native scrolling code/text; existing owner apps stay running. Marker reads are disabled consistently for this non-marker fixture. Draw submissions are not actual displayedFPS; actual presentation callbacks/timing must be used. Physical batch is staged but blocked by the current OS passcode requirement; owner unlock requested. No performance acceptance inferred from39 unit tests or installs.
 
 User requires60fps under realistic multitasking at the same sharpness and latency. A quiet comparison is diagnostic only; acceptance must include representative load. No default30fps target is accepted as the outcome, and forcing60/lowering resolution/inventing frames would not satisfy this gate.
+
+## Actual native batch and subsequent failure
+
+The owner unlocked the phone and the unmirrored build20261004.3 native batch executed. Earlier pending-unlock and pending-rerun statements above describe the preceding checkpoint.
+
+| Physical case | Actual outcome |
+| --- | --- |
+| Default Home10second return | PASS,29.072seconds; fresh enabled Controls without Connect |
+| Automatic PiP disabled, Home50second return | PASS,66.342seconds; beyond the phone25second hold, fresh enabled Controls without Connect |
+| Manual PiP after12seconds | PASS,35.538seconds; active state only, continuous frames unverified |
+| Renderer2→3→2 observation collection | PASS as acquisition,215.697seconds; changing desktop scenes invalidate a matched performance comparison |
+
+The subsequent renderer repeat failed its fresh-picture Controls gate (case24.123seconds) before any60second quality dwell. Its phone recording shows waiting with Mac capture/encode0 and phone decode0. Mac framework logs record start at20:29:50.130, queued at20:29:50.183/.185, and stop errors-3808 after the failed case. These rows do not establish an OS cause or prove a pending start cannot later complete.
+
+RemoteCaptureSession.start awaits startCapture without a deadline and installs health monitoring only after it returns. RemoteCapture.start also awaits cleanup before returning startup failure, while RemoteCapture.stop drops its session reference before the asynchronous stop finishes. A bounded callback/ticket correction is being prepared with synchronous media/input fencing and no replacement until cleanup is confirmed. No repaired source, installed candidate or physical startup acceptance is claimed at this checkpoint.
+
+Receipts: Oct4 chat work/renderer-checks/physical-batch.xcresult and physical-renderer-repeat.xcresult; raw recordings remain local. Keep two drawables as default. Actual presentation evidence, source-scene validity and settled encoder/pacer conditions are needed for future quality comparisons; command submission FPS is not displayed FPS.
