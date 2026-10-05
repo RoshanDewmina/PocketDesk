@@ -155,6 +155,116 @@ final class BigTextPhoneTests: XCTestCase {
         XCTAssertEqual(model.lastBigTextRequest?.width, 1024)
     }
 
+    func testSharingStoppedCardIsHiddenWhileTextSizeChanges() throws {
+        try connect()
+        model.fresh = true
+        model.captureHealthy = false
+        XCTAssertTrue(model.showsSharingStoppedCard)
+        model.chooseBigTextNow(1280)
+        XCTAssertFalse(model.showsSharingStoppedCard, "capture is stopped on purpose during the change")
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1280)], display: 1))
+        XCTAssertTrue(model.showsSharingStoppedCard, "hidden only while the change is pending")
+    }
+
+    func testSharingStoppedCardReturnsAfterTheTimeout() throws {
+        try connect()
+        var now: TimeInterval = 100
+        model.bigTextClock = { now }
+        model.fresh = true
+        model.captureHealthy = false
+        model.chooseBigTextNow(1280)
+        XCTAssertFalse(model.showsSharingStoppedCard)
+        now += 8.5
+        model.checkBigTextTimeout()
+        XCTAssertTrue(model.showsSharingStoppedCard)
+    }
+
+    func testNothingIsSentWhenTheMacIsAtItsOwnSize() throws {
+        try connect()
+        XCTAssertNil(model.lastBigTextRequest)
+        XCTAssertEqual(model.bigTextRequestsSent, 0)
+    }
+
+    func testMacLeftOnBigTextReturnsToNormalWithoutASavedLevel() throws {
+        try connect(current: 1280)
+        XCTAssertEqual(model.lastBigTextRequest?.display, 1)
+        XCTAssertEqual(model.lastBigTextRequest?.width, 0, "another phone or a crash left the Mac on Big Text")
+        XCTAssertEqual(model.bigText.pendingTarget, 0)
+        model.lastBigTextRequest = nil
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1280)], display: 1))
+        XCTAssertNil(model.lastBigTextRequest, "once per display per session")
+        XCTAssertEqual(model.bigTextRequestsSent, 1)
+    }
+
+    func testOffForThisSessionResetsASwitchedDisplayLeftOnBigText() throws {
+        let memory = BigTextMemory(defaults: defaults)
+        memory.remember(1280, forRoom: "room-a", display: builtIn, among: [builtIn, studio])
+        memory.remember(1024, forRoom: "room-a", display: studio, among: [builtIn, studio])
+        try sendSessionStart(features: [SessionFeature.displayScale])
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1280), described(studio)], display: 1))
+        XCTAssertNil(model.lastBigTextRequest)
+        model.setBigTextOffForSession(true)
+        try send(RemoteAction(action: "geometry", x: studio.width, y: studio.height, epoch: 2))
+        try send(RemoteAction(action: "displays", epoch: 2,
+                              displays: [described(), described(studio, current: 1280)], display: 7))
+        XCTAssertEqual(model.lastBigTextRequest?.display, 7)
+        XCTAssertEqual(model.lastBigTextRequest?.width, 0, "off for the session, not the saved 1024")
+        XCTAssertEqual(model.bigTextRequestsSent, 1)
+    }
+
+    func testMacLeftOnBigTextWaitsForAPendingRequest() throws {
+        try connect()
+        model.chooseBigTextNow(1024)
+        try send(RemoteAction(action: "geometry", x: studio.width, y: studio.height, epoch: 2))
+        try send(RemoteAction(action: "displays", epoch: 2,
+                              displays: [described(), described(studio, current: 1280)], display: 7, scaleError: "busy"))
+        XCTAssertEqual(model.lastBigTextRequest?.width, 1024, "never while a request is pending")
+        XCTAssertEqual(model.bigTextRequestsSent, 1)
+        try send(RemoteAction(action: "displays", epoch: 2,
+                              displays: [described(), described(studio, current: 1280)], display: 7))
+        XCTAssertEqual(model.lastBigTextRequest?.display, 7)
+        XCTAssertEqual(model.lastBigTextRequest?.width, 0)
+        XCTAssertEqual(model.bigTextRequestsSent, 2)
+    }
+
+    func testUnknownScaleErrorIsIgnored() throws {
+        try connect()
+        model.chooseBigTextNow(1024)
+        let reply = RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1024)], display: 1,
+                                 scaleError: "fromANewerMac")
+        XCTAssertNoThrow(try reply.validate(), "a newer Mac's error code must not end the session")
+        try send(reply)
+        XCTAssertNil(model.sessionNotice)
+        XCTAssertNil(model.bigText.pendingTarget, "the list is still the Mac's answer")
+        XCTAssertEqual(model.bigText.currentWidth, 1024)
+    }
+
+    func testLateSuccessClearsTheTimeoutNotice() throws {
+        try connect()
+        var now: TimeInterval = 100
+        model.bigTextClock = { now }
+        model.chooseBigTextNow(1280)
+        now += 8.5
+        model.checkBigTextTimeout()
+        XCTAssertEqual(model.sessionNotice, "Couldn't change text size")
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described()], display: 1))
+        XCTAssertEqual(model.sessionNotice, "Couldn't change text size", "a list without the change is not the late answer")
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1280)], display: 1))
+        XCTAssertNil(model.sessionNotice, "the change did happen, only late")
+    }
+
+    func testLateSuccessKeepsANewerNotice() throws {
+        try connect()
+        var now: TimeInterval = 100
+        model.bigTextClock = { now }
+        model.chooseBigTextNow(1280)
+        now += 8.5
+        model.checkBigTextTimeout()
+        model.announce("Copied to your Mac")
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1280)], display: 1))
+        XCTAssertEqual(model.sessionNotice, "Copied to your Mac")
+    }
+
     func testEndClearsSessionState() throws {
         BigTextMemory(defaults: defaults).remember(1280, forRoom: "room-a", display: builtIn, among: [builtIn])
         try connect()
