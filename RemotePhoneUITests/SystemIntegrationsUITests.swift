@@ -36,10 +36,14 @@ final class SystemIntegrationsUITests: XCTestCase {
     // MARK: Settings
 
     @MainActor
-    func testHomeOffersAlertsAndLockScreenAndTheSheetStartsQuiet() {
+    func testSettingsOffersAlertsAndLockScreenAndTheSheetStartsQuiet() {
         let app = launch(["--ui-seed-pairing=Studio Mac", "--ui-x"])
+        let more = app.buttons["Help and more"]
+        XCTAssertTrue(more.waitForExistence(timeout: 5))
+        more.tap()
+        app.buttons["Settings"].tap()
         let row = app.buttons["home.agentAlerts"]
-        XCTAssertTrue(row.waitForExistence(timeout: 5), "Home lists Alerts & Lock Screen")
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "Settings lists Alerts & Lock Screen")
         row.tap()
         XCTAssertTrue(element(app, "agent.settings").waitForExistence(timeout: 5))
         for identifier in ["agent.settings.alerts", "agent.settings.focus", "agent.settings.test",

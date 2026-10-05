@@ -234,7 +234,13 @@ class E2ETestCase: XCTestCase {
             paste.tap()
         } else {
             app.buttons["Help and more"].tap()
-            app.buttons["Paste Pairing Code"].tap()
+            app.buttons["Settings"].tap()
+            let pairAnother = app.buttons["settings.pairAnother"]
+            guard pairAnother.waitForExistence(timeout: 5) else { throw E2EFailure("Settings has no Pair another Mac") }
+            pairAnother.tap()
+            let pasteTab = app.buttons["Paste Code"]
+            guard pasteTab.waitForExistence(timeout: 5) else { throw E2EFailure("Pairing sheet has no Paste Code") }
+            pasteTab.tap()
         }
         let field = app.descendants(matching: .any)["Pairing code"].firstMatch
         guard field.waitForExistence(timeout: 5) else { throw E2EFailure("Pairing code field did not appear") }

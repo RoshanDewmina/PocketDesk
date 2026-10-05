@@ -160,8 +160,9 @@ struct HomeView: View {
     @Environment(\.farsideReturningFromSession) private var returning
     @State private var showPaywall = false
     @State private var showServerData = false
-    @State private var showLegal = false
     @State private var showSecurity = false
+    /// A Settings row that starts a Home flow (pairing, the gesture coach) waits for Settings to close.
+    @State private var afterSettings: (() -> Void)?
     @State private var showPairedMacs = false
     @State private var savedMacs: [PairedMac] = []
     @AppStorage(OnboardingFlow.firstPictureKey) private var firstPictureShown = false
@@ -186,7 +187,7 @@ struct HomeView: View {
     private var savedMacState: SavedMacHomeState { SavedMacHomeState(selected: connection.invitation, saved: savedMacs) }
     private func refreshSavedMacs() { savedMacs = PairedMacs.all() }
     private var status: MacStatus { MacStatus(connection.status, couch: model.attemptMode == .couch) }
-    private var covered: Bool { model.pairingEntry != nil || friendlyError != nil || onboarding.step != nil || showDetails || showTroubleshoot || showPaywall || showServerData || showLegal || showSecurity || showPairedMacs }
+    private var covered: Bool { model.pairingEntry != nil || friendlyError != nil || onboarding.step != nil || showDetails || showTroubleshoot || showPaywall || showServerData || showSecurity || showPairedMacs }
 
     var body: some View {
         GeometryReader { proxy in
@@ -252,8 +253,12 @@ struct HomeView: View {
             AnywherePaywallView(store: anywhere, access: AnywhereAccess.shared)
                 .farsideSheet()
         }
-        .sheet(isPresented: $showLegal) { LegalNoticesView().farsideRegularSheet() }
-        .sheet(isPresented: $showSecurity) { SecuritySettingsSheet() }
+        .sheet(isPresented: $showSecurity, onDismiss: settingsDismissed) {
+            SecuritySettingsSheet(model: model, connection: connection,
+                                  showsMacOptions: macName != nil || savedMacState == .choose,
+                                  pairAnotherMac: { closeSettings { model.pairingEntry = .scan } },
+                                  howToSteer: { closeSettings { onboarding.replayCoach() } })
+        }
         .sheet(isPresented: $showPairedMacs) { PairedMacSelectionSheet(model: model).farsideSheet() }
         .sheet(isPresented: $showServerData) {
             ServerDataRemovalView(connection: connection, access: AnywhereAccess.shared).farsideSheet()
@@ -261,7 +266,7 @@ struct HomeView: View {
         .confirmationDialog("Forget this Mac locally?", isPresented: $confirmForget, titleVisibility: .visible) {
             Button("Forget Mac", role: .destructive, action: forgetMac)
         } message: {
-            Text("This removes local pairing only. Server Data removes your Anywhere device link. You’ll need to scan a new pairing code to connect again.")
+            Text("This removes the pairing from this \(DeviceWord.current) only. To also remove this \(DeviceWord.current)’s Farside Anywhere link, use Settings › Server Data. To connect again, scan a new pairing code.")
         }
         .onChange(of: connection.status) { old, new in statusChanged(from: old, to: new) }
         .onChange(of: connection.serviceAccess) { _, access in
@@ -318,23 +323,22 @@ struct HomeView: View {
                 Section {
                     Button { showSecurity = true } label: { Label("Settings", systemImage: "gearshape") }
                     Button { showPairedMacs = true } label: { Label("Your Macs", systemImage: "laptopcomputer") }
-                    Button { model.pairingEntry = .paste } label: { Label("Paste Pairing Code", systemImage: "doc.on.clipboard") }
+                    if macName != nil, status.tone != .busy {
+                        Button { connect(mode: .couch) } label: {
+                            Label(CouchCopy.entryTitle, systemImage: "sofa")
+                            Text(CouchCopy.entryCaption)
+                        }
+                        .accessibilityIdentifier("home.couch")
+                    }
                 }
                 Section {
-                    Button { onboarding.replayCoach() } label: { Label("How to steer", systemImage: "hand.draw") }
-                    Button { showTroubleshoot = true } label: { Label("Trouble connecting?", systemImage: "questionmark.circle") }
-                    Button { showDetails = true } label: { Label("Connection Details", systemImage: "network") }
-                }
-                if !showsLaterOptions, connection.invitation != nil {
-                    Button(CouchCopy.entryTitle) { connect(mode: .couch) }
-                    Toggle("Local network only", isOn: Binding(get: { connection.localOnly }, set: { model.setLocalOnly($0) }))
-                        .disabled(!connection.localOnly && connection.invitation?.hasOwnerLocalIdentity != true)
-                    Button("Alerts & Lock Screen") { AgentAlertCenter.shared.showsSettings = true }
-                }
-                Section {
+                    Menu {
+                        Button { showTroubleshoot = true } label: { Label("Trouble connecting?", systemImage: "wifi.exclamationmark") }
+                        Button { showDetails = true } label: { Label("Connection Details", systemImage: "network") }
+                    } label: {
+                        Label("Help", systemImage: "questionmark.circle")
+                    }
                     Button { showPaywall = true } label: { Label("Farside Anywhere", systemImage: "globe") }
-                    Button { showServerData = true } label: { Label("Server Data", systemImage: "externaldrive") }
-                    Button { showLegal = true } label: { Label("Third-Party Notices", systemImage: "doc.text") }
                 }
                 if connection.invitation != nil {
                     Divider()
@@ -532,19 +536,6 @@ struct HomeView: View {
                     .accessibilityLabel("Connect")
                     .accessibilityHint("Closes the gap: opens your Mac’s screen on this \(DeviceWord.current)")
                     .accessibilityIdentifier("home.connect")
-                if showsLaterOptions {
-                VStack(spacing: 6) {
-                    Button(CouchCopy.entryTitle) { connect(mode: .couch) }
-                        .buttonStyle(FarsideSecondaryButtonStyle(height: 46))
-                        .accessibilityIdentifier("home.couch")
-                    Text(CouchCopy.entryCaption)
-                        .font(.footnote)
-                        .foregroundStyle(Farside.Palette.ash)
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.top, 2)
-                }
             }
         }
         .padding(.top, Farside.Space.m)
@@ -593,42 +584,10 @@ struct HomeView: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("home.pairedMacs")
             Rectangle().fill(Farside.Palette.line).frame(height: 1)
-            VStack(alignment: .leading, spacing: 6) {
-                Toggle("Local network only", isOn: Binding(get: { connection.localOnly }, set: { model.setLocalOnly($0) }))
-                .accessibilityIdentifier("home.localOnly")
-                .disabled(!connection.localOnly && connection.invitation?.hasOwnerLocalIdentity != true)
-                Text(connection.invitation == nil
-                     ? "Choose a saved Mac first. Enable Local network only on both devices."
-                     : connection.invitation?.hasOwnerLocalIdentity == true
-                        ? "Enable this on your Mac too. Connection requires a verified local route."
-                        : "Re-pair from a fresh owner-approved QR code on this Mac to enable Local network only. Connect normally until then.")
-                    .font(.footnote).foregroundStyle(Farside.Palette.ash)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(16)
-            Rectangle().fill(Farside.Palette.line).frame(height: 1)
-            if connection.invitation?.ownerPairID == nil, connection.invitation != nil {
-                Text("Send to My Mac needs a fresh owner-approved pairing. Confirm the new pairing works before forgetting its older record.")
-                    .font(.footnote).foregroundStyle(Farside.Palette.ash).padding(16)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
             Button { model.pairingEntry = .scan } label: {
                 HomeRow(title: "Pair another Mac", trailing: "plus")
             }
             .buttonStyle(.plain)
-            Rectangle().fill(Farside.Palette.line).frame(height: 1)
-            Button { AgentAlertCenter.shared.showsSettings = true } label: {
-                HomeRow(title: "Alerts & Lock Screen", trailing: "bell")
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Alerts and Lock Screen")
-            .accessibilityIdentifier("home.agentAlerts")
-            Rectangle().fill(Farside.Palette.line).frame(height: 1)
-            Button { onboarding.replayCoach() } label: {
-                HomeRow(title: "How to steer · 40 sec", trailing: "arrow.right")
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("How to steer, 40 seconds")
         }
         .farsidePlate(Farside.Radius.card, fill: .clear)
     }
@@ -788,6 +747,17 @@ struct HomeView: View {
         case .openSettings:
             if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
         }
+    }
+
+    private func closeSettings(then next: @escaping () -> Void) {
+        afterSettings = next
+        showSecurity = false
+    }
+
+    private func settingsDismissed() {
+        guard let next = afterSettings else { return }
+        afterSettings = nil
+        DispatchQueue.main.async(execute: next)
     }
 
     private func pairingDismissed() {
