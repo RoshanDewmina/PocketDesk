@@ -184,16 +184,30 @@ final class HostFrameTimingLog: @unchecked Sendable {
     }
 }
 
-/// Phone-local monotonic timestamps for one actual owned-decoder output. All four stages
-/// must be observed; an absent trace is never reconstructed from RTP or source clock estimates.
+/// Phone-local observations for one decoder delivery. Owned HEVC supplies all four stages;
+/// stock H.264 exposes only outward delivery. Missing native stages remain unknown;
+/// no clock is reconstructed from RTP, source timestamps, or another frame.
 struct PhoneDecodeTrace: Sendable, Equatable {
-    let submitMs: Double
-    let callbackMs: Double
-    let ownershipMs: Double
+    let submitMs: Double?
+    let callbackMs: Double?
+    let ownershipMs: Double?
     let deliveryMs: Double
 
+    init(submitMs: Double, callbackMs: Double, ownershipMs: Double, deliveryMs: Double) {
+        self.submitMs = submitMs; self.callbackMs = callbackMs
+        self.ownershipMs = ownershipMs; self.deliveryMs = deliveryMs
+    }
+
+    init(deliveryMs: Double) {
+        submitMs = nil; callbackMs = nil; ownershipMs = nil; self.deliveryMs = deliveryMs
+    }
+
     var isValid: Bool {
-        submitMs.isFinite && callbackMs.isFinite && ownershipMs.isFinite && deliveryMs.isFinite
+        guard deliveryMs.isFinite, deliveryMs >= 0 else { return false }
+        guard let submitMs, let callbackMs, let ownershipMs else {
+            return submitMs == nil && callbackMs == nil && ownershipMs == nil
+        }
+        return submitMs.isFinite && callbackMs.isFinite && ownershipMs.isFinite
             && submitMs >= 0 && submitMs <= callbackMs && callbackMs <= ownershipMs && ownershipMs <= deliveryMs
     }
 }
@@ -220,7 +234,7 @@ final class PhoneFrameTimingLog: @unchecked Sendable {
     private struct DecodeEntry {
         let rtp: Int32
         let timeStampNs: Int64
-        let trace: PhoneDecodeTrace
+        var trace: PhoneDecodeTrace?
     }
     private var decodeTraces: [DecodeEntry] = []
 
@@ -235,18 +249,24 @@ final class PhoneFrameTimingLog: @unchecked Sendable {
     func decodedDelivery(rtp: Int32, timeStampNs: Int64, trace: PhoneDecodeTrace) {
         guard renderTimingEnabled, trace.isValid else { return }
         lock.lock(); defer { lock.unlock() }
-        decodeTraces.removeAll { $0.rtp == rtp && $0.timeStampNs == timeStampNs }
+        if let index = decodeTraces.firstIndex(where: { $0.rtp == rtp && $0.timeStampNs == timeStampNs }) {
+            // Identical source identity cannot distinguish two outward deliveries; quarantine it.
+            decodeTraces[index].trace = nil
+            return
+        }
         decodeTraces.append(DecodeEntry(rtp: rtp, timeStampNs: timeStampNs, trace: trace))
         if decodeTraces.count > Self.capacity { decodeTraces.removeFirst() }
     }
 
     /// One outward delivery owns one trace. A repeated RTP with different source timestamp,
-    /// evicted entry or already-consumed trace supplies nil, rather than a nearest estimate.
+    /// duplicate identity, evicted entry or already-consumed trace supplies nil, rather than a nearest estimate.
     func takeDecodeTrace(rtp: Int32, timeStampNs: Int64) -> PhoneDecodeTrace? {
         guard renderTimingEnabled else { return nil }
         lock.lock(); defer { lock.unlock() }
         guard let index = decodeTraces.lastIndex(where: { $0.rtp == rtp && $0.timeStampNs == timeStampNs }) else { return nil }
-        return decodeTraces.remove(at: index).trace
+        let trace = decodeTraces[index].trace
+        decodeTraces[index].trace = nil // Keep a bounded tombstone so a replay cannot supply a fresh trace.
+        return trace
     }
 
     private(set) var receivedFrames = 0
@@ -382,17 +402,25 @@ enum FrameTimingSwitch {
 
 /// Pass-through H.264 decoder that logs each frame's wire timestamp, size, arrival and decode time.
 final class TimedH264Decoder: NSObject, RTCVideoDecoder {
-    private let inner = RTCVideoDecoderH264()
+    private let inner: any RTCVideoDecoder
     private weak var log: PhoneFrameTimingLog?
+    private let deliveryTiming = H264DeliveryTimingAdmission()
 
-    init(log: PhoneFrameTimingLog) {
-        self.log = log
+    init(log: PhoneFrameTimingLog, inner: any RTCVideoDecoder = RTCVideoDecoderH264()) {
+        self.log = log; self.inner = inner
         super.init()
     }
 
     func setCallback(_ callback: @escaping RTCVideoDecoderCallback) {
-        inner.setCallback { [weak log] frame in
+        inner.setCallback { [weak log, deliveryTiming] frame in
             log?.decoded(rtp: frame.timeStamp, atMs: MachClock.nowMs())
+            if let log, log.renderTimingEnabled {
+                deliveryTiming.performIfActive {
+                    // Stock RTC has no public native VT/ownership callbacks. Observe only delivery.
+                    log.decodedDelivery(rtp: frame.timeStamp, timeStampNs: frame.timeStampNs,
+                                        trace: PhoneDecodeTrace(deliveryMs: MachClock.nowMs()))
+                }
+            }
             callback(frame)
         }
     }
@@ -401,7 +429,7 @@ final class TimedH264Decoder: NSObject, RTCVideoDecoder {
         inner.startDecode(withNumberOfCores: numberOfCores)
     }
 
-    func release() -> Int { inner.release() }
+    func release() -> Int { deliveryTiming.retire(); return inner.release() }
 
     func decode(_ encodedImage: RTCEncodedImage, missingFrames: Bool, codecSpecificInfo info: (any RTCCodecSpecificInfo)?,
                 renderTimeMs: Int64) -> Int {
@@ -410,6 +438,18 @@ final class TimedH264Decoder: NSObject, RTCVideoDecoder {
     }
 
     func implementationName() -> String { inner.implementationName() }
+}
+
+/// Retires instrumentation without changing stock decoder callback or release behavior.
+/// Reusing a released wrapper leaves timing unknown rather than admitting an old callback.
+private final class H264DeliveryTimingAdmission: @unchecked Sendable {
+    private let lock = NSLock()
+    private var active = true
+    func performIfActive(_ body: () -> Void) {
+        lock.lock(); defer { lock.unlock() }
+        if active { body() }
+    }
+    func retire() { lock.lock(); active = false; lock.unlock() }
 }
 
 final class WeakFrameTimingBox<Value: AnyObject>: @unchecked Sendable {
