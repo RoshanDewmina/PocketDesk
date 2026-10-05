@@ -34,7 +34,7 @@ final class PointerOverlayUITests: XCTestCase {
         XCTAssertTrue(handle.waitForExistence(timeout: 5))
         // The synthesized swipe is occasionally dropped on a heavily loaded host; the
         // dock itself is not under test here, so retry the reveal before asserting.
-        let controls = app.buttons["Controls"]
+        let controls = app.buttons["More"]
         for _ in 0..<3 where !controls.exists {
             if handle.exists { handle.swipeUp() }
             _ = controls.waitForExistence(timeout: 5)

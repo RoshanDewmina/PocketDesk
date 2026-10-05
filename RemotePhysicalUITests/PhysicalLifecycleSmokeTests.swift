@@ -29,7 +29,7 @@ final class PhysicalLifecycleSmokeTests: XCTestCase {
     private func requireFreshControls(_ app: XCUIApplication) throws {
         let handle = app.buttons["Show controls"].firstMatch
         if handle.exists && handle.isHittable { handle.swipeUp() }
-        let controls = app.buttons["Controls"].firstMatch
+        let controls = app.buttons["More"].firstMatch
         XCTAssertTrue(controls.waitForExistence(timeout: 10))
         controls.tap()
         let click = app.buttons["Double-click"].firstMatch

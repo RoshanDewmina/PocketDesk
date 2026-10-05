@@ -8,9 +8,11 @@ final class CouchModeUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.staticTexts["Look at your Mac. This is its trackpad."].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["The picture is the one on your wall."].exists)
-        for id in ["remote.couch.keys", "remote.couch.mic", "remote.couch.clip", "remote.couch.picture", "remote.couch.controls"] {
+        for id in ["remote.couch.keys", "remote.couch.clip", "remote.couch.picture", "remote.couch.controls"] {
             XCTAssertTrue(app.buttons[id].exists, id)
         }
+        XCTAssertFalse(app.buttons["remote.couch.mic"].exists, "Dictate is gone; its slot returns only for Drop")
+        XCTAssertEqual(app.buttons["remote.couch.controls"].label, "More")
         XCTAssertFalse(app.buttons["Fit whole display"].exists, "Couch has no picture to fit")
         if app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists {
             // Regular Couch uses the same top anchor as a picture session.
