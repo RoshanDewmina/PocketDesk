@@ -1177,6 +1177,11 @@ final class PhoneRemoteModel: ObservableObject {
          deviceIdiom: UIUserInterfaceIdiom = UIDevice.current.userInterfaceIdiom) {
         workspaceDeviceIsPad = deviceIdiom == .pad
         #if DEBUG
+        // A dedicated offline UI case verifies the unset preference, independent of earlier tests.
+        if LaunchOptions.has("--ui-layout-check"), LaunchOptions.has("--ui-input-probe"),
+           LaunchOptions.has("--ui-auto-keyboard-default-check") {
+            UserDefaults.standard.removeObject(forKey: "FarsideAutoKeyboard")
+        }
         // E2E keeps its own trust; launch-seeded and injected test pairings stay isolated.
         connection = coordinator ?? RemoteCoordinator(isHost: false,
             store: PhoneE2E.active?.pairStore ?? LaunchSeeds.pairingStore(),
@@ -2566,6 +2571,20 @@ final class PhoneRemoteModel: ObservableObject {
         guard !reducedPictureNoticeShown, let link, link.reducedLevel, let size = link.pictureSize else { return }
         reducedPictureNoticeShown = true
         showSessionNotice(PhoneSessionNotice.reducedPicture(size: size))
+    }
+
+    /// Explicit Spotlight intent. A draft remains local; this never chooses or launches an app.
+    var canOpenMacApp: Bool {
+        sceneIsActive && canControl && !dragging && activeHold == nil &&
+            !isComposingText && textEditable
+    }
+
+    @discardableResult
+    func openMacApp() -> Bool {
+        guard canOpenMacApp else { return false }
+        // Deliberately retire toolbar latches; physical keyboard state still belongs to its owner.
+        modifiers.removeAll()
+        return commandShortcut("space")
     }
 
     @discardableResult

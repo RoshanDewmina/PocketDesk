@@ -194,3 +194,238 @@ final class ShortcutChipsPhoneTests: XCTestCase {
         XCTAssertTrue(actions.isEmpty)
     }
 }
+
+/// Real admitted model/coordinator packets; the DEBUG input probe is deliberately absent.
+@MainActor
+final class OpenAppPhoneTests: XCTestCase {
+    private final class Recorder {
+        var packets: [ControlPacket] = []
+        var accepts = true
+    }
+    private func deliver(_ action: RemoteAction, to model: PhoneRemoteModel) throws {
+        try XCTUnwrap(model.connection.onControl)(JSONEncoder().encode(action))
+    }
+    private func admit(_ model: PhoneRemoteModel, recorder: Recorder, session: String,
+                       epoch: UInt64, token: String) throws {
+        model.prepareConnection(mode: .picture)
+        model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: session)
+        model.connection.inputPacketSenderForTesting = { recorder.packets.append($0); return recorder.accepts }
+        try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: epoch), to: model)
+        try deliver(RemoteAction(action: "viewing", x: 1, epoch: epoch), to: model)
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: epoch,
+            interaction: NativeInteraction(token: token, doubleClickInterval: 0.5),
+            features: SessionFeature.host + [SessionFeature.phoneWorkspaceBeta, SessionFeature.virtualDisplay],
+            mode: "picture"), to: model)
+        model.frameReceived()
+        var context = try XCTUnwrap(recorder.packets.last(where: { $0.input?.kind == "offer" })?.input)
+        context.kind = "accept"; context.anchor = String(repeating: "a", count: 32)
+        try model.connection.receiveInputFixtureForTesting(ControlPacket(session: session, sequence: 1,
+            action: RemoteAction(action: "heartbeat", epoch: epoch), input: context))
+        XCTAssertNil(model.inputProbe)
+        XCTAssertTrue(model.canOpenMacApp)
+        recorder.packets.removeAll()
+    }
+    private func fixture() throws -> (PhoneRemoteModel, Recorder) {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "open-app.\(UUID().uuidString)"))
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults,
+            coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()), deviceIdiom: .phone)
+        let recorder = Recorder()
+        try admit(model, recorder: recorder, session: "open-app", epoch: 2, token: "navigation-token")
+        return (model, recorder)
+    }
+    private func assertDenied(_ model: PhoneRemoteModel, recorder: Recorder,
+                              file: StaticString = #filePath, line: UInt = #line) {
+        recorder.packets.removeAll()
+        let draft = model.draft, composing = model.isComposingText
+        let latches = model.modifiers, revision = model.autoKeyboardRevision
+        XCTAssertFalse(model.canOpenMacApp, file: file, line: line)
+        XCTAssertFalse(model.openMacApp(), file: file, line: line)
+        XCTAssertTrue(recorder.packets.isEmpty, "Denied intent must not queue or retry input", file: file, line: line)
+        XCTAssertEqual(model.draft, draft, file: file, line: line)
+        XCTAssertEqual(model.isComposingText, composing, file: file, line: line)
+        XCTAssertEqual(model.modifiers, latches, file: file, line: line)
+        XCTAssertEqual(model.autoKeyboardRevision, revision, file: file, line: line)
+    }
+
+    func testOpenAppSendsExactlyCurrentCommandSpaceAndKeepsDraftLocal() throws {
+        let (model, recorder) = try fixture()
+        defer { model.disconnect() }
+        let draft = "Local draft\ncafé 🧪"
+        model.draft = draft
+        model.modifiers = ["option", "control"]
+        model.hardwareModifiers = ["shift"]
+        let revision = model.autoKeyboardRevision
+        XCTAssertTrue(model.openMacApp())
+        XCTAssertEqual(recorder.packets.count, 1)
+        let packet = try XCTUnwrap(recorder.packets.first)
+        XCTAssertEqual(packet.session, "open-app")
+        XCTAssertEqual(packet.action.action, "key")
+        XCTAssertEqual(packet.action.key, "space")
+        XCTAssertEqual(packet.action.modifiers, ["command"])
+        XCTAssertEqual(packet.action.epoch, 2)
+        XCTAssertEqual(packet.action.interaction?.token, "navigation-token")
+        XCTAssertNil(packet.action.interaction?.hold)
+        XCTAssertEqual(packet.input?.epoch, 2)
+        XCTAssertEqual(packet.input?.anchor, String(repeating: "a", count: 32))
+        XCTAssertTrue(packet.action.text.isEmpty)
+        XCTAssertTrue(model.modifiers.isEmpty)
+        XCTAssertEqual(model.hardwareModifiers, ["shift"], "Hardware modifiers retain their own lifetime")
+        XCTAssertEqual(model.draft, draft)
+        XCTAssertFalse(model.isComposingText)
+        XCTAssertTrue(model.textEditable)
+        XCTAssertEqual(model.autoKeyboardRevision, revision)
+    }
+
+    func testOpenAppSenderRefusalDoesNotRetryOrCommitDraft() throws {
+        let (model, recorder) = try fixture()
+        defer { model.disconnect() }
+        model.draft = "Do not send\n秘密"
+        model.modifiers = ["option"]
+        recorder.accepts = false
+        XCTAssertFalse(model.openMacApp())
+        XCTAssertEqual(recorder.packets.map { $0.action.action }, ["key"])
+        XCTAssertEqual(recorder.packets.first?.action.key, "space")
+        XCTAssertEqual(recorder.packets.first?.action.modifiers, ["command"])
+        XCTAssertTrue(model.modifiers.isEmpty, "Explicit admitted intent clears toolbar latches even on sender refusal")
+        XCTAssertEqual(model.draft, "Do not send\n秘密")
+        XCTAssertTrue(model.textEditable)
+    }
+
+    func testOpenAppRefusesHeldMouseWithoutReleasingIt() throws {
+        let (model, recorder) = try fixture()
+        defer { model.disconnect() }
+        model.drag()
+        XCTAssertTrue(model.dragging)
+        XCTAssertEqual(recorder.packets.last?.action.action, "dragDown")
+        model.modifiers = ["option"]
+        assertDenied(model, recorder: recorder)
+        XCTAssertTrue(model.dragging)
+        XCTAssertNotNil(model.explicitHoldDeadline)
+        // A stale presentation flag cannot bypass the actual private hold identity.
+        model.dragging = false
+        assertDenied(model, recorder: recorder)
+        model.release()
+        XCTAssertTrue(model.canOpenMacApp)
+        recorder.packets.removeAll()
+        XCTAssertTrue(model.openMacApp())
+        XCTAssertEqual(recorder.packets.map { $0.action.key }, ["space"])
+    }
+
+    func testOpenAppRefusesCompositionAndPendingCommittedText() throws {
+        let (model, recorder) = try fixture()
+        defer { model.disconnect() }
+        model.draft = "marked候補"
+        model.isComposingText = true
+        assertDenied(model, recorder: recorder)
+        model.isComposingText = false
+        model.sendText()
+        XCTAssertFalse(model.textEditable)
+        XCTAssertEqual(recorder.packets.last?.action.action, "text")
+        assertDenied(model, recorder: recorder)
+    }
+
+    func testOpenAppRefusesPendingVoiceCommitWithoutChangingDraft() throws {
+        let (model, recorder) = try fixture()
+        defer { model.disconnect() }
+        model.draft = "Keep local draft"
+        XCTAssertTrue(model.sendVoiceText("pending voice"))
+        XCTAssertEqual(model.voiceDeliveryStatus, .waiting)
+        assertDenied(model, recorder: recorder)
+        XCTAssertEqual(model.draft, "Keep local draft")
+        XCTAssertEqual(model.voiceDeliveryStatus, .waiting)
+    }
+
+    func testOpenAppRechecksControlFreshnessAndSceneAtInvocation() throws {
+        let mutations: [(String, (PhoneRemoteModel) -> Void)] = [
+            ("control", { $0.controlAllowed = false }),
+            ("fresh picture", { $0.fresh = false }),
+            ("capture", { $0.captureHealthy = false }),
+            ("drag presentation", { $0.dragging = true }),
+            ("inactive", { $0.sceneChanged(.inactive) }),
+            ("background", { $0.sceneChanged(.background) })
+        ]
+        for (name, mutate) in mutations {
+            let (model, recorder) = try fixture()
+            defer { model.disconnect() }
+            model.draft = "local " + name
+            mutate(model)
+            model.modifiers = ["control"]
+            assertDenied(model, recorder: recorder)
+        }
+    }
+
+    func testOpenAppRejectsMissingAndExpiredNativeTokens() throws {
+        for missing in [true, false] {
+            let (model, recorder) = try fixture()
+            defer { model.disconnect() }
+            if missing {
+                try deliver(RemoteAction(action: "capture", x: 1, epoch: 2,
+                    interaction: NativeInteraction(token: nil, doubleClickInterval: 0.5),
+                    features: SessionFeature.host, mode: "picture"), to: model)
+            } else {
+                // Existing deterministic clock seam ages the token by at most 0.5 s per call.
+                for _ in 0..<3 { model.ageCouchStatusForTesting(by: 0.5) }
+            }
+            XCTAssertTrue(model.fresh)
+            XCTAssertTrue(model.captureHealthy)
+            assertDenied(model, recorder: recorder)
+        }
+    }
+
+    func testOpenAppRejectsRetiredGeometryUntilCurrentAdmission() throws {
+        let (model, recorder) = try fixture()
+        defer { model.disconnect() }
+        try deliver(RemoteAction(action: "geometry", x: 1200, y: 800, epoch: 3), to: model)
+        model.frameReceived() // A decoded picture alone cannot restore the retired native token.
+        assertDenied(model, recorder: recorder)
+    }
+
+    func testOpenAppRejectsScopedViewAndPendingLock() throws {
+        for locked in [false, true] {
+            let (model, recorder) = try fixture()
+            defer { model.disconnect() }
+            if locked {
+                let request = PhoneAwayLockRequest(hostKey: "fixture-host", session: model.connection.presentationSessionID,
+                    epoch: 2, sentAt: ProcessInfo.processInfo.systemUptime)
+                XCTAssertTrue(model.sendAdmittedLockMacForTesting(request))
+                XCTAssertTrue(model.lockMacPendingForTesting)
+            } else {
+                try deliver(RemoteAction(action: "capture", x: 1, epoch: 2,
+                    interaction: NativeInteraction(token: "navigation-token", doubleClickInterval: 0.5),
+                    features: SessionFeature.host, mode: "picture",
+                    captureScope: .init(epoch: 4, kind: .window, label: "Shared window", viewOnly: true)), to: model)
+                XCTAssertTrue(model.captureScopeViewOnly)
+            }
+            assertDenied(model, recorder: recorder)
+        }
+    }
+
+    func testOpenAppRequiresNewSessionAdmissionAfterEnd() throws {
+        let (model, recorder) = try fixture()
+        defer { model.disconnect() }
+        model.disconnect()
+        assertDenied(model, recorder: recorder)
+        model.connection.startInputFixtureForTesting(session: "replacement-unadmitted")
+        assertDenied(model, recorder: recorder)
+        model.connection.stop()
+        try admit(model, recorder: recorder, session: "replacement", epoch: 9, token: "replacement-token")
+        XCTAssertTrue(model.openMacApp())
+        XCTAssertEqual(recorder.packets.count, 1)
+        XCTAssertEqual(recorder.packets.first?.session, "replacement")
+        XCTAssertEqual(recorder.packets.first?.action.epoch, 9)
+        XCTAssertEqual(recorder.packets.first?.action.interaction?.token, "replacement-token")
+    }
+
+    func testOpenAppRefusesUnreadyAndExitingBetaWorkspace() throws {
+        guard FarsideBeta.isEnabled else { throw XCTSkip("Separate beta Workspace admission") }
+        let (model, recorder) = try fixture()
+        defer { model.disconnect() }
+        XCTAssertTrue(model.enterBetaWorkspace())
+        XCTAssertFalse(model.workspaceBetaReady)
+        assertDenied(model, recorder: recorder)
+        model.exitBetaWorkspace()
+        XCTAssertTrue(model.workspaceBetaExitPending)
+        assertDenied(model, recorder: recorder)
+    }
+}

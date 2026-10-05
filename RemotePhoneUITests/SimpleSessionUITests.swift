@@ -163,11 +163,262 @@ final class SimpleSessionUITests: XCTestCase {
     }
 
     @MainActor
-    private func launchPreview(extra: [String] = []) -> XCUIApplication {
+    func testOpenAppDefaultKeepsKeyboardManualAndSendsOnlySpotlight() {
+        // Omit the override to exercise the ordinary default as well as the explicit NO case below.
+        let app = launchPreview(explicitManualKeyboard: false)
+        defer { app.terminate() }
+        openDock(app)
+        app.buttons["More"].firstMatch.tap()
+        let panel = element("remote.controls.content", in: app)
+        let open = app.buttons["remote.navigation.openApp"].firstMatch
+        XCTAssertTrue(open.waitForExistence(timeout: 5) && open.isEnabled)
+        assertVisibleTarget(open, inside: panel, window: app.windows.firstMatch, name: "Open app")
+        record("Open app default manual Keyboard before invocation", app)
+        open.tap()
+        XCTAssertTrue(wait { !open.exists && !app.buttons["Done"].firstMatch.isHittable })
+        assertSingleSpotlightCommand(app)
+        assertKeyboardStaysClosed(app)
+        XCTAssertTrue(app.buttons["Keyboard"].firstMatch.isHittable)
+        XCTAssertFalse(app.buttons["Voice input"].exists)
+        record("Open app accepted shortcut with Keyboard still manual", app)
+    }
+
+    @MainActor
+    func testOpenAppExplicitManualKeyboardPreservesUnicodeDraftThroughHideAndReopen() {
+        let app = launchPreview(extra: ["--ui-software-keyboard"])
+        defer { app.terminate() }
+        app.buttons["Keyboard"].firstMatch.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 8))
+        let draft = app.textViews["remote.text"].firstMatch
+        let localDraft = "Local draft\ncafé"
+        XCTAssertTrue(draft.isHittable)
+        draft.tap(); draft.typeText(localDraft)
+        XCTAssertTrue(wait { draft.value as? String == localDraft })
+        app.buttons["remote.keyboard.hide"].firstMatch.tap()
+        XCTAssertTrue(wait { !app.keyboards.firstMatch.exists })
+        openDock(app)
+        app.buttons["More"].firstMatch.tap()
+        let open = app.buttons["remote.navigation.openApp"].firstMatch
+        XCTAssertTrue(open.waitForExistence(timeout: 5) && open.isHittable && open.isEnabled)
+        open.tap()
+        XCTAssertTrue(wait { !open.exists })
+        assertSingleSpotlightCommand(app)
+        assertKeyboardStaysClosed(app)
+        app.buttons["Keyboard"].firstMatch.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 8))
+        XCTAssertTrue(wait { draft.value as? String == localDraft }, "Spotlight must not submit or replace the local draft")
+        record("Open app then manual Keyboard retains exact Unicode draft", app)
+        app.buttons["remote.keyboard.hide"].firstMatch.tap()
+    }
+
+    @MainActor
+    func testOpenAppIsDisabledInViewAndCannotSendThroughItsHitRegion() {
+        let app = launchPreview()
+        defer { app.terminate() }
+        openDock(app)
+        app.buttons["More"].firstMatch.tap()
+        let panel = element("remote.controls.content", in: app)
+        XCTAssertTrue(panel.waitForExistence(timeout: 5))
+        panel.buttons["Move view"].firstMatch.tap()
+        XCTAssertTrue(wait { self.element("remote.canvas", in: app).label == "Remote desktop view" })
+        openDock(app)
+        app.buttons["More"].firstMatch.tap()
+        let open = app.buttons["remote.navigation.openApp"].firstMatch
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        XCTAssertFalse(open.isEnabled, "The model's local probe still allows control; View must independently disable navigation")
+        let before = probeText(app)
+        // Tap the visible disabled row, never the remote canvas. This must not dismiss More or send input.
+        open.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(panel.exists)
+        XCTAssertEqual(probeText(app), before)
+        XCTAssertFalse(probeText(app).contains("key space command"))
+        assertKeyboardStaysClosed(app)
+        record("View refuses Open app without input fallthrough", app)
+    }
+
+    @MainActor
+    func testOpenAppPortraitMoreSettingsDoneAndDropRemainReachable() {
+        assertNavigationReachability(category: nil, orientation: .portrait)
+    }
+
+    @MainActor
+    func testOpenAppLandscapeMoreSettingsDoneAndDropRemainReachable() {
+        assertNavigationReachability(category: nil, orientation: .landscapeLeft)
+    }
+
+    @MainActor
+    func testOpenAppAccessibilityPortraitMoreSettingsDoneAndDropRemainReachable() {
+        assertNavigationReachability(category: "UICTContentSizeCategoryAccessibilityXXXL", orientation: .portrait)
+    }
+
+    @MainActor
+    func testOpenAppAccessibilityLandscapeMoreSettingsDoneAndDropRemainReachable() {
+        assertNavigationReachability(category: "UICTContentSizeCategoryAccessibilityXXXL", orientation: .landscapeLeft)
+    }
+
+    @MainActor
+    func testOverflowingPortraitMoreKeepsPointerFollowPanelAtScrollViewport() throws {
+        let app = launchPreview(extra: ["--ui-controls-scroll-geometry"])
+        defer { app.terminate() }
+        openDock(app)
+        app.buttons["More"].firstMatch.tap()
+        let scroll = app.scrollViews["remote.controls.scroll"].firstMatch
+        XCTAssertTrue(scroll.waitForExistence(timeout: 5))
+        XCTAssertTrue(wait {
+            guard let geometry = self.controlsGeometry(in: app) else { return false }
+            return geometry.panel.height > 0 && !geometry.blocked && geometry.content.height > geometry.panel.height + 400
+        })
+        let before = try XCTUnwrap(controlsGeometry(in: app))
+        let viewport = scroll.frame
+        XCTAssertLessThan(viewport.height, app.windows.firstMatch.frame.height * 0.8,
+                          "This must exercise the ordinary short detent, with the trackpad still admitted")
+        XCTAssertFalse(before.blocked)
+        assertSameFrame(before.panel, viewport)
+        XCTAssertGreaterThan(before.content.height, viewport.height + 400, "The content must actually overflow")
+        record("Overflowing short More before content scroll", app)
+
+        // The fixture scrolls the native ScrollView itself. A sheet swipe could expand its
+        // detent instead, hiding the production bug by blocking pointer following entirely.
+        let fixture = app.buttons["remote.controls.geometryScroll"].firstMatch
+        XCTAssertTrue(fixture.isHittable)
+        fixture.tap()
+        XCTAssertTrue(wait {
+            guard let geometry = self.controlsGeometry(in: app) else { return false }
+            return geometry.content.minY < before.content.minY - 100
+        }, "The regression is invalid unless actual content moved inside the viewport")
+        let after = try XCTUnwrap(controlsGeometry(in: app))
+        XCTAssertFalse(after.blocked, "Keep the production nonblocking short-detent path under test")
+        assertSameFrame(scroll.frame, viewport)
+        assertSameFrame(after.panel, viewport)
+        assertSameFrame(after.panel, before.panel)
+        record("Overflowing short More retains stationary pointer-follow panel", app)
+        XCTAssertFalse(probeText(app).contains("key space command"))
+    }
+
+    private struct ControlsGeometry {
+        let panel: CGRect
+        let content: CGRect
+        let blocked: Bool
+
+        init?(_ value: String) {
+            let fields = value.split(separator: ";").reduce(into: [String: String]()) { result, entry in
+                let pair = entry.split(separator: "=", maxSplits: 1)
+                if pair.count == 2 { result[String(pair[0])] = String(pair[1]) }
+            }
+            func rect(_ key: String) -> CGRect? {
+                let values = fields[key]?.split(separator: ",").compactMap { Double($0) } ?? []
+                guard values.count == 4, values.allSatisfy({ $0.isFinite }) else { return nil }
+                return CGRect(x: values[0], y: values[1], width: values[2], height: values[3])
+            }
+            guard let panel = rect("panel"), let content = rect("content"),
+                  let blocked = fields["blocked"], ["true", "false"].contains(blocked) else { return nil }
+            self.panel = panel
+            self.content = content
+            self.blocked = blocked == "true"
+        }
+    }
+
+    @MainActor
+    private func controlsGeometry(in app: XCUIApplication) -> ControlsGeometry? {
+        let probe = element("remote.controls.geometryProbe", in: app)
+        guard probe.exists, let value = probe.value as? String else { return nil }
+        return ControlsGeometry(value)
+    }
+
+    private func assertSameFrame(_ actual: CGRect, _ expected: CGRect, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(actual.minX, expected.minX, accuracy: 1, file: file, line: line)
+        XCTAssertEqual(actual.minY, expected.minY, accuracy: 1, file: file, line: line)
+        XCTAssertEqual(actual.width, expected.width, accuracy: 1, file: file, line: line)
+        XCTAssertEqual(actual.height, expected.height, accuracy: 1, file: file, line: line)
+    }
+
+    @MainActor
+    private func assertNavigationReachability(category: String?, orientation: UIDeviceOrientation) {
+        XCUIDevice.shared.orientation = orientation
+        let app = launchPreview(extra: category.map { ["-UIPreferredContentSizeCategoryName", $0] } ?? [])
+        defer { app.terminate() }
+        openDock(app)
+        app.buttons["More"].firstMatch.tap()
+        let panel = element("remote.controls.content", in: app)
+        let open = app.buttons["remote.navigation.openApp"].firstMatch
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        record("Open app More geometry \(orientation.rawValue) \(category ?? "default")", app)
+        assertVisibleTarget(open, inside: panel, window: app.windows.firstMatch, name: "Open app")
+        let settings = app.buttons["remote.controls.settings"].firstMatch
+        let done = app.buttons["Done"].firstMatch
+        assertVisibleTarget(settings, inside: panel, window: app.windows.firstMatch, name: "Settings")
+        assertVisibleTarget(done, inside: panel, window: app.windows.firstMatch, name: "Done")
+        XCTAssertFalse(open.frame.intersects(settings.frame))
+        XCTAssertFalse(open.frame.intersects(done.frame))
+        let hold = panel.buttons["Hold click"].firstMatch
+        revealInControls(hold, app)
+        assertVisibleTarget(hold, inside: panel, window: app.windows.firstMatch, name: "Hold click")
+        hold.tap()
+        let drop = panel.buttons["Drop"].firstMatch
+        XCTAssertTrue(drop.waitForExistence(timeout: 5))
+        assertVisibleTarget(drop, inside: panel, window: app.windows.firstMatch, name: "Drop")
+        XCTAssertFalse(open.isEnabled, "Holding inside More must disable navigation immediately")
+        drop.tap()
+        revealInControls(open, app, towardTop: true)
+        XCTAssertTrue(open.isEnabled)
+        revealInControls(settings, app, towardTop: true)
+        XCTAssertTrue(settings.isHittable)
+        settings.tap()
+        let settingsPage = element("remote.controls.page", in: app)
+        let settingsDone = app.buttons["remote.controls.page.done"].firstMatch
+        XCTAssertTrue(wait { settingsPage.exists && settingsDone.isHittable },
+                      "Wait for the presented Settings page and its own Done action, not the covered More action")
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(settingsDone.frame))
+        XCTAssertFalse(app.buttons["remote.navigation.openApp"].firstMatch.isHittable,
+                       "Covered navigation must not be reachable through Settings")
+        record("Open app More retains reachable Settings and Done", app)
+        settingsDone.tap()
+        XCTAssertTrue(wait { !settingsPage.exists && !settingsDone.exists && !panel.isHittable })
+        XCTAssertFalse(probeText(app).contains("key space command"))
+        XCTAssertFalse(app.buttons["Voice input"].exists)
+    }
+
+    @MainActor
+    private func revealInControls(_ target: XCUIElement, _ app: XCUIApplication, towardTop: Bool = false) {
+        let scroll = app.scrollViews["remote.controls.scroll"].firstMatch
+        for _ in 0..<4 where !target.isHittable || !app.windows.firstMatch.frame.contains(target.frame) {
+            XCTAssertTrue(scroll.exists, "Overflow must have a real scroll container")
+            if towardTop { scroll.swipeDown() } else { scroll.swipeUp() }
+        }
+        XCTAssertTrue(target.isHittable)
+    }
+
+    @MainActor
+    private func probeText(_ app: XCUIApplication) -> String {
+        element("remote.inputProbe", in: app).value as? String ?? ""
+    }
+
+    @MainActor
+    private func assertSingleSpotlightCommand(_ app: XCUIApplication) {
+        XCTAssertTrue(wait { self.probeText(app).contains("key space command") })
+        let semantic = probeText(app).components(separatedBy: " | ").filter {
+            $0.contains(" key ") || $0.contains(" text") || $0.contains(" clipboard")
+        }
+        XCTAssertEqual(semantic.count, 1, "Open app emits only one shortcut, never text, Return or clipboard")
+        XCTAssertTrue(semantic.first?.hasSuffix("key space command") == true)
+    }
+
+    @MainActor
+    private func assertKeyboardStaysClosed(_ app: XCUIApplication) {
+        let unexpected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            app.keyboards.firstMatch.exists || app.textViews["remote.text"].exists || app.buttons["remote.keyboard.hide"].exists
+        }, object: nil)
+        unexpected.isInverted = true
+        XCTAssertEqual(XCTWaiter.wait(for: [unexpected], timeout: 1.5), .completed,
+                       "Spotlight cannot automatically open the local editor")
+    }
+
+    @MainActor
+    private func launchPreview(extra: [String] = [], explicitManualKeyboard: Bool = true) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill", "--ui-input-probe", "--ui-probe-quiet",
-                               "-FarsideBottomControls", "YES",
-                               "-FarsideAutoKeyboard", "NO"] + extra
+                               "-FarsideBottomControls", "YES"]
+            + (explicitManualKeyboard ? ["-FarsideAutoKeyboard", "NO"] : ["--ui-auto-keyboard-default-check"]) + extra
         app.launch()
         let handle = app.buttons["Show controls"].firstMatch
         if !handle.waitForExistence(timeout: 3) {

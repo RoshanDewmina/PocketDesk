@@ -38,6 +38,9 @@ struct NativeSessionView: View {
     @State private var controlsPath: [ControlsPage] = []
     @State private var controlsDetent: PresentationDetent = .large
     @State private var panelFrame: CGRect = .zero
+    #if DEBUG
+    @State private var controlsProbeContentFrame: CGRect = .zero
+    #endif
     @State private var curtainPreview = false
     @State private var showVoiceInput = false
     @State private var showClipboardRow = false
@@ -2433,7 +2436,7 @@ struct NativeSessionView: View {
     /// Settings pages cover the picture; the key panel never does.
     private var controlsBlockInput: Bool {
         guard showControls else { return false }
-        if controlsAsOverlay { return showOverlaySettings || accessibleCommands }
+        if controlsAsOverlay { return showOverlaySettings || controlsNeedScrolling }
         return !controlsPath.isEmpty || controlsDetent == .large
     }
 
@@ -2458,9 +2461,9 @@ struct NativeSessionView: View {
         return showsCurtainRow || showsDisplayRow || showsBigTextRow || showsCouchRow || model.awaySupported
     }
 
-    /// Header, two rows of keys and up to three session rows. Nothing in the panel scrolls.
+    /// Reserve the navigation row as well as the existing keys; shorter windows can scroll.
     private var panelHeight: CGFloat {
-        var height: CGFloat = 288
+        var height: CGFloat = 368
         if bottomControls {
             if showsTouchModeInPanel { height += 56 }
             if showsDisplayRow { height += 14 + 52 }
@@ -2475,9 +2478,46 @@ struct NativeSessionView: View {
         return height
     }
 
-    private var panelDetent: PresentationDetent { accessibleCommands ? .large : .height(panelHeight) }
+    private var controlsNeedScrolling: Bool { dynamicTypeSize.isAccessibilitySize || accessibleCommands }
+    private var panelDetent: PresentationDetent { controlsNeedScrolling ? .large : .height(panelHeight) }
 
     private var macKeysDisabled: Bool { !model.canControl || panMode }
+
+    private var openAppAvailable: Bool {
+        showControls && controlsPath.isEmpty && !showOverlaySettings && scenePhase == .active &&
+            !panMode && !keyboardOpen && !showVoiceInput && !primingMicrophone &&
+            voiceInput.phase == .idle && !voiceLocked && model.canOpenMacApp
+    }
+
+    private func openAppFromControls() {
+        // Read local presentation state again at invocation; canControl alone does not encode View.
+        guard openAppAvailable, model.openMacApp() else { return }
+        closeControls() // Queue acceptance only. Keep Keyboard a separate, deliberate action.
+    }
+
+    private var openAppRow: some View {
+        Button(action: openAppFromControls) {
+            HStack(spacing: 12) {
+                Image(systemName: "magnifyingglass").accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Open app…").font(.subheadline.weight(.semibold))
+                    Text("Spotlight · ⌘Space").font(.caption).foregroundStyle(Farside.Palette.ash)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(Farside.Palette.bone)
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(.rect)
+            .farsidePlate(Farside.Radius.control, fill: Farside.Palette.panel, stroke: Farside.Palette.line2)
+        }
+        .buttonStyle(.plain)
+        .disabled(!openAppAvailable)
+        .accessibilityLabel("Open app…")
+        .accessibilityHint("Shows or hides Spotlight on your Mac. Use Keyboard to search.")
+        .accessibilityIdentifier("remote.navigation.openApp")
+    }
 
     private var controlsSheet: some View {
         NavigationStack(path: $controlsPath) {
@@ -2486,7 +2526,7 @@ struct NativeSessionView: View {
                 .navigationDestination(for: ControlsPage.self) { controlsPage($0) }
         }
         .tint(Farside.Palette.bone)
-        .presentationDetents(accessibleCommands ? [.large] : [panelDetent, .large], selection: $controlsDetent)
+        .presentationDetents(controlsNeedScrolling ? [.large] : [panelDetent, .large], selection: $controlsDetent)
         .presentationBackgroundInteraction(.enabled(upThrough: panelDetent))
         .presentationDragIndicator(.visible)
         .farsideSheet()
@@ -2501,14 +2541,48 @@ struct NativeSessionView: View {
         .onAppear { controlsDetent = controlsPath.isEmpty ? panelDetent : .large }
     }
 
-    @ViewBuilder private var controlsPanel: some View {
-        if accessibleCommands {
+    private var controlsPanel: some View {
+        ScrollViewReader { reader in
             ScrollView { controlsPanelContent }
+                // Pointer following needs the stationary occluding viewport, not its moving content.
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { panelFrame = $0 }
                 .accessibilityIdentifier("remote.controls.scroll")
-        } else {
-            controlsPanelContent
+                #if DEBUG
+                .overlay(alignment: .bottomTrailing) {
+                    if controlsGeometryProbeEnabled {
+                        VStack {
+                            Color.clear.frame(width: 1, height: 1)
+                                .allowsHitTesting(false)
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel("Controls geometry probe")
+                                .accessibilityValue(controlsGeometryProbeValue)
+                                .accessibilityIdentifier("remote.controls.geometryProbe")
+                            Button("Scroll fixture") {
+                                // Scroll real overflowing content without changing the sheet detent.
+                                reader.scrollTo("controls.geometry.bottom", anchor: .bottom)
+                            }
+                            .frame(minWidth: 44, minHeight: 44)
+                            .accessibilityIdentifier("remote.controls.geometryScroll")
+                        }
+                    }
+                }
+                #endif
         }
     }
+
+    #if DEBUG
+    private var controlsGeometryProbeEnabled: Bool {
+        offlineLayoutCheck && model.inputProbe != nil && !controlsAsOverlay &&
+            LaunchOptions.has("--ui-controls-scroll-geometry")
+    }
+
+    private var controlsGeometryProbeValue: String {
+        func rect(_ frame: CGRect) -> String {
+            [frame.minX, frame.minY, frame.width, frame.height].map { String(Double($0)) }.joined(separator: ",")
+        }
+        return "panel=\(rect(panelFrame));content=\(rect(controlsProbeContentFrame));blocked=\(controlsBlockInput)"
+    }
+    #endif
 
     private var controlsPanelContent: some View {
         VStack(spacing: 0) {
@@ -2540,6 +2614,8 @@ struct NativeSessionView: View {
                     Label("Settings", systemImage: "gearshape")
                         .font(.body.weight(.medium))
                         .foregroundStyle(Farside.Palette.bone)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(.rect)
                 }
                 .accessibilityShowsLargeContentViewer()
                 .accessibilityIdentifier("remote.controls.settings")
@@ -2553,20 +2629,31 @@ struct NativeSessionView: View {
             if showsTouchModeInPanel {
                 panelTouchModeSegments.dynamicTypeSize(...commandTypeLimit).padding(.bottom, 12)
             }
+            openAppRow.padding(.bottom, 12)
             macKeys(compact: false)
             if showsSessionRows {
-                // The panel height is fixed and nothing in it scrolls, so the rows stop growing at
-                // xxxLarge like the header. Each row is also in Settings, which scrolls at any size.
+                // Keep the existing row typography; overflow remains reachable by scrolling.
                 sessionRows.padding(.top, 14)
                     .dynamicTypeSize(...commandTypeLimit)
             }
             Spacer(minLength: 0)
+            #if DEBUG
+            if controlsGeometryProbeEnabled {
+                Color.clear.frame(height: 600)
+                    .id("controls.geometry.bottom")
+                    .accessibilityHidden(true)
+            }
+            #endif
         }
         .padding(.horizontal, 16)
         .padding(.top, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Farside.Palette.void2)
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { panelFrame = $0 }
+        #if DEBUG
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+            if controlsGeometryProbeEnabled { controlsProbeContentFrame = $0 }
+        }
+        #endif
         .onAppear { if model.displays.isEmpty { model.requestDisplays() } }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("remote.controls.content")
@@ -2588,7 +2675,7 @@ struct NativeSessionView: View {
 
     /// Things you do to the Mac, each printed with its Mac shortcut or phone gesture.
     private func macKeys(compact: Bool) -> some View {
-        // There are always eight non-scrolling keys. Eager cells keep them present after
+        // Keep the existing eight eager keys. They remain present after
         // keyboard rotation/dismissal, when a lazy grid can retain a zero-sized viewport.
         let columns = PhoneCommandAccessibility.columns(compact: compact, accessible: accessibleCommands)
         return Grid(horizontalSpacing: 8, verticalSpacing: 8) {
@@ -2850,10 +2937,10 @@ struct NativeSessionView: View {
         .accessibilityIdentifier("remote.displayRow")
     }
 
-    /// Landscape and iPad: one row of keys over the picture, with Settings and Done at the end.
+    /// Landscape and iPad keep Settings and Done outside the scrollable command content.
     private var overlayControls: some View {
         Group {
-            if accessibleCommands {
+            if controlsNeedScrolling {
                 VStack(spacing: 10) {
                     HStack {
                         Text(moreTileTitle).font(.headline).accessibilityAddTraits(.isHeader)
@@ -2865,8 +2952,13 @@ struct NativeSessionView: View {
                         controlsDoneButton
                     }
                     if showsTouchModeInPanel { panelTouchModeSegments }
-                    ScrollView { macKeys(compact: false) }
-                        .accessibilityIdentifier("remote.controls.scroll")
+                    ScrollView {
+                        VStack(spacing: 10) {
+                            openAppRow
+                            macKeys(compact: false)
+                        }
+                    }
+                    .accessibilityIdentifier("remote.controls.scroll")
                 }
                 .padding(12)
                 .frame(maxWidth: 860)
@@ -2901,13 +2993,18 @@ struct NativeSessionView: View {
                     .frame(maxWidth: 360)
             }
             HStack(alignment: .center, spacing: 10) {
-                macKeys(compact: true)
-                    .frame(maxWidth: .infinity)
+                ScrollView {
+                    VStack(spacing: 10) {
+                        openAppRow
+                        macKeys(compact: true)
+                    }
+                }
+                .accessibilityIdentifier("remote.controls.scroll")
+                .frame(maxWidth: .infinity)
                 VStack(spacing: 6) {
                     Button { showOverlaySettings = true } label: { Image(systemName: "gearshape") }
-                        .buttonStyle(FarsideRoundButtonStyle(diameter: PhoneCommandAccessibility.target(40, enabled: PhoneCommandAccessibility.targetsEnabled)))
-                        .frame(minWidth: PhoneCommandAccessibility.target(40, enabled: PhoneCommandAccessibility.targetsEnabled),
-                               minHeight: commandTargetHeight)
+                        .buttonStyle(FarsideRoundButtonStyle(diameter: 44))
+                        .frame(minWidth: 44, minHeight: 44)
                         .contentShape(.rect)
                         .accessibilityLabel("Settings")
                         .accessibilityIdentifier("remote.controls.settings")
@@ -2920,6 +3017,7 @@ struct NativeSessionView: View {
         .padding(.horizontal, 8)
         .padding(.bottom, regularSessionLayout ? 0 : 6)
         .frame(maxWidth: 860)
+        .frame(maxHeight: max(180, min(620, canvasFrame.height * 0.8)))
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { panelFrame = $0 }
         .onAppear { if model.displays.isEmpty { model.requestDisplays() } }
         .accessibilityElement(children: .contain)
@@ -2965,6 +3063,7 @@ struct NativeSessionView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done", systemImage: "checkmark") { closeControls() }
+                        .accessibilityIdentifier("remote.controls.page.done")
                 }
             }
     }
