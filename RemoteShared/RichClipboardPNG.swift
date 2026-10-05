@@ -6,11 +6,32 @@ import UniformTypeIdentifiers
 struct RichClipboardPNG {
     let data: Data
     let metadata: RichImageMetadata
+    /// PNG properties queries can initialize a decoder. Bound the mandatory first IHDR
+    /// directly before invoking ImageIO at all; ImageIO subsequently verifies the image.
+    private static let pngSignature: [UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
+    static func preflightPNG(_ data: Data) throws {
+        guard data.starts(with: pngSignature) else { return } // Explicitly selected other raster formats use ImageIO metadata checks.
+        guard data.count >= 33 else { throw ClipboardStatus.invalid }
+        let header = Array(data.prefix(33))
+        func uint32(_ offset: Int) -> UInt32 {
+            (UInt32(header[offset]) << 24) | (UInt32(header[offset + 1]) << 16)
+                | (UInt32(header[offset + 2]) << 8) | UInt32(header[offset + 3])
+        }
+        guard uint32(8) == 13, Array(header[12..<16]) == [73, 72, 68, 82],
+              header[26] == 0, header[27] == 0, header[28] <= 1 else { throw ClipboardStatus.invalid }
+        let width = Int(uint32(16)), height = Int(uint32(20)), depth = header[24], color = header[25]
+        let allowedDepth = [UInt8(0), 3].contains(color) ? [UInt8(1), 2, 4, 8].contains(depth) : depth == 8
+        guard (1...RichClipboardLimits.dimension).contains(width), (1...RichClipboardLimits.dimension).contains(height),
+              width <= RichClipboardLimits.pixels / height,
+              width <= RichClipboardLimits.decodedBytes / 4 / height,
+              [UInt8(0), 2, 3, 4, 6].contains(color), allowedDepth else { throw ClipboardStatus.tooLarge }
+    }
     /// Metadata is checked before pixel allocation. Only one raster image is accepted. The
     /// transformed thumbnail normalizes orientation; encoding a new PNG strips source metadata.
     static func normalize(_ data: Data) throws -> RichClipboardPNG {
-        guard !data.isEmpty, data.count <= RichClipboardLimits.encodedBytes,
-              let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+        guard !data.isEmpty, data.count <= RichClipboardLimits.encodedBytes else { throw ClipboardStatus.tooLarge }
+        try preflightPNG(data)
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
               CGImageSourceGetCount(source) == 1,
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
@@ -35,8 +56,9 @@ struct RichClipboardPNG {
     }
     static func validateIncoming(_ data: Data, expected: RichImageMetadata) throws -> RichClipboardPNG {
         try expected.validate()
-        guard data.count == expected.bytes, ClipboardDigest.hex(data) == expected.digest,
-              let source = CGImageSourceCreateWithData(data as CFData, nil),
+        guard data.count == expected.bytes, data.starts(with: pngSignature), ClipboardDigest.hex(data) == expected.digest else { throw ClipboardStatus.invalid }
+        try preflightPNG(data)
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               CGImageSourceGetType(source) as String? == UTType.png.identifier else { throw ClipboardStatus.invalid }
         let value = try normalize(data)
         guard value.metadata.width == expected.width, value.metadata.height == expected.height else { throw ClipboardStatus.invalid }
