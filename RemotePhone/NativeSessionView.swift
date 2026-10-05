@@ -52,6 +52,9 @@ struct NativeSessionView: View {
     @State private var pinchRevision: UInt64 = 0
     @State private var revision: UInt64 = 0
     @State private var keyboardBarFrame: CGRect = .zero
+    @State private var pendingTaskView: TaskViewRestoreIntent?
+    @State private var pendingTaskViewFit = false
+    @State private var taskViewRestoreToken = 0
     @State private var focusedWindowGeometry: FocusGeometry?
     @State private var focusedWindowEpoch: UInt64 = 0
     @State private var previousWindowViewport: ResumeViewport?
@@ -280,17 +283,17 @@ struct NativeSessionView: View {
             }
         }
         .onChange(of: connection.connected) { _, connected in
-            if !connected { cancelGesture(); cancelVoiceInput() }
+            if !connected { cancelTaskView(); cancelGesture(); cancelVoiceInput() }
             if !offlineLayoutCheck && !model.fresh { lockVisible = true }
         }
         .onChange(of: model.contentConcealed) { _, concealed in
-            if concealed { cancelGesture(); cancelVoiceInput() }
+            if concealed { cancelTaskView(); cancelGesture(); cancelVoiceInput() }
         }
         .onChange(of: connection.inputRecovering) { _, recovering in
             if recovering { UIAccessibility.post(notification: .announcement, argument: "Input catching up") }
         }
         .onChange(of: model.privacyShield) { _, shielded in
-            if shielded { cancelGesture() }
+            if shielded { cancelTaskView(); cancelGesture() }
             if shielded && voiceInput.phase != .requestingPermission { voiceInput.pauseForInterruption() }
         }
         .onChange(of: model.canControl) { _, allowed in
@@ -386,7 +389,14 @@ struct NativeSessionView: View {
                                               barFrame: keyboardBarFrame, canvasFrame: canvasFrame,
                                               manualViewportRevision: manualViewportRevision,
                                               preview: offlineLayoutCheck))
-        .onChange(of: model.sourceSize) { _, _ in scheduleGeometry() }
+        .onChange(of: model.sourceSize) { _, _ in scheduleGeometry(); settleTaskView() }
+        .onChange(of: model.currentDisplayID) { _, _ in settleTaskView() }
+        .onChange(of: model.controlAllowed) { _, allowed in if !allowed { cancelTaskView() } }
+        .onChange(of: model.captureScopeViewOnly) { _, narrow in if narrow { cancelTaskView() } }
+        .onChange(of: model.sessionMode) { _, mode in if mode != .picture { cancelTaskView() } }
+        .onChange(of: model.pendingDisplayID) { _, _ in settleTaskView() }
+        .onChange(of: model.bigText.pendingTarget) { _, _ in settleTaskView() }
+        .onChange(of: model.windowWorkspaceAllowed) { _, allowed in if allowed { settleTaskView() } }
         .onChange(of: model.geometryEpoch) { _, _ in clearFocusedWindow() }
         .onChange(of: model.windowWorkspaceAllowed) { _, allowed in if !allowed { clearFocusedWindow(); model.windowWorkspace.retire() } }
         .onChange(of: horizontalSizeClass, initial: true) { _, sizeClass in
@@ -467,7 +477,7 @@ struct NativeSessionView: View {
                 model.clipboard.stopPasteboardMonitoring()
             }
         }
-        .onDisappear { cancelGesture(); cancelVoiceInput(); model.clipboard.stopPasteboardMonitoring() }
+        .onDisappear { cancelTaskView(); cancelGesture(); cancelVoiceInput(); model.clipboard.stopPasteboardMonitoring() }
         .sensoryFeedback(.success, trigger: model.clipboard.automaticCopyRevision)
         .task(id: model.acceptedClicks) {
             guard model.acceptedClicks > 0 else { return }
@@ -1621,6 +1631,11 @@ struct NativeSessionView: View {
     private var shortcutChipRow: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
+                ForEach(model.activePersonalChords) { chord in
+                    Button(chord.label) { model.runPersonalChord(chord) }
+                        .font(.subheadline.weight(.semibold)).padding(.horizontal, 16).padding(.vertical, 10)
+                        .buttonStyle(.glass).disabled(!model.windowWorkspaceAllowed || model.shortcutWorkspace.busy)
+                }
                 ForEach(model.shortcutChips) { chip in
                     Button { model.tapShortcut(chip) } label: {
                         Text(chip.label)
@@ -1646,7 +1661,7 @@ struct NativeSessionView: View {
 
     private var keyboardBar: some View {
         VStack(spacing: 8) {
-            if !model.shortcutChips.isEmpty { shortcutChipRow }
+            if !model.shortcutChips.isEmpty || !model.activePersonalChords.isEmpty { shortcutChipRow }
             if SessionChromePolicy.keyboardBar(regular: regularSessionLayout, hardware: regularHardwareKeyboard) {
                 HStack(spacing: 8) {
                     Group {
@@ -2043,7 +2058,7 @@ struct NativeSessionView: View {
 
     /// Pages pushed inside Controls. The key panel is the root.
     private enum ControlsPage: String, Hashable, CaseIterable {
-        case settings, workspace, display, picture, pointer, touch, view, clipboard, keyboard, steer, diagnostics
+        case settings, workspace, shortcuts, taskViews, display, picture, pointer, touch, view, clipboard, keyboard, steer, diagnostics
 
         static func named(_ name: String) -> ControlsPage? { ControlsPage(rawValue: name) }
     }
@@ -2546,6 +2561,14 @@ struct NativeSessionView: View {
                     applyFocusedWindow()
                 }
             }
+        case .shortcuts: settingsForm("Shortcut buttons") { ShortcutWorkspaceView(model: model) }
+        case .taskViews:
+            settingsForm("Saved task views") {
+                TaskViewWorkspaceView(model: model, viewport: recordableViewport, canSave: model.windowWorkspaceAllowed,
+                                      manualRevision: manualViewportRevision) { view, display, fit in
+                    startTaskView(view, display: display, fit: fit)
+                }
+            }.onAppear { model.requestDisplays() }
         case .display: settingsForm("Display") { displaySection }
         case .picture: settingsForm("Picture") { pictureSection }
         case .pointer: settingsForm("Pointer") { feelSection }
@@ -2590,7 +2613,13 @@ struct NativeSessionView: View {
     private func settingsPage(session: Bool) -> some View {
         settingsForm("Settings") {
             if !couch && model.hostFeatures.contains(WorkspaceUtilities.feature) && WorkspaceUtilities.isEnabled() {
-                Section { summaryRow("Workspace", "macwindow", value: "Apps and focused view", page: .workspace) }
+                Section {
+                    summaryRow("Workspace", "macwindow", value: "Apps and focused view", page: .workspace)
+                    summaryRow("Saved task views", "bookmark", value: "Save and restore", page: .taskViews)
+                }
+            }
+            if !couch && WorkspaceUtilities.isEnabled() && connection.presentationHostTrust != nil {
+                Section { summaryRow("Shortcut buttons", "pin", value: "Choose and order", page: .shortcuts) }
             }
             if session && showsCouchRow {
                 Section { couchPanelRow }
@@ -2962,7 +2991,7 @@ struct NativeSessionView: View {
 
     private var zoomBinding: Binding<Double> {
         Binding(get: { Double(viewport.zoom) }, set: { value in
-            focusedWindowGeometry = nil
+            cancelTaskView(); focusedWindowGeometry = nil
             cancelGesture()
             let center = CGPoint(x: viewport.safeRect.midX, y: viewport.safeRect.midY)
             viewport.setZoom(CGFloat(value), anchoredAt: center)
@@ -3329,7 +3358,7 @@ struct NativeSessionView: View {
             }
             if !couchTouched { couchTouched = true }
         }
-        if command.movesViewport { focusedWindowGeometry = nil; manualViewportRevision &+= 1 }
+        if command.movesViewport { cancelTaskView(); focusedWindowGeometry = nil; manualViewportRevision &+= 1 }
         switch command {
         case .precision(let phase, let finger):
             return precisionTap.handle(phase, finger: finger, viewport: viewport, model: model)
@@ -3479,7 +3508,7 @@ struct NativeSessionView: View {
             MiniMapView(viewport: current, pointer: pointer, maxSize: miniMapSize, thumbnail: miniMapThumbnail,
                         onPan: { translation in
                             model.pointerLocator.clear()
-                            focusedWindowGeometry = nil
+                            cancelTaskView(); focusedWindowGeometry = nil
                             viewport.pan(by: translation)
                             #if DEBUG
                             let visible = viewport.visibleSourceRect
@@ -3490,7 +3519,7 @@ struct NativeSessionView: View {
                         onJump: { point in
                             model.pointerLocator.clear()
                             withAnimation(reduceMotion ? nil : .smooth(duration: 0.28, extraBounce: 0)) {
-                                focusedWindowGeometry = nil
+                                cancelTaskView(); focusedWindowGeometry = nil
                                 viewport.center(onSourcePoint: point)
                             }
                             #if DEBUG
@@ -3572,6 +3601,52 @@ struct NativeSessionView: View {
             withAnimation(reduceMotion ? nil : .snappy) { viewport.updateSafeInsets(insets) }
         }
         applyFocusedWindow()
+        settleTaskView()
+    }
+
+    private func startTaskView(_ view: SavedTaskView, display: UInt32, fit: Bool) {
+        guard let hostKey = model.taskViewHostKey, view.hostKey == hostKey, model.savedTaskViews.contains(view),
+              model.windowWorkspaceAllowed, model.canChooseDisplay else { return }
+        cancelGesture(); clearFocusedWindow()
+        model.taskViewMessage = "Waiting for the current display…"
+        pendingTaskView = .init(id: UUID(), view: view, hostKey: hostKey, session: connection.presentationSessionID,
+            display: display, requestedEpoch: model.geometryEpoch, startedAt: ProcessInfo.processInfo.systemUptime)
+        pendingTaskViewFit = fit
+        if display != model.currentDisplayID, !model.selectDisplay(display) { cancelTaskView(); return }
+        closeControls(); controlsCollapsed = true
+        taskViewRestoreToken &+= 1
+        let token = taskViewRestoreToken
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(10))
+            guard token == taskViewRestoreToken, pendingTaskView != nil else { return }
+            cancelTaskView(); model.taskViewMessage = "The display didn’t settle. Choose a display again."
+        }
+        settleTaskView()
+    }
+    private func cancelTaskView() { pendingTaskView = nil; taskViewRestoreToken &+= 1 }
+    private func settleTaskView() {
+        guard let intent = pendingTaskView else { return }
+        guard !model.contentConcealed, !model.privacyShield, scenePhase == .active,
+              connection.connected, connection.presentationSessionID == intent.session else { cancelTaskView(); return }
+        let decision = intent.decision(hostKey: model.taskViewHostKey, session: connection.presentationSessionID,
+            epoch: model.geometryEpoch, display: model.currentDisplayID, size: model.sourceSize,
+            pendingDisplay: model.pendingDisplayID != nil, geometrySettled: model.bigText.pendingTarget == nil && !geometryPending &&
+                model.inlinePresentationAdmission != nil && viewport.sourceSize == model.sourceSize,
+            allowed: true, now: ProcessInfo.processInfo.systemUptime)
+        switch decision {
+        case .wait: return
+        case .cancel: cancelTaskView()
+        case .fit:
+            guard model.windowWorkspaceAllowed else { return }
+            viewport.setMode(.fit); cancelTaskView(); reportSettledViewport()
+            model.taskViewMessage = "Display size changed. Showing the whole display in Fit."
+        case .restore(let saved):
+            guard model.windowWorkspaceAllowed else { return }
+            if pendingTaskViewFit { viewport.setMode(.fit) } else { viewport.restore(saved) }
+            // A saved controlling view never changes the current input/view authority.
+            if saved.viewOnly { setInteractionMode(true) }
+            cancelTaskView(); reportSettledViewport(); model.taskViewMessage = "View restored on the display you chose."
+        }
     }
 
     private func applyFocusedWindow() {
@@ -3611,6 +3686,7 @@ struct NativeSessionView: View {
     }
 
     private func setMode(_ mode: ViewportMode) {
+        cancelTaskView()
         focusedWindowGeometry = nil
         guard mode != viewport.mode || !viewport.isAtBaseline else { return }
         cancelGesture()

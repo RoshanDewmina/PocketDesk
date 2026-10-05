@@ -2878,6 +2878,7 @@ final class RemoteHostModel: ObservableObject {
         }
     }
 
+    private let scopedChordWorkspace = HostShortcutWorkspace()
     private let windowWorkspace = HostWindowWorkspace()
     private var windowWorkspaceTask: Task<Void, Never>?
     private var windowWorkspaceAllowed: Bool {
@@ -2888,6 +2889,7 @@ final class RemoteHostModel: ObservableObject {
         !screenLocked && !HostScreenLock.isLocked() && !bigTextHandlingScreenChanges && !bigText.isChanging
     }
     private func retireWindowWorkspace() {
+        scopedChordWorkspace.retire()
         windowWorkspaceTask?.cancel(); windowWorkspaceTask = nil; windowWorkspace.retire()
     }
     private func receiveWindowWorkspace(_ action: RemoteAction) {
@@ -2920,12 +2922,53 @@ final class RemoteHostModel: ObservableObject {
         }
     }
 
+    private func receiveScopedChordWorkspace(_ action: RemoteAction) {
+        guard (try? action.validateWorkspace()) == true, let frame = action.workspace, frame.kind == .scopedChord,
+              let request = try? frame.decode(ScopedChordRequest.self), (try? request.validate()) != nil else { return }
+        guard action.epoch == inputEpoch.value, windowWorkspaceAllowed else { scopedChordWorkspace.retire(); return }
+        guard scopedChordWorkspace.admitRequest(frame.requestID) else { return }
+        let session = connection.presentationSessionID, epoch = inputEpoch.value, contextGeneration = scopedChordWorkspace.currentGeneration
+        func reply(_ value: ScopedChordReply) {
+            guard connection.presentationSessionID == session, inputEpoch.value == epoch,
+                  let response = try? WorkspaceFrame(kind: .scopedChord, requestID: frame.requestID, value: value) else { return }
+            _ = connection.sendControl(.workspace(response, epoch: epoch))
+        }
+        releaseRemoteInput(notifyPhone: true)
+        if request.operation == .context {
+            Task { [weak self] in
+                guard let self, !(await HostSecureFocus.isSecureNow()), self.windowWorkspaceAllowed,
+                      self.connection.presentationSessionID == session, self.inputEpoch.value == epoch, self.scopedChordWorkspace.currentGeneration == contextGeneration,
+                      let bundle = request.bundleID else { reply(.init(outcome: .rejected)); return }
+                reply(self.scopedChordWorkspace.issue(bundleID: bundle, session: session, epoch: epoch))
+            }
+            return
+        }
+        guard let context = request.context, let key = request.key,
+              let ticket = scopedChordWorkspace.consume(id: context, session: session, epoch: epoch),
+              let peer = connection.media else { reply(.init(outcome: .rejected)); return }
+        let action = RemoteAction(action: "key", key: key, modifiers: request.modifiers, epoch: epoch)
+        let expected = input.currentGeneration, expires = ProcessInfo.processInfo.systemUptime + 0.75
+        let service = scopedChordWorkspace
+        let submitted = input.post(owner: self, peer: peer, isLive: { $0.connection.media === $1 }, submit: { [input] authority, completion in
+            input.submit(action, upgraded: false, expires: expires, expectedGeneration: expected,
+                routeAuthority: { operation in authority { service.posting(ticket, operation: operation) } }, completion: completion)
+        }, deliver: { (model: RemoteHostModel, receipt: HostInputExecutor.Receipt) in
+            guard model.input.accepts(receipt), model.connection.presentationSessionID == session, model.inputEpoch.value == epoch else { return }
+            reply(.init(outcome: receipt.outcome.accepted ? .posted : .rejected))
+        })
+        if !submitted { reply(.init(outcome: .rejected)) }
+    }
+
     private func receive(_ data: Data) {
         guard let action = try? JSONDecoder().decode(RemoteAction.self, from: data) else {
             countInput("rejected-parse"); connection.endPhoneInputSession("Invalid phone input."); return
         }
         countInput("received")
-        if action.action == "workspace" { receiveWindowWorkspace(action); return }
+        if action.action == "workspace" {
+            if action.workspace?.kind == .scopedChord { receiveScopedChordWorkspace(action) }
+            else { receiveWindowWorkspace(action) }
+            return
+        }
         if action.action == "wakeRequest" { receiveWakeRequest(action); return }
         guard SharedCaptureScopePolicy.permits(action.action, kind: captureScopeKind) else {
             countInput("rejected-capture-scope"); return
