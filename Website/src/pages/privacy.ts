@@ -1,5 +1,5 @@
-// Source: Docs/launch/PRIVACY-POLICY.md §2 (draft of 28 Sep 2026), with "Farside Remote" renamed to the
-// Anywhere plan used on this site. Every [TO FILL] / [CONFIRM] marker is kept in the HTML comment below.
+// Source: Docs/launch/PRIVACY-POLICY.md §2; clipboard, metadata, removal and purchase wording
+// reconciled with main 4524689 on 5 Oct 2026. Unpublished draft; remaining review markers stay below.
 
 import { config } from "../../site.config";
 import { html, raw } from "../lib/html";
@@ -12,21 +12,21 @@ const OPEN_ITEMS = [
   "[TO FILL] Who we are: legal entity or individual name, registered address, country (config.contact.legalName / postalAddress).",
   "[TO FILL] privacy@ address on the real domain (config.contact.privacyEmail).",
   "[TO FILL] EU/UK representative or data protection officer, only if counsel says one is required. Not rendered.",
-  "[CONFIRM] Clipboard wording. Rendered as user-initiated text transfer both ways, not stored or logged (PRODUCT.md, 28 Sep night merge). Check against the shipping build.",
+  "[CONFIRM] Exact shipping clipboard behavior: default-enabled negotiated Mac-to-phone sync during an admitted control session, user-initiated phone-to-Mac Paste, and local-only phone clipboard writes with a five-minute expiry request. No user-facing sync toggle is claimed.",
   "[CONFIRM] Connection-service logging and retention once the production stack is final. Recommended: no request logs beyond 7 days, none containing message bodies.",
   "[CONFIRM] STUN configuration (rendered as 'may contact a STUN server operated by Cloudflare').",
   "[CONFIRM] Notifications section assumes agent alerts ship in 1.0 as a beta (PRODUCT D29). Remove the section if push does not ship.",
-  "[CONFIRM] Whether Apple's original transaction ID is stored hashed (SUBSCRIPTION-SETUP.md proposes an HMAC). Add 'stored as a keyed hash' once true.",
-  "[TO FILL] Subscription record retention after the active term (rendered: 90 days, to be confirmed).",
+  "[CONFIRM] Deployed purchase storage matches the source's keyed hash of the original transaction ID; complete production service and purchase-lifecycle acceptance.",
+  "[CONFIRM] Deployed cleanup matches subscription expiry/grace plus 90 days and notification deduplication after 90 days. Verify scheduler execution and provider backups/logs before publication; these are eligibility thresholds, not deletion receipts.",
   "[TO FILL] Support email retention (rendered: 24 months, to be confirmed).",
   "[TO FILL] Website hosting provider (rendered: Cloudflare Pages, to be confirmed). [CONFIRM] no cookies or analytics on the site.",
   "[CONFIRM] Sparkle update check sends only IP, app version and macOS version; system profiling off.",
   "[TO FILL] If serving the EU or UK: legal bases (for example contract and legitimate interests) and international transfers. Not rendered.",
   "[TO FILL] Other recipients: email provider, support tool (rendered: 'our email provider, to be confirmed').",
   "[CONFIRM] Cloudflare's role: relay, and network, DNS and hosting services.",
-  "[CONFIRM] Approved room identifiers kept until the Mac is removed or deletion is requested.",
+  "[CONFIRM] Persisted room/authentication and entitlement metadata, authenticated deletion, retained security blocks/revocations and cleanup jobs match the deployed service. Local Forget alone is not server deletion.",
   "[TO FILL] Server request log retention (rendered: 7 days, to be confirmed).",
-  "[E] 'Remove this Mac and delete server data' in Settings is not built yet; only the email route is rendered.",
+  "[CONFIRM] Exact-build local trust retirement and authenticated server deletion/retry. A verified Mac removal marker retires usable trust but is not physical Keychain-row deletion. Provider retention and Apple billing remain separate.",
   "[TO FILL] Rights and complaint routes under the laws that apply (PIPEDA and Quebec Law 25, EU/UK GDPR, California). Rendered generically.",
   "[TO FILL] Minimum age for 'not directed to children' (13 or 16, per counsel; rendered: 13, to be confirmed).",
   "[TO FILL] Contact block: name, postal address, email.",
@@ -40,7 +40,7 @@ const S: Section[] = [
     title: "The short version",
     body: html`<ul class="short">
   <li>Farside lets you see and control your own Mac from your iPhone or iPad. There is no Farside account. We do not ask for your name, email address or phone number.</li>
-  <li>What is on your Mac’s screen, what you type and what you say travel between your own devices, encrypted. We do not record, store or look at your screen, keystrokes, clipboard or voice.</li>
+  <li>What is on your Mac’s screen, what you type and what you say travel between your own devices, encrypted. We do not record, store or look at your screen, keystrokes or voice. Clipboard text moves between your devices and is written to the receiving system clipboard as described below.</li>
   <li>Our servers introduce your devices to each other and, if you subscribe to the Anywhere plan, pass encrypted traffic along when your devices cannot connect directly. To do that they see technical details such as IP addresses, timing and data volume, and a random identifier for each paired Mac.</li>
   <li>We check your subscription with Apple. Apple handles your payment; we never see your card or Apple Account details.</li>
   <li>No ads. No tracking. No analytics or advertising SDKs. We do not sell your data.</li>
@@ -57,7 +57,7 @@ const S: Section[] = [
   <li><b>Voice input.</b> When you tap the microphone, your iPhone converts speech to text using Apple’s speech recognition on the device. Only the text is sent to your Mac, when you tap Done. We never receive audio. If on-device recognition is not available for your language, Farside turns voice input off; it does not send audio to a server instead.</li>
   <li><b>Camera.</b> Used only to scan the pairing code on your Mac. Pictures are not saved or sent.</li>
   <li><b>Local network.</b> Used to connect your phone to your Mac when they are on the same network.</li>
-  <li><b>Clipboard.</b> When you choose to copy from your Mac or paste to it, Farside moves only that text, directly between your devices and encrypted. It is not stored or logged, and Farside does not read your clipboard in the background.</li>
+  <li><b>Clipboard.</b> Text moves encrypted between your paired devices. When both devices support it, automatic Mac-to-phone text sync is enabled by default: Farside watches for changes to the Mac clipboard during an active, authorized control session. It does not send the clipboard contents already present when sync starts. Automatic sync is unavailable while the session is paused, locked, concealed, View-only or in Low Data Mode. On the phone, Farside checks clipboard metadata to offer Paste; it reads clipboard text for transfer to the Mac only when you choose the system Paste action. Farside keeps no clipboard history. Incoming Mac text replaces the phone’s system clipboard with a local-only entry and a requested five-minute expiry; text pasted into another app has that app’s retention. Text sent to the Mac can remain in its system clipboard until replaced or cleared. Concealed/transient Mac clipboard items are refused, and each transfer is limited to 256 KB.</li>
   <li><b>Settings and trust.</b> Your pairing trust is stored in the Keychain on your devices and is not synced to iCloud. Preferences such as pointer speed live on the device.</li>
 </ul>`,
   },
@@ -65,19 +65,19 @@ const S: Section[] = [
     id: "connect",
     title: "What our servers see to connect you",
     body: html`<p>When you pair a phone with a Mac, the Mac shows a code that contains a random room identifier, a one-time token, an encryption key and an expiry of about two minutes. The key stays on your two devices. Our connection service forwards connection-setup messages between them; those messages are encrypted with that key, so we cannot read them.</p>
-<p>Each time a device connects, our service receives its IP address (as any internet service does), the random room identifier, a random token and the time. It keeps live connection state in memory only while devices are connected. It keeps a list of approved room identifiers so that only paired Macs can use the service.</p>
+<p>Each time a device connects, our service receives its IP address (as any internet service does), the random room identifier, authentication proof and connection timing. It persists room/authentication hashes, connection-policy state, entitlement associations and relay credential/revocation metadata beyond the live connection. The screen-encryption key is not sent to the service. Application cleanup rules are described below; provider logs and backups need separate retention review.</p>
 <p>If a direct connection is not possible and you have the Anywhere plan, your encrypted stream passes through a relay run by our provider Cloudflare. Cloudflare can see IP addresses, port numbers, timing and how much data passed. It cannot decrypt the stream. Relay credentials are short-lived and tied to a random room identifier, not to you. To find network addresses, connection setup may also contact a STUN server operated by Cloudflare.</p>`,
   },
   {
     id: "notifications",
     title: "Notifications (agent alerts, beta)",
-    body: html`<p>Farside only asks to send notifications if you turn on agent alerts. To deliver them, your phone’s Apple push notification token is sent to our server and stored with the random room identifier of the Mac it belongs to. Notifications say a task on your Mac needs you and contain no screen contents, prompts or file names. An alert’s opaque pairing identity keeps an explicit connection tied to its originating Mac. You can turn them off in iOS Settings or in the app, which deletes the token.</p>`,
+    body: html`<p>Farside only asks to send notifications if you turn on agent alerts. To deliver them, your phone’s Apple push notification token is sent to our server and stored with the random room identifier and pairing identity of the Mac it belongs to. Notifications say a task on your Mac needs you and contain no screen contents, prompts or file names. An alert’s opaque pairing identity keeps an explicit connection tied to its originating Mac. Turning alerts off in Farside requests authenticated removal of their registration, events and reports; removal may remain pending and retry if the service is unavailable. Turning notifications off in iOS Settings stops their presentation but does not itself confirm server deletion. Session Live Activities use separate addresses so the service can end them while the phone is suspended; agent-alert opt-out does not remove those addresses, and bounded ending retries may retain them briefly.</p>`,
   },
   {
     id: "subscription",
     title: "Subscription information",
-    body: html`<p>The Anywhere plan is an auto-renewing subscription bought through Apple. Apple, not us, processes payment. To unlock relay access, the app sends the signed transaction that Apple provides to our server. Our server verifies it with Apple and stores: which subscription product it is, when it renews or expires, Apple’s identifier for the subscription (Apple’s original transaction ID), whether it is a live or test purchase, and which paired room identifiers it has enabled.</p>
-<p>We also receive notices from Apple about renewals, cancellations and refunds so that access matches your subscription. We keep this while your subscription is active and for ${tbc("90 days")} afterwards, then delete it.</p>`,
+    body: html`<p>The Anywhere plan is an auto-renewing subscription bought through Apple. Apple, not us, processes payment. To verify access, the app sends Apple’s signed transaction to our service. Our subscription record stores a keyed hash derived from Apple’s original transaction ID, the product and live/test environment, access/grace/revocation dates and device associations. We do not receive payment-card details or your Apple Account password.</p>
+<p>We also receive notices from Apple about renewals, cancellations and refunds so that access matches your subscription. Subscription records and their device associations become eligible for cleanup 90 days after the verified expiry or grace-period deadline, whichever is later. Apple notification deduplication records become eligible after 90 days. Scheduled cleanup is not a promise of deletion at an exact time, and provider logs/backups require separate review. Removing a pairing or server data does not cancel Apple billing. New purchases remain disabled in current preparation builds until the intended service has passed acceptance.</p>`,
   },
   {
     id: "support",
@@ -120,16 +120,18 @@ const S: Section[] = [
   {
     id: "retention",
     title: "How long we keep information",
-    body: html`<table class="table">
+    body: html`<p>These are the current application’s cleanup rules. Eligibility is handled by scheduled cleanup; it does not certify deletion at an exact time or from provider logs/backups. Effective provider retention still needs confirmation before publication.</p>
+<table class="table">
   <thead><tr><th scope="col">Information</th><th scope="col">Kept for</th></tr></thead>
   <tbody>
-    <tr><td>Live connection state</td><td>Only while devices are connected (in memory)</td></tr>
-    <tr><td>Approved room identifiers</td><td>Until you remove the Mac or ask us to delete it</td></tr>
-    <tr><td>Push notification tokens</td><td>Until you turn off agent alerts or remove the Mac</td></tr>
-    <tr><td>Subscription record</td><td>The active term plus ${tbc("90 days")}</td></tr>
+    <tr><td>Room/authentication and connection-policy metadata</td><td>Persisted beyond a live connection. Successful authenticated server removal clears ordinary room state and room/device links; unused active database room entries are eligible for cleanup after 365 days.</td></tr>
+    <tr><td>Security blocks and pending relay revocations</td><td>May remain after removal to enforce abuse prevention and revocation.</td></tr>
+    <tr><td>Agent-alert registrations</td><td>Removed after successful app opt-out or authenticated removal; pending requests retry. Stale registrations are eligible after 365 days or inactive-room cleanup.</td></tr>
+    <tr><td>Subscription records and device associations</td><td>Eligible 90 days after the verified expiry/grace deadline; unlinking removes the requested device association separately.</td></tr>
+    <tr><td>Apple notification deduplication</td><td>Eligible after 90 days.</td></tr>
     <tr><td>Server request logs, if any</td><td>${tbc("7 days")}</td></tr>
     <tr><td>Support emails</td><td>${tbc("24 months")}</td></tr>
-    <tr><td>Data on your devices</td><td>Until you remove the pairing or delete the app</td></tr>
+    <tr><td>Data on your devices</td><td>Local trust retirement, preferences and system clipboard entries have separate lifetimes. Removing a pairing does not clear everything stored by the system or other apps; see the clipboard limits above.</td></tr>
   </tbody>
 </table>`,
   },
@@ -143,8 +145,8 @@ const S: Section[] = [
     id: "choices",
     title: "Your choices and rights",
     body: html`<ul>
-  <li>Stop sharing at any time from the Mac menu bar. Remove a paired phone from Farside on your Mac. Remove a Mac from the phone.</li>
-  <li>To delete what our servers hold about your Mac, email ${email("privacy")}. With no account, we may ask you to prove ownership from the device.</li>
+  <li>Stop sharing at any time from the Mac menu bar. Local Remove Phone retires that Mac’s usable pairing trust after local cleanup is confirmed; it does not by itself confirm server deletion. If macOS refuses deletion because of Keychain ownership, Farside can replace and verify the saved pairing with a removal marker; the Keychain row may remain without usable pairing credentials.</li>
+  <li>The phone’s unlink and Mac Server Data controls request authenticated server removal and expose pending cleanup and retry. Required proof is kept while removal is pending. Successful removal does not erase retained security/purchase records or certify provider erasure. You can also email ${email("privacy")}; with no account, we may ask you to prove ownership from the device.</li>
   <li>Change permissions (camera, microphone, speech, local network, notifications, screen recording, accessibility) in your device settings.</li>
   <li>Cancel your subscription in your Apple Account subscription settings. Refunds are handled by Apple.</li>
   <li>You can ask what we hold about you, ask for correction or deletion, and object to processing. Depending on where you live, you may have further rights and can complain to your privacy regulator ${raw('<span class="placeholder">(details to be confirmed)</span>')}.</li>

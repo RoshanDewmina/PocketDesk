@@ -1,6 +1,6 @@
 # Farside privacy policy and App Privacy preparation
 
-Engineering facts refreshed 29 September 2026 against integrated native/backend source. This is an **unpublished draft**, not a live privacy-policy receipt or final legal classification. Purchases are disabled; real APNs delivery, production configuration and distribution acceptance remain open. Complete public contact/effective-date fields, verify provider logging/retention and obtain the owner's final review before publication or App Store entry. The older legal/export/age-rating research in sections 4–6 is dated 28 September and requires action-time verification; it does not authorize portal submissions or changes in availability.
+Clipboard, metadata, opt-out, purchase-retention and local-trust wording reconciled 5 October 2026 against main `4524689`; other engineering material retains its 29 September review date. This is an **unpublished draft**, not a live privacy-policy receipt or final legal classification. Purchases are disabled; real APNs delivery, production configuration and distribution acceptance remain open. Complete public contact/effective-date fields, verify provider logging/retention and obtain the owner's final review before publication or App Store entry. The older legal/export/age-rating research in sections 4–6 is dated 28 September and requires action-time verification; it does not authorize portal submissions or changes in availability.
 
 The product is Farside; existing `com.roshan.PocketDesk.*` bundle identifiers remain. Engineering source anchors below describe prepared behavior, not a claim every provider feature is live.
 
@@ -11,7 +11,7 @@ The product is Farside; existing `com.roshan.PocketDesk.*` bundle identifiers re
 | Screen and input | Encrypted WebRTC media/data between paired devices, directly or through TURN. No app recording or content upload to the service. | `RemoteHost/RemoteCapture.swift`, `RemoteHost/RemoteInputDriver.swift`, `RemoteShared/PeerMedia.swift` |
 | Voice and camera | Speech recognition requires on-device support; only explicitly accepted text is sent to the Mac. Camera scans pairing QR locally. | `RemotePhone/VoiceInputController.swift`, `RemotePhone/ScannerView.swift` |
 | Text-field detection | Mac returns a boolean; no field content, title or label is requested. | `RemoteHost/HostTextFocusProbe.swift` |
-| Clipboard | Explicit text actions between devices, 256 KB cap; concealed/transient pasteboard types refused. No clipboard history or automatic synchronization service. Destination system clipboard may retain the transferred text. | `RemoteShared/ClipboardTransfer.swift`, `RemoteHost/HostClipboard.swift` |
+| Clipboard | Explicit text actions plus default-enabled, negotiated automatic Mac-to-phone text sync during an admitted control session. Internal `clipboardAutoSyncDisabled` removes that option; no user-facing toggle is claimed. Phone content reads for transfer use the chosen system Paste action; metadata polling alone does not read text. No clipboard history; 256 KB cap; concealed/transient Mac items refused. Phone incoming entries request local-only storage and five-minute expiry; Mac clipboard contents can remain until replaced/cleared. | `RemoteShared/MacShareBlocker.swift:45`, `RemoteHost/HostModel.swift:3177`, `RemoteHost/HostClipboard.swift:127`, `RemotePhone/PhoneClipboard.swift:47`, `RemotePhone/PhoneClipboard.swift:305`, `RemotePhone/NativeSessionView.swift:1960` |
 | Pairing trust and preferences | Pairing credentials/screen key in local Keychain; preferences in UserDefaults. iOS uses WhenUnlockedThisDeviceOnly. Existing macOS queries use the file-based Keychain; do not describe that Mac path as documented device-only Data Protection storage. | `RemoteShared/Pairing.swift`, `RemoteHost/HostReadiness.swift` |
 | Signaling and admission | TLS service receives random room identity, authentication proof, role and network metadata; encrypted signaling is forwarded. Workers/Durable Objects store room/authentication hashes, bounded policy state and relay credential/revocation metadata. D1 stores room status and entitlement associations. Screen-encryption key is not sent to the service. | `Backend/src/room.ts`, `Backend/src/entitlement/store.ts` |
 | Purchases | Service receives signed Apple transaction for verification; stores a keyed hash of original transaction ID, product/environment, access/grace/revocation dates and device associations. Apple notification identifiers/types are retained for deduplication. No card or Apple ID login credentials. | `Backend/src/entitlement/store.ts`, `Backend/src/apple/` |
@@ -20,7 +20,7 @@ The product is Farside; existing `com.roshan.PocketDesk.*` bundle identifiers re
 | Diagnostics | User-requested Copy Diagnostics and optional local stream statistics; no automatic content upload. Backend stores fixed security audit events/fingerprints. Final infrastructure logs and support retention still require review. | `RemoteHost/HostDiagnostics.swift`, `RemoteShared/StreamStatistics.swift`, `Backend/src/entitlement/store.ts` |
 | Updates and dependencies | Release Mac update checks use Sparkle only with configured public key/feed. Automatic checks/downloads are disabled in current configuration. WebRTC, Sparkle and bundled fonts have in-app notices. | `RemoteHost/HostUpdateController.swift`, `project.yml`, `RemoteShared/ThirdPartyNotices.txt`, `RemoteShared/LegalNoticesView.swift` |
 
-Removal is not cancellation. Local unlinking, authenticated server deletion and Apple subscription cancellation are separate actions. Local removal currently fails physically on `.11` with `delete:-25244`, leaving sharing Off and trust retryable; publication cannot claim that gate has passed.
+Removal is not cancellation. Local trust retirement, authenticated server deletion and Apple subscription cancellation are separate actions. The `.11` physical `delete:-25244` result is historical, not a current-build verdict. Current Mac source deletes and verifies the exact Keychain item, or on an ownership error replaces and verifies the saved pairing with a removal marker that contains no usable pairing credentials; that fallback does not remove the Keychain row (`RemoteShared/Pairing.swift:524–582`). Source implementation does not establish physical cleanup acceptance, successful server deletion or provider erasure.
 
 ## 2. Privacy policy draft for publication
 
@@ -34,7 +34,9 @@ Farside lets you view and control your own paired Mac from an iPhone or iPad. Th
 
 Screen Recording and Accessibility permissions enable the chosen Mac display and allowed controls. Pairing requires a short-lived code and approval on the Mac. Camera frames are used locally to scan that code. Voice recognition runs on the phone; Farside refuses recognition that cannot run on device. Only the text you accept with Done goes to the Mac.
 
-Clipboard actions transfer text only when you choose them. They do not create a Farside clipboard history or continuous sync. The receiving system clipboard may keep that text until you replace or clear it. Farside refuses marked concealed/transient clipboard content and limits each transfer to 256 KB.
+Clipboard text travels encrypted between your paired devices. When both devices support it, automatic Mac-to-phone text sync is enabled by default: Farside watches for changes to the Mac clipboard during an active, authorized control session. It does not send clipboard contents already present when sync starts. Automatic sync is unavailable while the session is paused, locked, concealed, View-only or in Low Data Mode. The phone checks clipboard metadata to offer Paste; it reads clipboard text for transfer to the Mac only when you choose the system Paste action.
+
+Farside keeps no clipboard history. Incoming Mac text replaces the phone's system clipboard with a local-only entry and a requested five-minute expiry. Text pasted into another app has that app's retention; text sent to the Mac can remain in its system clipboard until replaced or cleared. Farside refuses marked concealed/transient Mac clipboard items and limits each transfer to 256 KB.
 
 Pairing credentials and encryption keys are stored in each device's Keychain. Preferences remain on the device. Keep your phone locked: anyone using an unlocked paired phone may exercise the controls you enabled while the Mac is sharing. The Mac's physical display may still be visible to people nearby.
 
@@ -46,7 +48,7 @@ Free access requires a verified directly attached local Wi-Fi/Ethernet path. Int
 
 ### Purchases
 
-Apple processes Farside Anywhere payments. We do not receive your payment-card details or Apple ID password. The app sends Apple's signed purchase transaction to our service to verify access. We keep a keyed identifier derived from the original transaction ID, subscription product/environment, access/grace/revocation dates and device associations. Apple server notifications let access reflect renewal, refund and revocation. Purchase records are eligible for cleanup 90 days after the verified access/grace deadline; notification deduplication records after 90 days.
+Apple processes Farside Anywhere payments. We do not receive your payment-card details or Apple ID password. The app sends Apple's signed purchase transaction to our service to verify access. Our subscription record keeps a keyed hash derived from the original transaction ID, subscription product/environment, access/grace/revocation dates and device associations. Apple server notifications let access reflect renewal, refund and revocation. Subscription records and their device associations are eligible for cleanup 90 days after the verified expiry or grace-period deadline, whichever is later; notification deduplication records after 90 days. These thresholds depend on scheduled cleanup and do not certify deletion from provider logs or backups.
 
 Unlinking a device or deleting Farside server data does not cancel an Apple subscription. Manage cancellation or refund requests through Apple. Current preparation builds have new purchases disabled until the intended service has passed acceptance.
 
@@ -69,16 +71,16 @@ The current application cleanup rules are listed below. These are eligibility th
 | Information | Current application rule |
 |---|---|
 | Room/authentication state | Authenticated server removal clears ordinary room state and room/device links. Unused active D1 room entries are eligible after 365 days. Security blocks and pending relay revocations can remain to enforce abuse prevention/revocation. |
-| Purchase and device associations | Eligible 90 days after the verified access/grace deadline; unlinking removes the requested device association separately. |
+| Subscription records and device associations | Eligible 90 days after the verified expiry/grace deadline, whichever is later; unlinking removes the requested device association separately. |
 | Apple notification deduplication | Eligible after 90 days. |
 | Security audit | Eligible after 30 days. |
 | Agent alert events/reports | Events expire after 15 minutes; expired events/reports are removed by retention cleanup. |
 | Agent alert registration | Removed on successful app opt-out/unpairing/server removal or invalid-token handling; stale registrations eligible after 365 days or inactive-room cleanup. |
 | Activity-ending addresses | Stale active addresses eligible after 24 hours; ended addresses eligible 15 minutes after end. End retries are bounded. |
-| Local trust/preferences/clipboard | Local trust removal must succeed; preferences and system clipboard have their own local lifecycle. Deleting/unlinking does not guarantee all system clipboard or provider records disappear. |
+| Local trust/preferences/clipboard | Local usable trust retirement must be confirmed; a verified Mac removal marker may leave a Keychain row without pairing credentials. Preferences and system clipboard entries have separate lifetimes, including the phone's requested five-minute incoming clipboard expiry. Unlinking does not guarantee removal of text pasted elsewhere or of provider records. |
 | Provider logs/backups and support | [TO FILL: reviewed effective settings and confirmed retention.] |
 
-Stop Sharing ends remote access. Local Remove Phone removes the Mac's stored pairing only when its Keychain cleanup succeeds. The phone unlink and Mac Server Data controls use authenticated service endpoints; they preserve required proof while server deletion is pending and expose progress/retry. Completion means the requested server response and local cleanup have been confirmed. Security blocks, audit/purchase retention and pending relay revocations may remain as described above. Deleting server data does not cancel Apple billing.
+Stop Sharing ends remote access. Local Remove Phone retires the Mac's usable pairing trust after local cleanup is confirmed; it does not by itself confirm server deletion. If macOS refuses deletion because of Keychain ownership, Farside can replace and verify the saved pairing with a removal marker; the Keychain row may remain without usable pairing credentials. The phone unlink and Mac Server Data controls use authenticated service endpoints; they preserve required proof while server deletion is pending and expose progress/retry. Completion means the requested server response and local cleanup have been confirmed, not that every provider record has been erased. Security blocks, audit/purchase retention and pending relay revocations may remain as described above. Deleting server data does not cancel Apple billing.
 
 ### Providers and choices
 
@@ -190,7 +192,7 @@ Expected result: **4+**. Region-specific ratings (Australia, Brazil, Korea, Viet
 - Review applicable privacy/export obligations and action-time Apple questionnaires. Earlier research is a dated reference, not approval or final classification.
 - Verify effective production provider logging, backups, retention jobs, support retention, STUN/TURN and update request/profiling settings.
 - Finalize App Privacy/manifest categories for retained generic agent events/action reports and security metadata; hashing alone does not make linked records anonymous.
-- Verify removal, purchase/expiry, APNs/suspended-activity ending and exact archives physically. Source paths are implemented; actual `.11` local Keychain removal currently fails safely.
+- Verify removal, purchase/expiry, APNs/suspended-activity ending and exact archives physically. Current exact-build physical acceptance of local trust retirement and authenticated server deletion remains pending. The `.11` safe local Keychain removal failure is historical, not a current-build result.
 - Publish the final policy only after these fields/reviews are complete and URLs work; no publication or App Store submission occurred in this preparation.
 
 ## Sources (all checked 2026-09-28)
