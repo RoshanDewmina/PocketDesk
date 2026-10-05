@@ -176,6 +176,7 @@ The primary user is the owner of the Mac. Helping someone else, team administrat
 | D59 | **One audio switch: Listen on the phone** | 2 Oct, Roshan. The connected phone explicitly requests Mac audio; it starts muted. Mac Settings retains a default-allowed “Allow phone to listen” privacy veto because audio can include all apps, outside the shared display. Explicit prior Mac opt-outs remain respected. App/window sharing, Couch, pause, PiP, lock and session retirement deny audio. Capability negotiation preserves the old two-consent flow with older peers; internal `phoneAudioRequestDisabled` restores that flow. |
 | D60 | Pairing comparison uses the **existing Mac Allow moment**, with no extra normal-case tap or typing | 2 Oct, Roshan. Show the same short numeric code on the phone’s waiting screen and the Mac’s approval screen, bound to fresh ephemeral enrollment and the exact pending candidate. Approve only if the codes match; Decline remains the default action. Saved-pair reconnect does not ask again. Old/new enrollment must fail safely rather than silently downgrade a comparison-required invitation. Source and cryptographic fixtures do not establish physical pairing acceptance. |
 | D61 | **Remove the Session check pill and checklist UI** | 2 Oct, Roshan. The streamed picture stays unobstructed; Settings → How to steer keeps “Practice gestures again”. Internal useful-session evidence/counters remain where other code depends on them. |
+| D62 | **1.0 ships iPhone-only; iPad and iPhone Duo are parked** | 3 Oct, Roshan. Supersedes D57. The app, widget and share extension declare iPhone only (`TARGETED_DEVICE_FAMILY` 1); iPads run the iPhone app in compatibility mode. Apple does not allow removing iPad support after a release ships with it, so iPad returns only as a deliberate later decision. Parked with pointers: iPad Workspace engine (b9) and its UI picks (Sharpen In chosen), iPad full-screen frame-rate work (30 fps ladder cap at 2360×1526, see ORCHESTRATOR-STATE 2–3 Oct), Duo seam/hinge layout. |
 
 
 ### Work scenarios that guide the designs
@@ -194,7 +195,7 @@ Design priority: compare both controller layouts while reading and editing, not 
 
 ### Proposed platform scope
 
-Ship 1.0 as a universal native iPhone and iPad client with an Apple-silicon Mac companion (D57–D58). Support ordinary phone portrait and landscape layouts and a dedicated iPad layout from day one; the iPad design is in progress. Keep future Windows/Linux hosts and Android clients possible without building them now.
+Ship 1.0 as a native iPhone client with an Apple-silicon Mac companion (D58, D62; iPad and Duo parked, superseding D57). Support ordinary phone portrait and landscape layouts; the iPad layout work is parked, not shipped. Keep future Windows/Linux hosts and Android clients possible without building them now.
 
 The 28 September plan includes basic adaptive iPad/Duo compatibility and later device-specific testing, with specialized folded/dual-display experiences deferred. Apple now documents Duo and iOS 27.1 SDK adaptation; this is no longer only a speculative device concept. Physical support remains unverified. Keep the current iOS 26/macOS 26 deployment baseline unless explicitly changed; newer SDK APIs need availability checks.
 
