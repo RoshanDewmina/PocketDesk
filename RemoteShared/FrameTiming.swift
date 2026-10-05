@@ -234,6 +234,7 @@ final class PhoneFrameTimingLog: @unchecked Sendable {
     private struct DecodeEntry {
         let rtp: Int32
         let timeStampNs: Int64
+        let ownerID: UUID?
         var trace: PhoneDecodeTrace?
     }
     private var decodeTraces: [DecodeEntry] = []
@@ -246,7 +247,7 @@ final class PhoneFrameTimingLog: @unchecked Sendable {
 
     /// Stored immediately before the outward callback. Separate from heuristic host timing:
     /// `isActive == false` must not disable a phone-local observation.
-    func decodedDelivery(rtp: Int32, timeStampNs: Int64, trace: PhoneDecodeTrace) {
+    func decodedDelivery(rtp: Int32, timeStampNs: Int64, trace: PhoneDecodeTrace, ownerID: UUID? = nil) {
         guard renderTimingEnabled, trace.isValid else { return }
         lock.lock(); defer { lock.unlock() }
         if let index = decodeTraces.firstIndex(where: { $0.rtp == rtp && $0.timeStampNs == timeStampNs }) {
@@ -254,8 +255,17 @@ final class PhoneFrameTimingLog: @unchecked Sendable {
             decodeTraces[index].trace = nil
             return
         }
-        decodeTraces.append(DecodeEntry(rtp: rtp, timeStampNs: timeStampNs, trace: trace))
+        decodeTraces.append(DecodeEntry(rtp: rtp, timeStampNs: timeStampNs, ownerID: ownerID, trace: trace))
         if decodeTraces.count > Self.capacity { decodeTraces.removeFirst() }
+    }
+
+    /// A retired wrapper cannot lend an unread observation to a later callback or decoder.
+    /// Keep tombstones, and leave every other decoder's observations untouched.
+    func retireDecodeTraces(ownerID: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        for index in decodeTraces.indices where decodeTraces[index].ownerID == ownerID {
+            decodeTraces[index].trace = nil
+        }
     }
 
     /// One outward delivery owns one trace. A repeated RTP with different source timestamp,
@@ -418,7 +428,7 @@ final class TimedH264Decoder: NSObject, RTCVideoDecoder {
                 deliveryTiming.performIfActive {
                     // Stock RTC has no public native VT/ownership callbacks. Observe only delivery.
                     log.decodedDelivery(rtp: frame.timeStamp, timeStampNs: frame.timeStampNs,
-                                        trace: PhoneDecodeTrace(deliveryMs: MachClock.nowMs()))
+                                        trace: PhoneDecodeTrace(deliveryMs: MachClock.nowMs()), ownerID: deliveryTiming.ownerID)
                 }
             }
             callback(frame)
@@ -429,7 +439,10 @@ final class TimedH264Decoder: NSObject, RTCVideoDecoder {
         inner.startDecode(withNumberOfCores: numberOfCores)
     }
 
-    func release() -> Int { deliveryTiming.retire(); return inner.release() }
+    func release() -> Int {
+        deliveryTiming.retire { log?.retireDecodeTraces(ownerID: deliveryTiming.ownerID) }
+        return inner.release()
+    }
 
     func decode(_ encodedImage: RTCEncodedImage, missingFrames: Bool, codecSpecificInfo info: (any RTCCodecSpecificInfo)?,
                 renderTimeMs: Int64) -> Int {
@@ -444,12 +457,17 @@ final class TimedH264Decoder: NSObject, RTCVideoDecoder {
 /// Reusing a released wrapper leaves timing unknown rather than admitting an old callback.
 private final class H264DeliveryTimingAdmission: @unchecked Sendable {
     private let lock = NSLock()
+    let ownerID = UUID()
     private var active = true
     func performIfActive(_ body: () -> Void) {
         lock.lock(); defer { lock.unlock() }
         if active { body() }
     }
-    func retire() { lock.lock(); active = false; lock.unlock() }
+    func retire(_ body: () -> Void) {
+        lock.lock(); defer { lock.unlock() }
+        active = false
+        body()
+    }
 }
 
 final class WeakFrameTimingBox<Value: AnyObject>: @unchecked Sendable {
