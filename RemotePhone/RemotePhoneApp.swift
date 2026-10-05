@@ -249,6 +249,7 @@ final class PhoneRemoteModel: ObservableObject {
         preferences.set(stage.rawValue, forKey: Self.first60HintStageKey)
     }
     let files = PhoneFileTransfer()
+    let fileBrowser = PhoneFileBrowser()
     let sendToMac = SendToMacInbox()
     private var shareLiveSessionID: String?
     private var shareDestination: SendToMacDestination?
@@ -759,6 +760,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
     private func invalidatePresentation(keepingPiP: Bool = false, requestHostExit: Bool = true) {
         windowWorkspace.retire()
+        fileBrowser.reset()
         phoneLoadCache.invalidate()
         PhoneIdleTimer.shared.endSession()
         if pendingWake != nil { wakeStatus = "The helper session changed. No new wake result can be confirmed." }
@@ -2123,6 +2125,18 @@ final class PhoneRemoteModel: ObservableObject {
 
     // MARK: File transfer
 
+    var fileBrowserAvailable: Bool {
+        WorkspaceUtilities.isEnabled(preferences) && hostFeatures.contains(WorkspaceUtilities.feature)
+            && fileTransferAvailable && sceneIsActive && canControl && sessionMode == .picture && hostPresence == nil
+    }
+    func downloadBrowserFile(_ entry: String) {
+        guard fileBrowserAvailable, !files.isBusy else { files.postUnavailable("Folder downloads are unavailable right now."); return }
+        let transfer = FileTransferID.make()
+        let request = FileBrowserRequest(operation: .download, entry: entry, transfer: transfer)
+        guard let frame = try? WorkspaceFrame(kind: .files, requestID: InputCausalEnvelope.identity(), value: request) else { return }
+        files.requestBrowserDownload(transfer) { self.transmit(.workspace(frame, epoch: self.geometryEpoch)) }
+    }
+
     var fileTransferSupported: Bool { hostFeatures.contains(SessionFeature.fileTransfer) }
 
     /// Files need a live foreground session and the Mac's `file` channel. Control is not required:
@@ -2179,6 +2193,10 @@ final class PhoneRemoteModel: ObservableObject {
         }
         engine.link = { [weak self] in self?.connection.media }
         engine.isRelayed = { [weak self] in self?.connection.media?.isRelayRoute ?? false }
+        fileBrowser.send = { [weak self] frame in
+            guard let self, self.fileBrowserAvailable else { return false }
+            return self.transmit(.workspace(frame, epoch: self.geometryEpoch))
+        }
         connection.fileTransfer = engine
         files.receipts = { [weak self] transfer, snapshot, finish in self?.sendToMac.transferChanged(transfer, snapshot, finish) }
         files.onLinkResult = { [weak self] status in self?.sendToMac.linkFinished(status) }
@@ -3082,7 +3100,13 @@ let now = ProcessInfo.processInfo.systemUptime
         switch action.action {
         case "workspace":
             guard (try? action.validateWorkspace()) == true, let frame = action.workspace else { return }
-            windowWorkspace.receive(frame, epoch: action.epoch)
+            switch frame.kind {
+            case .windows: windowWorkspace.receive(frame, epoch: action.epoch)
+            case .files:
+                guard action.epoch == geometryEpoch, fileBrowserAvailable else { return }
+                fileBrowser.receive(frame)
+            default: break
+            }
         case "wakeReply": receiveWakeReply(action)
         case "viewing":
             controlAllowed = !captureScopeViewOnly && action.x == 1
@@ -3663,7 +3687,7 @@ let now = ProcessInfo.processInfo.systemUptime
         }
         departureReason = nil
         clipboard.cancel()
-        files.reset()
+        files.reset(); fileBrowser.reset()
         refreshSendToMac(force: true)
         resumeWatchdog?.cancel(); resumeWatchdog = nil
         // couchRefusal, requestedMode and lastOnScreenMode outlive the session: Home explains and
