@@ -66,6 +66,9 @@ struct StreamTuning: Equatable {
     /// Phone (efficiency audit P2): with `presentAtDisplayMaximum`, the video view drops to 30 Hz while
     /// no frame or touch has arrived for a moment and returns to its maximum on the next one.
     var idleVideoRefresh = true
+    /// Perf pack 4a: the host keeps per-frame display → encoded records and forwards the newest ones
+    /// with its summary so the phone can time each frame to its decode. Off sends no records.
+    var frameTiming = true
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
         encoderCeilingKbps.map { $0 * 1000 } ?? quality.maximumBitrateBps
@@ -90,6 +93,7 @@ struct StreamTuning: Equatable {
         tuning.viewportCapture = false
         tuning.ladder = false
         tuning.idleVideoRefresh = false
+        tuning.frameTiming = false
         return tuning
     }()
 
@@ -108,11 +112,13 @@ struct StreamTuning: Equatable {
     static let ladderKey = "PocketDeskLadder"
     static let encoderMaxInFlightKey = "PocketDeskEncoderMaxInFlight"
     static let idleVideoRefreshKey = "PocketDeskIdleVideoRefresh"
+    static let frameTimingKey = "PocketDeskFrameTiming"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
                                  highRefreshCaptureKey, targetFPSKey, highRefreshNoAdaptationKey, capToClientPixelsKey,
-                                 viewportCaptureKey, ladderKey, encoderMaxInFlightKey, idleVideoRefreshKey]
+                                 viewportCaptureKey, ladderKey, encoderMaxInFlightKey, idleVideoRefreshKey,
+                                 frameTimingKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -178,6 +184,9 @@ struct StreamTuning: Equatable {
         if defaults.object(forKey: idleVideoRefreshKey) != nil {
             tuning.idleVideoRefresh = defaults.bool(forKey: idleVideoRefreshKey)
         }
+        if defaults.object(forKey: frameTimingKey) != nil {
+            tuning.frameTiming = defaults.bool(forKey: frameTimingKey)
+        }
         return tuning
     }
 
@@ -222,6 +231,7 @@ struct StreamTuning: Equatable {
         if !ladder { parts.append("no ladder") }
         if let encoderMaxInFlight { parts.append("max in-flight \(encoderMaxInFlight)") }
         if presentAtDisplayMaximum && !idleVideoRefresh { parts.append("no idle refresh") }
+        if !frameTiming { parts.append("no frame timing") }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }
 

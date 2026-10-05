@@ -807,7 +807,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         lastBuffer = buffer
         bufferVersion &+= 1
         lastBufferDisplayTime = displayTime
-        deliver(buffer, at: now)
+        deliver(buffer, at: now, displayMs: displayTime > 0 ? CaptureTiming.milliseconds(fromMachTicks: displayTime) : 0)
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
@@ -834,8 +834,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         }
     }
 
-    private func deliver(_ buffer: CVPixelBuffer, at time: TimeInterval) {
+    private func deliver(_ buffer: CVPixelBuffer, at time: TimeInterval, displayMs: Double = 0) {
         lastSentAt = time
-        peer?.pushFrame(buffer, timeStampNs: Int64(time * 1_000_000_000))
+        peer?.pushFrame(buffer, timeStampNs: Int64(time * 1_000_000_000), displayMs: displayMs)
     }
 }
