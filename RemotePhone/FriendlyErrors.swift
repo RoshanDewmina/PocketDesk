@@ -170,7 +170,7 @@ struct FriendlyError: Identifiable, Equatable {
 
     static let codeRejected = FriendlyError(kind: .codeRejected, headline: "That code went stale",
                                             message: "Pairing codes last two minutes, and this one didn’t work.",
-                                            fix: "On your Mac, choose Pair a phone for a fresh code, then scan again.",
+                                            fix: "On your Mac, open Farside and make a new pairing code, then scan again.",
                                             action: .pairAgain)
 
     static let declined = FriendlyError(kind: .declined, headline: "Your Mac said no",

@@ -192,9 +192,9 @@ final class RemoteHostModel: ObservableObject {
             scopeEpoch: String(captureScopeEpoch), geometryEpoch: String(inputEpoch.value), scopeKind: captureScopeKind.rawValue,
             deadline: owner.deadline)
     }
-    func createGuestLink() { guests.create() }
+    func createGuestLink() { if HostGuestPolicy.enabled { guests.create() } }
     func copyGuestLink(_ id: String) { guests.copyLink(id) }
-    func approveGuest(_ id: String) { guests.approve(id) }
+    func approveGuest(_ id: String) { if HostGuestPolicy.enabled { guests.approve(id) } }
     func revokeGuest(_ id: String) { guests.end(id) }
 
     private lazy var bigText = BigTextController(

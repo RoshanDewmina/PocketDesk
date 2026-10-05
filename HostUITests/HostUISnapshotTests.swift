@@ -47,6 +47,7 @@ final class HostUISnapshotTests: XCTestCase {
                 $0.detail = "Couldn’t reach the connection. Check this Mac’s internet, then try again."
             }),
             ("popover-needs-setup", ready(.needsScreenRecording) { $0.screenRecording = .denied }),
+            ("popover-needs-phone", ready(.needsPhone) { $0.hasPairedPhone = false }),
             ("popover-capture-approval", ready(.captureNeedsApproval)),
             ("popover-crash-loop", ready(.unavailable) {
                 $0.crashLoopStopped = true
@@ -259,11 +260,14 @@ final class HostUISnapshotTests: XCTestCase {
             $0.keepAwake = true
             $0.keepAwakePausedOnBattery = true
             $0.loginItem = .needsApproval
-        }, actions: .preview))
+        }, actions: .preview, page: .sharing))
     }
 
     func testSettings() throws {
         try render("settings-removal-retry", HostSettingsView(state: ready(.paused) {
+            $0.localPairRemovalMessage = "Couldn’t confirm removal. Phone sharing is off. Unlock this Mac and retry Remove."
+        }, actions: .preview, page: .devices))
+        try render("settings-removal-retry-overview", HostSettingsView(state: ready(.paused) {
             $0.localPairRemovalMessage = "Couldn’t confirm removal. Phone sharing is off. Unlock this Mac and retry Remove."
         }, actions: .preview))
         try render("settings", HostSettingsView(state: ready(.ready), actions: .preview))
@@ -271,7 +275,7 @@ final class HostUISnapshotTests: XCTestCase {
             $0.displays = [HostDisplayOption(id: 1, name: "Built-in Retina Display"),
                            HostDisplayOption(id: 2, name: "Studio Display")]
             $0.session = Self.measured
-        }, actions: .preview))
+        }, actions: .preview, page: .sharing))
         try render("settings-needs-attention", HostSettingsView(state: ready(.needsPhone) {
             $0.hasPairedPhone = false
             $0.accessibility = .denied
@@ -284,18 +288,49 @@ final class HostUISnapshotTests: XCTestCase {
             $0.automaticRecovery = .needsApproval
             $0.privacyCurtain = true
             $0.curtainStatus = "Covering 2 displays. Your phone still sees the desktop."
-        }, actions: .preview))
+        }, actions: .preview, page: .sharing))
         try render("settings-crash-loop", HostSettingsView(state: ready(.unavailable) {
             $0.crashLoopStopped = true
             $0.automaticRecovery = .on
-        }, actions: .preview))
+        }, actions: .preview, page: .sharing))
         try render("settings-agent-alerts", HostSettingsView(state: ready(.controlling) {
             $0.session = Self.measured
             $0.agentAlerts = true
             $0.agentAlertsStatus = "Claude Code asked 2 min ago · told your iPhone"
-        }, actions: .preview))
+        }, actions: .preview, page: .advanced))
         try render("settings-capture-approval-icon-hidden", HostSettingsView(state: ready(.captureNeedsApproval) {
             $0.menuBarIconShown = false
+        }, actions: .preview))
+    }
+
+    func testSettingsPages() throws {
+        let now = Date()
+        let rich = ready(.controlling) {
+            $0.session = HostSessionReadout(route: .direct, roundTripMs: 76, framesPerSecond: 30)
+            $0.sessionStartedAt = now.addingTimeInterval(-754)
+            $0.phoneName = "Your iPhone"
+            $0.pairedDevices = [
+                HostPairedDeviceRow(id: "phone", name: "Your iPhone", lastUsed: now, connected: true),
+                HostPairedDeviceRow(id: "pad", name: "Your iPad", lastUsed: now.addingTimeInterval(-2 * 86_400), connected: false)
+            ]
+            $0.lockWarning = .lockedWhileSharing(at: now.addingTimeInterval(-600))
+            $0.loginItem = .on
+        }
+        for page in HostSettingsPage.allCases {
+            try render("settings-page-\(page.rawValue)", HostSettingsView(state: rich, actions: .preview, page: page))
+        }
+        var guestsOff = rich
+        guestsOff.guestViewingAvailable = true
+        try render("settings-page-devices-guests-off", HostSettingsView(state: guestsOff, actions: .preview, page: .devices))
+        try render("settings-page-overview-needs-permissions", HostSettingsView(state: ready(.needsScreenRecording) {
+            $0.screenRecording = .denied
+            $0.accessibility = .denied
+            $0.hasPairedPhone = false
+            $0.openAtLogin = false
+        }, actions: .preview))
+        try render("settings-page-overview-paused", HostSettingsView(state: ready(.paused) {
+            $0.pausedUntil = now.addingTimeInterval(540)
+            $0.pairedDevices = [HostPairedDeviceRow(id: "phone", name: "Your iPhone", lastUsed: now, connected: false)]
         }, actions: .preview))
     }
 

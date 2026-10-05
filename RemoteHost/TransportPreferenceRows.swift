@@ -6,21 +6,19 @@ struct TransportPreferenceRows: View {
     @AppStorage("farsideRelayPacketRepair") private var repair = false
     #endif
     var body: some View {
-        HostSettingsSection("Experimental full color") {
-            Toggle("Full color detail after restarting Farside", isOn: $fullColor)
-                .toggleStyle(.switch)
-                .accessibilityIdentifier("farside.settings.experimentalFullColor")
-            Text("Enable on both your Mac and iPhone, then quit and reopen both apps. Requires compatible hardware. Uses more bandwidth; picture quality and battery use are still being tested.")
-                .font(.footnote).foregroundStyle(.secondary)
+        HostSettingsSection("Experiments") {
+            HostSettingsRow("Full color detail",
+                            subtitle: "Turn on for both your Mac and iPhone, then quit and reopen both apps. Needs compatible hardware and uses more bandwidth; picture quality and battery use are still being tested.") {
+                HostSwitch(label: "Full color detail after restarting Farside", isOn: fullColor) { fullColor = $0 }
+                    .accessibilityIdentifier("farside.settings.experimentalFullColor")
+            }
+            #if DEBUG
+            HostSettingsRow("Relay packet repair",
+                            subtitle: "Packet loss testing. Quit and reopen the Mac app after changing this. Video quality under packet loss is still being tested.") {
+                HostSwitch(label: "Relay packet repair after restarting Farside", isOn: repair) { repair = $0 }
+                    .accessibilityIdentifier("farside.settings.relayPacketRepair")
+            }
+            #endif
         }
-        #if DEBUG
-        HostSettingsSection("Packet loss testing") {
-            Toggle("Relay packet repair after restarting Farside", isOn: $repair)
-                .toggleStyle(.switch)
-                .accessibilityIdentifier("farside.settings.relayPacketRepair")
-            Text("Experimental. Quit and reopen the Mac app after changing this setting. Video quality under packet loss is still being tested.")
-                .font(.footnote).foregroundStyle(.secondary)
-        }
-        #endif
     }
 }

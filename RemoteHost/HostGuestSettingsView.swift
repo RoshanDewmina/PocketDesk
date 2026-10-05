@@ -7,8 +7,10 @@ struct HostGuestSettingsView: View {
     var body: some View {
         HostSettingsSection("Guest viewing", footer: state.guestMessage ?? "Up to two guests can view video for ten minutes while your paid remote session is live. Guests have no audio or control. Changing shared content or ending the session ends every guest. A recipient can record pixels already received.") {
             VStack(alignment: .leading, spacing: 12) {
-                Button("Create guest link", action: actions.createGuestLink)
-                    .disabled(!state.guestViewingAvailable || state.guestRows.count >= 2)
+                if HostGuestPolicy.enabled {
+                    Button("Create guest link", action: actions.createGuestLink)
+                        .disabled(!state.guestViewingAvailable || state.guestRows.count >= 2)
+                }
                 ForEach(state.guestRows) { row in
                     VStack(alignment: .leading, spacing: 6) {
                         Text(row.status)
@@ -18,7 +20,7 @@ struct HostGuestSettingsView: View {
                         if row.pending { Text("Recipient key: \(row.fingerprint)").font(.system(.caption, design: .monospaced)).textSelection(.enabled).accessibilityLabel("Full recipient key fingerprint: \(row.fingerprint)") }
                         HStack {
                             if row.linkReady { Button("Copy link") { actions.copyGuestLink(row.id) } }
-                            if row.pending { Button("Review approval") { confirming = row } }
+                            if row.pending && HostGuestPolicy.enabled { Button("Review approval") { confirming = row } }
                             Button(row.pending ? "Decline" : "End guest") { actions.revokeGuest(row.id) }
                         }
                     }

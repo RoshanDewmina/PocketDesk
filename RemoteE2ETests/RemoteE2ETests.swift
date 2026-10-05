@@ -462,9 +462,9 @@ final class RemoteE2ETests: E2ETestCase {
         try waitFor("stream fresh on the other Space", timeout: 10) { phone.state.bool("fresh") }
 
         try revealDock()
-        app.buttons["Controls"].tap()
+        app.buttons["More"].tap()
         let next = app.buttons["Move right a Space"].firstMatch
-        XCTAssertTrue(next.waitForExistence(timeout: 5), "Space keys are the first row of the Controls panel")
+        XCTAssertTrue(next.waitForExistence(timeout: 5), "Space keys are the first row of the More panel")
         before = marks()
         next.tap()
         try expectHostInput("key", since: before) { $0.string("key") == "right" && ($0["modifiers"] as? [String]) == ["control"] }

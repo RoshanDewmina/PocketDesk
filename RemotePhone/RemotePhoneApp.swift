@@ -38,6 +38,13 @@ struct RemotePhoneApp: App {
                     AnywhereAccess.shared.attach(model.connection, store: .shared)
                     AgentPushIntegration.shared.attach(model)
                     model.sceneChanged(phase)
+                    #if DEBUG
+                    // Screenshot runs: this Mac has no Simulator.app to rotate the device.
+                    if LaunchOptions.has("--ui-landscape"),
+                       let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+                        scene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight))
+                    }
+                    #endif
                 }
                 .onChange(of: phase) { _, value in model.sceneChanged(value) }
         }

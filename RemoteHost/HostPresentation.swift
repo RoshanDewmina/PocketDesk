@@ -74,6 +74,33 @@ struct HostSessionReadout: Equatable {
     }
 }
 
+/// The live connection in plain words, for people who don't read latency numbers. Frame rate is
+/// left out on purpose: a still screen sends few frames and is not a bad connection.
+enum HostConnectionQuality: Int, Equatable, CaseIterable {
+    case weak = 1, fair, good, excellent
+
+    init?(_ readout: HostSessionReadout) {
+        guard let roundTripMs = readout.roundTripMs else { return nil }
+        self = switch roundTripMs {
+        case ..<40: .excellent
+        case ..<100: .good
+        case ..<200: .fair
+        default: .weak
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .excellent: "Excellent connection"
+        case .good: "Good connection"
+        case .fair: "Fair connection"
+        case .weak: "Weak connection"
+        }
+    }
+
+    var bars: Int { rawValue }
+}
+
 /// Process-start rollback switches; the layout experiment stays off until device A/B.
 enum HostPopoverPolicy {
     static let bounded = bounded(defaults: .standard)
@@ -137,6 +164,21 @@ enum HostPopoverPolicy {
         let name = state.captureScopes.first { $0.id == state.selectedCaptureScopeID }?.name
             ?? "Selected content unavailable"
         return "App/window sharing is view only. \(name)"
+    }
+}
+
+/// Guest viewing is off for 1.0 (D63): no Settings section, no new links, no approvals. A guest row
+/// that somehow exists while off still shows wherever it did, so nobody watches this Mac unseen and
+/// it can always be ended or declined.
+enum HostGuestPolicy {
+    static let enabled = enabled(defaults: .standard)
+
+    static func enabled(defaults: UserDefaults) -> Bool {
+        defaults.bool(forKey: "farsideGuestViewingEnabled")
+    }
+
+    static func showsSettings(available: Bool, rows: [HostGuestRow], enabled: Bool = enabled) -> Bool {
+        (enabled && available) || !rows.isEmpty
     }
 }
 
@@ -617,7 +659,7 @@ struct HostReadyCheck: Equatable, Identifiable {
             return Self(id: .phone, title: "iPhone paired", detail: "Only your approved phone can connect", result: .pass)
         }
         return state.pairingDeferred
-            ? Self(id: .phone, title: "iPhone paired", detail: "Skipped for now · pair from the menu bar",
+            ? Self(id: .phone, title: "iPhone paired", detail: "Skipped for now · pair in Settings → Devices",
                    result: .optional, fix: .pairPhone)
             : Self(id: .phone, title: "iPhone paired", detail: "No phone paired yet", result: .fail, fix: .pairPhone)
     }

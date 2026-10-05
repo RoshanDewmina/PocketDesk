@@ -50,7 +50,7 @@ struct HostSetupView: View {
             if state.first60SetupPending { page = HostSetupFlow.first60Page(for: state) }
         }
         .onChange(of: state.pairingDeferred) { _, deferred in
-            // Skip moves on to the ready check; Pair there (or in the menu bar) comes back.
+            // Skip moves on to the ready check; Pair there (or in Settings → Devices) comes back.
             if deferred && page == .pair { page = .ready }
             if !deferred && page == .ready && state.setupStep == .pairPhone { page = .pair }
         }
@@ -472,13 +472,13 @@ struct HostPairingPage: View {
     private var code: some View {
         VStack(alignment: .leading, spacing: 0) {
             HostHeading(parts: [.display("One code"), .plain(". "), .accent("No"), .display(" accounts"), .plain(".")])
-            HostSetupText.body("Open Farside on your iPhone or iPad, scan this, then approve it here. Keep both devices on the same Wi-Fi.")
+            HostSetupText.body("Open Farside on your iPhone, scan this, then approve it here. Keep both devices on the same Wi-Fi.")
                 .padding(.top, 10)
                 .padding(.bottom, 20)
             HStack(alignment: .top, spacing: 22) {
                 qr
                 VStack(alignment: .leading, spacing: 12) {
-                    step("1", "Open Farside on your iPhone or iPad")
+                    step("1", "Open Farside on your iPhone")
                     step("2", "Scan this code")
                     step("3", "Allow the phone here")
                     expiry
@@ -487,10 +487,10 @@ struct HostPairingPage: View {
             }
             if !state.hasPairedPhone {
                 HStack(spacing: 6) {
-                    Text("No iPhone or iPad to hand?")
+                    Text("No iPhone to hand?")
                         .font(.system(size: 12.5))
                         .foregroundStyle(Farside.Palette.ash)
-                    Button("Skip for now, and pair later from the menu bar", action: actions.skipPairing)
+                    Button("Skip, and pair later in Settings → Devices", action: actions.skipPairing)
                         .buttonStyle(HostButtonStyle(kind: .inline))
                         .accessibilityIdentifier("farside.setup.skipPairing")
                 }

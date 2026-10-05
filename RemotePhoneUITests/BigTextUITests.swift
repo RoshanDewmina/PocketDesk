@@ -32,14 +32,14 @@ final class BigTextUITests: XCTestCase {
         attachScreenshot("Big Text - step chosen")
     }
 
+    /// The simple More panel has no Big Text row; the saved level's session override lives in
+    /// Settings › Picture (FarsideBottomControls NO restores the panel row).
     @MainActor
-    func testPanelRowAppearsOnceALevelIsSavedAndTurnsItOffForTheSession() {
+    func testSavedLevelCanBeTurnedOffForTheSessionFromSettings() {
         let app = XCUIApplication()
         app.launchArguments += ["--ui-layout-check", "--ui-input-probe"]
         launchOffline(app)
         openControls(app)
-        let row = app.switches["remote.bigTextRow"]
-        XCTAssertFalse(row.exists, "No saved level, so the panel has no Big Text row")
         openSettingsPage(app, "picture")
         let step = app.buttons["remote.bigText.step.0"]
         scrollControls(app, to: step)
@@ -50,30 +50,17 @@ final class BigTextUITests: XCTestCase {
         XCTAssertTrue(pill.waitForNonExistence(timeout: 5))
         tapDone(app)
         openControls(app)
-        let regular = app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists
-        let toggle: XCUIElement
-        let initialValue: String
-        let finalValue: String
-        if regular {
-            // The regular key overlay is deliberately the existing landscape row, without
-            // portrait quick rows. Its Picture settings expose the same session override.
-            openSettingsPage(app, "picture")
-            toggle = app.switches["remote.bigText.sessionOff"]
-            scrollControls(app, to: toggle)
-            initialValue = "0"
-            finalValue = "1"
-        } else {
-            toggle = row
-            initialValue = "1"
-            finalValue = "0"
-        }
+        XCTAssertFalse(app.switches["remote.bigTextRow"].exists, "More does not repeat the Big Text setting")
+        openSettingsPage(app, "picture")
+        let toggle = app.switches["remote.bigText.sessionOff"]
+        scrollControls(app, to: toggle)
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
         XCTAssertTrue(toggle.isHittable, "The saved-level session override must be reachable")
-        XCTAssertEqual(toggle.value as? String, initialValue)
+        XCTAssertEqual(toggle.value as? String, "0")
         attachScreenshot("Big Text - session override")
         let mark = probeMark(app)
         toggle.tap()
-        let off = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", finalValue), object: toggle)
+        let off = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: toggle)
         XCTAssertEqual(XCTWaiter().wait(for: [off], timeout: 3), .completed)
         var sent = false
         for _ in 0..<20 where !sent {
@@ -101,7 +88,7 @@ final class BigTextUITests: XCTestCase {
     @MainActor
     private func openControls(_ app: XCUIApplication) {
         revealDock(app)
-        let controls = app.buttons["Controls"].firstMatch
+        let controls = app.buttons["More"].firstMatch
         XCTAssertTrue(controls.waitForExistence(timeout: 5))
         controls.tap()
         let content = app.descendants(matching: .any)["remote.controls.content"].firstMatch

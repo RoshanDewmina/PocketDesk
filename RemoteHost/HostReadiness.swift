@@ -324,7 +324,7 @@ struct HostPreferences {
         nonmutating set { defaults.set(newValue, forKey: Key.accessibilitySkipped) }
     }
 
-    /// Setup's "Skip for now" on the Pair step: pair later from the menu bar.
+    /// Setup's "Skip" on the Pair step: pair later in Settings → Devices.
     var pairingDeferred: Bool {
         get { defaults.bool(forKey: Key.pairingDeferred) }
         nonmutating set { defaults.set(newValue, forKey: Key.pairingDeferred) }

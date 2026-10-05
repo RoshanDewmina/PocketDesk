@@ -267,6 +267,7 @@ private struct HostButtonBody: View {
     private var foreground: Color {
         switch kind {
         case .primary, .ember: HostTheme.ink
+        case .plate where configuration.role == .destructive: Farside.Palette.ember
         case .plate, .inline: Farside.Palette.bone
         case .link: hovering && isEnabled ? Farside.Palette.bone : Farside.Palette.ash
         }
