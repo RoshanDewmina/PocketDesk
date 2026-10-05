@@ -6,6 +6,7 @@ final class HostFileBrowserService {
     private let access: FileBrowserAccess
     private let queue = DispatchQueue(label: "Farside.file-browser", qos: .userInitiated)
     private var generation = UUID()
+    private var operationLease = TransferEffectLease()
     private var busy = false
     private var activeBrowserTransfer: String?
     var allowed: () -> Bool = { false }
@@ -13,6 +14,7 @@ final class HostFileBrowserService {
     var engine: FileTransferEngine?
     init(access: FileBrowserAccess) { self.access = access }
     func reset() {
+        operationLease.closeAdmission(); operationLease = TransferEffectLease()
         generation = UUID(); busy = false
         if let activeBrowserTransfer { engine?.cancel(activeBrowserTransfer) }
         activeBrowserTransfer = nil
@@ -25,14 +27,14 @@ final class HostFileBrowserService {
         if request.operation == .roots { respond(frame, FileBrowserReply(status: .ok, entries: access.rootEntries())); return }
         guard !busy else { refuse(frame, request, .busy); return }
         busy = true
-        let generation = self.generation, access = self.access
+        let generation = self.generation, access = self.access, lease = operationLease
         queue.async { [weak self] in
             let page: Result<FileBrowserReply, Error>
             let prepared: Result<(DescriptorFileByteSource, String), Error>?
             if request.operation == .download {
-                prepared = Result { try access.source(request.entry!) }; page = .success(FileBrowserReply(status: .ok))
+                prepared = Result { try access.source(request.entry!, authorized: { lease.isActive }) }; page = .success(FileBrowserReply(status: .ok))
             } else {
-                prepared = nil; page = Result { try access.list(request.entry!, offset: request.offset, filter: request.filter) }
+                prepared = nil; page = Result { try access.list(request.entry!, offset: request.offset, filter: request.filter, authorized: { lease.isActive }) }
             }
             DispatchQueue.main.async { MainActor.assumeIsolated {
                 guard let self, self.generation == generation else {
