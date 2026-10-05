@@ -255,11 +255,6 @@ struct HostPopoverView: View {
                     .accessibilityIdentifier("farside.popover.allowAccessibility")
                 }
             }
-            if !bounded {
-                HostToggleRow(title: "Chime when a phone connects", subtitle: "So you always know",
-                              isOn: state.chimeOnConnect, set: actions.setChimeOnConnect)
-                    .accessibilityIdentifier("farside.popover.chime")
-            }
             HostToggleRow(title: "Hide this Mac’s screen", subtitle: HostCurtainCopy.subtitle(for: state),
                           isOn: state.privacyCurtain, set: actions.setPrivacyCurtain)
                 .accessibilityIdentifier("farside.popover.privacyCurtain")
@@ -269,10 +264,6 @@ struct HostPopoverView: View {
             }
             if !bounded {
                 VStack(alignment: .leading, spacing: 6) {
-                    HostToggleRow(title: "Open at login",
-                                  subtitle: HostBackgroundItemCopy.loginSubtitle(wanted: state.openAtLogin, state: state.loginItem),
-                                  isOn: state.openAtLogin, set: actions.setOpenAtLogin)
-                        .accessibilityIdentifier("farside.popover.openAtLogin")
                     if state.consentPending && state.setupStep == .done {
                         Button("Review open at login and keep awake…") {
                             dismiss()

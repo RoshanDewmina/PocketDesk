@@ -252,7 +252,7 @@ final class HostUISnapshotTests: XCTestCase {
             $0.keepAwake = true
             $0.keepAwakePausedOnBattery = true
             $0.loginItem = .needsApproval
-        }, actions: .preview, page: .mac))
+        }, actions: .preview, page: .sharing))
     }
 
     func testSettings() throws {
@@ -284,12 +284,12 @@ final class HostUISnapshotTests: XCTestCase {
         try render("settings-crash-loop", HostSettingsView(state: ready(.unavailable) {
             $0.crashLoopStopped = true
             $0.automaticRecovery = .on
-        }, actions: .preview, page: .mac))
+        }, actions: .preview, page: .sharing))
         try render("settings-agent-alerts", HostSettingsView(state: ready(.controlling) {
             $0.session = Self.measured
             $0.agentAlerts = true
             $0.agentAlertsStatus = "Claude Code asked 2 min ago · told your iPhone"
-        }, actions: .preview, page: .sharing))
+        }, actions: .preview, page: .advanced))
         try render("settings-capture-approval-icon-hidden", HostSettingsView(state: ready(.captureNeedsApproval) {
             $0.menuBarIconShown = false
         }, actions: .preview))

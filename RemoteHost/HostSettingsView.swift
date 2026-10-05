@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Settings pages, in sidebar order. Overview answers "is it working?"; everything else is one click away.
 enum HostSettingsPage: String, CaseIterable, Identifiable {
-    case overview, devices, sharing, mac, advanced
+    case overview, devices, sharing, advanced
 
     var id: String { rawValue }
 
@@ -10,8 +10,7 @@ enum HostSettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .overview: "Overview"
         case .devices: "Devices"
-        case .sharing: "Sharing"
-        case .mac: "This Mac"
+        case .sharing: "Settings"
         case .advanced: "Advanced"
         }
     }
@@ -20,9 +19,8 @@ enum HostSettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .overview: nil
         case .devices: "The devices that can connect to this Mac."
-        case .sharing: "What a connected phone can see and do."
-        case .mac: "Permissions, and keeping this Mac ready for your phone."
-        case .advanced: "Troubleshooting and experiments. You shouldn’t need these."
+        case .sharing: "What your phone can do, and keeping this Mac ready for it."
+        case .advanced: "Rarely needed options and help with problems."
         }
     }
 
@@ -30,8 +28,7 @@ enum HostSettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .overview: "house"
         case .devices: "ipad.and.iphone"
-        case .sharing: "rectangle.on.rectangle"
-        case .mac: "laptopcomputer"
+        case .sharing: "gearshape"
         case .advanced: "slider.horizontal.3"
         }
     }
@@ -108,8 +105,8 @@ struct HostSettingsView: View {
         } message: {
             Text(HostAwayCopy.introBody.joined(separator: "\n\n"))
         }
-        .confirmationDialog("Remove this Mac’s server room?", isPresented: $confirmingServerRemoval) {
-            Button("Remove Server Room", role: .destructive, action: actions.removeServerRoom)
+        .confirmationDialog("Remove this Mac’s data from Farside servers?", isPresented: $confirmingServerRemoval) {
+            Button("Remove Server Data", role: .destructive, action: actions.removeServerRoom)
         } message: {
             Text("Sharing stops now. Saved pairing is removed only after server confirmation. If the request fails, keep it and retry.")
         }
@@ -242,8 +239,6 @@ struct HostSettingsView: View {
         case .devices:
             state.localPairRemovalMessage != nil || state.guestRows.contains(where: \.pending)
         case .sharing:
-            false
-        case .mac:
             state.screenRecording == .denied || (state.allowControl && state.accessibility == .denied)
                 || state.loginItem == .needsApproval || state.automaticRecovery == .needsApproval
                 || loginNotRegistered || !state.permissionsTurnedOffByUpdate.isEmpty
@@ -307,7 +302,6 @@ struct HostSettingsView: View {
             readyChecklist(presentation)
         case .devices:
             devicesSection
-            connectionSection
             if state.guestViewingAvailable || !state.guestRows.isEmpty {
                 HostGuestSettingsView(state: state, actions: actions)
             }
@@ -315,15 +309,16 @@ struct HostSettingsView: View {
             captureScopeSection
             controlSection
             privacySection
-            agentAlertsSection
-        case .mac:
             permissionsSection
             reachableSection
-            menuBarSection
-            availabilityDisclosure
         case .advanced:
             troubleshootingSection
+            connectionSection
+            agentAlertsSection
+            #if DEBUG
+            availabilityDisclosure
             TransportPreferenceRows()
+            #endif
             serverDataSection
             aboutSection
         }
@@ -493,7 +488,7 @@ struct HostSettingsView: View {
         }
         if state.serverRemovalPending {
             items.append(.init(id: "serverRemoval", symbol: "icloud.slash",
-                               text: state.serverRemovalMessage ?? "Removing this Mac’s server room didn’t finish. Sharing stays off until it does.",
+                               text: state.serverRemovalMessage ?? "Removing this Mac’s server data didn’t finish. Sharing stays off until it does.",
                                buttonTitle: "Retry Removal…") { confirmingServerRemoval = true })
         }
         let pendingGuests = state.guestRows.filter(\.pending).count
@@ -549,7 +544,7 @@ struct HostSettingsView: View {
         return [
             .init(id: "screen", title: "See the screen",
                   value: screen ? "Allowed" : (captureApproval ? "Needs approval" : "Allow…"), ok: screen,
-                  action: screen ? { page = .mac } : { actions.openSystemSettings(.screenRecording) }),
+                  action: screen ? { page = .sharing } : { actions.openSystemSettings(.screenRecording) }),
             .init(id: "control", title: "Click and type",
                   value: !state.allowControl ? "View only" : (control ? "Allowed" : "Allow…"),
                   ok: !state.allowControl ? nil : control,
@@ -559,7 +554,7 @@ struct HostSettingsView: View {
                   ok: devices > 0 && state.localPairRemovalMessage == nil,
                   action: devices == 0 ? actions.pairNewPhone : { page = .devices }),
             .init(id: "login", title: "Opens at login", value: login.value, ok: login.ok,
-                  action: state.loginItem == .needsApproval ? actions.openLoginItems : { page = .mac })
+                  action: state.loginItem == .needsApproval ? actions.openLoginItems : { page = .sharing })
         ]
     }
 
@@ -767,11 +762,6 @@ struct HostSettingsView: View {
             if state.away.available {
                 awayModeRow
             }
-        }
-    }
-
-    private var menuBarSection: some View {
-        HostSettingsSection("Menu bar") {
             HostSettingsRow("Show in menu bar", subtitle: HostMenuBarIconCopy.subtitle(shown: state.menuBarIconShown)) {
                 HostSwitch(label: "Show in menu bar", isOn: state.menuBarIconShown, set: actions.setMenuBarIconShown)
                     .accessibilityIdentifier("farside.settings.showInMenuBar")
@@ -860,12 +850,13 @@ struct HostSettingsView: View {
     }
 
     private var troubleshootingSection: some View {
-        HostSettingsSection("Troubleshooting", footer: "Local reports expire after 7 days, up to 10 reports. Nothing is uploaded automatically.") {
-            HostSettingsRow("Diagnostics", subtitle: "No screen content, typed text, clipboard, tokens or IP addresses") {
+        HostSettingsSection("Help with problems", footer: "Diagnostics never include screen content or typed text. Nothing is sent until you paste it somewhere.") {
+            HostSettingsRow("Copy diagnostics", subtitle: "Paste them into a message when you ask for help") {
                 Button("Copy Diagnostics", action: actions.copyDiagnostics)
                     .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
                     .accessibilityIdentifier("farside.settings.copyDiagnostics")
             }
+            #if DEBUG
             ForEach(state.diagnosticReports) { report in
                 DisclosureGroup("Local report · \(report.outcome.rawValue)") {
                     Text(report.preview).font(.footnote).textSelection(.enabled)
@@ -883,13 +874,14 @@ struct HostSettingsView: View {
                 HostSwitch(label: "Newest frame wins", isOn: state.newestFrameWins, set: actions.setNewestFrameWins)
                     .accessibilityIdentifier("farside.settings.newestFrameWins")
             }
+            #endif
         }
     }
 
     private var serverDataSection: some View {
         HostSettingsSection("Server data", footer: "Room removal does not cancel an Apple subscription. Purchase history remains for up to 90 days after access ends; security blocks and pending relay revocations may be retained.") {
-            HostSettingsRow("This Mac’s server room", subtitle: state.serverRemovalMessage) {
-                Button(state.serverRemovalBusy ? "Removing…" : (state.serverRemovalPending ? "Retry Server Room Removal…" : "Remove Server Room…"), role: .destructive) {
+            HostSettingsRow("This Mac’s data on Farside servers", subtitle: state.serverRemovalMessage) {
+                Button(state.serverRemovalBusy ? "Removing…" : (state.serverRemovalPending ? "Retry Server Data Removal…" : "Remove Server Data…"), role: .destructive) {
                     confirmingServerRemoval = true
                 }
                 .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
