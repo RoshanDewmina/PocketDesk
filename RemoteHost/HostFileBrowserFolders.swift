@@ -5,7 +5,9 @@ import SwiftUI
 /// minimal bookmarks retain folder identity without adding sandbox or Full Disk Access entitlements.
 @MainActor
 final class HostFileBrowserFolders: ObservableObject {
-    #if DEBUG
+    #if HOST_UI_SNAPSHOT_TESTS
+    static let shared = HostFileBrowserFolders(defaults: HostFileBrowserSnapshotDefaults.defaults)
+    #elseif DEBUG
     static let shared = HostFileBrowserFolders(defaults: HostE2E.active?.defaults ?? .standard)
     #else
     static let shared = HostFileBrowserFolders()

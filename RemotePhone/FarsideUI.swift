@@ -497,7 +497,7 @@ struct FarsideSegmented<Value: Hashable>: View {
                     .foregroundStyle(selected ? Farside.Palette.bone : Farside.Palette.ash)
                     .lineLimit(stacked ? nil : 1)
                     .minimumScaleFactor(stacked ? 1 : 0.8)
-                    .frame(maxWidth: .infinity, minHeight: 38)
+                    .frame(maxWidth: .infinity, minHeight: 48)
                     .background(selected ? Farside.Palette.panel2 : .clear, in: .rect(cornerRadius: 11, style: .continuous))
                     .overlay {
                         if selected {

@@ -1,3 +1,9 @@
+# Combined regular development build — 5 October 2026
+
+The owner explicitly authorized merging completed features, including supported beta features, into the regular primary app, installing the replacements on Mac and iPhone, and removing the separate beta apps after verification. The latest owner instruction parks hands-on testing and continues the remaining work. Source authorization is recorded in the initiating chat outputs/farside-combined-integration-owner-authorization-2026-10-05.json. This supersedes historical separate-beta-only boundaries for supported completed features; physical acceptance and publication remain separate.
+
+The isolated integration combines current feedback/editor/recovery source4524689, quality05bcc22, feature74addd4 and dashboard/phone design5c60c1b. Shared folders, explicit image clipboard, personal shortcuts, current-window focus, saved task views, local text selection and explicit outcome alert controls retain their negotiated authority and independent opt-ins. New provider fields/migrations are preparation only; no backend deployment or APNs/provider acceptance. Public Smart Zoom/Open app extraction is in progress. Private virtual-display Workspace is excluded from this ordinary feature port; existing supported app/window sharing and window utilities remain distinct. Current planned version is20261005.1 with unchanged regular identities, family1 and signing team. Installed apps remain regular20261004.9 until new receipts prove replacement; no new physical performance or release readiness claim.
+
 # Host retention copy reconciliation — 5 October 2026
 
 ## Secure-input native query ownership — 5 October 2026

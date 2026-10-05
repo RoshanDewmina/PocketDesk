@@ -6,6 +6,19 @@ import AppKit
 /// app's dark appearance. Set POCKETDESK_SNAPSHOT_DIR to write farside-mac-<view>.png files.
 @MainActor
 final class HostUISnapshotTests: XCTestCase {
+    override func setUp() async throws {
+        try await super.setUp()
+        XCTAssertTrue(HostFileBrowserFolders.shared.folders.isEmpty, "Snapshots must not load or leave folder grants")
+        XCTAssertTrue(HostFileBrowserFolders.shared.access.rootEntries().isEmpty, "Snapshot owner must have no granted roots")
+    }
+
+    override func tearDown() async throws {
+        XCTAssertTrue(HostFileBrowserFolders.shared.folders.isEmpty, "A snapshot leaked shared-folder grants")
+        XCTAssertTrue(HostFileBrowserFolders.shared.access.rootEntries().isEmpty, "A snapshot leaked granted roots")
+        HostFileBrowserSnapshotDefaults.cleanUp()
+        try await super.tearDown()
+    }
+
     private var outputDirectory: URL? {
         ProcessInfo.processInfo.environment["POCKETDESK_SNAPSHOT_DIR"].map { URL(fileURLWithPath: $0) }
     }

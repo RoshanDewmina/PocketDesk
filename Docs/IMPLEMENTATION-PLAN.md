@@ -1,3 +1,9 @@
+# Current combined integration — 5 October 2026
+
+Owner-authorized regular merge/install/remove-beta work is in progress in the separate combined integration checkout. Manual phone tests remain parked. Preserve the eight snapshotted owner files and existing latest feedback/editor/privacy/recovery code. Quality+feature+Claude UI merges are committed; Shared folders/independent outcome alert controls retained in the new Mac sidebar pages. Supported beta Smart Zoom/Open app port is pending. Private virtual-display implementation is not being promoted. Plan matching regular version20261005.1; neither replacement is installed yet.
+
+Controls R6 baseline built successfully, first native case stopped on an outdated Control selector, with actual portrait Settings Done48×48/tap/dismissal advancing. Exact cleanup restored source and deleted the owned simulator. All other rotations, final combined paths and physical gates remain pending. Update actual receipts after combined verification and installations, not from historical branch results. Backend frozen-lock local fixtures176PASS/17files; typecheck completed without diagnostics, explicit exit receipt to follow. No provider migration/deployment/publication.
+
 # Host retention copy reconciliation — 5 October 2026
 
 ## Secure-input native query ownership — 5 October 2026

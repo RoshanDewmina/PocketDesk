@@ -2210,9 +2210,9 @@ struct NativeSessionView: View {
 
     /// Header, two rows of keys and up to three session rows. Nothing in the panel scrolls.
     private var panelHeight: CGFloat {
-        var height: CGFloat = 288
+        var height: CGFloat = 292
         if bottomControls {
-            if showsTouchModeInPanel { height += 56 }
+            if showsTouchModeInPanel { height += 66 }
             if showsDisplayRow { height += 14 + 52 }
             return height
         }
@@ -2331,7 +2331,7 @@ struct NativeSessionView: View {
                 .foregroundStyle(Farside.Palette.ink)
                 .frame(width: 36, height: 36)
                 .background(Farside.Palette.bone, in: .circle)
-                .frame(minWidth: 44, minHeight: 44)
+                .frame(minWidth: 48, minHeight: 48)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -2762,7 +2762,7 @@ struct NativeSessionView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done", systemImage: "checkmark") { closeControls() }
+                    controlsDoneButton
                 }
             }
     }
