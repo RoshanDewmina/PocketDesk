@@ -6,6 +6,133 @@ import XCTest
 @testable import PocketDeskRemote
 
 final class OwnedVideoLifecycleTests: XCTestCase {
+    #if FARSIDE_WORKSPACE_BETA
+    @MainActor
+    func testBetaMotionDrainsOldCropFlightsThenRejectsLateNarrowPresentationAndRetainsSafeEndpoint() async throws {
+        for gpuFirst in [true, false] {
+            let admission = VideoPresentationAdmission(identity: identity(), validUntil: ProcessInfo.processInfo.systemUptime + 100)
+            let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission))
+            defer { view.invalidate() }
+            view.metal.isPaused = true
+            view.drawRequester = { _ in }
+            let full = CaptureRegion(epoch: 0, x: 0, y: 0, width: 200, height: 100, outputWidth: 200, outputHeight: 100)
+            let narrow = CaptureRegion(epoch: 9, x: 60, y: 20, width: 80, height: 40, outputWidth: 80, outputHeight: 40)
+            func frame(_ region: CaptureRegion, original: Bool = true, scope: UInt64 = 1, geometry: UInt64 = 1) throws -> VideoFrameEnvelope {
+                var pixels: CVPixelBuffer?
+                XCTAssertEqual(CVPixelBufferCreate(nil, region.outputWidth, region.outputHeight, kCVPixelFormatType_32BGRA,
+                    [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+                return .init(receiptID: UUID(), identity: admission.identity,
+                    frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixels)), rotation: ._0, timeStampNs: 1),
+                    arrivalMs: MachClock.nowMs(), marker: nil, originalSource: original,
+                    videoTag: .init(generation: String(repeating: "a", count: 32), nonce: String(repeating: "b", count: 32),
+                        geometryEpoch: geometry, scopeEpoch: scope, ltrToken: nil, region: region))
+            }
+            let wide = try frame(full), crop = try frame(narrow)
+            func drainReceiptQueue() async {
+                await withCheckedContinuation { continuation in
+                    OwnedMetalVideoView.presentedReceiptQueue.async {
+                        DispatchQueue.main.async { continuation.resume() }
+                    }
+                }
+            }
+            XCTAssertTrue(view.beginViewportCoverage(generation: 9, required: full.rect, scope: 1))
+            let staleReceipt = try XCTUnwrap(view.viewportCoverageReceipt(wide))
+            // Stand in for a narrow submission already committed before return begins.
+            view.mailbox.offer(crop)
+            let old = try XCTUnwrap(view.mailbox.take(holdUntilPresented: true))
+            XCTAssertTrue(view.beginViewportCoverage(generation: 10, required: full.rect, scope: 1))
+            view.mailbox.offer(wide)
+            let covering = try XCTUnwrap(view.mailbox.take(holdUntilPresented: true))
+            XCTAssertFalse(view.viewportCoverageAllows(wide, submissionID: covering.id))
+            if gpuFirst { view.mailbox.gpuCompleted(old.id) } else { view.mailbox.presented(old.id) }
+            XCTAssertFalse(view.viewportCoverageAllows(wide, submissionID: covering.id), "One old completion edge cannot admit widening")
+            if gpuFirst { view.mailbox.presented(old.id) } else { view.mailbox.gpuCompleted(old.id) }
+            XCTAssertTrue(view.viewportCoverageAllows(wide, submissionID: covering.id))
+            XCTAssertFalse(view.viewportCoverageReady(generation: 10), "Submission/drain is not a physical receipt")
+            staleReceipt(ProcessInfo.processInfo.systemUptime)
+            await drainReceiptQueue()
+            XCTAssertFalse(view.viewportCoverageReady(generation: 10), "Old wide receipts cannot start a new camera")
+            let coveringReceipt = try XCTUnwrap(view.viewportCoverageReceipt(wide))
+            coveringReceipt(ProcessInfo.processInfo.systemUptime)
+            await drainReceiptQueue()
+            XCTAssertTrue(view.viewportCoverageReady(generation: 10))
+            view.synchronizeViewportCoverage(visible: full.rect)
+            XCTAssertFalse(view.viewportCoverageAllows(crop, submissionID: covering.id), "Unchanged endpoint observation must keep late narrow crops withheld")
+            XCTAssertFalse(view.viewportCoverageAllows(try frame(full, original: false), submissionID: covering.id))
+            XCTAssertFalse(view.viewportCoverageAllows(try frame(full, scope: 2), submissionID: covering.id))
+            XCTAssertFalse(view.viewportCoverageAllows(try frame(full, geometry: 2), submissionID: covering.id))
+            view.mailbox.completed(covering.id)
+            // Exercise the actual draw seam: a delayed narrow frame cannot acquire a drawable,
+            // publish placement or enter the receipt-free compatibility fallback.
+            var acquisitions = 0, placements = 0
+            view.drawableAcquirer = { _ in acquisitions += 1; return nil }
+            view.onFrameDrawn = { _ in placements += 1 }
+            view.offer(crop); view.draw(in: view.metal)
+            XCTAssertEqual(acquisitions, 0); XCTAssertEqual(placements, 0)
+            XCTAssertEqual(view.fallbackCreationCount, 0); XCTAssertEqual(view.drawsPresented, 0)
+            view.finishViewportCoverage(generation: 9, required: narrow.rect)
+            XCTAssertFalse(view.viewportCoverageAllows(crop, submissionID: covering.id), "Old cleanup cannot shrink the current required area")
+            view.finishViewportCoverage(generation: 10, required: full.rect)
+            XCTAssertFalse(view.viewportCoverageAllows(crop, submissionID: covering.id), "Return endpoint must retain wide coverage")
+            XCTAssertTrue(view.beginViewportCoverage(generation: 11, required: full.rect, scope: 1))
+            coveringReceipt(ProcessInfo.processInfo.systemUptime)
+            await drainReceiptQueue()
+            XCTAssertFalse(view.viewportCoverageReady(generation: 11))
+            view.finishViewportCoverage(generation: 11, required: narrow.rect)
+            let current = try XCTUnwrap(view.mailbox.take(holdUntilPresented: true))
+            XCTAssertTrue(view.viewportCoverageAllows(crop, submissionID: current.id), "Cancelled/zoom-in endpoint permits sharpening that covers its current pose")
+            view.mailbox.completed(current.id)
+            let terminalReceipt = try XCTUnwrap(view.viewportCoverageReceipt(crop))
+            admission.lifetime.retire()
+            terminalReceipt(ProcessInfo.processInfo.systemUptime)
+            await drainReceiptQueue()
+            XCTAssertFalse(view.viewportCoverageReady(generation: 11), "Retired source cannot reopen motion")
+        }
+    }
+    @MainActor
+    func testRetainedEndpointSurvivesUnchangedPoseAndRetiresForEveryManualPoseFamily() throws {
+        let admission = VideoPresentationAdmission(identity: identity(), validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission))
+        defer { view.invalidate() }
+        view.metal.isPaused = true
+        var base = ViewportTransform(sourceSize: CGSize(width: 200, height: 100), canvasSize: CGSize(width: 100, height: 50), mode: .fit)
+        base.setZoom(2, anchoredAt: CGPoint(x: 50, y: 25))
+        let mutations: [(String, (inout ViewportTransform) -> Void)] = [
+            ("map pan", { $0.pan(by: CGSize(width: 20, height: 0)) }),
+            ("map jump", { $0.center(onSourcePoint: CGPoint(x: 180, y: 75)) }),
+            ("zoom slider", { $0.setZoom(3, anchoredAt: CGPoint(x: 50, y: 25)) }),
+            ("pointer/keyboard reveal", { let safe = $0.safeRect; _ = $0.reveal(sourcePoint: CGPoint(x: 190, y: 90), in: safe, margin: 8) }),
+            ("safe insets", { $0.updateSafeInsets(ViewportInsets(top: 0, left: 0, bottom: 12, right: 0)) }),
+            ("resize", { $0.resize(sourceSize: CGSize(width: 200, height: 100), canvasSize: CGSize(width: 120, height: 50)) })
+        ]
+        for (index, mutation) in mutations.enumerated() {
+            let generation = UInt64(index + 1)
+            XCTAssertTrue(view.beginViewportCoverage(generation: generation, required: base.visibleSourceRect, scope: 1))
+            view.finishViewportCoverage(generation: generation, required: base.visibleSourceRect)
+            var moved = base
+            mutation.1(&moved)
+            let rect = moved.visibleSourceRect
+            var pixels: CVPixelBuffer?
+            XCTAssertEqual(CVPixelBufferCreate(nil, 64, 32, kCVPixelFormatType_32BGRA, nil, &pixels), kCVReturnSuccess)
+            let crop = CaptureRegion(epoch: 7, x: Double(rect.minX), y: Double(rect.minY), width: Double(rect.width), height: Double(rect.height), outputWidth: 64, outputHeight: 32)
+            let envelope = VideoFrameEnvelope(receiptID: UUID(), identity: admission.identity,
+                frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixels)), rotation: ._0, timeStampNs: 1),
+                arrivalMs: MachClock.nowMs(), marker: nil, originalSource: true,
+                videoTag: .init(generation: String(repeating: "a", count: 32), nonce: String(repeating: "b", count: 32), geometryEpoch: 1,
+                    scopeEpoch: 1, ltrToken: nil, region: crop))
+            view.mailbox.offer(envelope)
+            let submitted = try XCTUnwrap(view.mailbox.take(holdUntilPresented: true))
+            let before = view.viewportCoverageAllows(envelope, submissionID: submitted.id)
+            view.synchronizeViewportCoverage(visible: base.visibleSourceRect)
+            XCTAssertEqual(view.viewportCoverageAllows(envelope, submissionID: submitted.id), before,
+                           "Unchanged endpoint/deferred observation must preserve the coverage policy")
+            view.synchronizeViewportCoverage(visible: moved.visibleSourceRect)
+            XCTAssertTrue(view.viewportCoverageAllows(envelope, submissionID: submitted.id), mutation.0 + " must admit its new legitimate crop")
+            view.mailbox.completed(submitted.id)
+        }
+    }
+    #endif
+
     @MainActor
     func testDrawablePoolExperimentDefaultsToTwoRejectsInvalidValuesAndIsFrozenPerRenderer() throws {
         let name = "OwnedVideoDrawablePool." + UUID().uuidString

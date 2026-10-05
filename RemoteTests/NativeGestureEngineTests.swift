@@ -38,6 +38,24 @@ final class NativeGestureEngineTests: XCTestCase {
         XCTAssertEqual(log.dragBegins, 0)
     }
 
+    func testViewRepeatedFocusReturnThenPanNeverEmitsMacCommands() {
+        let log = CommandLog()
+        let input = engine(log, enabled: false, panMode: true)
+        for base in [1.0, 2.0] {
+            input.update([touch(1, 100, 100)], at: base)
+            input.update([], at: base + 0.05)
+            input.update([touch(2, 102, 101)], at: base + 0.2)
+            input.update([], at: base + 0.25)
+        }
+        input.update([touch(3, 100, 100)], at: 3)
+        input.update([touch(3, 170, 110)], at: 3.1)
+        input.update([], at: 3.2)
+        XCTAssertEqual(log.zoomToggles.count, 2)
+        XCTAssertTrue(log.clicks.isEmpty)
+        XCTAssertTrue(log.scrollPhases.isEmpty)
+        XCTAssertEqual(log.dragBegins, 0)
+    }
+
     func testViewTwoFingerPanCanBecomePinchWithoutLifting() {
         let log = CommandLog()
         let input = engine(log, enabled: false, panMode: true)

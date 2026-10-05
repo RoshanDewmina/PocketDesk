@@ -29,7 +29,11 @@ struct MacWidgetSnapshot: Codable, Equatable {
         }
     }
 
+    #if FARSIDE_WORKSPACE_BETA
+    static let appGroup = "group.com.roshan.PocketDesk.WorkspaceBeta"
+    #else
     static let appGroup = "group.com.roshan.PocketDesk"
+    #endif
     static let defaultsKey = "macWidgetSnapshot"
     static let maximumNameLength = 64
 
@@ -45,7 +49,13 @@ struct MacWidgetSnapshot: Codable, Equatable {
         self.lastReached = lastReached
     }
 
-    static var sharedDefaults: UserDefaults? { UserDefaults(suiteName: appGroup) }
+    static var sharedDefaults: UserDefaults? {
+        #if FARSIDE_WORKSPACE_BETA
+        nil // Experimental app has no App Group entitlement or embedded widget.
+        #else
+        UserDefaults(suiteName: appGroup)
+        #endif
+    }
 
     /// Nil when the group is unavailable, empty or holds something unreadable: the widget then says "Your Mac".
     static func load(from defaults: UserDefaults? = sharedDefaults) -> MacWidgetSnapshot? {

@@ -1370,6 +1370,52 @@ final class LadderPolicyTests: XCTestCase {
         XCTAssertEqual(powerMonitor.tick(sample: slowSample, at: 0).ladder, rung(1, "phonePower"))
     }
 
+    func testAuxiliaryHeartbeatsPreservePhoneLoadThroughTheHostMonitorTick() {
+        var report = StreamStatsReport(role: "phone", previous: nil,
+                                      current: StreamStatsSample(entries: []), counters: nil)
+        report.thermalState = 2
+        let feedback = PhoneLoadFeedback(report: report)
+        var inbox = HostPhoneLoadInbox()
+        inbox.receive(RemoteAction(action: "heartbeat", epoch: 7, phoneLoad: feedback), epoch: 7, at: 10)
+        let video = VideoFeedback(operation: .refresh, generation: String(repeating: "a", count: 32),
+                                  nonce: String(repeating: "b", count: 32), token: nil, scopeEpoch: 1)
+        let probes = [
+            RemoteAction(action: "heartbeat", epoch: 7, videoFeedback: video),
+            RemoteAction(action: "heartbeat", epoch: 7, pointerProbe: "pointer"),
+            RemoteAction(action: "heartbeat", epoch: 7, textFocusProbe: String(repeating: "c", count: 32))
+        ]
+        for probe in probes {
+            inbox.receive(probe, epoch: 7, at: 10.25)
+            XCTAssertEqual(inbox.current(at: 11), feedback)
+        }
+        var received = sample
+        received.phoneLoad = inbox.current(at: 11)
+        var monitor = HostLoadMonitor(targetFPS: 120)
+        XCTAssertEqual(monitor.tick(sample: received, at: 11).ladder, rung(1, "phone"),
+                       "The monitor still receives pressure despite intervening probe heartbeats")
+
+        inbox.receive(RemoteAction(action: "heartbeat", epoch: 7), epoch: 7, at: 11.25)
+        XCTAssertNil(inbox.current(at: 11.25), "Only a regular nil report says load is unavailable")
+    }
+
+    func testPhoneLoadInboxDoesNotRenewAgeForProbesOrAcceptStaleEpochs() {
+        var report = StreamStatsReport(role: "phone", previous: nil,
+                                      current: StreamStatsSample(entries: []), counters: nil)
+        report.decodeMs = 9
+        let feedback = PhoneLoadFeedback(report: report)
+        var inbox = HostPhoneLoadInbox()
+        inbox.receive(RemoteAction(action: "heartbeat", epoch: 7, phoneLoad: feedback), epoch: 7, at: 10)
+        inbox.receive(RemoteAction(action: "heartbeat", epoch: 6), epoch: 7, at: 11)
+        XCTAssertEqual(inbox.current(at: 11), feedback, "An old epoch cannot clear current evidence")
+        inbox.receive(RemoteAction(action: "heartbeat", epoch: 7, pointerProbe: "pointer"), epoch: 7, at: 12.4)
+        XCTAssertNil(inbox.current(at: 12.501), "Auxiliary traffic cannot keep an old load window fresh")
+        inbox.receive(RemoteAction(action: "heartbeat", epoch: 6, phoneLoad: feedback), epoch: 7, at: 13)
+        XCTAssertNil(inbox.current(at: 13), "An old epoch cannot refresh pressure")
+        inbox.receive(RemoteAction(action: "heartbeat", epoch: 7, phoneLoad: feedback), epoch: 7, at: 14)
+        inbox.reset()
+        XCTAssertNil(inbox.current(at: 14), "Session teardown removes cached load")
+    }
+
     func testSampleFromTheHostReport() {
         var report = StreamStatsReport(role: "host", previous: nil, current: StreamStatsSample(entries: []),
                                        counters: nil)

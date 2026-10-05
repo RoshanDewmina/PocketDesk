@@ -17,6 +17,11 @@ struct HostSettingsView: View {
         let presentation = HostPopoverPresentation.make(for: state)
         VStack(alignment: .leading, spacing: 18) {
             header(presentation)
+            if FarsideBeta.isEnabled {
+                Text(FarsideBeta.label).font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Farside.Palette.bone)
+                    .accessibilityIdentifier("farside.settings.betaLabel")
+            }
             statusPanel(presentation)
             if let warning = state.lockWarning {
                 HostLockWarningBlock(warning: warning, awayAvailable: state.away.available,
@@ -220,7 +225,7 @@ struct HostSettingsView: View {
     }
 
     private var availabilitySection: some View {
-        HostSettingsSection("Availability", footer: "Start at login and recovery apply after you log in. Farside never stores your Mac password or unlocks FileVault. Virtual workspace is unavailable in this build.") {
+        HostSettingsSection("Availability", footer: availabilityFooter) {
             HostSettingsRow("Keep this Mac awake",
                             subtitle: HostKeepAwakeCopy.subtitle(pausedOnBattery: state.keepAwakePausedOnBattery)) {
                 HostSwitch(label: "Keep this Mac awake", isOn: state.keepAwake, set: actions.setKeepAwake)
@@ -241,6 +246,13 @@ struct HostSettingsView: View {
         }
     }
 
+    private var availabilityFooter: String {
+        let workspace = FarsideBeta.isEnabled
+            ? "Workspace is an experimental session feature. Pair Farside Beta on your iPhone and allow the requested Mac permissions to try it."
+            : "Virtual workspace is unavailable in this build."
+        return "Start at login and recovery apply after you log in. Farside never stores your Mac password or unlocks FileVault. \(workspace)"
+    }
+
     private var permissionsSection: some View {
         HostSettingsSection("Permissions") {
             permissionRow("Screen Recording", reason: "So your iPhone can see the screen",
@@ -257,18 +269,20 @@ struct HostSettingsView: View {
                     .accessibilityIdentifier("farside.settings.showInMenuBar")
             }
             HostSettingsRow("Open at login",
-                            subtitle: HostBackgroundItemCopy.loginSubtitle(wanted: state.openAtLogin, state: state.loginItem)) {
+                            subtitle: FarsideBeta.isEnabled ? "Unavailable in the Workspace beta." : HostBackgroundItemCopy.loginSubtitle(wanted: state.openAtLogin, state: state.loginItem)) {
                 backgroundItemAccessory(state.loginItem) {
                     HostSwitch(label: "Open at login", isOn: state.openAtLogin, set: actions.setOpenAtLogin)
                         .accessibilityIdentifier("farside.settings.openAtLogin")
+                        .disabled(FarsideBeta.isEnabled)
                 }
             }
             HostSettingsRow("Restart Farside if it quits",
-                            subtitle: HostBackgroundItemCopy.recoverySubtitle(state.automaticRecovery)) {
+                            subtitle: FarsideBeta.isEnabled ? "Unavailable in the Workspace beta." : HostBackgroundItemCopy.recoverySubtitle(state.automaticRecovery)) {
                 backgroundItemAccessory(state.automaticRecovery) {
                     HostSwitch(label: "Restart Farside if it quits", isOn: state.automaticRecovery.isRegistered,
                                set: actions.setAutomaticRecovery)
                         .accessibilityIdentifier("farside.settings.automaticRecovery")
+                        .disabled(FarsideBeta.isEnabled)
                 }
             }
             HostSettingsRow("Agent alerts (beta)",
@@ -407,6 +421,11 @@ struct HostSettingsView: View {
                     .font(.system(size: 12.5))
                     .foregroundStyle(Farside.Palette.ash)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            if let workspace = state.workspaceStatus {
+                Text(workspace).font(.system(size: 12.5)).foregroundStyle(Farside.Palette.ash)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("farside.settings.workspaceStatus")
             }
 
         }

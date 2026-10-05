@@ -467,6 +467,13 @@ final class PhoneRemoteModel: ObservableObject {
     /// and showed old-crop frames stretched into the new rect. Fallbacks, for frames without a region:
     /// the last echoed region of the frame's pixel size, then the echo itself.
     @Published private(set) var placementRegion: CaptureRegion?
+    // The beta camera must never place a pending status echo over old cropped pixels.
+    // This small display seam does not activate the production ScrollFixes package.
+    @Published private(set) var betaFramePlacementRegion: CaptureRegion?
+    private var betaFramePlacementKnown = false
+    var picturePlacementRegion: CaptureRegion? {
+        FarsideBeta.isEnabled && betaFramePlacementKnown ? betaFramePlacementRegion : placementRegion
+    }
     private var regionHistory: [CaptureRegion] = []
     static let regionHistoryLimit = 16
     /// While frames carry regions, a frame without one (a Smooth Motion midpoint, or one encoded before
@@ -612,14 +619,124 @@ final class PhoneRemoteModel: ObservableObject {
     @Published var modifiers: Set<String> = []
     @Published var controlAllowed = false
     @Published var fresh = false
-    @Published var captureHealthy = false { willSet { if !newValue { invalidatePresentation() } } }
-    @Published var geometryEpoch: UInt64 = 0 { willSet { if newValue != geometryEpoch { retireContentPresentation() } } }
+    @Published var captureHealthy = false { willSet { if !newValue { invalidatePresentation(preserveRotationHold: rotationCaptureRetirement) } } }
+    private var rotationGeometryRetirement = false
+    private var rotationCaptureRetirement = false
+    let virtualDisplayRotationHold = VirtualDisplayRotationHold()
+    @Published var geometryEpoch: UInt64 = 0 { willSet { if newValue != geometryEpoch { retireContentPresentation(preserveRotationHold: rotationGeometryRetirement) } } }
     @Published var textStatus = ""
     @Published private(set) var voiceDeliveryStatus: VoiceDeliveryStatus = .idle
     @Published private(set) var voiceRetryTranscript = ""
     @Published private(set) var contentConcealed = false { willSet { if newValue { invalidatePresentation(keepingPiP: pipBackground && mayHoldBackgroundPiP) } } }
 
     @Published var sourceSize = CGSize(width: 1440, height: 900)
+    @Published private(set) var virtualDisplayActive = false
+    private var virtualDisplayViewport: VirtualDisplayViewport?
+    private var virtualDisplayViewportSession: UUID?
+    private var virtualDisplayViewportGeneration: UInt64?
+    private var workspaceMeasurementAttempted = false
+    @Published private(set) var workspaceMeasurementGeneration: UInt64 = 0
+    let workspaceDeviceIsPad: Bool
+    var workspaceDeviceEligible: Bool { workspaceDeviceIsPad || FarsideBeta.isEnabled }
+    var phoneWorkspaceOffered: Bool {
+        FarsideBeta.isEnabled && !workspaceDeviceIsPad && hostFeatures.contains(SessionFeature.phoneWorkspaceBeta)
+            && hostFeatures.contains(SessionFeature.virtualDisplay)
+    }
+    private var workspaceAppliedGeometry: (generation: UInt64, source: CGSize)?
+    func workspaceGeometryApplied(source: CGSize, generation: UInt64) {
+        guard generation == workspaceMeasurementGeneration, source == sourceSize else { return }
+        workspaceAppliedGeometry = (generation, source)
+    }
+    private var workspaceObservedHostAttempt = false
+    @Published private(set) var workspaceBetaRequested = false
+    @Published private(set) var workspaceBetaPhase: WorkspaceBetaPhase = .idle
+    @Published private(set) var workspaceBetaReady = false
+    @Published private(set) var workspaceBetaExitPending = false
+    @Published private(set) var viewportTransitionGeneration: UInt64?
+    private var nextViewportTransition: UInt64 = 0
+    var coordinateInputFenced: Bool { viewportTransitionGeneration != nil }
+    private var smartZoomCoverage: (identity: VideoPresentationIdentity, rect: CGRect)?
+    func smartZoomCoverageContains(_ rect: CGRect) -> Bool {
+        guard viewportCaptureSupported else { return true }
+        guard let coverage = smartZoomCoverage, coverage.identity == inlinePresentationAdmission?.identity else { return false }
+        return coverage.rect.insetBy(dx: -0.01, dy: -0.01).contains(rect)
+    }
+
+    func smartZoomStartAllowed(interactionBlocked: Bool) -> Bool {
+        FarsideBeta.isEnabled && !interactionBlocked && sceneIsActive && connection.connected &&
+            sessionMode == .picture && !privacyShield && !contentConcealed
+    }
+    func beginSmartZoomTransition(interactionBlocked: Bool) -> UInt64? {
+        guard smartZoomStartAllowed(interactionBlocked: interactionBlocked) else { return nil }
+        return beginViewportTransition()
+    }
+    private var smartZoomRenderer: OwnedMetalVideoView? {
+        guard let session = VideoPresentationSession.active, let admission = inlinePresentationAdmission,
+              session.admissionIdentity == admission.identity, session.admissionLifetime === admission.lifetime,
+              admission.permits(at: ProcessInfo.processInfo.systemUptime) else { return nil }
+        return session.view
+    }
+    func constrainSmartZoomPresentation(_ required: CGRect, generation: UInt64) -> Bool {
+        guard viewportTransitionGeneration == generation, let scope = sharedCaptureScope?.epoch else { return false }
+        return smartZoomRenderer?.beginViewportCoverage(generation: generation, required: required, scope: scope) == true
+    }
+    func smartZoomPresentationReady(generation: UInt64) -> Bool {
+        viewportTransitionGeneration == generation && smartZoomRenderer?.viewportCoverageReady(generation: generation) == true
+    }
+    func finishSmartZoomTransition(_ generation: UInt64, visible: CGRect) {
+        // Renderer ownership also survives a model input cancellation: release its old union
+        // to the current pose, while its generation check still protects any newer camera.
+        smartZoomRenderer?.finishViewportCoverage(generation: generation, required: visible)
+        endViewportTransition(generation)
+    }
+    func clearSmartZoomPresentationConstraint() { smartZoomRenderer?.clearViewportCoverage() }
+    func synchronizeSmartZoomPresentation(visible: CGRect) {
+        guard viewportTransitionGeneration == nil else { return }
+        smartZoomRenderer?.synchronizeViewportCoverage(visible: visible)
+    }
+
+    @discardableResult
+    func beginViewportTransition() -> UInt64 {
+        cancelInput()
+        nextViewportTransition &+= 1
+        viewportTransitionGeneration = nextViewportTransition
+        return nextViewportTransition
+    }
+    func endViewportTransition(_ generation: UInt64) {
+        guard viewportTransitionGeneration == generation else { return }
+        viewportTransitionGeneration = nil
+    }
+    func cancelViewportTransition() {
+        nextViewportTransition &+= 1
+        viewportTransitionGeneration = nil
+    }
+
+    @discardableResult
+    func enterBetaWorkspace() -> Bool {
+        guard phoneWorkspaceOffered, connection.connected, sceneIsActive, sessionMode == .picture,
+              !workspaceBetaRequested, !workspaceBetaExitPending, workspaceBetaPhase == .idle,
+              !privacyShield, !contentConcealed, !captureScopeViewOnly else { return false }
+        cancelInput()
+        workspaceBetaReady = false
+        workspaceObservedHostAttempt = false
+        workspaceBetaRequested = true
+        workspaceBetaPhase = .preparing
+        retireWorkspaceMeasurement()
+        workspaceLayoutSourceSize = sourceSize
+        return true
+    }
+    func exitBetaWorkspace() {
+        guard FarsideBeta.isEnabled, connection.connected,
+              workspaceBetaRequested || workspaceBetaExitPending else { return }
+        cancelInput()
+        workspaceBetaRequested = false
+        workspaceBetaReady = false
+        workspaceBetaExitPending = true
+        workspaceBetaPhase = .restoring
+        retireWorkspaceMeasurement()
+        _ = connection.sendControl(heartbeatAction())
+    }
+    @Published private(set) var workspaceLayoutSourceSize: CGSize?
     @Published private(set) var inputRevision: UInt64 = 0
     @Published private(set) var acceptedClicks: UInt64 = 0
     /// Which click the last accepted one was ("click", "right" or "double"), for the contact ripple.
@@ -748,15 +865,19 @@ final class PhoneRemoteModel: ObservableObject {
               host.invitation == invitation else { return }
         presentationHost = host
     }
-    private func retireContentPresentation() {
+    private func retireContentPresentation(preserveRotationHold: Bool = false) {
         diagnostics.cancel()
         pipTransitional = false
-        invalidatePresentation()
+        invalidatePresentation(preserveRotationHold: preserveRotationHold)
         presentationContentEpoch &+= 1
         setMacAudioMuted(true)
         finishPiPRestore(false)
     }
-    private func invalidatePresentation(keepingPiP: Bool = false, requestHostExit: Bool = true) {
+    private func invalidatePresentation(keepingPiP: Bool = false, requestHostExit: Bool = true, preserveRotationHold: Bool = false) {
+        cancelViewportTransition()
+        smartZoomCoverage = nil
+        workspaceBetaReady = false
+        if !preserveRotationHold { virtualDisplayRotationHold.clear() }
         PhoneIdleTimer.shared.endSession()
         if pendingWake != nil { wakeStatus = "The helper session changed. No new wake result can be confirmed." }
         pendingWake = nil; wakeTimeout?.cancel(); wakeTimeout = nil
@@ -800,6 +921,22 @@ final class PhoneRemoteModel: ObservableObject {
                 contentEpoch: presentationContentEpoch, geometryEpoch: geometryEpoch)
         }
         let blocked = pendingLockMac != nil || host?.invitation != connection.invitation || hostPresence == .locked || hostPresence == .switchedUser
+        if virtualDisplayRotationHold.isHolding {
+            let old = virtualDisplayRotationHold.policy.oldIdentity
+            let sameWorkspace = identity.map { value in
+                value.hostRecordID == old?.hostRecordID && value.ownerPairID == old?.ownerPairID &&
+                    value.sessionID == old?.sessionID && value.trackID == old?.trackID
+            } ?? false
+            if !sameWorkspace || blocked || sessionBlocker != nil || !sceneIsActive || privacyShield || contentConcealed || sessionMode != .picture ||
+                !hostFeatures.contains(SessionFeature.virtualDisplay) || !virtualDisplayActive || captureScopeViewOnly ||
+                viewOnlyConfirmed || pendingViewOnlyStart || awaitingViewOnlyExit ||
+                currentDisplayID != virtualDisplayRotationHold.policy.begin?.display ||
+                sharedCaptureScope?.epoch != virtualDisplayRotationHold.policy.begin?.scopeEpoch ||
+                connection.presentationDeadline(at: now) == nil || !connection.connected {
+                virtualDisplayRotationHold.clear()
+            }
+            virtualDisplayRotationHold.expire(at: now)
+        }
         var proof = PresentationLeasePolicy.admission(identity: identity, routeDeadline: connection.presentationDeadline(at: now),
             captureHealthAt: lastCaptureHealth, healthy: captureHealthy, picture: sessionMode == .picture,
             trackPresent: connection.remoteVideo != nil, blocked: blocked, now: now)
@@ -859,6 +996,75 @@ final class PhoneRemoteModel: ObservableObject {
             lastUsefulPresentationUpdate = now; refreshUsefulSession(at: now)
         }
     }
+    func rotationSourcePresented(_ source: VideoPresentedSource) {
+        let now = ProcessInfo.processInfo.systemUptime
+        if FarsideBeta.isEnabled, let admission = inlinePresentationAdmission, admission.permits(at: now),
+           source.lifetime === admission.lifetime, source.lifetime.isActive,
+           source.envelope.identity == admission.identity, source.envelope.originalSource,
+           let tag = source.envelope.videoTag, (try? tag.validate()) != nil,
+           source.presentedAt <= now, now - source.presentedAt <= 0.5, tag.geometryEpoch == geometryEpoch,
+           tag.scopeEpoch == sharedCaptureScope?.epoch, let region = tag.region, (try? region.validate()) != nil {
+            smartZoomCoverage = (admission.identity, region.rect)
+        }
+        betaWorkspaceSourcePresented(source, at: now)
+        virtualDisplayRotationHold.expire(at: now)
+        guard hostFeatures.contains(SessionFeature.virtualDisplay), virtualDisplayActive,
+              sceneIsActive, !privacyShield, !contentConcealed, sessionMode == .picture,
+              !captureScopeViewOnly, !viewOnlyConfirmed, !pendingViewOnlyStart, !awaitingViewOnlyExit,
+              pendingLockMac == nil, sessionBlocker == nil, hostPresence != .locked, hostPresence != .switchedUser,
+              connection.connected, let admission = inlinePresentationAdmission,
+              let scope = sharedCaptureScope, scope.kind == .display, !scope.viewOnly,
+              let display = currentDisplayID, connection.presentationDeadline(at: now) != nil else { return }
+        virtualDisplayRotationHold.record(source, admission: admission, scope: scope.epoch, display: display, now: now)
+    }
+    private func betaWorkspaceSourcePresented(_ source: VideoPresentedSource, at now: TimeInterval) {
+        guard FarsideBeta.isEnabled, workspaceBetaRequested || workspaceBetaExitPending,
+              sceneIsActive, !privacyShield, !contentConcealed, connection.connected,
+              fresh, captureHealthy, controlAllowed, sessionMode == .picture,
+              !viewOnlyConfirmed, !pendingViewOnlyStart, !awaitingViewOnlyExit, pendingLockMac == nil,
+              sessionBlocker == nil, hostPresence != .locked, hostPresence != .switchedUser,
+              source.presentedAt <= now, now - source.presentedAt <= 0.5,
+              workspaceAppliedGeometry?.generation == workspaceMeasurementGeneration,
+              workspaceAppliedGeometry?.source == sourceSize,
+              let admission = inlinePresentationAdmission,
+              admission.permits(at: now), source.lifetime === admission.lifetime, source.lifetime.isActive,
+              source.envelope.identity == admission.identity, let proof = source.rotationProof,
+              proof.tagGeometry == geometryEpoch, proof.tagScope == sharedCaptureScope?.epoch,
+              sharedCaptureScope?.kind == .display, !captureScopeViewOnly else { return }
+        if workspaceBetaExitPending {
+            guard workspaceBetaPhase == .idle, !virtualDisplayActive else { return }
+            workspaceBetaExitPending = false
+            workspaceLayoutSourceSize = nil
+            announce("Normal desktop restored")
+        } else {
+            if workspaceObservedHostAttempt, workspaceBetaPhase == .idle, !virtualDisplayActive {
+                workspaceBetaRequested = false
+                workspaceBetaReady = false
+                workspaceLayoutSourceSize = nil
+                announce("Workspace unavailable. Using your normal desktop.")
+                return
+            }
+            guard workspaceBetaPhase == .active, virtualDisplayActive, let viewport = virtualDisplayViewport,
+                  let spec = VirtualDisplaySpecification(viewport: viewport),
+                  sourceSize == CGSize(width: spec.logicalWidth, height: spec.logicalHeight),
+                  proof.pixelWidth == spec.width, proof.pixelHeight == spec.height else { return }
+            if !workspaceBetaReady { announce("Beta Workspace picture is ready") }
+            workspaceBetaReady = true
+        }
+    }
+    private func beginRotationHold(_ request: VirtualDisplayResizeBegin) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard hostFeatures.contains(SessionFeature.virtualDisplay), virtualDisplayActive,
+              sceneIsActive, !privacyShield, !contentConcealed, sessionMode == .picture,
+              !captureScopeViewOnly, !viewOnlyConfirmed, !pendingViewOnlyStart, !awaitingViewOnlyExit,
+              pendingLockMac == nil, sessionBlocker == nil, hostPresence != .locked, hostPresence != .switchedUser,
+              connection.connected, fresh, captureHealthy, let admission = inlinePresentationAdmission,
+              let scope = sharedCaptureScope, scope.kind == .display, !scope.viewOnly,
+              let display = currentDisplayID, let route = connection.presentationDeadline(at: now) else { return }
+        if virtualDisplayRotationHold.begin(request, admission: admission, scope: scope.epoch, display: display, routeDeadline: route, now: now) {
+            cancelInput(); pointerOverlay.reset(sourceSize: sourceSize)
+        }
+    }
     private func usefulPictureDeadline(at now: TimeInterval) -> TimeInterval? {
         guard sessionMode == .picture, fresh, lastFrame > 0,
               inlinePresentationAdmission?.permits(at: now) == true,
@@ -913,6 +1119,7 @@ final class PhoneRemoteModel: ObservableObject {
         }
     }
     func startPictureInPicture() {
+        virtualDisplayRotationHold.clear()
         guard sceneIsActive, !privacyShield, !contentConcealed, !awaitingViewOnlyExit, pipState == .ready,
               hostFeatures.contains(SessionFeature.liveViewOnly), pipAdmission?.permits(at: ProcessInfo.processInfo.systemUptime) == true else { return }
         livePiP.automaticStartAllowed = false; autoPiPStarted = false // The button owns this start.
@@ -966,7 +1173,9 @@ final class PhoneRemoteModel: ObservableObject {
 
     init(background: BackgroundExecution? = nil, resumeStore: SessionResumeStore = SessionResumeStore(),
          macAudioPlayback: PhoneSystemAudioPlayback? = nil, livePiP: LivePiPController? = nil,
-         preferences: UserDefaults = .standard, coordinator: RemoteCoordinator? = nil) {
+         preferences: UserDefaults = .standard, coordinator: RemoteCoordinator? = nil,
+         deviceIdiom: UIUserInterfaceIdiom = UIDevice.current.userInterfaceIdiom) {
+        workspaceDeviceIsPad = deviceIdiom == .pad
         #if DEBUG
         // E2E keeps its own trust; launch-seeded and injected test pairings stay isolated.
         connection = coordinator ?? RemoteCoordinator(isHost: false,
@@ -989,6 +1198,8 @@ final class PhoneRemoteModel: ObservableObject {
         autoPiPEnabled = !preferences.bool(forKey: Self.autoPiPDisabledKey)
         self.background = background ?? SystemBackgroundExecution()
         self.resumeStore = resumeStore
+        connection.requestsIPadWorkspace = workspaceDeviceIsPad
+        connection.requestsPhoneWorkspaceBeta = FarsideBeta.isEnabled && !workspaceDeviceIsPad
         resumeCapsule = resumeStore.load()
         if let host = connection.presentationHostTrust { bigTextMemory.migrate(host: host) }
         NativeCodecCapability.warmUp()
@@ -1069,6 +1280,7 @@ final class PhoneRemoteModel: ObservableObject {
             guard let self else { completion(false); return }
             self.requestPiPRestore(completion)
         }
+        virtualDisplayRotationHold.onChange = { [weak self] in self?.objectWillChange.send() }
         connection.onPresentationInvalidated = { [weak self] in self?.retireContentPresentation() }
         if preferences.bool(forKey: Self.localOnlyKey) { connection.setLocalOnly(true) }
         connection.restore()
@@ -1098,6 +1310,11 @@ final class PhoneRemoteModel: ObservableObject {
                 self.bigText.autoApplied = false
             }
             self.beginFirstPicture()
+            self.retireWorkspaceMeasurement()
+            self.workspaceBetaRequested = false
+            self.workspaceObservedHostAttempt = false
+            self.workspaceBetaExitPending = false
+            self.workspaceBetaPhase = .idle
             self.invalidatePresentation()
             self.cachePresentationHost()
             self.cancelLockMacRequest()
@@ -1194,6 +1411,8 @@ final class PhoneRemoteModel: ObservableObject {
     #endif
 
     var canControl: Bool {
+        guard !virtualDisplayRotationHold.isHolding else { return false }
+        guard !FarsideBeta.isEnabled || !(workspaceBetaRequested || workspaceBetaExitPending) || workspaceBetaReady else { return false }
         guard pendingLockMac == nil else { return false }
         guard !captureScopeViewOnly, bigText.pendingTarget == nil, !viewOnlyConfirmed, !pendingViewOnlyStart, !awaitingViewOnlyExit, !pipBackground else { return false }
         #if DEBUG
@@ -1332,6 +1551,7 @@ final class PhoneRemoteModel: ObservableObject {
     var scrollModifiers = ScrollModifierPolicy.phoneProcessEnabled
     private var extendedKeyNoticeShown = false
 
+    private static let viewportSensitiveActions: Set<String> = ["move", "moveTo", "click", "right", "double", "middle", "auxClick", "dragDown", "scroll", "pencil"]
     private static let pointerActions: Set<String> = ["move", "moveTo", "click", "right", "double", "middle", "dragDown", "scroll"]
     private static let couchPressActions: Set<String> = ["click", "double", "right", "middle", "dragDown"]
 
@@ -1340,7 +1560,7 @@ final class PhoneRemoteModel: ObservableObject {
     /// The Mac's displays, when it lists them (`SessionFeature.displaySelection`).
     @Published private(set) var displays: [DisplayDescriptor] = []
     /// The display the Mac is streaming now.
-    @Published private(set) var currentDisplayID: UInt32?
+    @Published private(set) var currentDisplayID: UInt32? { willSet { if newValue != currentDisplayID { virtualDisplayRotationHold.clear() } } }
     /// A switch the phone asked for and the Mac has not confirmed yet.
     @Published private(set) var pendingDisplayID: UInt32?
     private var displaysRequested = false
@@ -1461,6 +1681,10 @@ final class PhoneRemoteModel: ObservableObject {
 
     /// On the first list of a session, return to the display chosen last time for this Mac.
     private func applyRememberedDisplay() {
+        // A saved physical preference cannot retire an offered/owned phone workspace.
+        // Explicit display selection retains its established physical fallback behavior.
+        guard !(hostFeatures.contains(SessionFeature.virtualDisplay) && (workspaceDeviceIsPad || workspaceBetaRequested)),
+              !virtualDisplayActive else { return }
         guard !rememberedDisplayApplied, let room = connection.invitation?.room, canControl else { return }
         rememberedDisplayApplied = true
         guard let wanted = DisplayMemory.match(displayMemory.choice(forRoom: room), in: displays),
@@ -1863,9 +2087,48 @@ final class PhoneRemoteModel: ObservableObject {
         let viewport = viewportCaptureSupported ? viewportReporter.region(forDisplay: sourceSize) : nil
         let load = hostFeatures.contains(SessionFeature.ladder) &&
             phoneLoadReportedAt.map({ now >= $0 && now - $0 <= 2.5 }) == true ? phoneLoad : nil
+        let workspaceSupported = (workspaceDeviceIsPad || phoneWorkspaceOffered && workspaceBetaRequested) && connection.connected && sceneIsActive &&
+            hostFeatures.contains(SessionFeature.virtualDisplay)
+        let workspace = virtualDisplayViewportSession == connection.presentationSessionID &&
+            virtualDisplayViewportGeneration == workspaceMeasurementGeneration ? virtualDisplayViewport : nil
         return RemoteAction(action: "heartbeat", macAudioRequested: phoneAudioRequestSupported ? currentMacAudioConsent() && !macAudioSuspended : nil, lowDataMode: constrained, epoch: geometryEpoch, pointerSync: pointerOverlay.advertisement(),
                             streamQuality: appliedStreamQuality == nil ? nil : streamQuality, clock: clock,
-                            screenPixels: screenPixels(), viewport: viewport, phoneLoad: load)
+                            screenPixels: screenPixels(),
+                            virtualDisplayViewport: workspaceSupported ? workspace : nil,
+                            virtualDisplayViewportUnavailable: workspaceBetaExitPending || workspaceSupported && workspace == nil && (workspaceDeviceIsPad || workspaceMeasurementAttempted) ? true : nil,
+                            virtualDisplayResizeHoldSupported: workspaceSupported && workspace != nil ? true : nil,
+                            viewport: viewport, phoneLoad: load)
+    }
+
+    /// The iPad's measured usable picture, aligned before negotiation; zoom is unrelated.
+    func virtualDisplayViewportChanged(size: CGSize, scale: CGFloat, maximumFPS: Int, generation: UInt64) {
+        guard (workspaceDeviceIsPad || phoneWorkspaceOffered && workspaceBetaRequested), connection.connected, sceneIsActive,
+              generation == workspaceMeasurementGeneration else { return }
+        workspaceMeasurementAttempted = true
+        let value = VirtualDisplayViewport(width: Double(size.width), height: Double(size.height),
+                                          scale: Double(scale), maximumFPS: maximumFPS, iPadWorkspace: workspaceDeviceIsPad,
+                                          experimentalPhoneWorkspace: !workspaceDeviceIsPad ? true : nil)
+        let admitted = (try? value.validate()) != nil ? value : nil
+        if admitted != nil, hostFeatures.contains(SessionFeature.virtualDisplay), workspaceLayoutSourceSize == nil {
+            workspaceLayoutSourceSize = sourceSize
+        }
+        guard admitted != virtualDisplayViewport || virtualDisplayViewportSession != connection.presentationSessionID ||
+              virtualDisplayViewportGeneration != generation else { return }
+        virtualDisplayViewport = admitted
+        virtualDisplayViewportSession = connection.presentationSessionID
+        virtualDisplayViewportGeneration = generation
+        if hostFeatures.contains(SessionFeature.virtualDisplay), connection.connected {
+            _ = connection.sendControl(heartbeatAction())
+        }
+    }
+
+    private func retireWorkspaceMeasurement() {
+        workspaceAppliedGeometry = nil
+        workspaceMeasurementAttempted = false
+        virtualDisplayViewport = nil
+        virtualDisplayViewportSession = nil
+        virtualDisplayViewportGeneration = nil
+        workspaceMeasurementGeneration &+= 1
     }
 
     /// Statistics run on every live media connection, including when the overlay is hidden.
@@ -1893,6 +2156,16 @@ final class PhoneRemoteModel: ObservableObject {
 
     /// Called on the main thread for every frame the Metal view draws.
     func frameDrawn(_ envelope: VideoFrameEnvelope) {
+        if FarsideBeta.isEnabled, envelope.identity == inlinePresentationAdmission?.identity,
+           inlinePresentationAdmission?.permits(at: ProcessInfo.processInfo.systemUptime) == true,
+           let tag = envelope.videoTag, (try? tag.validate()) != nil,
+           tag.geometryEpoch == geometryEpoch, tag.scopeEpoch == sharedCaptureScope?.epoch,
+           let region = tag.region,
+           region.outputWidth == Int(envelope.frame.width), region.outputHeight == Int(envelope.frame.height) {
+            let placed = region.isWholeDisplay ? nil : region
+            betaFramePlacementKnown = true
+            if Self.regionCoverageChanged(betaFramePlacementRegion, placed) { betaFramePlacementRegion = placed }
+        }
         framePlacement(tag: envelope.videoTag, width: Int(envelope.frame.width), height: Int(envelope.frame.height))
     }
 
@@ -1921,6 +2194,8 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     private func resetRegions() {
+        betaFramePlacementKnown = false
+        betaFramePlacementRegion = nil
         captureRegion = nil
         regionHistory.removeAll()
         taggedRegionFrames = 0
@@ -1983,6 +2258,14 @@ final class PhoneRemoteModel: ObservableObject {
     #endif
 
     private lazy var displayTickInput = PhoneDisplayTickInputPump()
+
+    #if DEBUG
+    /// Keep model cancellation tests on the real transmission path with a deterministic display clock.
+    func setDisplayTickInputForTesting(_ pump: PhoneDisplayTickInputPump) {
+        displayTickInput.cancel()
+        displayTickInput = pump
+    }
+    #endif
 
     /// Every control message leaves through here, so the offline probe sees the same actions.
     private func transmit(_ action: RemoteAction) -> Bool {
@@ -2400,6 +2683,7 @@ final class PhoneRemoteModel: ObservableObject {
                            text: String = "", key: String = "", modifiers: [String] = [],
                            probeTextFocus: Bool = false, pointerSync: PointerSync? = nil, pencil: PencilFrame? = nil) -> Bool {
         textFocusProbe.invalidate()
+        guard !coordinateInputFenced || !Self.viewportSensitiveActions.contains(name) else { return false }
         guard canControl, pendingLockMac == nil else { return false }
         // Moves still go while the Mac is behind, so it can catch up; presses wait.
         if sessionMode == .couch, Self.couchPressActions.contains(name),
@@ -2574,6 +2858,9 @@ let now = ProcessInfo.processInfo.systemUptime
     func cancelInput() {
         textFocusProbe.invalidate()
         pointerLocator.clear()
+        // Unsent motion belongs to the cancelled gesture even when no button is held.
+        // Native release() only sends cleanup for a hold, so it cannot retire this queue alone.
+        displayTickInput.cancel()
         release()
         inputRevision &+= 1
     }
@@ -2730,6 +3017,7 @@ let now = ProcessInfo.processInfo.systemUptime
             resumeMacAudioIfAllowed()
             completePiPRestoreIfCurrent()
         case .inactive:
+            virtualDisplayRotationHold.clear()
             diagnostics.cancel()
             pipTransitional = mayKeepLivePiP || autoPiPMayStart
             if autoPiPMayStart { livePiP.prepareForLeaving() }
@@ -2746,6 +3034,7 @@ let now = ProcessInfo.processInfo.systemUptime
                 // Release input and shield the snapshot, but only .background starts a hold timer.
             }
         case .background:
+            virtualDisplayRotationHold.clear()
             sceneWasBackground = true
             sceneIsActive = false
             privacyShield = false
@@ -3048,7 +3337,7 @@ let now = ProcessInfo.processInfo.systemUptime
         case "wakeReply": receiveWakeReply(action)
         case "viewing":
             controlAllowed = !captureScopeViewOnly && action.x == 1
-            if !controlAllowed { pointerLocator.clear(); release() }
+            if !controlAllowed { virtualDisplayRotationHold.clear(); pointerLocator.clear(); release() }
         case "heartbeat":
             if let app = action.frontmostApp, action.epoch == geometryEpoch,
                ShortcutChips.negotiated(enabled: ShortcutChips.isEnabled(preferences), peerFeatures: hostFeatures),
@@ -3124,9 +3413,30 @@ let now = ProcessInfo.processInfo.systemUptime
                 }
             }
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
-            hostFeatures = Set(SharedCaptureScopePolicy.features(action.features ?? [], kind: sharedCaptureScope?.kind ?? .display))
+            if action.features != nil || !virtualDisplayActive {
+                hostFeatures = Set(SharedCaptureScopePolicy.features(action.features ?? [], kind: sharedCaptureScope?.kind ?? .display))
+                // B8 hosts advertised this to every idiom. Preserve ordinary iPhone display/Big Text behavior.
+                if !workspaceDeviceIsPad && !phoneWorkspaceOffered { hostFeatures.remove(SessionFeature.virtualDisplay) }
+                if action.features != nil {
+                    if hostFeatures.contains(SessionFeature.virtualDisplay) && (workspaceDeviceIsPad || workspaceBetaRequested) {
+                        // The geometry packet for the new route can precede its active capture status.
+                        if workspaceLayoutSourceSize == nil { workspaceLayoutSourceSize = sourceSize }
+                    } else {
+                        workspaceLayoutSourceSize = nil
+                    }
+                }
+            }
+            if action.epoch == geometryEpoch, action.features != nil {
+                virtualDisplayActive = hostFeatures.contains(SessionFeature.virtualDisplay) && action.virtualDisplayActive == true
+            }
             if !hostFeatures.contains(SessionFeature.shortcutChips) { frontmostApp = nil }
             if action.features != nil { firstPictureCaptureObserved = true }
+            if FarsideBeta.isEnabled, action.epoch == geometryEpoch, let phase = action.virtualDisplayPhase {
+                // A normal idle heartbeat already in flight cannot cancel a just-chosen entry.
+                if workspaceBetaRequested && phase != .idle { workspaceObservedHostAttempt = true }
+                if !workspaceBetaRequested || phase != .idle || workspaceObservedHostAttempt { workspaceBetaPhase = phase }
+                if phase != .active { workspaceBetaReady = false }
+            }
             if hostFeatures.contains(SessionFeature.causalInput) { connection.requestCausalInput(epoch: geometryEpoch) }
             hostPresence = action.hostState.flatMap(HostPresence.init(rawValue:))
             sessionBlocker = action.hostState.flatMap(MacShareBlocker.init(rawValue:))
@@ -3165,7 +3475,24 @@ let now = ProcessInfo.processInfo.systemUptime
                 tokenReceivedAt = ProcessInfo.processInfo.systemUptime
                 if let interval = interaction.doubleClickInterval { doubleClickInterval = interval }
             }
+            if virtualDisplayRotationHold.isHolding {
+                if action.x == 1 {
+                    let same = action.epoch == virtualDisplayRotationHold.policy.targetEpoch &&
+                        action.display == virtualDisplayRotationHold.policy.begin?.display &&
+                        action.virtualDisplayActive == true && action.features?.contains(SessionFeature.virtualDisplay) == true &&
+                        sessionBlocker == nil && hostPresence != .locked && hostPresence != .switchedUser && !captureScopeViewOnly &&
+                        sharedCaptureScope?.kind == .display && sharedCaptureScope?.epoch == virtualDisplayRotationHold.policy.begin?.scopeEpoch
+                    if !same { virtualDisplayRotationHold.clear() }
+                }
+                rotationCaptureRetirement = action.x == 0 && action.features == nil && sessionBlocker == nil &&
+                    hostPresence != .locked && hostPresence != .switchedUser && !captureScopeViewOnly &&
+                    !viewOnlyConfirmed && !pendingViewOnlyStart && !awaitingViewOnlyExit &&
+                    virtualDisplayRotationHold.policy.permitsPreflight(
+                    token: action.virtualDisplayResizeToken, epoch: action.epoch,
+                    scope: sharedCaptureScope?.epoch ?? 0, now: ProcessInfo.processInfo.systemUptime)
+            }
             captureHealthy = action.x == 1
+            rotationCaptureRetirement = false
             lastCaptureHealth = captureHealthy ? ProcessInfo.processInfo.systemUptime : 0
             if !captureHealthy { pointerLocator.clear(); release() }
             // A status without a feature list (the host's capture-start preflight) says nothing about the mode.
@@ -3211,6 +3538,10 @@ let now = ProcessInfo.processInfo.systemUptime
             connection.media?.observeLadder(action.ladder)
             sendViewportChange(settled: false, at: ProcessInfo.processInfo.systemUptime)
             refreshFirstPicture()
+        case "virtualDisplayResizeBegin":
+            if let request = action.virtualDisplayResizeBegin, action.epoch == geometryEpoch { beginRotationHold(request) }
+        case "virtualDisplayResizeCancel":
+            virtualDisplayRotationHold.cancel(token: action.virtualDisplayResizeToken)
         case "geometry":
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
             guard action.epoch != geometryEpoch else { return }
@@ -3222,7 +3553,14 @@ let now = ProcessInfo.processInfo.systemUptime
             }
             pointerOverlay.reset(sourceSize: sourceSize)
             displayTickInput.cancel()
+            let preservesRotation = inlinePresentationAdmission.map { admission in
+                virtualDisplayRotationHold.bind(token: action.virtualDisplayResizeToken, epoch: action.epoch,
+                    scope: sharedCaptureScope?.epoch ?? 0, display: currentDisplayID ?? 0, current: admission.identity)
+            } ?? false
+            if !preservesRotation { virtualDisplayRotationHold.clear() }
+            rotationGeometryRetirement = preservesRotation
             geometryEpoch = action.epoch
+            rotationGeometryRetirement = false
             couchAck.reset()
             couchStalled = false
             resetRegions()
@@ -3230,7 +3568,9 @@ let now = ProcessInfo.processInfo.systemUptime
             ladder = nil
             connection.media?.observeLadder(nil)
             fresh = false
+            rotationCaptureRetirement = preservesRotation
             captureHealthy = false
+            rotationCaptureRetirement = false
             lastFrame = 0
             lastCaptureHealth = 0
             if let reply = deferredBigTextReply {
@@ -3517,6 +3857,11 @@ let now = ProcessInfo.processInfo.systemUptime
     }
 
     private func end() {
+        workspaceBetaRequested = false
+        workspaceBetaReady = false
+        workspaceBetaExitPending = false
+        workspaceBetaPhase = .idle
+        cancelViewportTransition()
         firstPictureTask?.cancel(); firstPictureTask = nil
         firstPictureSettlement.cancel()
         firstPictureSession = false
@@ -3526,6 +3871,7 @@ let now = ProcessInfo.processInfo.systemUptime
         firstPictureCaptureObserved = false
         initialBigTextRequestID = nil
         deferredSetupBigText = nil
+        retireWorkspaceMeasurement()
         PhoneIdleTimer.shared.endSession()
         let awayWasOn = (presentationHost ?? connection.presentationHostTrust).map { awayMemory.wasOn(host: $0) } ?? false
         cancelLockMacRequest()
@@ -3604,6 +3950,8 @@ let now = ProcessInfo.processInfo.systemUptime
         hostFeatures = []
         lowDataState = LowDataPolicyState()
         frontmostApp = nil
+        virtualDisplayActive = false
+        workspaceLayoutSourceSize = nil
         hostPresence = nil
         sessionBlocker = nil
         curtainState = nil
@@ -3773,6 +4121,7 @@ struct RemoteVideoSurface: UIViewRepresentable {
     /// Raw decoded source callback; must be thread-safe (LivePiPController.offer is thread-safe).
     var onSourceFrame: ((VideoFrameEnvelope) -> Void)?
     var onOriginalSourcePresented: ((VideoPresentationIdentity, UUID) -> Void)?
+    var onSourcePresented: ((VideoPresentedSource) -> Void)?
     /// Main thread, once per drawn frame, outside the presentation fence.
     var onFrameDrawn: ((VideoFrameEnvelope) -> Void)?
     var videoFeedback: VideoFeedbackContext?
@@ -3809,6 +4158,7 @@ struct RemoteVideoSurface: UIViewRepresentable {
                 view.topAnchor.constraint(equalTo: container.topAnchor), view.bottomAnchor.constraint(equalTo: container.bottomAnchor)])
         }
         context.coordinator.session?.onOriginalSourcePresented = onOriginalSourcePresented
+        context.coordinator.session?.onSourcePresented = onSourcePresented
         context.coordinator.session?.onFrameDrawn = onFrameDrawn
         context.coordinator.session?.configure(admission: admission, counters: counters, statistics: statistics,
             sourceSize: sourceSize, displayedPixelWidth: displayedPixelWidth, fillsFrame: fillsFrame,

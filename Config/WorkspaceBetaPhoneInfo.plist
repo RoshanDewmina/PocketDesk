@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>FarsideWorkspaceBeta</key>
+    <true/>
+	<key>UIBackgroundModes</key>
+	<array><string>audio</string></array>
+	<key>NSBonjourServices</key>
+	<array><string>_farside._tcp</string></array>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.roshan.PocketDesk.WorkspaceBeta.route</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>farside-beta</string>
+			</array>
+		</dict>
+	</array>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>FarsidePrivacyURL</key>
+	<string>$(FARSIDE_PRIVACY_URL)</string>
+	<key>FarsideServiceBaseURL</key>
+	<string>$(FARSIDE_SERVICE_BASE_URL)</string>
+	<key>FarsideAPNSEnvironment</key>
+	<string>$(FARSIDE_APNS_ENVIRONMENT)</string>
+	<key>FarsideServiceReady</key>
+	<string>$(FARSIDE_SERVICE_READY)</string>
+	<key>FarsideTermsURL</key>
+	<string>$(FARSIDE_TERMS_URL)</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Doto-Variable.ttf</string>
+		<string>InstrumentSerif-Italic.ttf</string>
+	</array>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
+</dict>
+</plist>

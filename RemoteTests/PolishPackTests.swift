@@ -789,6 +789,8 @@ final class First60PairingSafetyTests: XCTestCase {
         let invitation = try HostPair.create(server: "wss://example.test/signal", name: "Studio Mac").invitation
         XCTAssertEqual(try PairInvitation.parse(invitation.code()), invitation)
         let cameraCode = try invitation.cameraCode()
+        XCTAssertEqual(URLComponents(string: cameraCode)?.scheme, FarsideBeta.urlScheme)
+        XCTAssertThrowsError(try PairInvitation.parse(cameraCode.replacingOccurrences(of: "\(FarsideBeta.urlScheme)://", with: "\(FarsideBeta.isEnabled ? "farside" : "farside-beta")://")))
         XCTAssertEqual(try PairInvitation.parse(cameraCode), invitation)
         // Check the exact emitted payload; independently encoded JSON has no key-order contract.
         let emittedPayload = try XCTUnwrap(cameraCode.split(separator: "#", maxSplits: 1).last)
@@ -798,7 +800,7 @@ final class First60PairingSafetyTests: XCTestCase {
     func testCameraLinkRejectsAmbiguousAndWebRoutes() throws {
         let invitation = try HostPair.create(server: "wss://example.test/signal", name: "Studio Mac").invitation
         let link = try invitation.cameraCode()
-        for invalid in [link.replacingOccurrences(of: "farside://", with: "https://"),
+        for invalid in [link.replacingOccurrences(of: "\(FarsideBeta.urlScheme)://", with: "https://"),
                         link.replacingOccurrences(of: "pair#", with: "pair/extra#"),
                         link.replacingOccurrences(of: "pair#", with: "pair?next=example#"),
                         link.replacingOccurrences(of: "pair#", with: "user@pair#"),

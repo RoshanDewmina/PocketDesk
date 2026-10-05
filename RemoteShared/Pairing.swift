@@ -45,14 +45,14 @@ struct PairInvitation: Codable, Equatable {
     /// A Camera-app-readable custom URL. Opening it only stages a review in the phone UI;
     /// it conveys no approval. Existing `code()` stays available for older phone versions.
     func cameraCode() throws -> String {
-        "farside://pair#" + (try JSONEncoder().encode(self)).base64EncodedString()
+        "\(FarsideBeta.urlScheme)://pair#" + (try JSONEncoder().encode(self)).base64EncodedString()
     }
 
     static func normalizedCode(_ text: String) throws -> String {
         guard text.utf8.count < 4096 else { throw RemoteError.invalidPairing }
         if text.hasPrefix("pocketdesk:") { return text }
         // Pairing.swift is also compiled by the narrow host snapshot target.
-        guard !UserDefaults.standard.bool(forKey: "PocketDeskFirst60Disabled"), let parts = URLComponents(string: text), parts.scheme == "farside",
+        guard !UserDefaults.standard.bool(forKey: "PocketDeskFirst60Disabled"), let parts = URLComponents(string: text), parts.scheme?.lowercased() == FarsideBeta.urlScheme,
               parts.host == "pair", parts.path.isEmpty, parts.port == nil,
               parts.user == nil, parts.password == nil, parts.query == nil,
               let payload = parts.fragment, !payload.isEmpty,
@@ -475,7 +475,7 @@ struct PairStore: PairPersistence {
     }
 #endif
     private var query: [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "PocketDesk.Remote.Trust.v1", kSecAttrAccount as String: account]
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: FarsideBeta.trustService, kSecAttrAccount as String: account]
     }
     func save<T: Encodable>(_ value: T) throws {
         let data = try JSONEncoder().encode(value)

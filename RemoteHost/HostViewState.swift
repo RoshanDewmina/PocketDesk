@@ -132,6 +132,7 @@ struct HostViewState: Equatable {
     var allowBigText = true
     /// "Big Text on · looks like 1280 × 832" or "Restoring normal size…"; nil when Big Text is off.
     var bigTextStatus: String?
+    var workspaceStatus: String?
     var macOSMajor = HostSystemSettingsPane.currentMacOSMajor
     /// False after the person removed the menu bar icon; Farside keeps running.
     var menuBarIconShown = true

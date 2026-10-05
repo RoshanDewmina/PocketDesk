@@ -100,7 +100,12 @@ struct PairingSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Farside.Space.l) {
-                    FarsideHeading("Pair your Mac.", accent: "your", size: 30)
+                    FarsideHeading(FarsideBeta.isEnabled ? "Pair your Beta Mac." : "Pair your Mac.", accent: "your", size: 30)
+                    if FarsideBeta.isEnabled {
+                        Text("BETA · Open Farside Beta Mac and scan its pairing code. This experimental app keeps its pairing separate from ordinary Farside.")
+                            .font(.footnote).foregroundStyle(Farside.Palette.ash)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     if waitingForApproval { approvalWaiting }
                     else if foundCode != nil { foundMac }
                     else {

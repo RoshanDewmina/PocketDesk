@@ -34,6 +34,12 @@ struct HostPopoverView: View {
             content: measuredHeights["naturalWho"] ?? 100, actions: actionsHeight, maximum: maximum)
         VStack(alignment: .leading, spacing: 0) {
             HostPopoverStrip(presentation: presentation, activity: activity)
+            if FarsideBeta.isEnabled {
+                Text(FarsideBeta.label).font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Farside.Palette.bone)
+                    .padding(.horizontal, 16).padding(.vertical, 8)
+                    .accessibilityIdentifier("farside.popover.betaLabel")
+            }
             if bounded {
                 who(presentation)
                     .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
@@ -94,6 +100,11 @@ struct HostPopoverView: View {
 
     private func details(_ presentation: HostPopoverPresentation) -> some View {
         VStack(alignment: .leading, spacing: 0) {
+            if let workspace = state.workspaceStatus {
+                Text(workspace).font(.system(size: 12)).foregroundStyle(Farside.Palette.ash)
+                    .fixedSize(horizontal: false, vertical: true).padding(.top, 12)
+                    .accessibilityIdentifier("farside.popover.workspaceStatus")
+            }
             if state.status.isSessionLive {
                 HostLiveReadout(session: state.session, allowControl: state.status == .controlling,
                         activity: activity ?? HostActivityFeed())

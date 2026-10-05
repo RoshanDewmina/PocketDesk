@@ -15,6 +15,13 @@ extension SMAppService: HostBackgroundService {
     }
 }
 
+/// The separate experimental app never registers or removes production background services.
+private final class WorkspaceBetaBackgroundService: HostBackgroundService {
+    var status: SMAppService.Status { .notFound }
+    func register() throws {}
+    func unregisterAndWait() async throws {}
+}
+
 extension HostBackgroundItemState {
     init(_ status: SMAppService.Status) {
         switch status {
@@ -127,7 +134,12 @@ final class HostBackgroundServices {
     }
 
     static func live(bundle: Bundle = .main) -> HostBackgroundServices {
-        HostBackgroundServices(
+        if FarsideBeta.isEnabled {
+            return HostBackgroundServices(loginItem: WorkspaceBetaBackgroundService(),
+                recoveryAgent: WorkspaceBetaBackgroundService(), defaults: .standard,
+                installed: false, helperFingerprint: nil)
+        }
+        return HostBackgroundServices(
             loginItem: SMAppService.mainApp,
             recoveryAgent: SMAppService.agent(plistName: agentPlistName),
             defaults: .standard,

@@ -24,6 +24,10 @@ struct HostConsentView: View {
             VStack(spacing: 10) {
                 choice(symbol: "power", title: HostConsentCopy.loginTitle, body: HostConsentCopy.loginBody,
                        isOn: $draft.openAtLogin, identifier: "farside.consent.openAtLogin")
+                    .disabled(FarsideBeta.isEnabled)
+                if FarsideBeta.isEnabled {
+                    paragraph("Open at login is unavailable in the Workspace beta.", size: 12.5)
+                }
                 choice(symbol: "moon.zzz", title: HostConsentCopy.keepAwakeTitle, body: HostConsentCopy.keepAwakeBody,
                        note: HostConsentCopy.alwaysTrue, isOn: $draft.keepAwake, identifier: "farside.consent.keepAwake")
             }

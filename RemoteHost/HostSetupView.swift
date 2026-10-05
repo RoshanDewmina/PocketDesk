@@ -19,6 +19,11 @@ struct HostSetupView: View {
             HostSetupRail(page: page, state: state)
                 .frame(width: HostTheme.railWidth)
             VStack(alignment: .leading, spacing: 0) {
+                if FarsideBeta.isEnabled {
+                    Text(FarsideBeta.label).font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Farside.Palette.bone).padding(.bottom, 10)
+                        .accessibilityIdentifier("farside.setup.betaLabel")
+                }
                 HostDotProgress(page: page,
                                 filled: HostSetupFlow.progressDots(page: page, state: state),
                                 caption: HostSetupFlow.progressCaption(page: page, state: state),
@@ -81,7 +86,7 @@ struct HostSetupView: View {
                     .accessibilityIdentifier("farside.setup.back")
             }
             if page == .ready {
-                Button("Done", action: actions.finishSetup)
+                Button(HostSetupFlow.first60PairingIsDeferred(state) ? "Close for now" : "Done", action: actions.finishSetup)
                     .buttonStyle(HostButtonStyle(kind: .primary, height: 34))
                     .keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier("farside.setup.done")
@@ -121,7 +126,8 @@ struct HostSetupRail: View {
                     HostRailStep(step: step, isCurrent: step == page,
                                  isComplete: HostSetupFlow.isComplete(step, state: state, current: page),
                                  number: state.first60SetupPending ? (pages.firstIndex(of: step) ?? 0) + 1 : nil,
-                                 titleOverride: state.first60SetupPending && step == .ready ? "Try it" : nil)
+                                 titleOverride: state.first60SetupPending && step == .ready
+                                    ? (HostSetupFlow.first60PairingIsDeferred(state) ? "Later" : "Try it") : nil)
                 }
             }
             .padding(18)
@@ -471,13 +477,15 @@ struct HostPairingPage: View {
     private var code: some View {
         VStack(alignment: .leading, spacing: 0) {
             HostHeading(parts: [.display("One code"), .plain(". "), .accent("No"), .display(" accounts"), .plain(".")])
-            HostSetupText.body("Open Farside on your iPhone or iPad, scan this, then approve it here. Keep both devices on the same Wi-Fi.")
+            HostSetupText.body(FarsideBeta.isEnabled
+                ? "Open Farside Beta on your iPhone, scan this code, then approve it here. Keep both devices on the same Wi-Fi."
+                : "Open Farside on your iPhone or iPad, scan this, then approve it here. Keep both devices on the same Wi-Fi.")
                 .padding(.top, 10)
                 .padding(.bottom, 20)
             HStack(alignment: .top, spacing: 22) {
                 qr
                 VStack(alignment: .leading, spacing: 12) {
-                    step("1", "Open Farside on your iPhone or iPad")
+                    step("1", FarsideBeta.isEnabled ? "Open Farside Beta on your iPhone" : "Open Farside on your iPhone or iPad")
                     step("2", "Scan this code")
                     step("3", "Allow the phone here")
                     expiry
@@ -486,7 +494,7 @@ struct HostPairingPage: View {
             }
             if !state.hasPairedPhone {
                 HStack(spacing: 6) {
-                    Text("No iPhone or iPad to hand?")
+                    Text(FarsideBeta.isEnabled ? "No iPhone to hand?" : "No iPhone or iPad to hand?")
                         .font(.system(size: 12.5))
                         .foregroundStyle(Farside.Palette.ash)
                     Button("Skip for now, and pair later from the menu bar", action: actions.skipPairing)
@@ -680,11 +688,24 @@ struct HostReadyPage: View {
     var body: some View {
         let checks = HostReadyCheck.checks(for: state)
         VStack(alignment: .leading, spacing: 0) {
-            if state.first60SetupPending {
+            if HostSetupFlow.first60PairingIsDeferred(state) {
+                HostHeading(parts: [.display("Finish setup"), .accent(" later"), .plain(".")])
+                HostSetupText.body(deferredPairingMessage)
+                    .padding(.top, 12)
+                Button("Pair now", action: actions.pairNewPhone)
+                    .buttonStyle(HostButtonStyle(kind: .plate))
+                    .accessibilityIdentifier("farside.setup.resumePairing")
+                    .padding(.top, 20)
+            } else if state.first60SetupPending && state.hasPairedPhone && !state.pairingRequested
+                        && HostSetupFlow.first60Page(for: state) == .ready {
                 HostHeading(parts: [.display("Your Mac"), .accent(" is ready"), .plain(".")])
                 HostSetupText.body(state.first60RemoteDoneAvailable
-                    ? "Move the pointer from your phone or iPad, then click Done below to finish setup."
-                    : "Connect from your phone or iPad to see this Mac. You can finish setup here.")
+                    ? (FarsideBeta.isEnabled
+                        ? "Move the pointer from Farside Beta on your iPhone, then click Done below to finish setup."
+                        : "Move the pointer from your phone or iPad, then click Done below to finish setup.")
+                    : (FarsideBeta.isEnabled
+                        ? "Connect from Farside Beta on your iPhone to see this Mac. You can finish setup here."
+                        : "Connect from your phone or iPad to see this Mac. You can finish setup here."))
                     .padding(.top, 12)
                 if !state.allowControl || !state.accessibility.isGranted || state.captureScopeViewOnly {
                     HostSetupText.body("Your phone can watch. You can enable control later in Settings.")
@@ -722,6 +743,12 @@ struct HostReadyPage: View {
         .onChange(of: state.consentPending, initial: true) { _, pending in
             if pending && !First60.isEnabled() { choosing = true }
         }
+    }
+
+    private var deferredPairingMessage: String {
+        let pair = FarsideBeta.isEnabled ? "Pair your iPhone using Farside Beta" : "Pair your iPhone or iPad using Farside"
+        let permission = state.screenRecording.isGranted ? "" : " and allow Screen Recording"
+        return "\(pair)\(permission) before you can see this Mac. You can continue from the menu bar."
     }
 }
 

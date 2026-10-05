@@ -52,6 +52,46 @@ final class ViewportCaptureTests: XCTestCase {
         return String(decoding: try encoder.encode(action), as: UTF8.self)
     }
 
+    #if FARSIDE_WORKSPACE_BETA
+    func testBetaWideningKeepsActualCroppedPixelsPlacedUntilMatchingWholeSourcePresents() throws {
+        let model = connectedModel()
+        model.sceneChanged(.active)
+        model.regionByFrame = false // Production optional package remains off.
+        try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 4), to: model)
+        let crop = CaptureRegion(epoch: 9, x: 300, y: 200, width: 640, height: 320, outputWidth: 640, outputHeight: 320)
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 4, features: [SessionFeature.viewportCapture], captureRegion: crop,
+            captureScope: .init(epoch: 1, kind: .display, label: "Entire display", viewOnly: false)), to: model)
+        _ = model.admitPiPProofForTesting(validUntil: ProcessInfo.processInfo.systemUptime + 20)
+        let admission = try XCTUnwrap(model.inlinePresentationAdmission)
+        func envelope(_ region: CaptureRegion) throws -> VideoFrameEnvelope {
+            var pixels: CVPixelBuffer?
+            XCTAssertEqual(CVPixelBufferCreate(nil, region.outputWidth, region.outputHeight, kCVPixelFormatType_32BGRA,
+                [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+            return .init(receiptID: UUID(), identity: admission.identity,
+                frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixels)), rotation: ._0, timeStampNs: 1),
+                arrivalMs: 1, marker: nil, originalSource: true,
+                videoTag: .init(generation: String(repeating: "a", count: 32), nonce: String(repeating: "b", count: 32),
+                    geometryEpoch: 4, scopeEpoch: 1, ltrToken: nil, region: region))
+        }
+        let cropped = try envelope(crop)
+        model.frameDrawn(cropped)
+        XCTAssertEqual(model.picturePlacementRegion, crop)
+        let whole = CaptureRegion(epoch: 0, x: 0, y: 0, width: 1470, height: 956, outputWidth: 1470, outputHeight: 956)
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 4, features: [SessionFeature.viewportCapture], captureRegion: whole,
+            captureScope: .init(epoch: 1, kind: .display, label: "Entire display", viewOnly: false)), to: model)
+        XCTAssertNil(model.placementRegion, "Legacy status echo has widened")
+        XCTAssertEqual(model.picturePlacementRegion, crop, "Old pixels retain their actual crop placement")
+        let full = try envelope(whole)
+        model.frameDrawn(full)
+        XCTAssertNil(model.picturePlacementRegion)
+        XCTAssertFalse(model.smartZoomCoverageContains(CGRect(origin: .zero, size: display)), "A drawn frame alone is not a presentation receipt")
+        model.rotationSourcePresented(.init(lifetime: admission.lifetime, envelope: full,
+            presentedAt: ProcessInfo.processInfo.systemUptime, refinementPixels: nil))
+        XCTAssertTrue(model.smartZoomCoverageContains(CGRect(origin: .zero, size: display)))
+        XCTAssertFalse(model.regionByFrame, "The beta seam did not change production optional switches")
+    }
+    #endif
+
     // MARK: First window chooses the one shared viewport preference
 
     func testFirstRegularWindowStoresFitOnceAndCompactReadsIt() throws {

@@ -172,7 +172,7 @@ struct FarsideSystemRoutes: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onOpenURL { url in
-                if url.scheme == "farside", url.host == "pair" { model.stagePairingLink(url); return }
+                if url.scheme?.lowercased() == FarsideBeta.urlScheme, url.host?.lowercased() == "pair" { model.stagePairingLink(url); return }
                 if let route = FarsideRoute(url: url) { SystemRequestInbox.shared.post(.route(route)) }
             }
             .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in

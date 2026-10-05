@@ -12,6 +12,7 @@ final class HostUpdateController: ObservableObject {
     private var observation: AnyCancellable?
 
     private init() {
+        guard !FarsideBeta.isEnabled else { return }
         #if !DEBUG
         guard let key = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String,
               Data(base64Encoded: key)?.count == 32,

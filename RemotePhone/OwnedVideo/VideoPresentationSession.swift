@@ -33,6 +33,15 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
         get { view.onOriginalSourcePresented }
         set { view.onOriginalSourcePresented = newValue }
     }
+    private var rotationCallbackEnabled = false
+    var onSourcePresented: ((VideoPresentedSource) -> Void)? {
+        get { view.onSourcePresented }
+        set {
+            guard newValue != nil || rotationCallbackEnabled else { return }
+            rotationCallbackEnabled = newValue != nil
+            view.onSourcePresented = newValue
+        }
+    }
     var onFrameDrawn: ((VideoFrameEnvelope) -> Void)? {
         get { view.onFrameDrawn }
         set { view.onFrameDrawn = newValue }

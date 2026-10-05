@@ -2,6 +2,8 @@ import XCTest
 import SwiftUI
 import Combine
 import AVKit
+import CoreVideo
+import WebRTC
 @testable import PocketDeskRemote
 
 @MainActor
@@ -37,6 +39,314 @@ private final class LifecyclePiPPlatform: LivePiPPlatformController {
 
 @MainActor
 final class SessionLifecycleTests: XCTestCase {
+    func testViewportTransitionRejectsPointerInputKeepsKeysAndIgnoresOldCompletion() throws {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(),
+            coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()))
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "smart-zoom-input-fence")
+        var sent: [RemoteAction] = []
+        model.connection.inputPacketSenderForTesting = { sent.append($0.action); return true }
+        defer { model.connection.stop() }
+        func deliver(_ action: RemoteAction) throws {
+            try XCTUnwrap(model.connection.onControl)(JSONEncoder().encode(action))
+        }
+        try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 3))
+        try deliver(RemoteAction(action: "viewing", x: 1, epoch: 3))
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 3, features: [SessionFeature.absolutePointer]))
+        model.frameReceived()
+        XCTAssertTrue(model.canControl)
+        let first = model.beginViewportTransition()
+        sent.removeAll()
+        XCTAssertFalse(model.pointTo(CGPoint(x: 100, y: 100)))
+        XCTAssertFalse(model.gesture(.click(count: 1)))
+        XCTAssertFalse(model.gesture(.move(CGSize(width: 10, height: 0))))
+        XCTAssertFalse(model.gesture(.secondaryClick))
+        XCTAssertTrue(model.hardwareKey("a", modifiers: []))
+        XCTAssertEqual(sent.map(\.action), ["key"], "Blocked pointer commands are discarded, not queued")
+        let second = model.beginViewportTransition()
+        model.endViewportTransition(first)
+        XCTAssertTrue(model.coordinateInputFenced, "An earlier completion cannot reopen a newer transition")
+        XCTAssertFalse(model.gesture(.click(count: 1)))
+        model.endViewportTransition(second)
+        XCTAssertTrue(model.gesture(.click(count: 1)))
+        XCTAssertEqual(sent.filter { $0.action == "click" }.count, 1)
+    }
+
+    func testGeometryAndEndRetireViewportTransitionBeforeLateCompletion() throws {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(),
+            coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()))
+        model.connection.startInputFixtureForTesting(session: "smart-zoom-retirement")
+        model.connection.inputPacketSenderForTesting = { _ in true }
+        defer { model.connection.stop() }
+        let old = model.beginViewportTransition()
+        try XCTUnwrap(model.connection.onControl)(JSONEncoder().encode(RemoteAction(action: "geometry", x: 1440, y: 900, epoch: 4)))
+        XCTAssertFalse(model.coordinateInputFenced)
+        let current = model.beginViewportTransition()
+        model.endViewportTransition(old)
+        XCTAssertEqual(model.viewportTransitionGeneration, current)
+        model.connection.onEnded?()
+        XCTAssertFalse(model.coordinateInputFenced)
+        model.endViewportTransition(current)
+        XCTAssertFalse(model.coordinateInputFenced)
+    }
+
+    #if FARSIDE_WORKSPACE_BETA
+    func testVoiceBlockedSmartZoomStartAndCancelledTaskCleanupCannotOrphanOrReplaceFence() async throws {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(),
+            coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()))
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "smart-zoom-voice-guard")
+        model.connection.inputPacketSenderForTesting = { _ in true }
+        defer { model.connection.stop() }
+        XCTAssertNil(model.beginSmartZoomTransition(interactionBlocked: true), "Open Dictate/Controls must reject before acquiring a fence")
+        XCTAssertFalse(model.coordinateInputFenced)
+        let first = try XCTUnwrap(model.beginSmartZoomTransition(interactionBlocked: false))
+        let started = expectation(description: "transition suspended")
+        let task = Task { @MainActor in
+            defer { model.finishSmartZoomTransition(first, visible: CGRect(x: 0, y: 0, width: 100, height: 100)) }
+            started.fulfill()
+            do { try await Task.sleep(for: .seconds(5)) } catch { return }
+        }
+        await fulfillment(of: [started], timeout: 2)
+        task.cancel()
+        await task.value
+        XCTAssertFalse(model.coordinateInputFenced, "Cancelled await must execute owner cleanup without normal completion")
+        let next = try XCTUnwrap(model.beginSmartZoomTransition(interactionBlocked: false))
+        XCTAssertNil(model.beginSmartZoomTransition(interactionBlocked: true))
+        model.finishSmartZoomTransition(first, visible: .zero)
+        XCTAssertEqual(model.viewportTransitionGeneration, next, "Older cleanup and blocked starts cannot disturb a newer owner")
+        model.finishSmartZoomTransition(next, visible: .zero)
+        XCTAssertFalse(model.coordinateInputFenced)
+        model.sceneChanged(.inactive)
+        XCTAssertNil(model.beginSmartZoomTransition(interactionBlocked: false), "Lifecycle-invalid starts must not acquire a fence")
+    }
+
+    func testBetaReadyRequiresMatchingOriginalRasterLifetimeAndAppliedLocalGeometry() throws {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(),
+            coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()), deviceIdiom: .phone)
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "phone-workspace-presented-ready")
+        model.connection.inputPacketSenderForTesting = { _ in true }
+        defer { model.connection.stop() }
+        func deliver(_ action: RemoteAction) throws { try XCTUnwrap(model.connection.onControl)(JSONEncoder().encode(action)) }
+        let features = [SessionFeature.phoneWorkspaceBeta, SessionFeature.virtualDisplay]
+        try deliver(RemoteAction(action: "geometry", x: 1440, y: 900, epoch: 7))
+        try deliver(RemoteAction(action: "viewing", x: 1, epoch: 7))
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 7, features: features, display: 9,
+            virtualDisplayActive: false, virtualDisplayPhase: .idle,
+            captureScope: .init(epoch: 3, kind: .display, label: "Entire display", viewOnly: false)))
+        XCTAssertTrue(model.enterBetaWorkspace())
+        XCTAssertNil(model.heartbeatAction().virtualDisplayViewportUnavailable, "Waiting for first measurement is not cancellation")
+        model.virtualDisplayViewportChanged(size: CGSize(width: 380, height: 240), scale: 3, maximumFPS: 60,
+            generation: model.workspaceMeasurementGeneration)
+        try deliver(RemoteAction(action: "geometry", x: 570, y: 360, epoch: 8))
+        try deliver(RemoteAction(action: "viewing", x: 1, epoch: 8))
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 8, features: features, display: 9,
+            virtualDisplayActive: true, virtualDisplayPhase: .active,
+            captureScope: .init(epoch: 3, kind: .display, label: "Entire display", viewOnly: false)))
+        model.frameReceived()
+        _ = model.admitPiPProofForTesting(validUntil: ProcessInfo.processInfo.systemUptime + 20)
+        let admission = try XCTUnwrap(model.inlinePresentationAdmission)
+        func source(width: Int, height: Int, lifetime: VideoPresentationLifetime, original: Bool = true,
+                    lease: VideoPresentationAdmission? = nil, tagGeometry: UInt64 = 8,
+                    presentedAt: TimeInterval? = nil) throws -> VideoPresentedSource {
+            let current = lease ?? admission
+            var pixels: CVPixelBuffer?
+            XCTAssertEqual(CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA,
+                [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+            let frame = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixels)), rotation: ._0, timeStampNs: 1)
+            return .init(lifetime: lifetime, envelope: .init(receiptID: UUID(), identity: current.identity,
+                frame: frame, arrivalMs: 1, marker: nil, originalSource: original,
+                videoTag: .init(generation: String(repeating: "a", count: 32), nonce: String(repeating: "b", count: 32),
+                    geometryEpoch: tagGeometry, scopeEpoch: 3, ltrToken: nil)),
+                presentedAt: presentedAt ?? ProcessInfo.processInfo.systemUptime, refinementPixels: nil)
+        }
+        model.rotationSourcePresented(try source(width: 1140, height: 720, lifetime: admission.lifetime))
+        XCTAssertFalse(model.workspaceBetaReady, "Model geometry alone cannot replace applied native layout")
+        model.workspaceGeometryApplied(source: model.sourceSize, generation: model.workspaceMeasurementGeneration)
+        model.rotationSourcePresented(try source(width: 128, height: 256, lifetime: admission.lifetime))
+        XCTAssertFalse(model.workspaceBetaReady, "A different raster cannot prove the fitted source")
+        model.rotationSourcePresented(try source(width: 1140, height: 720, lifetime: admission.lifetime, original: false))
+        XCTAssertFalse(model.workspaceBetaReady, "Interpolation is not a fitted original-source receipt")
+        let retired = VideoPresentationLifetime(); retired.retire()
+        model.rotationSourcePresented(try source(width: 1140, height: 720, lifetime: retired))
+        XCTAssertFalse(model.workspaceBetaReady, "A queued retired renderer cannot prove readiness")
+        model.rotationSourcePresented(try source(width: 1140, height: 720, lifetime: admission.lifetime))
+        XCTAssertTrue(model.workspaceBetaReady)
+        XCTAssertTrue(model.canControl)
+        let retainedWorkspace = try source(width: 1140, height: 720, lifetime: admission.lifetime)
+        model.exitBetaWorkspace()
+        XCTAssertFalse(model.workspaceBetaReady)
+        XCTAssertTrue(model.workspaceBetaExitPending)
+        for phase: WorkspaceBetaPhase in [.restoring, .blocked] {
+            try deliver(RemoteAction(action: "capture", x: 1, epoch: 8, features: features, display: 9,
+                virtualDisplayActive: true, virtualDisplayPhase: phase,
+                captureScope: .init(epoch: 3, kind: .display, label: "Entire display", viewOnly: false)))
+            model.rotationSourcePresented(retainedWorkspace)
+            XCTAssertTrue(model.workspaceBetaExitPending, "Retained Workspace pixels cannot finish restoration")
+            XCTAssertFalse(model.canControl)
+        }
+        // Confirm a new ordinary geometry and explicit feature withdrawal. Status alone cannot
+        // prove that the ordinary picture has physically reached this renderer.
+        try deliver(RemoteAction(action: "geometry", x: 1440, y: 900, epoch: 9))
+        try deliver(RemoteAction(action: "viewing", x: 1, epoch: 9))
+        let ordinaryFeatures = [SessionFeature.displayScale, SessionFeature.captureScope]
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 9, features: ordinaryFeatures, display: 1,
+            virtualDisplayActive: false, virtualDisplayPhase: .idle,
+            captureScope: .init(epoch: 3, kind: .display, label: "Entire display", viewOnly: false)))
+        model.frameReceived()
+        XCTAssertFalse(model.hostFeatures.contains(SessionFeature.virtualDisplay))
+        XCTAssertFalse(model.virtualDisplayActive)
+        XCTAssertTrue(model.workspaceBetaExitPending)
+        _ = model.admitPiPProofForTesting(validUntil: ProcessInfo.processInfo.systemUptime + 20)
+        let ordinary = try XCTUnwrap(model.inlinePresentationAdmission)
+        let currentOrdinary = try source(width: 720, height: 450, lifetime: ordinary.lifetime,
+            lease: ordinary, tagGeometry: 9)
+        model.rotationSourcePresented(currentOrdinary)
+        XCTAssertTrue(model.workspaceBetaExitPending, "Current model geometry does not acknowledge native layout")
+        model.workspaceGeometryApplied(source: model.sourceSize, generation: model.workspaceMeasurementGeneration)
+        model.rotationSourcePresented(retainedWorkspace)
+        XCTAssertTrue(model.workspaceBetaExitPending, "A retired old renderer cannot finish the new ordinary route")
+        model.rotationSourcePresented(try source(width: 720, height: 450, lifetime: ordinary.lifetime,
+            lease: ordinary, tagGeometry: 8))
+        XCTAssertTrue(model.workspaceBetaExitPending, "A current renderer carrying an old geometry tag is stale")
+        model.rotationSourcePresented(try source(width: 720, height: 450, lifetime: ordinary.lifetime,
+            lease: ordinary, tagGeometry: 9, presentedAt: ProcessInfo.processInfo.systemUptime - 1))
+        XCTAssertTrue(model.workspaceBetaExitPending, "An old physical receipt cannot declare the current picture ready")
+        model.rotationSourcePresented(try source(width: 720, height: 450, lifetime: retired,
+            lease: ordinary, tagGeometry: 9))
+        XCTAssertTrue(model.workspaceBetaExitPending, "Even matching identity cannot revive a retired lifetime")
+        model.rotationSourcePresented(try source(width: 720, height: 450, lifetime: ordinary.lifetime,
+            original: false, lease: ordinary, tagGeometry: 9))
+        XCTAssertTrue(model.workspaceBetaExitPending, "Interpolated output is not ordinary original-source evidence")
+        // An unresolved host producer/journal remains blocked even when ordinary-looking pixels arrive.
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 9, features: ordinaryFeatures, display: 1,
+            virtualDisplayActive: false, virtualDisplayPhase: .blocked,
+            captureScope: .init(epoch: 3, kind: .display, label: "Entire display", viewOnly: false)))
+        model.rotationSourcePresented(try source(width: 720, height: 450, lifetime: ordinary.lifetime,
+            lease: ordinary, tagGeometry: 9))
+        XCTAssertTrue(model.workspaceBetaExitPending)
+        XCTAssertFalse(model.canControl)
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 9, features: ordinaryFeatures, display: 1,
+            virtualDisplayActive: false, virtualDisplayPhase: .idle,
+            captureScope: .init(epoch: 3, kind: .display, label: "Entire display", viewOnly: false)))
+        XCTAssertTrue(model.workspaceBetaExitPending, "Host idle still waits for physical original-source proof")
+        model.rotationSourcePresented(try source(width: 720, height: 450, lifetime: ordinary.lifetime,
+            lease: ordinary, tagGeometry: 9))
+        XCTAssertFalse(model.workspaceBetaExitPending)
+        XCTAssertFalse(model.coordinateInputFenced)
+        XCTAssertTrue(model.canControl)
+        XCTAssertTrue(model.gesture(.click(count: 1)), "Control can resume under the confirmed normal source authority")
+    }
+
+    func testBetaPhoneWorkspaceNeedsExplicitEntryAndHostOfferAndCancelsWithoutInputAuthority() throws {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(),
+            coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()), deviceIdiom: .phone)
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "phone-workspace-explicit-entry")
+        model.connection.inputPacketSenderForTesting = { _ in true }
+        defer { model.connection.stop() }
+        model.geometryEpoch = 7
+        XCTAssertTrue(model.connection.requestsPhoneWorkspaceBeta)
+        XCTAssertFalse(model.enterBetaWorkspace())
+        try XCTUnwrap(model.connection.onControl)(JSONEncoder().encode(RemoteAction(action: "capture", x: 1, epoch: 7,
+            features: [SessionFeature.phoneWorkspaceBeta, SessionFeature.virtualDisplay], virtualDisplayPhase: .idle)))
+        XCTAssertTrue(model.phoneWorkspaceOffered)
+        XCTAssertNil(model.heartbeatAction().virtualDisplayViewport)
+        XCTAssertTrue(model.enterBetaWorkspace())
+        model.virtualDisplayViewportChanged(size: CGSize(width: 380, height: 240), scale: 3, maximumFPS: 60,
+            generation: model.workspaceMeasurementGeneration)
+        let viewport = try XCTUnwrap(model.heartbeatAction().virtualDisplayViewport)
+        XCTAssertEqual(viewport.experimentalPhoneWorkspace, true)
+        XCTAssertEqual(viewport.iPadWorkspace, false)
+        XCTAssertFalse(model.workspaceBetaReady)
+        XCTAssertFalse(model.canControl, "Host .active alone does not prove a fitted picture")
+        model.exitBetaWorkspace()
+        XCTAssertTrue(model.workspaceBetaExitPending)
+        XCTAssertEqual(model.heartbeatAction().virtualDisplayViewportUnavailable, true)
+        XCTAssertNil(model.heartbeatAction().virtualDisplayViewport)
+        XCTAssertFalse(model.canControl, "Cancellation is a cleanup command, not pointer authority")
+        model.connection.onAuthenticated?()
+        XCTAssertFalse(model.workspaceBetaRequested, "A new session cannot inherit opt-in")
+        XCTAssertFalse(model.workspaceBetaExitPending)
+    }
+    #endif
+
+    func testIPadWorkspaceAdvertisesOnlyMeasuredNegotiatedGeometry() throws {
+        let model = PhoneRemoteModel(deviceIdiom: .pad)
+        defer { model.connection.stop() }
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "ipad-workspace")
+        model.connection.inputPacketSenderForTesting = { _ in true }
+        model.geometryEpoch = 7
+        model.virtualDisplayViewportChanged(size: CGSize(width: 800, height: 600), scale: 2, maximumFPS: 60,
+                                            generation: model.workspaceMeasurementGeneration)
+        XCTAssertTrue(model.connection.requestsIPadWorkspace)
+        XCTAssertNil(model.heartbeatAction().virtualDisplayViewport, "An older host receives no workspace fields")
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", x: 1, epoch: 7,
+            features: [SessionFeature.virtualDisplay])))
+        let action = model.heartbeatAction()
+        XCTAssertEqual(action.virtualDisplayViewport?.iPadWorkspace, true)
+        XCTAssertEqual(action.virtualDisplayViewport?.pixelWidth, 1600)
+        XCTAssertEqual(action.virtualDisplayViewport?.pixelHeight, 1200)
+        XCTAssertNil(action.virtualDisplayViewportUnavailable)
+        XCTAssertEqual(action.virtualDisplayResizeHoldSupported, true)
+        model.virtualDisplayViewportChanged(size: .zero, scale: 2, maximumFPS: 60,
+                                            generation: model.workspaceMeasurementGeneration)
+        XCTAssertNil(model.heartbeatAction().virtualDisplayViewport)
+        XCTAssertEqual(model.heartbeatAction().virtualDisplayViewportUnavailable, true)
+        XCTAssertNil(model.heartbeatAction().virtualDisplayResizeHoldSupported)
+    }
+
+    func testIPhoneRejectsLegacyVirtualDisplayAdvertisementAndSendsNoWorkspaceFields() throws {
+        let model = PhoneRemoteModel(deviceIdiom: .phone)
+        defer { model.connection.stop() }
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "phone-ordinary-display")
+        model.connection.inputPacketSenderForTesting = { _ in true }
+        model.geometryEpoch = 7
+        model.virtualDisplayViewportChanged(size: CGSize(width: 400, height: 800), scale: 3, maximumFPS: 60,
+                                            generation: model.workspaceMeasurementGeneration)
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", x: 1, epoch: 7,
+            features: [SessionFeature.virtualDisplay, SessionFeature.displayScale], virtualDisplayActive: true)))
+        XCTAssertFalse(model.connection.requestsIPadWorkspace)
+        XCTAssertFalse(model.hostFeatures.contains(SessionFeature.virtualDisplay))
+        XCTAssertTrue(model.hostFeatures.contains(SessionFeature.displayScale), "The ordinary Big Text path stays available")
+        XCTAssertFalse(model.virtualDisplayActive)
+        let action = model.heartbeatAction()
+        XCTAssertNil(action.virtualDisplayViewport)
+        XCTAssertNil(action.virtualDisplayViewportUnavailable)
+        XCTAssertNil(action.virtualDisplayResizeHoldSupported)
+    }
+
+    func testWorkspaceFreezesPhysicalAspectBeforeGeometryAndInactivePreflightPackets() throws {
+        let model = PhoneRemoteModel(deviceIdiom: .pad)
+        defer { model.connection.stop() }
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "ipad-workspace-packet-order")
+        model.connection.inputPacketSenderForTesting = { _ in true }
+        model.geometryEpoch = 7
+        let physical = CGSize(width: 1440, height: 900)
+        model.sourceSize = physical
+        model.virtualDisplayViewportChanged(size: CGSize(width: 800, height: 400), scale: 2, maximumFPS: 60,
+                                            generation: model.workspaceMeasurementGeneration)
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", x: 1, epoch: 7,
+            features: [SessionFeature.virtualDisplay], virtualDisplayActive: false)))
+        XCTAssertEqual(model.workspaceLayoutSourceSize, physical)
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "geometry", x: 800, y: 400, epoch: 8)))
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", x: 0, epoch: 8)))
+        XCTAssertFalse(model.virtualDisplayActive)
+        XCTAssertEqual(model.sourceSize, CGSize(width: 800, height: 400))
+        XCTAssertEqual(model.workspaceLayoutSourceSize, physical, "Featureless preflight is not a route withdrawal")
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", x: 1, epoch: 8,
+            features: [SessionFeature.virtualDisplay], virtualDisplayActive: true)))
+        XCTAssertTrue(model.virtualDisplayActive)
+        XCTAssertEqual(model.workspaceLayoutSourceSize, physical)
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", x: 1, epoch: 8,
+            features: [SessionFeature.displayScale], virtualDisplayActive: false)))
+        XCTAssertNil(model.workspaceLayoutSourceSize, "An explicit ordinary route clears the reference")
+    }
+
     private func deliberateEndModel(background: FakeBackgroundExecution? = nil) throws -> (PhoneRemoteModel, () -> [ControlPacket]) {
         let model = PhoneRemoteModel(background: background ?? FakeBackgroundExecution())
         model.prepareConnection(mode: .picture); model.sceneChanged(.active)
@@ -47,6 +357,41 @@ final class SessionLifecycleTests: XCTestCase {
         model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", x: 1, epoch: 1,
             features: [SessionFeature.backgroundPause, SessionFeature.deliberateEnd])))
         return (model, { packets })
+    }
+
+    func testWorkspaceViewportRequiresCurrentAuthenticatedMeasurementAcrossReconnect() throws {
+        let model = PhoneRemoteModel(deviceIdiom: .pad)
+        defer { model.connection.stop() }
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "ipad-workspace-old")
+        model.connection.inputPacketSenderForTesting = { _ in true }
+        model.connection.onAuthenticated?()
+        model.geometryEpoch = 7
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", x: 1, epoch: 7,
+            features: [SessionFeature.virtualDisplay])))
+        let oldGeneration = model.workspaceMeasurementGeneration
+        model.virtualDisplayViewportChanged(size: CGSize(width: 800, height: 600), scale: 2, maximumFPS: 60,
+                                            generation: oldGeneration)
+        XCTAssertEqual(model.heartbeatAction().virtualDisplayViewport?.width, 800)
+        model.connection.onEnded?()
+        XCTAssertGreaterThan(model.workspaceMeasurementGeneration, oldGeneration)
+        XCTAssertNil(model.heartbeatAction().virtualDisplayViewport)
+        model.prepareConnection(mode: .picture)
+        model.connection.startInputFixtureForTesting(session: "ipad-workspace-new")
+        model.connection.inputPacketSenderForTesting = { _ in true }
+        model.connection.onAuthenticated?()
+        model.geometryEpoch = 8
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", x: 1, epoch: 8,
+            features: [SessionFeature.virtualDisplay])))
+        XCTAssertNil(model.heartbeatAction().virtualDisplayViewport, "Authentication cannot revive the retired layout")
+        XCTAssertEqual(model.heartbeatAction().virtualDisplayViewportUnavailable, true)
+        model.virtualDisplayViewportChanged(size: CGSize(width: 800, height: 600), scale: 2, maximumFPS: 60,
+                                            generation: oldGeneration)
+        XCTAssertNil(model.heartbeatAction().virtualDisplayViewport, "A queued old layout generation is ignored")
+        model.virtualDisplayViewportChanged(size: CGSize(width: 1000, height: 700), scale: 2, maximumFPS: 60,
+                                            generation: model.workspaceMeasurementGeneration)
+        XCTAssertEqual(model.heartbeatAction().virtualDisplayViewport?.width, 1000)
+        XCTAssertEqual(model.heartbeatAction().virtualDisplayViewport?.height, 700)
     }
 
     func testExplicitEndUsesAcknowledgedCloseWhileNonexplicitFailureDoesNot() throws {
@@ -701,6 +1046,117 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertFalse(model.privacyShield)
         model.sceneChanged(.background)
         XCTAssertFalse(model.contentConcealed)
+    }
+}
+
+final class IPadWorkspaceGeometryTests: XCTestCase {
+    private let picture = CGRect(x: 40, y: 20, width: 1024, height: 768)
+    private let safe = CGRect(x: 50, y: 30, width: 1004, height: 748)
+    private let top = CGRect(x: 250, y: 35, width: 300, height: 45)
+
+    func testUsablePictureExcludesSafeAreasChromeAndSoftwareKeyboard() throws {
+        let dock = CGRect(x: 200, y: 730, width: 700, height: 38)
+        let normal = try XCTUnwrap(IPadWorkspaceGeometry.usableRect(picture: picture, safe: safe,
+            topChrome: top, bottomChrome: dock, keyboardDock: .zero, keyboardOpen: false, scale: 2))
+        XCTAssertEqual(normal, CGRect(x: 50, y: 80, width: 1004, height: 650))
+        let keyboard = CGRect(x: 50, y: 480, width: 1004, height: 60)
+        let typing = try XCTUnwrap(IPadWorkspaceGeometry.usableRect(picture: picture, safe: safe,
+            topChrome: top, bottomChrome: .zero, keyboardDock: keyboard, keyboardOpen: true, scale: 2))
+        XCTAssertEqual(typing, CGRect(x: 50, y: 80, width: 1004, height: 400))
+        let closed = IPadWorkspaceGeometry.usableRect(picture: picture, safe: safe,
+            topChrome: top, bottomChrome: dock, keyboardDock: keyboard, keyboardOpen: false, scale: 2)
+        XCTAssertEqual(closed, normal, "Dismissal ignores the last keyboard frame and restores the usable extent")
+    }
+
+    func testStackedPictureDoesNotShrinkForAKeyboardEntirelyInTheTrackpad() throws {
+        let stacked = CGRect(x: 40, y: 20, width: 1024, height: 500)
+        let keyboard = CGRect(x: 40, y: 600, width: 1024, height: 60)
+        let shown = try XCTUnwrap(IPadWorkspaceGeometry.usableRect(picture: stacked, safe: safe, topChrome: top,
+            bottomChrome: .zero, keyboardDock: keyboard, keyboardOpen: true, scale: 2))
+        let hidden = IPadWorkspaceGeometry.usableRect(picture: stacked, safe: safe, topChrome: top,
+            bottomChrome: .zero, keyboardDock: keyboard, keyboardOpen: false, scale: 2)
+        XCTAssertEqual(shown, hidden)
+        XCTAssertEqual(shown.size, CGSize(width: 1004, height: 440))
+    }
+
+    func testHardwareDraftHoldsTheNegotiatedExtentButSoftwareKeyboardAndRotationUpdateIt() {
+        let normal = CGRect(x: 50, y: 80, width: 1004, height: 650)
+        let localDraft = CGRect(x: 50, y: 60, width: 1004, height: 700)
+        let software = CGRect(x: 50, y: 80, width: 1004, height: 400)
+        var geometry = IPadWorkspaceGeometry.DraftGeometry()
+        XCTAssertEqual(geometry.update(picture: picture, safe: safe, scale: 2, measured: normal,
+                                       hardwareKeyboard: true, keyboardOpen: false), normal)
+        XCTAssertEqual(geometry.update(picture: picture, safe: safe, scale: 2, measured: localDraft,
+                                       hardwareKeyboard: true, keyboardOpen: true), normal)
+        XCTAssertEqual(geometry.update(picture: picture, safe: safe, scale: 2, measured: software,
+                                       hardwareKeyboard: false, keyboardOpen: true), software)
+        XCTAssertEqual(geometry.update(picture: picture, safe: safe, scale: 2, measured: normal,
+                                       hardwareKeyboard: true, keyboardOpen: true), normal,
+                       "Attaching hardware first replaces the software-keyboard-reduced workspace")
+        XCTAssertEqual(geometry.update(picture: picture, safe: safe, scale: 2, measured: localDraft,
+                                       hardwareKeyboard: true, keyboardOpen: true), normal,
+                       "Only subsequent local hardware-draft chrome keeps the negotiated extent")
+        let rotatedPicture = CGRect(x: 0, y: 0, width: 768, height: 1024)
+        let rotated = CGRect(x: 0, y: 60, width: 768, height: 950)
+        XCTAssertEqual(geometry.update(picture: rotatedPicture, safe: rotatedPicture, scale: 2,
+                                       measured: rotated, hardwareKeyboard: true, keyboardOpen: true), rotated)
+    }
+
+    func testNegotiatedWorkspaceFitsInsideUsablePictureAndKeepsInputCornersAligned() throws {
+        let usable = try XCTUnwrap(IPadWorkspaceGeometry.usableRect(picture: picture, safe: safe, topChrome: top,
+            bottomChrome: .zero, keyboardDock: CGRect(x: 50, y: 480, width: 1004, height: 60),
+            keyboardOpen: true, scale: 2))
+        let local = usable.offsetBy(dx: -picture.minX, dy: -picture.minY)
+        let source = CGSize(width: usable.width * 2, height: usable.height * 2)
+        let viewport = ViewportTransform(sourceSize: source, canvasSize: picture.size, mode: .fit,
+            safeInsets: ViewportInsets(top: local.minY, left: local.minX,
+                bottom: picture.height - local.maxY, right: picture.width - local.maxX))
+        XCTAssertEqual(viewport.contentRect, local)
+        XCTAssertEqual(viewport.sourcePoint(fromView: local.origin), .zero)
+        XCTAssertEqual(viewport.sourcePoint(fromView: CGPoint(x: local.maxX, y: local.maxY)),
+                       CGPoint(x: source.width, y: source.height))
+    }
+
+    func testFractionalUsableEdgesAlignInwardToAnExactEvenRaster() throws {
+        let canvas = CGRect(x: 5.25, y: 12.5, width: 834, height: 1210)
+        let safe = canvas.insetBy(dx: 0.3, dy: 10.1)
+        for scale in [CGFloat(2), 3] {
+            let usable = try XCTUnwrap(IPadWorkspaceGeometry.usableRect(picture: canvas, safe: safe,
+                topChrome: .zero, bottomChrome: .zero, keyboardDock: .zero, keyboardOpen: false, scale: scale))
+            XCTAssertGreaterThanOrEqual(usable.minX, safe.minX)
+            XCTAssertGreaterThanOrEqual(usable.minY, safe.minY)
+            XCTAssertLessThanOrEqual(usable.maxX, safe.maxX)
+            XCTAssertLessThanOrEqual(usable.maxY, safe.maxY)
+            XCTAssertLessThan(safe.width - usable.width, 4 / scale)
+            XCTAssertLessThan(safe.height - usable.height, 4 / scale)
+            let request = VirtualDisplayViewport(width: Double(usable.width), height: Double(usable.height),
+                scale: Double(scale), maximumFPS: 60, iPadWorkspace: true)
+            XCTAssertNoThrow(try request.validate())
+            XCTAssertEqual(request.pixelWidth % 2, 0)
+            XCTAssertEqual(request.pixelHeight % 2, 0)
+        }
+        XCTAssertNil(IPadWorkspaceGeometry.usableRect(picture: canvas, safe: .zero,
+            topChrome: .zero, bottomChrome: .zero, keyboardDock: .zero, keyboardOpen: false, scale: 2))
+    }
+
+    func testVirtualAspectNeverFeedsBackIntoTheStackedPictureHeight() {
+        let window = CGSize(width: 834, height: 1210)
+        let physical = CGSize(width: 1440, height: 900)
+        let expected = SessionWindowLayout.pictureSize(window: window, source: physical, stacked: true)
+        for workspace in [CGSize(width: 824, height: 450), CGSize(width: 824, height: 300)] {
+            let source = IPadWorkspaceGeometry.layoutSource(current: workspace, reference: physical, active: true)
+            XCTAssertTrue(SessionWindowLayout.stacked(regular: true, window: window, source: source, wasStacked: true))
+            XCTAssertEqual(SessionWindowLayout.pictureSize(window: window, source: source, stacked: true), expected)
+        }
+        XCTAssertEqual(IPadWorkspaceGeometry.layoutSource(current: physical, reference: CGSize(width: 800, height: 600),
+                                                         active: false), physical)
+    }
+
+    func testAttachedIPadKeyboardKeepsAutomaticEditableFocusOnTheRemoteCanvas() {
+        XCTAssertFalse(IPadWorkspaceGeometry.mayOpenAutomaticDraft(isPad: true, hardwareKeyboard: true))
+        XCTAssertTrue(IPadWorkspaceGeometry.mayOpenAutomaticDraft(isPad: true, hardwareKeyboard: false))
+        XCTAssertTrue(IPadWorkspaceGeometry.mayOpenAutomaticDraft(isPad: false, hardwareKeyboard: true),
+                      "The iPhone's existing automatic draft behavior is unchanged")
     }
 }
 

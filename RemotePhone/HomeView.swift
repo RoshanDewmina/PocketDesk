@@ -397,6 +397,19 @@ struct HomeView: View {
 
     private var homeColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if FarsideBeta.isEnabled {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(FarsideBeta.label).font(.caption.weight(.bold))
+                    Text("Pair with Farside Beta Mac for experimental iPhone Workspace and reversible View zoom. These features may never ship.")
+                        .font(.footnote).fixedSize(horizontal: false, vertical: true)
+                    Text("Workspace moves supported Mac windows to a temporary display. Choose it explicitly inside a session; use normal desktop or End to leave.")
+                        .font(.footnote).fixedSize(horizontal: false, vertical: true)
+                    Text("Build \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")")
+                        .font(.caption2).textSelection(.enabled)
+                }
+                .foregroundStyle(Farside.Palette.ash).padding(.vertical, 12)
+                .accessibilityIdentifier("home.beta.features")
+            }
             homePrimary
             Spacer(minLength: verticalSizeClass == .compact ? Farside.Space.l : Farside.Space.xl)
             homeUtilities

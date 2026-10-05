@@ -160,7 +160,11 @@ final class SendToMacFileIO {
 }
 
 enum SendToMacOutbox {
+    #if FARSIDE_WORKSPACE_BETA
+    static let appGroup = "group.com.roshan.PocketDesk.WorkspaceBeta"
+    #else
     static let appGroup = "group.com.roshan.PocketDesk"
+    #endif
     /// Process-start rollback for staged-content protection and app-entry cleanup.
     /// The extension and app each read their own defaults domain; no user-facing setting.
     static let protectionDisabledKey = "PocketDeskShareProtectionDisabled"
@@ -169,8 +173,12 @@ enum SendToMacOutbox {
     static let outboxNotification = "com.roshan.PocketDesk.sendToMac.outbox"
 
     static var root: URL? {
+        #if FARSIDE_WORKSPACE_BETA
+        nil // No staged production share payloads may enter the beta application.
+        #else
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)?
             .appendingPathComponent("SendToMac", isDirectory: true)
+        #endif
     }
 
     // MARK: Beacon

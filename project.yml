@@ -6,8 +6,12 @@ options:
 settings:
   base:
     SWIFT_VERSION: '5.0'
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS: '$(inherited) FARSIDE_WORKSPACE_BETA'
     TARGETED_DEVICE_FAMILY: '1,2'
     CODE_SIGNING_ALLOWED: NO
+  configs:
+    Debug:
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: '$(inherited) DEBUG FARSIDE_WORKSPACE_BETA'
 targets:
   PocketDesktop:
     type: application
@@ -82,11 +86,13 @@ targets:
     platform: iOS
     deploymentTarget: '26.0'
     # RemotePhone glob includes OwnedVideo/OwnedVideo.metal in the app default Metal library.
-    sources: [RemotePhone, RemoteShared, PocketDesktop/TrackpadSurface.swift]
+    sources:
+      - path: RemotePhone
+        excludes: [Info.plist]
+      - RemoteShared
+      - PocketDesktop/TrackpadSurface.swift
     dependencies:
       - package: WebRTC
-      - target: FarsideWidgets
-      - target: FarsideShare
     settings:
       base:
         # SDK guards, separate from runtime availability: the stable 27.0 SDK lacks Duo symbols.
@@ -94,18 +100,18 @@ targets:
         'SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphone*27.2*]': '$(inherited) FARSIDE_DUO_SDK'
         # 1.0 is iPhone-only (3 Oct, Roshan); iPad and Duo are parked.
         TARGETED_DEVICE_FAMILY: '1'
-        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.Remote
-        CURRENT_PROJECT_VERSION: '20261004.5'
+        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.WorkspaceBeta
+        CURRENT_PROJECT_VERSION: '20261004.102'
         MARKETING_VERSION: '1.0'
         DEVELOPMENT_TEAM: 39HM2X8GS6
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Farside
-        INFOPLIST_FILE: RemotePhone/Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: Farside Beta
+        INFOPLIST_FILE: Config/WorkspaceBetaPhoneInfo.plist
         # Push, Time Sensitive and Associated Domains need an explicit App ID, which the wildcard
         # development profile cannot provide. Off by default so a device build signs; on with
         # FARSIDE_ENABLE_PUSH=YES once the App ID exists (design/SYSTEM-INTEGRATIONS-REPORT.md).
-        CODE_SIGN_ENTITLEMENTS: $(FARSIDE_ENTITLEMENTS_$(FARSIDE_ENABLE_PUSH))
+        CODE_SIGN_ENTITLEMENTS: Config/WorkspaceBeta.entitlements
         FARSIDE_ENABLE_PUSH: 'NO'
         FARSIDE_APNS_ENVIRONMENT: development
         # The App Group (Connect widget snapshot) is in both; only push and domains wait for the flag.
@@ -140,18 +146,19 @@ targets:
       - FarsideWidgets
       - RemotePhone/ActivityShared
       - RemoteShared/FarsideTheme.swift
+      - RemoteShared/FarsideBeta.swift
     settings:
       base:
         TARGETED_DEVICE_FAMILY: '1'
-        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.Remote.Widgets
+        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.WorkspaceBeta.Widgets
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: '$(inherited) FARSIDE_WIDGET_EXTENSION'
-        CURRENT_PROJECT_VERSION: '20261004.5'
+        CURRENT_PROJECT_VERSION: '20261004.102'
         MARKETING_VERSION: '1.0'
         DEVELOPMENT_TEAM: 39HM2X8GS6
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: FarsideWidgets/Info.plist
-        INFOPLIST_KEY_CFBundleDisplayName: Farside
+        INFOPLIST_KEY_CFBundleDisplayName: Farside Beta
         CODE_SIGN_ENTITLEMENTS: FarsideWidgets/FarsideWidgets.entitlements
         SKIP_INSTALL: YES
   # Send to My Mac: stages one shared item in the App Group for the app's live session to send.
@@ -163,11 +170,12 @@ targets:
       - FarsideShare
       - RemotePhone/ShareShared
       - RemoteShared/FarsideTheme.swift
+      - RemoteShared/FarsideBeta.swift
     settings:
       base:
         TARGETED_DEVICE_FAMILY: '1'
-        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.Remote.Share
-        CURRENT_PROJECT_VERSION: '20261004.5'
+        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.WorkspaceBeta.Share
+        CURRENT_PROJECT_VERSION: '20261004.102'
         MARKETING_VERSION: '1.0'
         DEVELOPMENT_TEAM: 39HM2X8GS6
         CODE_SIGN_STYLE: Automatic
@@ -222,15 +230,11 @@ targets:
     platform: macOS
     deploymentTarget: '26.0'
     sources:
-      - RemoteHost
+      - path: RemoteHost
+        excludes: [RemoteHostInfo.plist]
       - RemoteShared
       # Doto and Instrument Serif Italic with their OFL texts: the phone's files, one copy for both apps.
       - RemotePhone/Fonts
-      - path: RemoteWatchdog/LaunchAgent/com.roshan.PocketDesk.RemoteHost.watchdog.plist
-        buildPhase:
-          copyFiles:
-            destination: wrapper
-            subpath: Contents/Library/LaunchAgents
       - path: script/agent-hooks/farside-notify
         buildPhase:
           copyFiles:
@@ -239,26 +243,20 @@ targets:
     dependencies:
       - package: WebRTC
       - package: Sparkle
-      - target: FarsideWatchdog
-        embed: true
-        link: false
-        codeSign: true
-        copy:
-          destination: executables
     settings:
       base:
         SWIFT_OBJC_BRIDGING_HEADER: RemoteShared/SystemAudio-Bridging-Header.h
-        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.RemoteHost
+        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.WorkspaceBetaHost
         # D35: Apple silicon only (M1 or later), in every configuration.
         ARCHS: arm64
         EXCLUDED_ARCHS: x86_64
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Farside
+        INFOPLIST_KEY_CFBundleDisplayName: Farside Beta
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CURRENT_PROJECT_VERSION: '20261004.5'
+        CURRENT_PROJECT_VERSION: '20261004.102'
         MARKETING_VERSION: '1.0'
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect directly to your paired iPhone or iPad on your local network.
-        INFOPLIST_FILE: RemoteHost/Info.plist
+        INFOPLIST_FILE: Config/WorkspaceBetaHostInfo.plist
         FARSIDE_HOST_SERVICE_URL: ''
         FARSIDE_UPDATE_PUBLIC_KEY: ''
         INFOPLIST_KEY_LSUIElement: YES
@@ -283,7 +281,7 @@ targets:
     sources: [RemoteWatchdog/main.swift, RemoteWatchdog/WatchdogSupervisor.swift, RemoteWatchdog/WatchdogE2E.swift, RemoteHost/HostWatchdogState.swift]
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.RemoteHost.watchdog
+        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.WorkspaceBetaHost.watchdog
         ARCHS: arm64
         EXCLUDED_ARCHS: x86_64
         CODE_SIGNING_ALLOWED: YES
@@ -301,7 +299,7 @@ targets:
     deploymentTarget: '26.0'
     sources: [RemoteTests, RemoteShared, RemotePhone/OwnedVideo/VideoPresentationAdmission.swift, RemotePhone/PhoneIdleTimer.swift, RemotePhone/PhoneMediaSession.swift, RemoteHost/AwayLock.swift, RemoteHost/AwayModeController.swift, RemoteHost/AwayModeMachine.swift, RemoteHost/HostAwayEnvironment.swift, RemoteHost/HostAwayPresentation.swift, RemotePhone/AwayMemory.swift, RemotePhone/PhoneAwayLockRequest.swift, RemoteHost/HostPresentation.swift, RemoteHost/HostTextFocusProbe.swift, RemoteHost/HostAXBroker.swift, RemoteHost/HostAXWebAccess.swift, RemoteHost/RemoteCapture.swift, RemoteHost/ViewportCapture.swift, RemoteHost/RemoteInputDriver.swift, RemoteHost/RemoteInputEvents.swift, RemoteHost/HostSecureFocus.swift, RemoteHost/HostCursorShape.swift, RemoteHost/HostClipboard.swift, RemoteHost/HostPairingPreflight.swift, RemoteHost/HostPermissionState.swift, RemoteHost/HostReadiness.swift, RemoteHost/HostFeatureList.swift, RemoteHost/GuestMediaPeer.swift, RemoteHost/HostGuestController.swift, RemoteHost/Availability/HostLANWake.swift, RemoteHost/Availability/LANMagicPacketSender.swift, RemoteHost/HostInputExecutor.swift, RemoteHost/HostCaptureScope.swift, RemoteHost/HostKeepAwake.swift, RemoteHost/HostTermination.swift, RemoteHost/BrowserPeerController.swift, RemoteHost/BrowserPeerStore.swift, RemoteHost/BrowserFrameMarker.swift, RemoteHost/BrowserInputGate.swift, RemoteHost/HostWatchdogState.swift, RemoteHost/HostHangWatchdog.swift, RemoteHost/HostWatchdogReporter.swift, RemoteHost/HostLoginItem.swift, RemoteHost/HostViewState.swift, RemoteHost/PrivacyCurtain.swift, RemoteHost/HostDiagnostics.swift, RemoteHost/HostE2EInputFence.swift, RemoteWatchdog/WatchdogE2E.swift, RemoteHost/HostDisplayCatalog.swift, RemoteHost/AgentAlertGate.swift, RemoteHost/AgentBridgeHTTP.swift, RemoteHost/AgentAlertBridge.swift, RemoteHost/HostAgentAlerts.swift,
               RemoteHost/HostLoadMonitor.swift, FarsideTestPad/BenchState.swift, RemoteHost/HostFileTransfer.swift,
-              RemoteHost/HostAppActivation.swift, RemoteHost/HostActivity.swift, RemoteHost/MacVitalsSources.swift, RemoteHost/MacVitalsMonitor.swift, RemoteHost/CouchSessionPolicy.swift, RemoteHost/BigTextModes.swift, RemoteHost/BigTextDisplaySwitcher.swift, RemoteHost/BigTextWindows.swift, RemoteHost/BigTextController.swift]
+              RemoteHost/HostAppActivation.swift, RemoteHost/HostActivity.swift, RemoteHost/MacVitalsSources.swift, RemoteHost/MacVitalsMonitor.swift, RemoteHost/CouchSessionPolicy.swift, RemoteHost/BigTextModes.swift, RemoteHost/BigTextDisplaySwitcher.swift, RemoteHost/BigTextWindows.swift, RemoteHost/BigTextController.swift, RemoteHost/SessionVirtualDisplay.swift, RemoteHost/VirtualDisplayWindows.swift]
     dependencies:
       - package: WebRTC
     settings:
@@ -321,6 +319,7 @@ targets:
       - HostUITests
       - RemotePhone/Fonts
       - RemoteShared/Pairing.swift
+      - RemoteShared/FarsideBeta.swift
       - RemoteShared/HostIdentityStore.swift
       - RemoteShared/FarsideTheme.swift
       - RemoteShared/FarsideHalftone.swift

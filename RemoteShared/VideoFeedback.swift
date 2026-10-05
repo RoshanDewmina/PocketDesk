@@ -63,6 +63,10 @@ final class VideoFeedbackContext: @unchecked Sendable {
     var receiverAcknowledgements: Int { lock.lock(); defer { lock.unlock() }; return acceptedAckCount }
     private var refresh = false
     private var decoderGeneration = UUID()
+    // Five seconds of valid wire timestamps at the protocol's 240 FPS ceiling,
+    // plus pending/burst margin. Pending and weak decoded buffers remain capped at 128.
+    // A live tombstone is never evicted to admit a newer association.
+    private static let retiredLimit = 2048
     private var retired: [UInt32: Double] = [:]
     private var pending: [UInt32: (VideoFrameTag, Double, UUID)] = [:]
     private var decoded: [(WeakFrame, VideoFrameTag, Double)] = []
@@ -104,10 +108,10 @@ final class VideoFeedbackContext: @unchecked Sendable {
     #if DEBUG
     var refinementProducerForTesting: VideoRefinementProducer { producer }
     #endif
-    func beginDecoder() {
-        lock.lock(); let now = ProcessInfo.processInfo.systemUptime
+    func beginDecoder(at time: Double? = nil) {
+        lock.lock(); let now = time ?? ProcessInfo.processInfo.systemUptime
         retired = retired.filter { now >= $0.value && now - $0.value <= 5 }
-        for wire in pending.keys where retired.count < 128 { retired[wire] = now }
+        for wire in pending.keys where retired.count < Self.retiredLimit { retired[wire] = now }
         pending.removeAll(); decoded.removeAll(); timingReceiver.reset(); decoderGeneration = UUID(); lock.unlock()
     }
     func setFeedback(_ callback: ((VideoFeedback, UInt64) -> Void)?) { lock.lock(); feedback = callback; lock.unlock() }
@@ -184,8 +188,8 @@ final class VideoFeedbackContext: @unchecked Sendable {
         guard allowed, !ended, now.isFinite else { return }
         pending = pending.filter { now >= $0.value.1 && now - $0.value.1 <= 5 }
         retired = retired.filter { now >= $0.value && now - $0.value <= 5 }
-        if pending[wire] != nil { pending.removeValue(forKey: wire); if retired.count < 128 { retired[wire] = now }; return } // Ambiguous input never proves a reference.
-        if retired[wire] != nil || retired.count >= 128 { return }
+        if pending[wire] != nil { pending.removeValue(forKey: wire); if retired.count < Self.retiredLimit { retired[wire] = now }; return } // Ambiguous input never proves a reference.
+        if retired[wire] != nil || retired.count >= Self.retiredLimit { return }
         // Even an unmarked, malformed or stale AU can collide with an outstanding native decode.
         // Retire that association before accepting any metadata from the second submission.
         guard let tag, (try? tag.validate()) != nil, tag.geometryEpoch == geometry, tag.scopeEpoch == scope else { return }
@@ -199,7 +203,7 @@ final class VideoFeedbackContext: @unchecked Sendable {
         let packet = VideoFeedback(operation: .refresh, generation: tag.generation, nonce: tag.nonce, token: nil, scopeEpoch: tag.scopeEpoch)
         lock.unlock(); callback?(packet, epoch)
     }
-    func rejected(wire: UInt32) { lock.lock(); pending.removeValue(forKey: wire); if retired.count < 128 { retired[wire] = ProcessInfo.processInfo.systemUptime }; lock.unlock() }
+    func rejected(wire: UInt32, at time: Double? = nil) { lock.lock(); pending.removeValue(forKey: wire); if retired.count < Self.retiredLimit { retired[wire] = time ?? ProcessInfo.processInfo.systemUptime }; lock.unlock() }
     #if DEBUG && AUDIO_LIFETIME_TESTS
     var beforeDecodedAdmissionForTesting: (() -> Void)?
     func withTimingAdmissionHeldForTesting(_ body: () -> Void) { lock.lock(); defer { lock.unlock() }; body() }
@@ -220,7 +224,7 @@ final class VideoFeedbackContext: @unchecked Sendable {
         if timingAllowed, let timing = entry.0.timing {
             timingReceiver.decoded(timing, generation: entry.0.generation, nonce: entry.0.nonce, atMs: decodedAtMs)
         }
-        if retired.count < 128 { retired[UInt32(bitPattern: frame.timeStamp)] = now }
+        if retired.count < Self.retiredLimit { retired[UInt32(bitPattern: frame.timeStamp)] = now }
         let packet = entry.0.ltrToken.map { VideoFeedback(operation: .ltrAck, generation: entry.0.generation,
             nonce: entry.0.nonce, token: $0, scopeEpoch: entry.0.scopeEpoch) }
         let callback = feedback; let epoch = geometry
@@ -263,10 +267,10 @@ final class VideoFeedbackContext: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard allowed, timingAllowed, !ended else { return nil }; return timingReceiver.drain()
     }
-    func tag(for frame: RTCVideoFrame) -> VideoFrameTag? {
+    func tag(for frame: RTCVideoFrame, at time: Double? = nil) -> VideoFrameTag? {
         lock.lock(); defer { lock.unlock() }
         guard allowed, !ended else { return nil }
-        let now = ProcessInfo.processInfo.systemUptime
+        let now = time ?? ProcessInfo.processInfo.systemUptime
         decoded = decoded.filter { $0.0.alive && now >= $0.2 && now - $0.2 <= 5 }
         return decoded.last { $0.0.matches(frame) }?.1
     }

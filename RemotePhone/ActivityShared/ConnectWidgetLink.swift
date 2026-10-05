@@ -5,7 +5,7 @@ import AppIntents
 /// extension; the app routes it through `FarsideRoute.openMac`, which asks before connecting.
 enum ConnectWidgetLink {
     static let kind = "FarsideConnect"
-    static let url = URL(string: "farside://open")!
+    static let url = URL(string: "\(FarsideBeta.urlScheme)://open")!
 }
 
 /// Display data only; the app resolves the destination from its own paired-Mac store.

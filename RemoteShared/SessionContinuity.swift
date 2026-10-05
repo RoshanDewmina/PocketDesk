@@ -4,6 +4,12 @@ import Foundation
 /// extension action after seeing the matching feature, so older hosts never receive an
 /// action name their validator would reject.
 enum SessionFeature {
+    /// Internal, default-off phone-sized display. Only extended-list peers receive it.
+    static let virtualDisplay = "display.virtual.1"
+    /// Request only: iPad workspace geometry; never implies permission to control the Mac.
+    static let ipadWorkspace = "display.ipad.1"
+    /// Experimental phone request; never authorizes control or implicit window movement.
+    static let phoneWorkspaceBeta = "display.phone.beta.1"
   static let liveViewOnly = "viewOnlyLive.2"
     static let shortcutChips = "app.shortcuts.1"
     static let extendedFeatureList = "features.32"

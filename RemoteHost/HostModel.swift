@@ -127,10 +127,10 @@ final class RemoteHostModel: ObservableObject {
     #if DEBUG
     // E2E mode: inert login/recovery items and an isolated watchdog record; see HostE2E.swift.
     private let background = HostE2E.active?.backgroundServices ?? HostBackgroundServices.live()
-    private let watchdog = HostE2E.active.map { $0.makeWatchdogReporter() } ?? HostWatchdogReporter.live()
+    private let watchdog = FarsideBeta.isEnabled ? nil : (HostE2E.active.map { $0.makeWatchdogReporter() } ?? HostWatchdogReporter.live())
     #else
     private let background = HostBackgroundServices.live()
-    private let watchdog = HostWatchdogReporter.live()
+    private let watchdog = FarsideBeta.isEnabled ? nil : HostWatchdogReporter.live()
     #endif
     private var hangWatchdog: HostHangWatchdog?
     private let curtain = PrivacyCurtainController()
@@ -180,6 +180,62 @@ final class RemoteHostModel: ObservableObject {
         })
     }))
     private let capture = RemoteCapture()
+    // A default-off route: none of the adapter/AX work is initialized on ordinary launches.
+    private var virtualDisplayEnabled: Bool {
+        if FarsideBeta.isEnabled { return true }
+        #if DEBUG
+        return (HostE2E.active?.defaults ?? .standard).bool(forKey: "farsideVirtualDisplayEnabled")
+        #else
+        return UserDefaults.standard.bool(forKey: "farsideVirtualDisplayEnabled")
+        #endif
+    }
+    private var virtualDisplayAvailableToPeer: Bool {
+        virtualDisplayEnabled && (connection.peerFeatures.contains(SessionFeature.ipadWorkspace) ||
+            (FarsideBeta.isEnabled && connection.peerFeatures.contains(SessionFeature.phoneWorkspaceBeta)))
+    }
+    private var experimentalPhoneWorkspacePeer: Bool {
+        FarsideBeta.isEnabled && connection.peerFeatures.contains(SessionFeature.phoneWorkspaceBeta)
+    }
+    private var virtualDisplayJournalURL: URL {
+        #if DEBUG
+        if let harness = HostE2E.active {
+            return FileManager.default.temporaryDirectory.appendingPathComponent("FarsideE2E-\(harness.runID)/virtual-display-window-restore.json")
+        }
+        #endif
+        return VirtualDisplayWindowKeeper.defaultJournalURL
+    }
+    private lazy var virtualDisplay = SessionVirtualDisplay()
+    private lazy var virtualWindows = VirtualDisplayWindowKeeper(journalURL: virtualDisplayJournalURL)
+    private var virtualDisplayWindowAuthority: VirtualDisplayWindowOperationAuthority?
+    private var virtualDisplayWorkspaceTask: Task<Void, Never>?
+    private var virtualDisplayLastWorkspaceRefresh = -Double.infinity
+    private var virtualDisplayReturnBounds: CGRect?
+    @Published private var virtualDisplaySource: SCDisplay?
+    private var virtualDisplayRequested: VirtualDisplaySpecification?
+    private var virtualDisplayTask: Task<Void, Never>?
+    private var virtualDisplayGrace: Task<Void, Never>?
+    private var virtualDisplayGeneration: UInt64 = 0
+    @Published private var virtualDisplayBlocked = false
+    private var virtualDisplayWasUsed = false
+    @Published private var virtualDisplayChanging = false
+    @Published private var virtualDisplayRecoveryPending = false
+    private var virtualDisplayLastRetiredAt = -Double.infinity
+    @Published private var virtualDisplayRetirementPending = false
+    private var virtualDisplayResumeMode: SessionMode?
+    private var virtualDisplayQuitPending = false
+    private var virtualDisplayLastRestoreRetry: TimeInterval = 0
+    private var virtualDisplayAcceptedRequest: VirtualDisplaySpecification?
+    private var virtualDisplayNegotiationDeadline: Task<Void, Never>?
+    private var virtualDisplayResizeHoldSupported = false
+    private var virtualDisplayResizeBegin: VirtualDisplayResizeBegin?
+    private weak var virtualDisplayResizePeer: PeerMedia?
+    private var virtualDisplayResizeDeadline: TimeInterval = 0
+    private var usesVirtualDisplay: Bool { virtualDisplaySource != nil }
+    private var virtualDisplaySourceResumable: Bool {
+        guard let source = virtualDisplaySource,
+              virtualDisplayAcceptedRequest == virtualDisplayRequested else { return false }
+        return virtualDisplay.isReady(for: source)
+    }
     private let guests = HostGuestController()
     private var guestContext: HostGuestContext? {
         guard active, captureHealthy, sessionState == .picture, !screenLocked, !terminating,
@@ -223,8 +279,7 @@ final class RemoteHostModel: ObservableObject {
     private var criticalThermalPause = CriticalThermalPausePolicy()
     private var criticalThermalRecoveryTask: Task<Void, Never>?
     private var vitalsMonitor: MacVitalsMonitor?
-    private var phoneLoad: PhoneLoadFeedback?
-    private var phoneLoadReceivedAt: TimeInterval?
+    private var phoneLoad = HostPhoneLoadInbox()
     private var ladderState: LadderState?
     private var busyState: BusyState?
     private let wakeTargets = HostWakeTargetStore()
@@ -345,6 +400,7 @@ final class RemoteHostModel: ObservableObject {
 
     /// Selecting content stops sharing first. Share Again is the owner's explicit restart consent.
     func selectCaptureScope(_ id: String) {
+        if virtualDisplayWasUsed { virtualDisplayBlocked = true; retireVirtualDisplay() }
         captureScopeSelectionGeneration &+= 1
         let generation = captureScopeSelectionGeneration
         captureScopeSelectionTask?.cancel()
@@ -483,7 +539,8 @@ final class RemoteHostModel: ObservableObject {
     /// The name set in System Settings, read from configd. `Host.current()` resolves the host's
     /// addresses and can block the main thread, and `viewState` is rebuilt on every model change.
     nonisolated static var computerName: String? {
-        SCDynamicStoreCopyComputerName(nil, nil) as String?
+        let name = SCDynamicStoreCopyComputerName(nil, nil) as String?
+        return FarsideBeta.isEnabled ? "\(name ?? "My Mac") · BETA" : name
     }
 
     var viewState: HostViewState {
@@ -553,8 +610,9 @@ final class RemoteHostModel: ObservableObject {
             serverRemovalPending: serverRemovalPending,
             serverRemovalMessage: serverRemovalMessage,
             localPairRemovalMessage: localPairRemovalMessage,
-            allowBigText: !captureScopeViewOnly && preferences.allowBigText,
+            allowBigText: !captureScopeViewOnly && !virtualDisplayWasUsed && preferences.allowBigText,
             bigTextStatus: bigTextStatus,
+            workspaceStatus: workspaceStatus,
             menuBarIconShown: menuBarIconShown,
             permissionsTurnedOffByUpdate: permissionsTurnedOffByUpdate,
             diagnosticReports: diagnosticReports
@@ -569,6 +627,37 @@ final class RemoteHostModel: ObservableObject {
         if bigText.restorePending || bigText.phase == .restoring { return "Restoring normal size…" }
         guard let current = bigText.current else { return nil }
         return "Big Text on · looks like \(current.width) × \(current.height)"
+    }
+
+    private var workspacePhase: WorkspaceBetaPhase {
+        SessionVirtualDisplayPolicy.phase(recoveryPending: virtualDisplayRecoveryPending,
+            retirementPending: virtualDisplayRetirementPending, preparing: virtualDisplayChanging,
+            virtualSourceActive: usesVirtualDisplay, workspaceOwned: virtualDisplayWasUsed,
+            entryBlocked: virtualDisplayBlocked, ordinaryCaptureHealthy: sessionState == .picture && sessionHealthy,
+            capturedDisplayID: capturedDisplayID, selectedPhysicalDisplayID: selected, routeEpoch: inputEpoch.value)
+    }
+
+    private var workspaceStatus: String? {
+        guard FarsideBeta.isEnabled else { return nil }
+        switch workspacePhase {
+        case .idle:
+            if !hasPairedPhone { return "BETA · Pair Farside Beta on your iPhone to try Workspace." }
+            if !screenRecordingPermission.isGranted || captureApproval.isPending {
+                return "BETA · Allow Screen Recording on this Mac to try Workspace."
+            }
+            if !controlPermission.isGranted || !inputAccess.accessibility.isGranted {
+                return "BETA · Allow Accessibility on this Mac to try Workspace."
+            }
+            if captureScopeViewOnly { return "BETA · Choose Entire display to try Workspace." }
+            if !allowControl { return "BETA · Turn on Allow control to try Workspace." }
+            return virtualDisplayBlocked
+                ? "BETA · Normal screen is being shared. Reconnect to try Workspace again."
+                : "BETA · Open Farside Beta on your iPhone to try Workspace."
+        case .preparing: return "BETA · Preparing the fitted Workspace…"
+        case .active: return "BETA · Fitted Workspace is being shared. End sharing to restore windows."
+        case .restoring: return "BETA · Restoring Workspace windows. Keep Farside open; unresolved windows will be retried."
+        case .blocked: return "BETA · Workspace unavailable. Use the normal screen, then reconnect to try again."
+        }
     }
 
     private var availabilityNote: HostAvailabilityNote? {
@@ -631,21 +720,42 @@ final class RemoteHostModel: ObservableObject {
             preferences.defaults.set(first60SetupFinished, forKey: First60.finishedDefaultsKey)
         }
         connection.first60SetupStatus = first60Enabled ? { [weak self] in self?.first60Status } : nil
-        connection.startAllowed = { [weak self] in self?.serverRemovalPending == false && self?.captureScopeNeedsSelection == false }
+        if FileManager.default.fileExists(atPath: virtualDisplayJournalURL.path) {
+            virtualDisplayRecoveryPending = true
+            Task { [weak self] in
+                guard let self else { return }
+                self.virtualDisplayRecoveryPending = !(await self.virtualWindows.recover())
+                if self.virtualDisplayRecoveryPending { self.detail = "Window restoration from the previous phone workspace needs attention." }
+                else { self.reconcileSharing() }
+            }
+        }
+        connection.startAllowed = { [weak self] in self?.serverRemovalPending == false && self?.captureScopeNeedsSelection == false && self?.virtualDisplayRecoveryPending == false }
         connection.shareBlocker = { [weak self] in
             MacShareBlocker.current(screenRecordingGranted: CGPreflightScreenCaptureAccess(),
                                     captureApprovalPending: self?.captureApproval.isPending == true)
         }
         connection.onAuthenticated = { [weak self] in
+            self?.virtualDisplayGrace?.cancel(); self?.virtualDisplayGrace = nil
+            self?.virtualDisplayNegotiationDeadline?.cancel()
+            self?.virtualDisplayNegotiationDeadline = nil
+            self?.virtualDisplayBlocked = false
+            self?.virtualDisplayResizeHoldSupported = false
+            self?.cancelVirtualDisplayResizeHold()
             self?.bigTextEndedForLifecycle = false
             self?.deliberatePeerEnding = false
             self?.acceptedPhonePauseEpoch = nil
+            // Each authenticated peer must advertise its own current canvas. Restore the
+            // retained workspace before physical-first capability/viewport renegotiation.
+            if let self, self.virtualDisplayWasUsed { self.retireVirtualDisplay(resume: .picture) }
             self?.phoneConnected()
         }
         connection.onEnded = { [weak self] in
             if self?.bigTextEndedForLifecycle == true { self?.bigText.sessionEnded(.sessionEnded) }
             else { self?.bigText.connectionLost() }
             self?.endCapture()
+            if self?.virtualDisplayWasUsed == true {
+                self?.retireVirtualDisplay(afterGrace: self?.bigTextEndedForLifecycle != true && self?.terminating != true)
+            }
             self?.reconcileAvailabilityAfterCoordinatorReset()
         }
         connection.onControl = { [weak self] data in self?.receive(data) }
@@ -708,7 +818,14 @@ final class RemoteHostModel: ObservableObject {
             self.curtain.lift()
             self.reconcileCurtain()
         }
-        curtain.ownsScreenChange = { [weak self] in self?.bigTextOwnsScreenChanges ?? false }
+        curtain.ownsScreenChange = { [weak self] in
+            guard let self else { return false }
+            return self.bigTextOwnsScreenChanges || (self.virtualDisplayWasUsed && self.virtualDisplay.physicalTopologyUnchanged)
+        }
+        curtain.excludesDisplay = { [weak self] id in
+            guard let self, self.virtualDisplayWasUsed else { return false }
+            return self.virtualDisplay.isOwnedDisplay(id)
+        }
         curtain.onLocalLift = { [weak self] in self?.curtainLiftedLocally() }
         curtain.onPhaseChange = { [weak self] phase in
             guard let self else { return }
@@ -776,7 +893,17 @@ final class RemoteHostModel: ObservableObject {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                if self.bigTextHandlingScreenChanges {
+                if (self.virtualDisplayWasUsed || ProcessInfo.processInfo.systemUptime - self.virtualDisplayLastRetiredAt < 2),
+                   self.virtualDisplay.physicalTopologyUnchanged {
+                    self.curtain.refitDuringDisplayChange()
+                    if !self.virtualDisplayChanging && !self.virtualDisplay.ownedDisplayPresent && self.usesVirtualDisplay {
+                        self.virtualDisplayFallback()
+                    }
+                } else if self.virtualDisplayWasUsed && self.virtualDisplay.ownsScreenChanges {
+                    // A physical hot-plug/mode change is foreign, even during our transition.
+                    self.retireVirtualDisplay()
+                    self.handleScreenChange()
+                } else if self.bigTextHandlingScreenChanges {
                     self.bigText.handleScreenChangeNotification(
                         refit: { self.curtain.refitDuringDisplayChange() },
                         foreign: { self.handleScreenChange() })
@@ -813,6 +940,19 @@ final class RemoteHostModel: ObservableObject {
                 guard let self else { return }
                 self.pollPermissions()
                 let now = ProcessInfo.processInfo.systemUptime
+                self.refreshVirtualWorkspace(at: now)
+                if !self.screenLocked, self.inputAccess.accessibility.isGranted,
+                   now - self.virtualDisplayLastRestoreRetry >= 30 {
+                    if self.virtualDisplayRecoveryPending {
+                        self.virtualDisplayLastRestoreRetry = now
+                        self.virtualDisplayRecoveryPending = !(await self.virtualWindows.recover())
+                        if !self.virtualDisplayRecoveryPending { self.reconcileSharing() }
+                    } else if self.virtualDisplayRetirementPending &&
+                                self.virtualDisplayGrace == nil && self.virtualDisplayTask == nil {
+                        self.virtualDisplayLastRestoreRetry = now
+                        self.retireVirtualDisplay(resume: self.virtualDisplayResumeMode)
+                    }
+                }
                 if self.bigText.restorePending, !self.bigText.isChanging, !self.screenLocked,
                    now - self.bigTextLastRestoreRetry >= 30 {
                     self.bigTextLastRestoreRetry = now
@@ -1329,6 +1469,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func setOpenAtLogin(_ enabled: Bool) {
+        guard !FarsideBeta.isEnabled else { return }
         if let problem = background.setLoginItem(enabled) {
             detail = problem
             events.record(.error, problem)
@@ -1340,7 +1481,7 @@ final class RemoteHostModel: ObservableObject {
     /// The one-time choice from setup. Automatic recovery is a separate choice and stays as it was.
     func confirmBackgroundChoices(openAtLogin wanted: Bool, keepAwake: Bool) {
         setKeepAwake(keepAwake)
-        if let problem = background.applyLoginChoice(wanted) {
+        if !FarsideBeta.isEnabled, let problem = background.applyLoginChoice(wanted) {
             detail = problem
             events.record(.error, problem)
         }
@@ -1352,6 +1493,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func setAutomaticRecovery(_ enabled: Bool) {
+        guard !FarsideBeta.isEnabled else { return }
         if let problem = background.setRecovery(enabled, setupComplete: setupStep == .done) {
             detail = problem
             events.record(.error, problem)
@@ -1573,6 +1715,7 @@ final class RemoteHostModel: ObservableObject {
 
     /// Reconcile existing background choices; setup alone never enables a new background item.
     private func applyBackgroundDefaults() {
+        guard !FarsideBeta.isEnabled else { return }
         if let problem = background.applyDefaults(setupComplete: true) { events.record(.error, problem) }
         refreshBackgroundStates()
         updateHangWatchdog(curtainUp: curtain.phase != .down)
@@ -1581,6 +1724,7 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Watchdog and recovery
 
     private func startWatchdog() {
+        guard !FarsideBeta.isEnabled else { events.record(.launch, "BETA launched without automatic recovery registration"); return }
         let hang = HostHangWatchdog.retainingUnconfirmedCover(onHang: watchdog.map {
             HostWatchdogReporter.hangHandler(files: $0.files, launchID: $0.record.launchID, bootSession: $0.record.bootSession)
         } ?? { _ in _exit(3) })
@@ -1899,7 +2043,7 @@ final class RemoteHostModel: ObservableObject {
             locallyDismissed: curtainLocallyDismissed,
             raiseFailed: curtainRaiseFailed,
             safeMode: crashLoopStopped,
-            displayReconfiguring: bigText.isChanging || bigTextResuming || bigTextNeedsRefresh,
+            displayReconfiguring: bigText.isChanging || bigTextResuming || bigTextNeedsRefresh || virtualDisplayChanging,
             awayCovered: away.wantsCover && awayMarkerCommitted
         )
         switch PrivacyCurtainPolicy.desired(inputs, currentlyUp: curtain.phase != .down) {
@@ -2099,6 +2243,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func stop() {
+        retireVirtualDisplay()
         guests.endAll()
         bigText.sessionEnded(.sessionEnded)
         liftCurtain(holdingForRestore: true)
@@ -2115,7 +2260,20 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func prepareForTermination(reply: @escaping (Bool) -> Void) -> Bool {
-        away.prepareForQuit(reply: reply)
+        guard virtualDisplayWasUsed else { return away.prepareForQuit(reply: reply) }
+        virtualDisplayQuitPending = true
+        retireVirtualDisplay()
+        Task { [weak self] in
+            guard let self else { reply(true); return }
+            await self.virtualDisplayTask?.value
+            if self.virtualWindows.hasPendingRestore || self.virtualDisplay.ownsScreenChanges {
+                self.virtualDisplayQuitPending = false
+                reply(false)
+                return
+            }
+            if !self.away.prepareForQuit(reply: reply) { reply(true) }
+        }
+        return true
     }
 
     func stopForTermination() {
@@ -2253,6 +2411,7 @@ final class RemoteHostModel: ObservableObject {
             }
         }
         if refreshInputAccess() || screenChanged { evaluateUpgradeRegrant() }
+        if virtualDisplayWasUsed && !inputAccess.accessibility.isGranted { retireVirtualDisplay() }
         if captureApproval.isDue(at: ProcessInfo.processInfo.systemUptime) { checkCaptureApproval() }
         if let pairingExpires, !pairingExpired, !pairingCode.isEmpty, pairingExpires <= Date() {
             pairingExpired = true
@@ -2416,6 +2575,27 @@ final class RemoteHostModel: ObservableObject {
             }
             return
         }
+        if virtualDisplayRetirementPending && virtualDisplayTask == nil {
+            detail = "Restoring the phone workspace before sharing again."
+            return
+        }
+        if virtualDisplayChanging, let pending = virtualDisplayTask {
+            let peer = connection.media
+            let attempt = captureAttempt
+            Task { [weak self] in
+                await pending.value
+                guard let self, self.connection.media === peer, self.connection.connected, self.active,
+                      self.captureAttempt == attempt,
+                      !self.virtualDisplayWasUsed || self.usesVirtualDisplay,
+                      !self.phonePause.isPaused, !self.terminating else { return }
+                self.beginCapture(keepingExclusions: keepingExclusions, startupRecoveryRemaining: startupRecoveryRemaining)
+            }
+            return
+        }
+        if usesVirtualDisplay && !virtualDisplaySourceResumable {
+            virtualDisplayFallback()
+            return
+        }
         guard !captureScopeNeedsSelection else { stop(); return }
         guard CGPreflightScreenCaptureAccess() else {
             screenRecordingPermission = .denied
@@ -2428,7 +2608,7 @@ final class RemoteHostModel: ObservableObject {
             return
         }
         if displaysStaleFromCouch { restartForDisplaysChangedInCouch(); return }
-        guard let display = displays.first(where: { $0.displayID == selected }), let peer = connection.media else { stop(); return }
+        guard let display = virtualDisplaySource ?? displays.first(where: { $0.displayID == selected }), let peer = connection.media else { stop(); return }
         if HostScreenLock.isLocked() { handleAvailability(.screenLocked); return }
         peer.requestRefinementCapture(refinementNegotiated && !away.isLocking)
         peer.setSystemAudioEnabled(systemAudioAllowedNow)
@@ -2485,12 +2665,15 @@ final class RemoteHostModel: ObservableObject {
                 guard self.captureStartIsCurrent(attempt, peer: peer), !Task.isCancelled else { return }
                 let owner = try await self.capture.start(display: display, peer: peer,
                     keepingExclusions: !self.captureScopeViewOnly && keepingExclusions, target: self.captureScopeTarget,
+                    virtualDisplay: self.usesVirtualDisplay ? self.virtualDisplay.specification : nil,
                     beforeStart: { [weak self] geometry in
                         guard let self else { return false }
                         let preflight = [
-                            RemoteAction(action: "geometry", x: geometry.size.width, y: geometry.size.height, epoch: self.inputEpoch.value),
+                            RemoteAction(action: "geometry", x: geometry.size.width, y: geometry.size.height, epoch: self.inputEpoch.value,
+                                virtualDisplayResizeToken: self.currentVirtualDisplayResizeToken(peer: peer)),
                             RemoteAction(action: "viewing", x: self.sessionControlAllowed && self.controlPermission.isGranted ? 1 : 0, epoch: self.inputEpoch.value),
-                            RemoteAction(action: "capture", x: 0, epoch: self.inputEpoch.value, captureScope: self.captureScopeStatus)
+                            RemoteAction(action: "capture", x: 0, epoch: self.inputEpoch.value,
+                                virtualDisplayResizeToken: self.currentVirtualDisplayResizeToken(peer: peer), captureScope: self.captureScopeStatus)
                         ]
                         return CaptureStartPreflight.send(preflight,
                             whileCurrent: { [weak self] in self?.captureStartIsCurrent(attempt, peer: peer) == true },
@@ -2500,7 +2683,14 @@ final class RemoteHostModel: ObservableObject {
                     _ = self.capture.stop(ifOwnedBy: owner)
                     return
                 }
-                if !self.captureScopeViewOnly { self.bigText.sessionResumed() }
+                if !self.captureScopeViewOnly && !self.usesVirtualDisplay {
+                    if self.virtualDisplayAvailableToPeer && !self.experimentalPhoneWorkspacePeer && !self.virtualDisplayBlocked {
+                        self.waitForVirtualDisplayViewport()
+                    } else { self.bigText.sessionResumed() }
+                }
+                // A successful stream owns the actual successor epoch. The phone independently
+                // releases its frozen pixels only after that tagged source physically presents.
+                self.clearVirtualDisplayResizeHold()
                 self.excludeCoverFromCapture()
                 self.away.refresh()
                 self.beginLoadMonitor(peer: peer)
@@ -2538,6 +2728,10 @@ final class RemoteHostModel: ObservableObject {
                 self.events.record(.error, "Capture could not start (\(Self.captureErrorCode(error)))")
                 if CaptureStopReason.classify(error) == .needsApproval {
                     self.captureNeedsApproval()
+                    return
+                }
+                if self.virtualDisplayWasUsed && !self.virtualDisplayRetirementPending {
+                    self.virtualDisplayFallback()
                     return
                 }
                 self.stop()
@@ -2596,6 +2790,10 @@ final class RemoteHostModel: ObservableObject {
 
     /// No screen capture, encoder, load monitor, viewport, cursor hiding or curtain: the person watches the Mac itself.
     private func beginCouch(restoringBigText: Bool = true) {
+        if virtualDisplayWasUsed {
+            retireVirtualDisplay(resume: .couch)
+            return
+        }
         if restoringBigText { bigText.sessionEnded(.restoreButton) }
         cancelPictureRefresh()
         guard connection.connected, connection.media != nil else { stop(); return }
@@ -2784,6 +2982,10 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func captureFailed(_ error: Error) {
+        if usesVirtualDisplay && CaptureStopReason.classify(error) != .needsApproval {
+            virtualDisplayFallback()
+            return
+        }
         guests.endAll()
         if error is HostCaptureScopeError, captureScopeViewOnly { captureScopeLost(); return }
         #if DEBUG
@@ -2928,7 +3130,24 @@ final class RemoteHostModel: ObservableObject {
             if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, let pixels = action.screenPixels {
                 capture.setClientPixels(pixels)
             }
-            if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, !captureScopeViewOnly, StreamTuning.current.viewportCapture,
+            if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, action.isRegularPhoneHeartbeat {
+                virtualDisplayResizeHoldSupported = action.virtualDisplayResizeHoldSupported == true
+                    && action.virtualDisplayViewport != nil && action.virtualDisplayViewportUnavailable != true
+                    && advertisedFeatures.contains(SessionFeature.virtualDisplay)
+                if let viewport = action.virtualDisplayViewport { requestVirtualDisplay(viewport) }
+            }
+            if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value,
+               action.virtualDisplayViewportUnavailable == true {
+                if virtualDisplayWasUsed { virtualDisplayFallback() }
+                else if experimentalPhoneWorkspacePeer {
+                    // Escape can arrive before preparation starts. It fences a late viewport.
+                    virtualDisplayGeneration &+= 1
+                    virtualDisplayBlocked = true
+                    virtualDisplayNegotiationDeadline?.cancel(); virtualDisplayNegotiationDeadline = nil
+                    sendCaptureHealth(sessionHealthy)
+                }
+            }
+            if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, !captureScopeViewOnly, !usesVirtualDisplay, StreamTuning.current.viewportCapture,
                ViewportCapturePolicy.describesViewport(action) {
                 // A regular heartbeat without a viewport means the phone can no longer describe its
                 // visible area. Return to the whole display instead of retaining an old crop.
@@ -2936,8 +3155,7 @@ final class RemoteHostModel: ObservableObject {
                 connection.media?.captureSharpness = capture.deliveredSharpness
             }
             if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value {
-                phoneLoad = action.phoneLoad
-                phoneLoadReceivedAt = action.phoneLoad == nil ? nil : ProcessInfo.processInfo.systemUptime
+                phoneLoad.receive(action, epoch: inputEpoch.value, at: ProcessInfo.processInfo.systemUptime)
             }
             if let probe = action.clock, !probe.isEcho, (try? probe.validate()) != nil {
                 let received = min(MachClock.nowMs(), connection.media?.controlArrivalMs ?? .infinity)
@@ -3284,7 +3502,7 @@ final class RemoteHostModel: ObservableObject {
 
     private func captureHealthChanged(_ healthy: Bool) {
         updateCriticalThermalPause()
-        let healthy = healthy && !criticalThermalPause.isPaused
+        let healthy = healthy && !criticalThermalPause.isPaused && !virtualDisplayChanging && !virtualDisplayRetirementPending
         if !healthy { guests.endAll() }
         guard sessionState == .picture else { return }
         // The capture reports every 0.4 s; the 4 Hz lifecycle timer already re-checks Accessibility,
@@ -3341,7 +3559,7 @@ final class RemoteHostModel: ObservableObject {
               (try? action.validate()) != nil,
               connection.connected, active, captureHealthy,
               action.epoch == inputEpoch.value,
-              let display = displays.first(where: {
+              let display = virtualDisplaySource ?? displays.first(where: {
                   $0.displayID == selected && $0.displayID == capturedDisplayID
               }),
               pointerLocator.admit(at: ProcessInfo.processInfo.systemUptime)
@@ -3359,8 +3577,7 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Ladder and busy state (G12)
 
     private func beginLoadMonitor(peer: PeerMedia) {
-        phoneLoad = nil
-        phoneLoadReceivedAt = nil
+        phoneLoad.reset()
         ladderState = nil
         busyState = nil
         let tuning = StreamTuning.current
@@ -3375,8 +3592,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func endLoadMonitor() {
-        phoneLoad = nil
-        phoneLoadReceivedAt = nil
+        phoneLoad.reset()
         loadMonitor = nil
         connection.media?.senderQueueGovernorStatus = nil
         connection.media?.senderQueueGovernorShedding = false
@@ -3399,8 +3615,7 @@ final class RemoteHostModel: ObservableObject {
                                     hostThermalState: HostLoadMonitor.thermalName(process.thermalState),
                                     lowPowerMode: process.isLowPowerModeEnabled)
         var sampleWithPhone = sample
-        sampleWithPhone.phoneLoad = HostLoadMonitor.currentPhoneLoad(phoneLoad, receivedAt: phoneLoadReceivedAt,
-                                                                    now: process.systemUptime)
+        sampleWithPhone.phoneLoad = phoneLoad.current(at: process.systemUptime)
         sampleWithPhone.provenLocalLink = peer.provenLocalLinkActive
         let change = monitor.tick(sample: sampleWithPhone, at: process.systemUptime)
         loadMonitor = monitor
@@ -3408,8 +3623,10 @@ final class RemoteHostModel: ObservableObject {
         peer.senderQueueGovernorShedding = monitor.governorShedding
         if let ladder = change.ladder {
             ladderState = ladder
-            capture.setLadder(ladder)
-            connection.media?.applyLadder(ladder)
+            var applied = ladder
+            if usesVirtualDisplay { applied.sizeFraction = 1 }
+            capture.setLadder(applied)
+            connection.media?.applyLadder(applied)
             events.record(.session, "Ladder rung \(ladder.rung): \(ladder.fps) fps × \(ladder.sizeFraction) (\(ladder.reason ?? "headroom"))")
         }
         if let busy = change.busy {
@@ -3493,9 +3710,11 @@ final class RemoteHostModel: ObservableObject {
             + (wakeHelperAvailable ? [SessionFeature.lanWake] : [])
             + (awayAvailable && !ManagedLockPolicy.isManaged() ? [SessionFeature.away] : [])
         let existing = SharedCaptureScopePolicy.features(HostFeatureList.features(base: base,
-            allowBigText: !captureScopeViewOnly && preferences.allowBigText,
+            allowBigText: !captureScopeViewOnly && !virtualDisplayWasUsed && preferences.allowBigText,
             accessibility: inputAccess.accessibility.isGranted,
-            peerFeatures: connection.peerFeatures, requestedMode: connection.peerRequestedMode), kind: captureScopeKind)
+            peerFeatures: connection.peerFeatures, requestedMode: connection.peerRequestedMode,
+            virtualDisplayEnabled: virtualDisplayAvailableToPeer && !virtualDisplayBlocked && !captureScopeViewOnly,
+            experimentalPhoneEnabled: FarsideBeta.isEnabled), kind: captureScopeKind)
         return ShortcutChips.advertised(addingTo: existing, enabled: ShortcutChips.isEnabled() && !captureScopeViewOnly,
             peerFeatures: connection.peerFeatures)
     }
@@ -3515,6 +3734,23 @@ final class RemoteHostModel: ObservableObject {
             controlAllowed: sessionControlAllowed, accessibilityGranted: controlPermission.isGranted,
             captureApprovalPending: sessionState == .picture && captureApproval.isPending,
             phoneUnderstandsApproval: features.contains(MacShareBlocker.approvalFeature))
+        // A routine unhealthy tick is not a different capture route. During this bounded,
+        // explicitly authorized resize the tagged preflight carries retirement instead.
+        // Every blocker/state boundary cancels before the ordinary status is delivered.
+        if !healthy, let begin = virtualDisplayResizeBegin {
+            let now = ProcessInfo.processInfo.systemUptime
+            if virtualDisplayChanging, now < virtualDisplayResizeDeadline,
+               presence == nil, state == nil, viewOnlyRequestID == nil,
+               connection.media === virtualDisplayResizePeer, active, !terminating,
+               !screenLocked, !phonePause.isPaused, !liveViewOnly, !away.isLocking,
+               awayPictureClear, !captureApproval.isPending, sessionState == .picture,
+               captureScopeKind == .display, captureScopeEpoch == begin.scopeEpoch,
+               virtualDisplayEnabled, !virtualDisplayRetirementPending,
+               virtualDisplay.displayID == begin.display, virtualDisplay.physicalTopologyUnchanged {
+                return
+            }
+            cancelVirtualDisplayResizeHold()
+        }
       let capability = !liveViewOnly && !away.isLocking && !captureScopeViewOnly && sessionState.issuesTokens(healthy: healthy) ? inputFreshness.capability(
             epoch: inputEpoch.value,
             now: ProcessInfo.processInfo.systemUptime,
@@ -3531,6 +3767,10 @@ final class RemoteHostModel: ObservableObject {
             curtain: curtainState.rawValue, hostEvent: event,
             away: advertisedFeatures.contains(SessionFeature.away) ? away.protocolState.rawValue : nil,
             display: capturedDisplayID, agentAlert: alert,
+            virtualDisplayActive: SessionVirtualDisplayPolicy.activeStatus(sourceActive: usesVirtualDisplay,
+                experimentalPhonePeer: experimentalPhoneWorkspacePeer,
+                virtualDisplayAdvertised: advertisedFeatures.contains(SessionFeature.virtualDisplay)),
+            virtualDisplayPhase: experimentalPhoneWorkspacePeer ? workspacePhase : nil,
             captureRegion: capture.appliedCaptureRegion, ladder: ladderState, busy: busyState,
             macVitals: vitalsMonitor?.current(now: ProcessInfo.processInfo.systemUptime),
             mode: sessionState.wireMode, modeReason: pendingModeReason?.rawValue ?? sessionState.wireReason,
@@ -3542,6 +3782,383 @@ final class RemoteHostModel: ObservableObject {
     }
 
     // MARK: Session mode
+
+    private func waitForVirtualDisplayViewport() {
+        guard virtualDisplayNegotiationDeadline == nil else { return }
+        virtualDisplayNegotiationDeadline = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled, let self, self.connection.connected,
+                  !self.usesVirtualDisplay, !self.virtualDisplayChanging else { return }
+            self.virtualDisplayNegotiationDeadline = nil
+            self.virtualDisplayBlocked = true
+            self.bigText.sessionResumed()
+            self.sendCaptureHealth(self.sessionHealthy)
+        }
+    }
+
+    private func requestVirtualDisplay(_ viewport: VirtualDisplayViewport) {
+        guard virtualDisplayAvailableToPeer,
+              SessionVirtualDisplayPolicy.permitsWorkspace(viewport: viewport, experimentalPhoneEnabled: experimentalPhoneWorkspacePeer),
+              !virtualDisplayBlocked, !virtualDisplayRetirementPending, !captureScopeViewOnly, !liveViewOnly,
+              active, connection.connected, sessionState == .picture, !phonePause.isPaused, !terminating, !virtualDisplayQuitPending,
+              sessionControlAllowed, controlPermission.isGranted, !criticalThermalPause.isPaused,
+              !screenLocked, !away.isLocking, awayPictureClear, !captureApproval.isPending,
+              CGPreflightScreenCaptureAccess(), CaptureStopReason.systemAllowsCapture,
+              inputAccess.accessibility.isGranted, advertisedFeatures.contains(SessionFeature.virtualDisplay),
+              let spec = VirtualDisplaySpecification(viewport: viewport), let peer = connection.media else { return }
+        guard !bigText.isEngaged && !bigText.isChanging && !bigText.restorePending else {
+            virtualDisplayBlocked = true
+            detail = "Restore Big Text to normal size, then reconnect to try Workspace."
+            sendCaptureHealth(sessionHealthy)
+            return
+        }
+        // Codec constraints are preserved. Exact pixels at 60 are the fallback for a 120 request.
+        guard RemoteCaptureConfiguration.virtualDisplayOutput(spec, budget: peer.nativeCaptureBudget, fps: 60) != nil else {
+            if virtualDisplayWasUsed { virtualDisplayFallback() }
+            else {
+                virtualDisplayBlocked = true; bigText.sessionResumed()
+                sendCaptureHealth(sessionHealthy)
+            }
+            return
+        }
+        virtualDisplayNegotiationDeadline?.cancel(); virtualDisplayNegotiationDeadline = nil
+        if let begin = virtualDisplayResizeBegin,
+           begin.pixelWidth != spec.width || begin.pixelHeight != spec.height {
+            cancelVirtualDisplayResizeHold() // Cancel immediately, including while an await is in flight.
+        }
+        virtualDisplayRequested = spec
+        if virtualDisplayTask != nil { return } // One owner drains size changes; newest request wins.
+        if usesVirtualDisplay && virtualDisplayAcceptedRequest == spec { return }
+        virtualDisplayGeneration &+= 1
+        let generation = virtualDisplayGeneration
+        if virtualDisplayWindowAuthority == nil { virtualDisplayWindowAuthority = VirtualDisplayWindowOperationAuthority() }
+        guard let windowAuthority = virtualDisplayWindowAuthority, windowAuthority.isCurrent else { return }
+        virtualDisplayWasUsed = true
+        virtualDisplayChanging = true
+        input.enabled = false
+        releaseRemoteInput(notifyPhone: true)
+        captureHealthy = false
+        sendCaptureHealth(false)
+        // Retain the admitted peer until preparation settles. A reset before this task
+        // starts must not leave a completed task installed as a permanent transition.
+        virtualDisplayTask = Task { [weak self, peer, windowAuthority] in
+            guard let self else { return }
+            // A refresh already admitted on the AX lane settles before display geometry changes.
+            await self.virtualDisplayWorkspaceTask?.value
+            let current = { [weak self, weak peer] in
+                guard let self, let peer else { return false }
+                return windowAuthority.isCurrent && self.virtualDisplayAvailableToPeer &&
+                    self.virtualDisplayGeneration == generation && self.connection.media === peer &&
+                    self.active && self.connection.connected && self.sessionState == .picture &&
+                    !self.phonePause.isPaused && !self.terminating && !self.screenLocked &&
+                    !self.virtualDisplayQuitPending &&
+                    !self.criticalThermalPause.isPaused && !self.away.isLocking && self.awayPictureClear &&
+                    !self.captureApproval.isPending && self.screenRecordingPermission.isGranted &&
+                    self.sessionControlAllowed && self.controlPermission.isGranted && self.inputAccess.accessibility.isGranted &&
+                    !self.liveViewOnly && !self.captureScopeViewOnly
+            }
+            var failed = false
+            var resizeHoldAttempted = !self.usesVirtualDisplay
+            do {
+                while current(), let wanted = self.virtualDisplayRequested {
+                    let first = !self.usesVirtualDisplay
+                    if let begin = self.virtualDisplayResizeBegin,
+                       begin.pixelWidth != wanted.width || begin.pixelHeight != wanted.height {
+                        self.cancelVirtualDisplayResizeHold() // Coalescing cannot renew frozen authority.
+                    }
+                    if !first, !resizeHoldAttempted {
+                        resizeHoldAttempted = true
+                        self.beginVirtualDisplayResizeHold(wanted, peer: peer)
+                    }
+                    self.input.enabled = false
+                    self.releaseRemoteInput(notifyPhone: true)
+                    self.captureHealthy = false
+                    self.captureAttempt &+= 1
+                    self.captureTask?.cancel(); self.captureTask = nil
+                    self.endLoadMonitor()
+                    let stop = self.capture.stop()
+                    await stop?.value
+                    guard current() else { break }
+                    // A bounded stop can finish while macOS still owns its quarantined producer.
+                    // Never reflow the desktop or retire its source under that producer.
+                    guard !CaptureProducerReservation.shared.isReserved else {
+                        throw CaptureStartupTicket.Failure.cleanupPending
+                    }
+                    // WindowServer may reflow windows while adding a display. Persist the
+                    // originals before the topology changes, rather than after creation.
+                    if first {
+                        guard let physical = self.displays.first(where: { $0.displayID == self.selected }) else {
+                            throw VirtualDisplayWindowError.unsupported
+                        }
+                        self.virtualDisplayReturnBounds = physical.frame
+                        try await self.virtualWindows.prepareWorkspaceWindows(whileCurrent: { windowAuthority.isCurrent })
+                    } else {
+                        guard let owned = self.virtualDisplay.displayID, self.virtualDisplay.isOwnedDisplay(owned),
+                              let proof = self.virtualDisplay.windowOwnershipProof,
+                              let fallback = self.virtualDisplayReturnBounds else {
+                            throw VirtualDisplayWindowError.unsupported
+                        }
+                        // Catch windows opened since the last polling cycle before changing
+                        // the owned display's mode (which can itself reflow windows).
+                        try await self.virtualWindows.bindOwnedDisplay(proof, whileCurrent: { windowAuthority.isCurrent })
+                        try await self.virtualWindows.sealWorkspaceForResize(to: CGDisplayBounds(owned),
+                            physicalFallbackBounds: fallback, whileCurrent: { windowAuthority.isCurrent })
+                    }
+                    guard current() else { break }
+                    let display: SCDisplay
+                    do { display = try await self.virtualDisplay.prepare(wanted, whileCurrent: current) }
+                    catch {
+                        guard wanted.refreshHz == 120, current() else { throw error }
+                        display = try await self.virtualDisplay.prepare(wanted.at60Hz, whileCurrent: current)
+                    }
+                    guard current() else { break }
+                    guard let proof = self.virtualDisplay.windowOwnershipProof else { throw VirtualDisplayWindowError.unsupported }
+                    try await self.virtualWindows.bindOwnedDisplay(proof, whileCurrent: { windowAuthority.isCurrent })
+                    guard current() else { break }
+                    if let begin = self.virtualDisplayResizeBegin, begin.display != display.displayID {
+                        self.cancelVirtualDisplayResizeHold()
+                    }
+                    if first { try await self.virtualWindows.moveWorkspaceWindows(to: display.frame, whileCurrent: { windowAuthority.isCurrent }) }
+                    else { try await self.virtualWindows.resize(to: display.frame, whileCurrent: { windowAuthority.isCurrent }) }
+                    guard current() else { break }
+                    self.virtualDisplaySource = display
+                    self.virtualDisplayAcceptedRequest = wanted
+                    if wanted == self.virtualDisplayRequested { break }
+                }
+            } catch {
+                failed = true
+                self.events.record(.error, "Phone-sized display unavailable; restoring normal picture")
+            }
+            guard self.virtualDisplayGeneration == generation else { return }
+            self.virtualDisplayTask = nil
+            self.virtualDisplayChanging = false
+            // Unexpected disconnect owns the existing grace timer even if it happened
+            // during an awaited resize. Keep the journal/display until that timer settles.
+            if self.virtualDisplayGrace != nil, !self.connection.connected,
+               !self.virtualDisplayQuitPending, !self.virtualDisplayRetirementPending { return }
+            if failed { self.virtualDisplayFallback() }
+            else if current() { self.beginCapture(keepingExclusions: true) }
+            else {
+                // A view-only/lock/session transition can invalidate preparation without
+                // throwing. It must still restore the journal and remove the owned display.
+                self.retireVirtualDisplay(resume: self.connection.connected && self.active &&
+                    self.sessionState == .picture && !self.phonePause.isPaused && !self.terminating ? .picture : nil)
+            }
+        }
+    }
+
+    /// Bounded, single-flight enrollment lets ordinary app switching/new windows join the
+    /// workspace. Off-Space windows are neither activated nor guessed at through private APIs.
+    private func refreshVirtualWorkspace(at now: TimeInterval) {
+        if connection.connected && virtualDisplayWasUsed && !virtualDisplayAvailableToPeer {
+            retireVirtualDisplay(resume: .picture)
+            return
+        }
+        guard now - virtualDisplayLastWorkspaceRefresh >= 2, virtualDisplayWorkspaceTask == nil,
+              !virtualDisplayChanging, !virtualDisplayRetirementPending, usesVirtualDisplay,
+              active, connection.connected, sessionHealthy, sessionState == .picture,
+              !screenLocked, !phonePause.isPaused, !liveViewOnly, !captureScopeViewOnly,
+              !away.isLocking, !terminating, !input.held, inputAccess.accessibility.isGranted,
+              let authority = virtualDisplayWindowAuthority, authority.isCurrent,
+              let source = virtualDisplaySource, virtualDisplay.isReady(for: source),
+              virtualDisplay.physicalTopologyUnchanged, let fallback = virtualDisplayReturnBounds,
+              let peer = connection.media else { return }
+        virtualDisplayLastWorkspaceRefresh = now
+        let generation = virtualDisplayGeneration
+        virtualDisplayWorkspaceTask = Task { [weak self, peer, authority] in
+            guard let self else { return }
+            defer { self.virtualDisplayWorkspaceTask = nil }
+            do {
+                try await self.virtualWindows.refreshWorkspace(to: source.frame, physicalFallbackBounds: fallback,
+                    whileCurrent: { authority.isCurrent })
+            } catch {
+                guard authority.isCurrent, self.virtualDisplayGeneration == generation,
+                      self.connection.media === peer, !self.virtualDisplayRetirementPending else { return }
+                self.events.record(.error, "iPad workspace window placement unavailable; restoring the desk")
+                self.virtualDisplayFallback()
+            }
+        }
+    }
+
+    private func beginVirtualDisplayResizeHold(_ wanted: VirtualDisplaySpecification, peer: PeerMedia) {
+        guard virtualDisplayResizeHoldSupported, virtualDisplayEnabled,
+              let source = virtualDisplaySource, virtualDisplay.isReady(for: source),
+              connection.media === peer, connection.connected, sessionState == .picture,
+              active, !terminating, !virtualDisplayRetirementPending,
+              !captureScopeViewOnly, !liveViewOnly, !screenLocked, !phonePause.isPaused,
+              !displayAsleep, !away.isLocking, awayPictureClear, !captureApproval.isPending,
+              screenRecordingPermission.isGranted, inputAccess.accessibility.isGranted,
+              let display = virtualDisplaySource?.displayID else { return }
+        let begin = VirtualDisplayResizeBegin(token: UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased(),
+            display: display, fromEpoch: inputEpoch.value, scopeEpoch: captureScopeEpoch,
+            pixelWidth: wanted.width, pixelHeight: wanted.height)
+        guard (try? begin.validate()) != nil,
+              connection.sendControl(RemoteAction(action: "virtualDisplayResizeBegin", epoch: inputEpoch.value,
+                  virtualDisplayResizeBegin: begin)) else { return }
+        virtualDisplayResizeBegin = begin
+        virtualDisplayResizePeer = peer
+        virtualDisplayResizeDeadline = ProcessInfo.processInfo.systemUptime + 2
+    }
+
+    private func currentVirtualDisplayResizeToken(peer: PeerMedia) -> String? {
+        guard let begin = virtualDisplayResizeBegin else { return nil }
+        guard connection.media === peer, virtualDisplayResizePeer === peer,
+              ProcessInfo.processInfo.systemUptime < virtualDisplayResizeDeadline,
+              connection.connected, active, !terminating, sessionState == .picture,
+              !virtualDisplayRetirementPending, !virtualDisplayBlocked, virtualDisplayEnabled,
+              !screenLocked, !phonePause.isPaused, !liveViewOnly, !displayAsleep,
+              !away.isLocking, awayPictureClear, !captureApproval.isPending,
+              screenRecordingPermission.isGranted, inputAccess.accessibility.isGranted,
+              usesVirtualDisplay, virtualDisplaySource?.displayID == begin.display,
+              virtualDisplay.specification?.width == begin.pixelWidth,
+              virtualDisplay.specification?.height == begin.pixelHeight,
+              captureScopeKind == .display, captureScopeEpoch == begin.scopeEpoch,
+              inputEpoch.value > begin.fromEpoch else {
+            cancelVirtualDisplayResizeHold()
+            return nil
+        }
+        return begin.token
+    }
+
+    private func clearVirtualDisplayResizeHold() {
+        virtualDisplayResizeBegin = nil
+        virtualDisplayResizePeer = nil
+        virtualDisplayResizeDeadline = 0
+    }
+
+    private func cancelVirtualDisplayResizeHold() {
+        guard let begin = virtualDisplayResizeBegin else { return }
+        clearVirtualDisplayResizeHold()
+        if connection.connected {
+            _ = connection.sendControl(RemoteAction(action: "virtualDisplayResizeCancel", epoch: inputEpoch.value,
+                virtualDisplayResizeToken: begin.token))
+        }
+    }
+
+    /// Capture/input retire synchronously. Window restoration must finish before display removal.
+    private func retireVirtualDisplay(afterGrace: Bool = false, resume: SessionMode? = nil) {
+        // Also stops already-admitted queue work during disconnect grace.
+        virtualDisplayWindowAuthority?.revoke()
+        virtualDisplayNegotiationDeadline?.cancel(); virtualDisplayNegotiationDeadline = nil
+        virtualDisplayGrace?.cancel(); virtualDisplayGrace = nil
+        cancelVirtualDisplayResizeHold()
+        guard virtualDisplayWasUsed else { return }
+        if afterGrace {
+            virtualDisplayGrace = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(20))
+                guard !Task.isCancelled, let self, !self.connection.connected else { return }
+                self.retireVirtualDisplay()
+            }
+            return
+        }
+        if virtualDisplayRetirementPending, virtualDisplayTask != nil {
+            virtualDisplayResumeMode = resume
+            return
+        }
+        virtualDisplayGeneration &+= 1
+        let generation = virtualDisplayGeneration
+        virtualDisplayRetirementPending = true
+        virtualDisplayResumeMode = resume
+        virtualDisplayRequested = nil
+        virtualDisplayAcceptedRequest = nil
+        virtualDisplaySource = nil
+        virtualDisplayChanging = true
+        input.enabled = false
+        releaseRemoteInput(notifyPhone: true)
+        captureAttempt &+= 1
+        captureTask?.cancel(); captureTask = nil
+        captureHealthy = false
+        sendCaptureHealth(false)
+        let stopped = capture.stop()
+        let previous = virtualDisplayTask
+        let workspace = virtualDisplayWorkspaceTask
+        virtualDisplayTask = Task { [weak self] in
+            await previous?.value
+            await workspace?.value
+            await stopped?.value
+            guard let self else { return }
+            guard self.virtualDisplayGeneration == generation else { return }
+            guard !CaptureProducerReservation.shared.isReserved else {
+                self.virtualDisplayChanging = false
+                self.virtualDisplayTask = nil
+                self.detail = "Screen sharing is still stopping. Keep Farside open while Workspace restoration is retried."
+                self.sendCaptureHealth(false)
+                return
+            }
+            // A false readiness probe is not proof of removal. Preserve originals until
+            // current ownership/absence and the protected physical topology are known.
+            let presence = await self.virtualDisplay.retirementPresence()
+            guard self.virtualDisplayGeneration == generation else { return }
+            var sealed = presence != .present
+            if presence == .present, let owned = self.virtualDisplay.displayID,
+               self.virtualDisplay.isOwnedDisplay(owned), let proof = self.virtualDisplay.windowOwnershipProof,
+               let fallback = self.virtualDisplayReturnBounds {
+                do {
+                    try await self.virtualWindows.bindOwnedDisplay(proof)
+                    try await self.virtualWindows.sealWorkspaceForRetirement(to: CGDisplayBounds(owned),
+                        physicalFallbackBounds: fallback)
+                    sealed = true
+                } catch {
+                    // Incomplete inventory/overflow must retain the display and return journal.
+                    self.events.record(.error, "iPad workspace inventory incomplete; retaining display for restoration")
+                }
+            }
+            guard self.virtualDisplayGeneration == generation else { return }
+            if sealed, await self.virtualWindows.restore(after: presence,
+                physicalTopologyUnchanged: self.virtualDisplay.physicalTopologyUnchanged) {
+                var removalVerified = presence != .present
+                if presence == .present, let owned = self.virtualDisplay.displayID,
+                   self.virtualDisplay.isOwnedDisplay(owned), let proof = self.virtualDisplay.windowOwnershipProof,
+                   let fallback = self.virtualDisplayReturnBounds {
+                    do {
+                        try await self.virtualWindows.bindOwnedDisplay(proof)
+                        removalVerified = try await self.virtualWindows.verifyWorkspaceRemoval(to: CGDisplayBounds(owned),
+                            physicalFallbackBounds: fallback)
+                    } catch {
+                        self.events.record(.error, "iPad workspace removal inventory needs retry")
+                    }
+                }
+                guard self.virtualDisplayGeneration == generation else { return }
+                if removalVerified {
+                    do {
+                        try await self.virtualDisplay.stop()
+                        // Keep the original journal through verified display removal. A
+                        // failed stop or crash during removal must remain recoverable.
+                        _ = await self.virtualWindows.restore(after: .confirmedRemoved,
+                            physicalTopologyUnchanged: self.virtualDisplay.physicalTopologyUnchanged)
+                    }
+                    catch { self.events.record(.error, "Phone-sized display removal needs retry") }
+                }
+            }
+            if !self.virtualWindows.hasPendingRestore && !self.virtualDisplay.ownsScreenChanges {
+                self.virtualDisplayWasUsed = false
+                self.virtualDisplayWindowAuthority = nil
+                self.virtualDisplayReturnBounds = nil
+                self.virtualDisplayLastRetiredAt = ProcessInfo.processInfo.systemUptime
+                self.virtualDisplayRetirementPending = false
+            } else {
+                self.detail = "Restoring the phone workspace. Window restoration will be retried."
+                self.events.record(.error, "Phone workspace restoration remains pending")
+            }
+            if self.virtualDisplayGeneration == generation {
+                self.virtualDisplayChanging = false
+                self.virtualDisplayTask = nil
+                self.sendCaptureHealth(false)
+                if !self.virtualDisplayWasUsed, let mode = self.virtualDisplayResumeMode,
+                   self.connection.connected, self.active, !self.phonePause.isPaused, !self.terminating {
+                    self.virtualDisplayResumeMode = nil
+                    if mode == .couch { self.beginCouch() }
+                    else { self.beginCapture() }
+                }
+            }
+        }
+    }
+
+    private func virtualDisplayFallback() {
+        guard virtualDisplayWasUsed, !virtualDisplayRetirementPending else { return }
+        virtualDisplayBlocked = true
+        retireVirtualDisplay(resume: .picture)
+    }
 
     private func receiveModeRequest(_ action: RemoteAction) {
         guard !away.isLocking, connection.connected, active, action.epoch == inputEpoch.value, !phonePause.isPaused && !liveViewOnly,
@@ -3656,6 +4273,7 @@ final class RemoteHostModel: ObservableObject {
                 return true
             }
             guard released else { connection.dropPeerSession(); return }
+            if next && virtualDisplayWasUsed { virtualDisplayFallback() }
             invalidateTextFocus(); clipboard.reset(); fileTransfer.reset()
             // Restore only the Mac owner's existing producer consent when leaving live PiP.
             // Phone playback remains muted until the person explicitly enables it again.
@@ -3743,7 +4361,8 @@ final class RemoteHostModel: ObservableObject {
                 switchSessionDisplay(to: id)
             }
         case "displayScale":
-            guard sessionState == .picture else {
+            guard sessionState == .picture, !virtualDisplayWasUsed,
+                  (!advertisedFeatures.contains(SessionFeature.virtualDisplay) || experimentalPhoneWorkspacePeer) else {
                 return sendDisplayList(scaleError: .disabled, scaleRequestID: action.scaleRequestID)
             }
             guard let requested = action.display, let width = action.looksLikeWidth else { return }
@@ -3767,6 +4386,7 @@ final class RemoteHostModel: ObservableObject {
     /// The phone chose another display: stream it in the same session. A new epoch and geometry
     /// follow, so input meant for the old display can never land on the new one.
     private func switchSessionDisplay(to id: CGDirectDisplayID) {
+        if virtualDisplayWasUsed { virtualDisplayBlocked = true; retireVirtualDisplay() }
         cancelHeldScale()
         bigText.sessionEnded(.displaySwitched)
         selected = id
@@ -3801,6 +4421,7 @@ final class RemoteHostModel: ObservableObject {
     /// The phone is backgrounding: stop capture and input now, but keep the peer and its
     /// session slot so a quick return resumes without renegotiation.
     private func pauseForPhoneBackground(ending: Bool = false) {
+        if virtualDisplayWasUsed { retireVirtualDisplay() }
         cancelPictureRefresh()
         guard !phonePause.isPaused && (ending || !liveViewOnly) else { return }
         phoneAudioRequested = false
@@ -3862,6 +4483,7 @@ final class RemoteHostModel: ObservableObject {
         couchSessionSnapshot.observeAvailability(event)
         switch HostSleepPolicy.response(to: event) {
         case .tearDown(let presence):
+            virtualDisplayWindowAuthority?.revoke()
             // Revoke before any lock bookkeeping or teardown guard, synchronously in the notification callback.
             input.enabled = false
             couchHealthy = false

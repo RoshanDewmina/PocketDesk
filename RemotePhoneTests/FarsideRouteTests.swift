@@ -20,12 +20,12 @@ final class FarsideRouteTests: XCTestCase {
     }
 
     func testTheCustomSchemeRoutes() {
-        XCTAssertEqual(route("farside://session"), .resumeSession)
-        XCTAssertEqual(route("farside://open"), .openMac)
-        XCTAssertEqual(route("farside://help/h_20af"), .agentAlert(id: "h_20af"))
-        XCTAssertEqual(route("farside://open/h_20af"), .agentAlert(id: "h_20af"), "A help request id opens its alert")
-        XCTAssertEqual(route("farside://open/9f3c2a71"), .openMac, "Any other link id is navigation to the Mac only")
-        XCTAssertEqual(route("FARSIDE://SESSION"), .resumeSession, "Scheme and host are case-insensitive")
+        XCTAssertEqual(route("\(FarsideRoute.scheme)://session"), .resumeSession)
+        XCTAssertEqual(route("\(FarsideRoute.scheme)://open"), .openMac)
+        XCTAssertEqual(route("\(FarsideRoute.scheme)://help/h_20af"), .agentAlert(id: "h_20af"))
+        XCTAssertEqual(route("\(FarsideRoute.scheme)://open/h_20af"), .agentAlert(id: "h_20af"), "A help request id opens its alert")
+        XCTAssertEqual(route("\(FarsideRoute.scheme)://open/9f3c2a71"), .openMac, "Any other link id is navigation to the Mac only")
+        XCTAssertEqual(route("\(FarsideRoute.scheme.uppercased())://SESSION"), .resumeSession, "Scheme and host are case-insensitive")
     }
 
     func testUniversalLinksAreAcceptedOnlyFromAnAssociatedHost() {
@@ -39,16 +39,16 @@ final class FarsideRouteTests: XCTestCase {
     }
 
     func testMalformedOrUnknownRoutesAreRefused() {
-        XCTAssertNil(route("farside://"))
-        XCTAssertNil(route("farside://help"))
-        XCTAssertNil(route("farside://help/"))
-        XCTAssertNil(route("farside://help/a/b"))
-        XCTAssertNil(route("farside://help/h_20af/extra"))
-        XCTAssertNil(route("farside://session/extra"))
-        XCTAssertNil(route("farside://unknown"))
-        XCTAssertNil(route("farside://help/h 20af"))
-        XCTAssertNil(route("farside://help/h_%00"))
-        XCTAssertNil(route("farside://help/" + String(repeating: "a", count: 65)))
+        XCTAssertNil(route("\(FarsideRoute.scheme)://"))
+        XCTAssertNil(route("\(FarsideRoute.scheme)://help"))
+        XCTAssertNil(route("\(FarsideRoute.scheme)://help/"))
+        XCTAssertNil(route("\(FarsideRoute.scheme)://help/a/b"))
+        XCTAssertNil(route("\(FarsideRoute.scheme)://help/h_20af/extra"))
+        XCTAssertNil(route("\(FarsideRoute.scheme)://session/extra"))
+        XCTAssertNil(route("\(FarsideRoute.scheme)://unknown"))
+        XCTAssertNil(route("\(FarsideRoute.scheme)://help/h 20af"))
+        XCTAssertNil(route("\(FarsideRoute.scheme)://help/h_%00"))
+        XCTAssertNil(route("\(FarsideRoute.scheme)://help/" + String(repeating: "a", count: 65)))
         XCTAssertNil(route("mailto:someone@example.com"))
         XCTAssertNil(route("javascript:alert(1)"))
     }
@@ -58,6 +58,16 @@ final class FarsideRouteTests: XCTestCase {
         for route in all {
             XCTAssertEqual(FarsideRoute(url: route.url), route, "Routes survive a round trip through their URL")
         }
+    }
+
+    func testIsolatedBetaSchemeRejectsProductionLinksAndProductionRejectsBetaLinks() {
+        let other = FarsideBeta.isEnabled ? "farside" : "farside-beta"
+        XCTAssertNil(route("\(other)://open"))
+        XCTAssertNil(route("\(other)://session"))
+        XCTAssertNil(route("\(other)://help/h_20af"))
+        XCTAssertEqual(FarsideRoute.openMac.url.scheme, FarsideBeta.urlScheme)
+        XCTAssertEqual(SessionActivityLinks.session.scheme, FarsideBeta.urlScheme)
+        XCTAssertEqual(ConnectWidgetLink.url.scheme, FarsideBeta.urlScheme)
     }
 
     func testHelpRequestIds() {

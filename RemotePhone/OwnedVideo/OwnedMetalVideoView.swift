@@ -7,6 +7,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     let metal: MTKView
     let fence: VideoPresentationFence
     let identity: VideoPresentationIdentity
+    private let presentationLifetime: VideoPresentationLifetime
     let mailbox = NewestFrameMailbox<VideoFrameEnvelope>()
     var counters: StreamCounters?
     var beforeDraw: ((MTKView) -> Void)?
@@ -14,10 +15,66 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     /// presentation (b7-scroll). The model places the picture by this frame's own capture region.
     var onFrameDrawn: ((VideoFrameEnvelope) -> Void)?
     private var drawnEnvelope: VideoFrameEnvelope?
+    private var viewportCoverage: BetaViewportCoverageConstraint?
+
+    /// Main-thread presentation constraint. Decoding and the compressed reference chain are unchanged.
+    func beginViewportCoverage(generation: UInt64, required: CGRect, scope: UInt64) -> Bool {
+        guard FarsideBeta.isEnabled, required.width > 0, required.height > 0,
+              [required.minX, required.minY, required.maxX, required.maxY].allSatisfy({ $0.isFinite }),
+              fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, { true }) == true else { return false }
+        viewportCoverage = .init(generation: generation, required: required, scope: scope)
+        return true
+    }
+    func viewportCoverageReady(generation: UInt64) -> Bool {
+        fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) {
+            viewportCoverage?.generation == generation && viewportCoverage?.presented == true
+        } ?? false
+    }
+    func finishViewportCoverage(generation: UInt64, required: CGRect) {
+        guard viewportCoverage?.generation == generation else { return }
+        viewportCoverage?.required = required // Keep the current camera safe from delayed old crops.
+    }
+    func clearViewportCoverage() { viewportCoverage = nil }
+    /// One rule for all subsequent camera edits, independent of their gesture or layout source.
+    /// A deferred endpoint observation must not retire unchanged framing.
+    func synchronizeViewportCoverage(visible: CGRect) {
+        guard let coverage = viewportCoverage, coverage.required != visible else { return }
+        viewportCoverage = nil
+    }
+    /// The first eligible submission must follow BOTH edges of all pre-install submissions.
+    func viewportCoverageAllows(_ envelope: VideoFrameEnvelope, submissionID: UInt64) -> Bool {
+        guard let coverage = viewportCoverage else { return true }
+        return coverage.accepts(envelope, identity: identity) &&
+            (coverage.presented || mailbox.isOnlyFlight(submissionID))
+    }
+    /// This exact closure is called from Core Animation. It captures generation before commit,
+    /// then queues owner validation without waiting for main or any local lock.
+    func viewportCoverageReceipt(_ envelope: VideoFrameEnvelope) -> ((TimeInterval) -> Void)? {
+        guard let generation = viewportCoverage?.generation else { return nil }
+        return { [weak self] time in
+            Self.presentedReceiptQueue.async {
+                DispatchQueue.main.async { [weak self] in
+                    self?.viewportCoveragePresented(envelope, generation: generation, at: time)
+                }
+            }
+        }
+    }
+    func viewportCoveragePresented(_ envelope: VideoFrameEnvelope, generation: UInt64, at time: TimeInterval) {
+        guard time.isFinite, time > 0, time <= ProcessInfo.processInfo.systemUptime,
+              fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, { true }) == true,
+              viewportCoverage?.generation == generation,
+              viewportCoverage?.accepts(envelope, identity: identity) == true else { return }
+        viewportCoverage?.presented = true
+    }
     var fillsFrame = false
     var videoFeedback: VideoFeedbackContext?
     /// Only an actual original source drawable presentation may report this receipt.
     /// Consumers enqueue owner-validated work; they must not synchronously hop to main.
+    private var sourcePresented: ((VideoPresentedSource) -> Void)?
+    var onSourcePresented: ((VideoPresentedSource) -> Void)? {
+        get { fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) { sourcePresented } ?? nil }
+        set { _ = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) { sourcePresented = newValue } }
+    }
     private var originalSourcePresented: ((VideoPresentationIdentity, UUID) -> Void)?
     var onOriginalSourcePresented: ((VideoPresentationIdentity, UUID) -> Void)? {
         get { fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) { originalSourcePresented } ?? nil }
@@ -72,7 +129,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     }
 
     init(admission: VideoPresentationAdmission, fence: VideoPresentationFence, defaults: UserDefaults = .standard) {
-        self.fence = fence; identity = admission.identity
+        self.fence = fence; identity = admission.identity; presentationLifetime = admission.lifetime
         unfencedPreparation = !defaults.bool(forKey: "phoneUnfencedDrawableDisabled")
         immediateSourceDraw = !defaults.bool(forKey: "phoneImmediateSourceDrawDisabled")
         drawablePoolCount = OwnedVideoPacingExperiment.drawableCount(defaults: defaults)
@@ -180,8 +237,9 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     func invalidate() {
         fence.invalidate(); mailbox.invalidate()
         wakeLock.lock(); closed = true; wakeLock.unlock()
-        beforeDraw = nil; onFrameDrawn = nil; drawnEnvelope = nil; timingAvailable = false
+        beforeDraw = nil; onFrameDrawn = nil; drawnEnvelope = nil; viewportCoverage = nil; timingAvailable = false
         videoFeedback = nil
+        sourcePresented = nil
         originalSourcePresented = nil // The terminal fence already drained any earlier callback.
         metal.isPaused = true; metal.isHidden = true
         fallback?.isEnabled = false; fallback?.removeFromSuperview(); fallback = nil
@@ -217,12 +275,17 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     }
     private func drawAdmitted(in view: MTKView) {
         guard let submission = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, {
-            mailbox.take(redraw: redraw, holdUntilPresented: unfencedPreparation || backingPolicy.enabled)
+            mailbox.take(redraw: redraw, holdUntilPresented: FarsideBeta.isEnabled || unfencedPreparation || backingPolicy.enabled)
         }) ?? nil else {
             if pacingDiagnosticsEnabled { pacingDiagnostics.noSubmission += 1 }
             return
         }
         let envelope = submission.frame
+        guard viewportCoverageAllows(envelope, submissionID: submission.id) else {
+            // No decoder drop: only this presentation is withheld, keeping the last safe picture.
+            mailbox.requeue(submission.id, frame: envelope, wasNew: submission.isNew)
+            return
+        }
         guard let geometry = envelope.geometry else { mailbox.completed(submission.id); invalidate(); return }
         guard let backing = backingPolicy.target(picture: geometry.displaySize,
                 current: view.drawableSize == CGSize(width: 1, height: 1) ? nil : view.drawableSize,
@@ -287,7 +350,6 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             mailbox.completed(submission.id); showFallbackIfAdmitted(envelope); return
         }
         fallback?.removeFromSuperview(); fallback = nil; redraw = false
-        drawnEnvelope = envelope // From here the frame is presented.
         #if targetEnvironment(simulator)
         timingAvailable = false // Simulator SDK does not expose actual presented handlers.
         #else
@@ -326,18 +388,26 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4); encoder.endEncoding()
         // Capture this drawable's exact envelope, not whichever frame is newest at callback time.
         #if !targetEnvironment(simulator)
-        if observesPresentation(isNew: submission.isNew) {
-            let callback = onOriginalSourcePresented // Short admission snapshot, no layer access under it.
-            let receipt = submission.isNew ? presentedReceipt(envelope, callback: callback) : nil
+        if FarsideBeta.isEnabled || observesPresentation(isNew: submission.isNew) {
+            let callbacks = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) {
+                (originalSourcePresented, sourcePresented)
+            } // One short admission snapshot; no layer access under it.
+            let callback = callbacks?.0
+            let sourceCallback = callbacks?.1
+            let receipt = submission.isNew ? presentedReceipt(envelope, callback: callback, sourceCallback: sourceCallback,
+                refinementPixels: sourceCallback == nil ? nil : refinementPixels) : nil
             let mailbox = mailbox, id = submission.id
+            let coverageReceipt = viewportCoverageReceipt(envelope)
             drawable.addPresentedHandler { shown in
                 // Core Animation holds its private lock: enqueue before taking ANY local lock.
+                let presentedTime = shown.presentedTime
                 Self.presentedReceiptQueue.async { mailbox.presented(id) }
+                coverageReceipt?(presentedTime)
                 receipt?(shown.presentedTime)
             }
         }
         #endif
-        let holdUntilPresented = unfencedPreparation || backingPolicy.enabled
+        let holdUntilPresented = FarsideBeta.isEnabled || unfencedPreparation || backingPolicy.enabled
         command.addCompletedHandler { [mailbox, wrappers, envelope, refinementPixels] completed in
             withExtendedLifetime((wrappers, envelope, refinementPixels)) {
                 #if targetEnvironment(simulator)
@@ -351,7 +421,9 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         // Retirement can run while acquisition/preparation blocks. Only this final, short
         // effect is fenced; rejected preparation cannot publish or resurrect old pixels.
         let submitted = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) {
+            guard viewportCoverageAllows(envelope, submissionID: submission.id) else { return false }
             command.present(drawable); command.commit(); drawsPresented += 1
+            drawnEnvelope = envelope // Only the accepted commit may update model placement.
             if pacingDiagnosticsEnabled {
                 if submission.isNew && envelope.originalSource { pacingDiagnostics.originalSubmissions += 1 }
                 else { pacingDiagnostics.otherSubmissions += 1 }
@@ -361,7 +433,10 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             }
             return true
         }
-        if submitted != true { mailbox.completed(submission.id); invalidate() }
+        if submitted != true {
+            mailbox.completed(submission.id)
+            if fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, { true }) != true { invalidate() }
+        }
     }
     /// Main-thread counters only. This measures scheduling/submission, never actual presentation.
     /// No callback, fence, identity, pixel or original-frame ownership rule changes for this A/B.
@@ -380,8 +455,11 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     /// only enqueues; admission is rechecked off Core Animation's thread.
     static let presentedReceiptQueue = DispatchQueue(label: "farside.owned-video.presented", qos: .userInteractive)
     func presentedReceipt(_ envelope: VideoFrameEnvelope,
-                          callback: ((VideoPresentationIdentity, UUID) -> Void)?) -> (CFTimeInterval) -> Void {
-        { [weak self] presentedTime in
+                          callback: ((VideoPresentationIdentity, UUID) -> Void)?,
+                          sourceCallback: ((VideoPresentedSource) -> Void)? = nil,
+                          refinementPixels: CVPixelBuffer? = nil) -> (CFTimeInterval) -> Void {
+        let sourceLifetime = sourceCallback == nil ? nil : presentationLifetime
+        return { [weak self] presentedTime in
             guard presentedTime.isFinite, presentedTime > 0 else { return }
             Self.presentedReceiptQueue.async {
                 guard let self else { return }
@@ -397,12 +475,19 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
                     self.videoFeedback?.presentedTiming(envelope.videoTag, originalSource: envelope.originalSource,
                         newSubmission: true, presentedTime: presentedTime,
                         clock: clock?.estimate, observedAtMs: clock?.atMs)
-                    if envelope.originalSource { callback?(envelope.identity, envelope.receiptID) }
+                    if envelope.originalSource {
+                        callback?(envelope.identity, envelope.receiptID)
+                        if let sourceCallback, let sourceLifetime {
+                            sourceCallback(VideoPresentedSource(lifetime: sourceLifetime, envelope: envelope, presentedAt: presentedTime, refinementPixels: refinementPixels))
+                        }
+                    }
                 }
             }
         }
     }
     private func showFallbackIfAdmitted(_ envelope: VideoFrameEnvelope) {
+        guard viewportCoverage == nil else { return } // Compatibility rendering has no positive presentation receipt.
+
         _ = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) { showFallback(envelope) }
     }
     private func showFallback(_ envelope: VideoFrameEnvelope) {
@@ -575,5 +660,22 @@ struct OwnedVideoBackingPolicy {
         // an occupied surface or drawing a new capture region into old geometry.
         if let current, target != current, !drained { return nil }
         return target
+    }
+}
+
+/// Beta camera motion accepts only a tagged original picture that covers its entire path.
+/// Renderer lifetime/privacy authority remains independently fenced at every effect.
+private struct BetaViewportCoverageConstraint {
+    let generation: UInt64
+    var required: CGRect
+    let scope: UInt64
+    var presented = false
+    func accepts(_ envelope: VideoFrameEnvelope, identity: VideoPresentationIdentity) -> Bool {
+        guard envelope.identity == identity, envelope.originalSource,
+              let tag = envelope.videoTag, (try? tag.validate()) != nil,
+              tag.geometryEpoch == identity.geometryEpoch, tag.scopeEpoch == scope,
+              let region = tag.region, (try? region.validate()) != nil,
+              region.outputWidth == Int(envelope.frame.width), region.outputHeight == Int(envelope.frame.height) else { return false }
+        return region.rect.insetBy(dx: -0.01, dy: -0.01).contains(required)
     }
 }

@@ -40,13 +40,20 @@ enum MacShareBlocker: String, Codable, Equatable {
         static let phone = Handshake(features: [MacShareBlocker.feature, MacShareBlocker.approvalFeature, SessionFeature.extendedFeatureList, SessionFeature.causalInput, SessionFeature.pencilInput, SessionFeature.videoLTR, SessionFeature.exactVideoTiming])
         /// Refinement rides in `features` so a Mac that predates `options` still honours it; text
         /// clarity only exists on Macs that read `options`.
-        static func phoneRequest(_ optional: [String], mode: String? = nil, defaults: UserDefaults = .standard) -> Handshake {
+        static func phoneRequest(_ optional: [String], mode: String? = nil, defaults: UserDefaults = .standard,
+                                 requestsIPadWorkspace: Bool = false, requestsPhoneWorkspaceBeta: Bool = false) -> Handshake {
             let options = (optional.contains(SessionFeature.textClarity) ? [SessionFeature.textClarity] : [])
                 + (!defaults.bool(forKey: "clipboardAutoSyncDisabled") ? [SessionFeature.clipboardSync] : [])
                 + (!defaults.bool(forKey: "phoneAudioRequestDisabled") ? [SessionFeature.phoneAudio] : [])
                 + (DeliberateSessionEnd.isEnabled(defaults) ? [SessionFeature.deliberateEnd] : [])
-            return Handshake(features: phone.features + (optional.contains(SessionFeature.videoRefinement) ? [SessionFeature.videoRefinement] : []),
-                             mode: mode, first60: First60.isEnabled(defaults) ? true : nil, shortcutChips: ShortcutChips.isEnabled(defaults) ? true : nil, options: options.isEmpty ? nil : options)
+            // Preserve the legacy eight-feature bound. Refinement keeps its existing eighth slot.
+            let extra = optional.contains(SessionFeature.videoRefinement) ? [SessionFeature.videoRefinement]
+                : (requestsPhoneWorkspaceBeta && FarsideBeta.isEnabled ? [SessionFeature.phoneWorkspaceBeta]
+                   : (requestsIPadWorkspace ? [SessionFeature.ipadWorkspace] : []))
+            return Handshake(features: phone.features + extra,
+                             mode: mode, first60: First60.isEnabled(defaults) ? true : nil,
+                             shortcutChips: ShortcutChips.isEnabled(defaults) ? true : nil,
+                             options: options.isEmpty ? nil : options)
         }
         var requested: Set<String> { Set(features + (options ?? []) + (shortcutChips == true ? [SessionFeature.shortcutChips] : [])) }
 

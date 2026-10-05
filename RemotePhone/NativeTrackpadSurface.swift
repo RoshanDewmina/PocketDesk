@@ -126,7 +126,9 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
     func updateAccessibility(panMode: Bool, direct: Bool = false, middleClick: Bool = false) {
         accessibilityLabel = panMode ? "Remote desktop view" : (direct ? "Remote desktop, direct touch" : "Remote desktop trackpad")
         if panMode {
-            accessibilityHint = "Drag to move the view. Pinch to zoom. Double-tap to zoom in or fit the whole display."
+            accessibilityHint = FarsideBeta.isEnabled
+                ? "Drag to move the view. Pinch to zoom. Double-tap to focus or return. Zoom in, Back to view and Fit are available above the picture."
+                : "Drag to move the view. Pinch to zoom. Double-tap to zoom in or fit the whole display."
         } else if direct {
             accessibilityHint = "Tap to click where you touch. Drag, or touch and hold, to click and drag. Two fingers scroll or pinch to zoom."
         } else {

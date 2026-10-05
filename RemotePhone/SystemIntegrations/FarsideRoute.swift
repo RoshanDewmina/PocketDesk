@@ -11,10 +11,10 @@ enum FarsideRoute: Equatable {
     /// A help request from an agent: the "needs you" alert, its sheet and Snooze reminders.
     case agentAlert(id: String)
 
-    static let scheme = "farside"
+    static let scheme = FarsideBeta.urlScheme
 
     /// Keep aligned with the Associated Domains entitlement and the site’s AASA file.
-    static var associatedHosts: Set<String> = ["getfarside.com"]
+    static var associatedHosts: Set<String> = FarsideBeta.isEnabled ? [] : ["getfarside.com"]
 
     /// Help request ids are `h_` plus a short token. Anything else is refused before it reaches UI.
     static func isValidID(_ id: String) -> Bool {
