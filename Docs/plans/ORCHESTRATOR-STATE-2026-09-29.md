@@ -188,3 +188,16 @@ REAL-HOST E2E caveat: E2E host runs as 2nd instance on the same Mac, activates T
 05:3x SELF-TEST PASS (report /private/tmp/farside-e2e/reports/20260929T085749Z): a picture 100% lit, d1 resumed 0.6 s + picture 100%, d3 reconnect 1.1 s + picture 81%. Screenshot ~/Downloads/farside-e2e-picture-after-pairing-2026-09-29.png (sent to owner). Committed picture check 3b18365; pushed.
 NEXT (announced to owner at 05:3x, proceed ~05:50 unless they object): lockf -k /tmp/farside-xcodebuild.lock script/build_and_run.sh (Debug host w/ E2E hooks from main 3b18365; SIGTERM stop, rollback on failed launch) -> script/e2e/run-e2e.sh --host-app "/Applications/PocketDesk Host.app" --scenarios a,b,c,d1,d2,d3,d4,d5,e --keep-xcresults (skip long soak first pass) -> triage.
 Then ~06:30: merge parity/integrations if done, final build, install host + iPhone (iPad not connected), morning report.
+
+## Active checkpoint — 5 October 2026, ten features
+
+This section supersedes older “where things stand” entries for this task only. Main `pocketdesk-remote-chat` remains at 4524689916bccec56ba681f808a7ff3e3fa8d8e6 with unrelated work preserved. Integration branch `codex/ten-features` in `/Users/roshansilva/Developer/farside-ten-features` starts from glass-lens commit 15568c111b2d4c17b646b9cd314e871dce486723. Shared owner utility envelope committed as b91d945; new utility capability advertisement and integration tests remain pending.
+
+Authorized worker lanes, both GPT-6.1-Sol/high:
+- `/root/build_navigation`, `codex/ten-navigation`: 1 app/window switcher and 2 current-window viewport; then 3 shortcuts and 6 saved views. Own window workspace files and scoped HostModel/phone/native UI hooks.
+- `/root/build_files`, `codex/ten-files`: 4 granted-root file browser; then 5 explicit rich clipboard. Own file browser files, descriptor reader, and scoped transfer/settings hooks.
+- Root owns common schema, capability advertisement, project membership, PRODUCT, docs, 7 notifications, 8 OCR, 9 supported virtual-workspace gate, and 10 guest productization.
+
+A third worker and revival of a completed worker both returned “agent thread limit reached”; use staged delivery and reuse available lanes. Workers must notify before taking the shared Xcode lock. No worker may install or deploy. Isolated builds use external DerivedData and the shared lock.
+
+Evidence: glass source and earlier 51 native / 2 UI checks passed; no physical acceptance or main integration. Ten-feature packages currently in implementation, not reviewed or accepted. Each lane returns commits plus actual scoped checks. Root integrates, reviews exact final source, runs integrated checks, records unsupported/external/device gaps explicitly, and obtains fresh independent review.
