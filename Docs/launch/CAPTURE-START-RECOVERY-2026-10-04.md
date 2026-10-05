@@ -1,5 +1,13 @@
 # Capture startup recovery — 4 October 2026
 
+## Latest physical execution — 22:07 ET
+
+Installed `.4` ran the unmirrored native batch: Home10-second return PASS30.594s; Home50-second return with automatic PiP disabled PASS66.210s; manual PiP active after12seconds PASS32.536s. Exported screenshots show a floating desktop after12seconds, but continuous motion is not established. Repeated fresh picture/End passed cycles1–3 and failed cycle4; cycle5 did not run. The failure hierarchy shows Home with `Relay unavailable` and `Anywhere is unavailable`, and no new host ICE/capture request appears after confirmed previous-producer cleanup22:07:29.097. This is a connection/signaling-stage failure with unknown cause, not evidence of an unresponsive SCK start for that attempt.
+
+The controlled first producer successfully settled at22:04:52.299; withheld complete-frame admission reached the startup deadline22:04:57.264. Stop retirement was confirmed22:04:57.270, followed by a new producer's successful start22:04:57.337 and fresh enabled phone controls without Reconnect. This verifies the successful-start/no-frame fault path only. Missing callbacks remain outside physical acceptance. The batch exited65 for the repeated-connect failure and its finally block restored the ordinary installed host without fault arguments. No full reliability, performance or release acceptance. Earlier pending execution states below are historical.
+
+Raw receipts: Oct4 chat `work/capture-start-checks/physical-recovery-cached.log`, `.xcresult`, `physical-host-filtered.log`, and exported attachments. No diagnostic ZIP or private screenshot is published.
+
 ## Observed failure
 
 Installed20261004.3 passed native Home10second return, Home50second return without automatic PiP, and manual PiP active state after12seconds. A later first-picture repeat failed before quality acquisition: Mac capture/encode and phone decode were zero, with the phone waiting. The underlying OS cause is unknown. A later tool report that the Mac was locked does not establish the earlier failure's cause.
