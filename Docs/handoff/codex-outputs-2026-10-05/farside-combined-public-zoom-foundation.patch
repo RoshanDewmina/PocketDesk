@@ -1,0 +1,1005 @@
+--- a/RemotePhone/RemotePhoneApp.swift
++++ b/RemotePhone/RemotePhoneApp.swift
+@@ -477,6 +477,13 @@
+     /// and showed old-crop frames stretched into the new rect. Fallbacks, for frames without a region:
+     /// the last echoed region of the frame's pixel size, then the echo itself.
+     @Published private(set) var placementRegion: CaptureRegion?
++    // Place the drawn picture by its own tagged crop, not by a newer pending status echo.
++    // This display seam does not activate the optional ScrollFixes package.
++    @Published private(set) var drawnFramePlacementRegion: CaptureRegion?
++    private var drawnFramePlacementKnown = false
++    var picturePlacementRegion: CaptureRegion? {
++        drawnFramePlacementKnown ? drawnFramePlacementRegion : placementRegion
++    }
+     private var regionHistory: [CaptureRegion] = []
+     static let regionHistoryLimit = 16
+     /// While frames carry regions, a frame without one (a Smooth Motion midpoint, or one encoded before
+@@ -630,6 +637,58 @@
+     @Published private(set) var contentConcealed = false { willSet { if newValue { invalidatePresentation(keepingPiP: pipBackground && mayHoldBackgroundPiP) } } }
+ 
+     @Published var sourceSize = CGSize(width: 1440, height: 900)
++    @Published private(set) var viewportTransitionGeneration: UInt64?
++    private var nextViewportTransition: UInt64 = 0
++    var coordinateInputFenced: Bool { viewportTransitionGeneration != nil }
++    func smartZoomStartAllowed(interactionBlocked: Bool) -> Bool {
++        !interactionBlocked && sceneIsActive && connection.connected &&
++            sessionMode == .picture && !privacyShield && !contentConcealed
++    }
++    func beginSmartZoomTransition(interactionBlocked: Bool) -> UInt64? {
++        guard smartZoomStartAllowed(interactionBlocked: interactionBlocked) else { return nil }
++        return beginViewportTransition()
++    }
++    private var smartZoomRenderer: OwnedMetalVideoView? {
++        guard let session = VideoPresentationSession.active, let admission = inlinePresentationAdmission,
++              session.admissionIdentity == admission.identity, session.admissionLifetime === admission.lifetime,
++              admission.permits(at: ProcessInfo.processInfo.systemUptime) else { return nil }
++        return session.view
++    }
++    func constrainSmartZoomPresentation(_ required: CGRect, generation: UInt64) -> Bool {
++        guard viewportTransitionGeneration == generation, let scope = sharedCaptureScope?.epoch else { return false }
++        return smartZoomRenderer?.beginViewportCoverage(generation: generation, required: required, scope: scope) == true
++    }
++    func smartZoomPresentationReady(generation: UInt64) -> Bool {
++        viewportTransitionGeneration == generation && smartZoomRenderer?.viewportCoverageReady(generation: generation) == true
++    }
++    func finishSmartZoomTransition(_ generation: UInt64, visible: CGRect) {
++        // Renderer ownership also survives a model input cancellation: release its old union
++        // to the current pose, while its generation check still protects any newer camera.
++        smartZoomRenderer?.finishViewportCoverage(generation: generation, required: visible)
++        endViewportTransition(generation)
++    }
++    func clearSmartZoomPresentationConstraint() { smartZoomRenderer?.clearViewportCoverage() }
++    func synchronizeSmartZoomPresentation(visible: CGRect) {
++        guard viewportTransitionGeneration == nil else { return }
++        smartZoomRenderer?.synchronizeViewportCoverage(visible: visible)
++    }
++
++    @discardableResult
++    func beginViewportTransition() -> UInt64 {
++        cancelInput()
++        nextViewportTransition &+= 1
++        viewportTransitionGeneration = nextViewportTransition
++        return nextViewportTransition
++    }
++    func endViewportTransition(_ generation: UInt64) {
++        guard viewportTransitionGeneration == generation else { return }
++        viewportTransitionGeneration = nil
++    }
++    func cancelViewportTransition() {
++        nextViewportTransition &+= 1
++        viewportTransitionGeneration = nil
++    }
++
+     @Published private(set) var inputRevision: UInt64 = 0
+     @Published private(set) var acceptedClicks: UInt64 = 0
+     /// Which click the last accepted one was ("click", "right" or "double"), for the contact ripple.
+@@ -769,6 +828,7 @@
+         finishPiPRestore(false)
+     }
+     private func invalidatePresentation(keepingPiP: Bool = false, requestHostExit: Bool = true) {
++        cancelViewportTransition()
+         shortcutWorkspace.retire()
+         windowWorkspace.retire()
+         fileBrowser.reset(); richClipboard.reset()
+@@ -1385,6 +1445,7 @@
+     var scrollModifiers = ScrollModifierPolicy.phoneProcessEnabled
+     private var extendedKeyNoticeShown = false
+ 
++    private static let viewportSensitiveActions: Set<String> = ["move", "moveTo", "click", "right", "double", "middle", "auxClick", "dragDown", "scroll", "pencil"]
+     private static let pointerActions: Set<String> = ["move", "moveTo", "click", "right", "double", "middle", "dragDown", "scroll"]
+     private static let couchPressActions: Set<String> = ["click", "double", "right", "middle", "dragDown"]
+ 
+@@ -1947,6 +2008,16 @@
+ 
+     /// Called on the main thread for every frame the Metal view draws.
+     func frameDrawn(_ envelope: VideoFrameEnvelope) {
++        if envelope.identity == inlinePresentationAdmission?.identity,
++           inlinePresentationAdmission?.permits(at: ProcessInfo.processInfo.systemUptime) == true,
++           let tag = envelope.videoTag, (try? tag.validate()) != nil,
++           tag.geometryEpoch == geometryEpoch, tag.scopeEpoch == sharedCaptureScope?.epoch,
++           let region = tag.region,
++           region.outputWidth == Int(envelope.frame.width), region.outputHeight == Int(envelope.frame.height) {
++            let placed = region.isWholeDisplay ? nil : region
++            drawnFramePlacementKnown = true
++            if Self.regionCoverageChanged(drawnFramePlacementRegion, placed) { drawnFramePlacementRegion = placed }
++        }
+         framePlacement(tag: envelope.videoTag, width: Int(envelope.frame.width), height: Int(envelope.frame.height))
+     }
+ 
+@@ -1975,6 +2046,8 @@
+     }
+ 
+     private func resetRegions() {
++        drawnFramePlacementKnown = false
++        drawnFramePlacementRegion = nil
+         captureRegion = nil
+         regionHistory.removeAll()
+         taggedRegionFrames = 0
+@@ -2386,6 +2459,20 @@
+         showSessionNotice(PhoneSessionNotice.reducedPicture(size: size))
+     }
+ 
++    /// Explicit Spotlight intent. A draft remains local; this never chooses or launches an app.
++    var canOpenMacApp: Bool {
++        sceneIsActive && canControl && !dragging && activeHold == nil &&
++            !isComposingText && textEditable
++    }
++
++    @discardableResult
++    func openMacApp() -> Bool {
++        guard canOpenMacApp else { return false }
++        // Deliberately retire toolbar latches; physical keyboard state still belongs to its owner.
++        modifiers.removeAll()
++        return commandShortcut("space")
++    }
++
+     @discardableResult
+     func commandShortcut(_ key: String) -> Bool {
+         guard canControl, pendingLockMac == nil else { return false }
+@@ -2501,6 +2588,7 @@
+                            text: String = "", key: String = "", modifiers: [String] = [],
+                            probeTextFocus: Bool = false, pointerSync: PointerSync? = nil, pencil: PencilFrame? = nil) -> Bool {
+         textFocusProbe.invalidate()
++        guard !coordinateInputFenced || !Self.viewportSensitiveActions.contains(name) else { return false }
+         guard canControl, pendingLockMac == nil else { return false }
+         // Moves still go while the Mac is behind, so it can catch up; presses wait.
+         if sessionMode == .couch, Self.couchPressActions.contains(name),
+@@ -3733,6 +3821,7 @@
+     }
+ 
+     private func end() {
++        cancelViewportTransition()
+         firstPictureTask?.cancel(); firstPictureTask = nil
+         firstPictureSettlement.cancel()
+         firstPictureSession = false
+--- a/RemotePhone/OwnedVideo/OwnedMetalVideoView.swift
++++ b/RemotePhone/OwnedVideo/OwnedMetalVideoView.swift
+@@ -14,6 +14,57 @@
+     /// presentation (b7-scroll). The model places the picture by this frame's own capture region.
+     var onFrameDrawn: ((VideoFrameEnvelope) -> Void)?
+     private var drawnEnvelope: VideoFrameEnvelope?
++    private var viewportCoverage: ViewportCoverageConstraint?
++
++    /// Main-thread presentation constraint. Decoding and the compressed reference chain are unchanged.
++    func beginViewportCoverage(generation: UInt64, required: CGRect, scope: UInt64) -> Bool {
++        guard required.width > 0, required.height > 0,
++              [required.minX, required.minY, required.maxX, required.maxY].allSatisfy({ $0.isFinite }),
++              fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, { true }) == true else { return false }
++        viewportCoverage = .init(generation: generation, required: required, scope: scope)
++        return true
++    }
++    func viewportCoverageReady(generation: UInt64) -> Bool {
++        fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) {
++            viewportCoverage?.generation == generation && viewportCoverage?.presented == true
++        } ?? false
++    }
++    func finishViewportCoverage(generation: UInt64, required: CGRect) {
++        guard viewportCoverage?.generation == generation else { return }
++        viewportCoverage?.required = required // Keep the current camera safe from delayed old crops.
++    }
++    func clearViewportCoverage() { viewportCoverage = nil }
++    /// One rule for all subsequent camera edits, independent of their gesture or layout source.
++    /// A deferred endpoint observation must not retire unchanged framing.
++    func synchronizeViewportCoverage(visible: CGRect) {
++        guard let coverage = viewportCoverage, coverage.required != visible else { return }
++        viewportCoverage = nil
++    }
++    /// The first eligible submission must follow BOTH edges of all pre-install submissions.
++    func viewportCoverageAllows(_ envelope: VideoFrameEnvelope, submissionID: UInt64) -> Bool {
++        guard let coverage = viewportCoverage else { return true }
++        return coverage.accepts(envelope, identity: identity) &&
++            (coverage.presented || mailbox.isOnlyFlight(submissionID))
++    }
++    /// This exact closure is called from Core Animation. It captures generation before commit,
++    /// then queues owner validation without waiting for main or any local lock.
++    func viewportCoverageReceipt(_ envelope: VideoFrameEnvelope) -> ((TimeInterval) -> Void)? {
++        guard let generation = viewportCoverage?.generation else { return nil }
++        return { [weak self] time in
++            Self.presentedReceiptQueue.async {
++                DispatchQueue.main.async { [weak self] in
++                    self?.viewportCoveragePresented(envelope, generation: generation, at: time)
++                }
++            }
++        }
++    }
++    func viewportCoveragePresented(_ envelope: VideoFrameEnvelope, generation: UInt64, at time: TimeInterval) {
++        guard time.isFinite, time > 0, time <= ProcessInfo.processInfo.systemUptime,
++              fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, { true }) == true,
++              viewportCoverage?.generation == generation,
++              viewportCoverage?.accepts(envelope, identity: identity) == true else { return }
++        viewportCoverage?.presented = true
++    }
+     var fillsFrame = false
+     /// Main-thread only. The reading magnifier opts in; ordinary video remains unmodified.
+     var glassLensEnabled = false {
+@@ -76,7 +127,7 @@
+         (unfencedPreparation, immediateSourceDraw, backingPolicy.enabled, precompiledShaders)
+     }
+     func observesPresentation(isNew: Bool) -> Bool {
+-        isNew || unfencedPreparation || backingPolicy.enabled
++        true // Smart Zoom may begin after any submission, including a redraw.
+     }
+ 
+     init(admission: VideoPresentationAdmission, fence: VideoPresentationFence, defaults: UserDefaults = .standard) {
+@@ -188,7 +239,7 @@
+     func invalidate() {
+         fence.invalidate(); mailbox.invalidate()
+         wakeLock.lock(); closed = true; wakeLock.unlock()
+-        beforeDraw = nil; onFrameDrawn = nil; drawnEnvelope = nil; timingAvailable = false
++        beforeDraw = nil; onFrameDrawn = nil; drawnEnvelope = nil; viewportCoverage = nil; timingAvailable = false
+         videoFeedback = nil
+         originalSourcePresented = nil // The terminal fence already drained any earlier callback.
+         metal.isPaused = true; metal.isHidden = true
+@@ -225,12 +276,17 @@
+     }
+     private func drawAdmitted(in view: MTKView) {
+         guard let submission = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, {
+-            mailbox.take(redraw: redraw, holdUntilPresented: unfencedPreparation || backingPolicy.enabled)
++            mailbox.take(redraw: redraw, holdUntilPresented: true)
+         }) ?? nil else {
+             if pacingDiagnosticsEnabled { pacingDiagnostics.noSubmission += 1 }
+             return
+         }
+         let envelope = submission.frame
++        guard viewportCoverageAllows(envelope, submissionID: submission.id) else {
++            // No decoder drop: only this presentation is withheld, keeping the last safe picture.
++            mailbox.requeue(submission.id, frame: envelope, wasNew: submission.isNew)
++            return
++        }
+         guard let geometry = envelope.geometry else { mailbox.completed(submission.id); invalidate(); return }
+         guard let backing = backingPolicy.target(picture: geometry.displaySize,
+                 current: view.drawableSize == CGSize(width: 1, height: 1) ? nil : view.drawableSize,
+@@ -295,7 +351,6 @@
+             mailbox.completed(submission.id); showFallbackIfAdmitted(envelope); return
+         }
+         fallback?.removeFromSuperview(); fallback = nil; redraw = false
+-        drawnEnvelope = envelope // From here the frame is presented.
+         #if targetEnvironment(simulator)
+         timingAvailable = false // Simulator SDK does not expose actual presented handlers.
+         #else
+@@ -340,14 +395,16 @@
+             let callback = onOriginalSourcePresented // Short admission snapshot, no layer access under it.
+             let receipt = submission.isNew ? presentedReceipt(envelope, callback: callback) : nil
+             let mailbox = mailbox, id = submission.id
++            let coverageReceipt = viewportCoverageReceipt(envelope)
+             drawable.addPresentedHandler { shown in
+                 // Core Animation holds its private lock: enqueue before taking ANY local lock.
+                 Self.presentedReceiptQueue.async { mailbox.presented(id) }
++                coverageReceipt?(shown.presentedTime)
+                 receipt?(shown.presentedTime)
+             }
+         }
+         #endif
+-        let holdUntilPresented = unfencedPreparation || backingPolicy.enabled
++        let holdUntilPresented = true // All prior submissions retain both completion edges.
+         command.addCompletedHandler { [mailbox, wrappers, envelope, refinementPixels] completed in
+             withExtendedLifetime((wrappers, envelope, refinementPixels)) {
+                 #if targetEnvironment(simulator)
+@@ -361,7 +418,9 @@
+         // Retirement can run while acquisition/preparation blocks. Only this final, short
+         // effect is fenced; rejected preparation cannot publish or resurrect old pixels.
+         let submitted = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) {
++            guard viewportCoverageAllows(envelope, submissionID: submission.id) else { return false }
+             command.present(drawable); command.commit(); drawsPresented += 1
++            drawnEnvelope = envelope // Only the accepted commit may update model placement.
+             if pacingDiagnosticsEnabled {
+                 if submission.isNew && envelope.originalSource { pacingDiagnostics.originalSubmissions += 1 }
+                 else { pacingDiagnostics.otherSubmissions += 1 }
+@@ -371,7 +430,10 @@
+             }
+             return true
+         }
+-        if submitted != true { mailbox.completed(submission.id); invalidate() }
++        if submitted != true {
++            mailbox.completed(submission.id)
++            if fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, { true }) != true { invalidate() }
++        }
+     }
+     /// Main-thread counters only. This measures scheduling/submission, never actual presentation.
+     /// No callback, fence, identity, pixel or original-frame ownership rule changes for this A/B.
+@@ -414,6 +476,7 @@
+         }
+     }
+     private func showFallbackIfAdmitted(_ envelope: VideoFrameEnvelope) {
++        guard viewportCoverage == nil else { return } // Compatibility rendering has no positive presentation receipt.
+         _ = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) { showFallback(envelope) }
+     }
+     private func showFallback(_ envelope: VideoFrameEnvelope) {
+@@ -613,3 +676,20 @@
+         return target
+     }
+ }
++
++/// Local camera motion accepts only a tagged original picture that covers its entire path.
++/// Renderer lifetime/privacy authority remains independently fenced at every effect.
++private struct ViewportCoverageConstraint {
++    let generation: UInt64
++    var required: CGRect
++    let scope: UInt64
++    var presented = false
++    func accepts(_ envelope: VideoFrameEnvelope, identity: VideoPresentationIdentity) -> Bool {
++        guard envelope.identity == identity, envelope.originalSource,
++              let tag = envelope.videoTag, (try? tag.validate()) != nil,
++              tag.geometryEpoch == identity.geometryEpoch, tag.scopeEpoch == scope,
++              let region = tag.region, (try? region.validate()) != nil,
++              region.outputWidth == Int(envelope.frame.width), region.outputHeight == Int(envelope.frame.height) else { return false }
++        return region.rect.insetBy(dx: -0.01, dy: -0.01).contains(required)
++    }
++}
+--- a/RemoteShared/ViewportTransform.swift
++++ b/RemoteShared/ViewportTransform.swift
+@@ -167,6 +167,35 @@
+             let targetScale = max(scale * 2, fillScale)
+             setZoom(targetScale / baselineScale, anchoredAt: anchor)
+         }
++    }
++
++    /// A local focus destination never forces Fill on a portrait canvas.
++    public func focused(anchoredAt anchor: CGPoint) -> ViewportTransform? {
++        guard sourcePoint(fromView: anchor) != nil, baselineScale > 0 else { return nil }
++        var result = self
++        result.setZoom(zoom * 2, anchoredAt: anchor)
++        guard result.scale > scale * 1.000_001 else { return nil }
++        return result
++    }
++
++    /// Sample one camera pose. Picture and hit mapping consume this same transform.
++    /// Source/safe-area replacement must cancel the owner rather than interpolate stale geometry.
++    public func interpolated(to target: ViewportTransform, progress: CGFloat) -> ViewportTransform? {
++        guard sourceSize == target.sourceSize, canvasSize == target.canvasSize,
++              safeInsets == target.safeInsets, progress.isFinite else { return nil }
++        let t = min(max(progress, 0), 1)
++        if t == 0 { return self }
++        if t == 1 { return target }
++        let sampledScale = scale + (target.scale - scale) * t
++        var result = ViewportTransform(sourceSize: sourceSize, canvasSize: canvasSize,
++            mode: target.mode, safeInsets: safeInsets)
++        result.baselineFillCrop = baselineFillCrop
++        guard result.baselineScale > 0 else { return nil }
++        result.setZoom(sampledScale / result.baselineScale, anchoredAt: .zero)
++        let from = contentRect.origin, to = target.contentRect.origin
++        let origin = CGPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t)
++        result.pan(by: CGSize(width: origin.x - result.contentRect.minX, height: origin.y - result.contentRect.minY))
++        return result
+     }
+ 
+     /// Ends a pinch. Pinching Fill below its own size and releasing nearer Fit switches to
+@@ -598,3 +627,25 @@
+     static let defaultsKey = "PocketDeskBaselineFillCrop"
+     static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? false
+ }
++
++/// Ephemeral framing only: no pixels, authority or host content. Geometry changes discard return.
++public struct ViewportFocusReturn {
++    private var bookmark: ViewportTransform?
++    public init() {}
++    public var canRestore: Bool { bookmark != nil }
++    public mutating func clear() { bookmark = nil }
++    public mutating func restoreDestination(for current: ViewportTransform) -> ViewportTransform? {
++        guard let bookmark else { return nil }
++        guard bookmark.sourceSize == current.sourceSize, bookmark.canvasSize == current.canvasSize,
++              bookmark.safeInsets == current.safeInsets else { clear(); return nil }
++        // Consume only after the caller actually reaches the destination.
++        return bookmark
++    }
++    public mutating func destination(from current: ViewportTransform, anchoredAt anchor: CGPoint) -> ViewportTransform? {
++        guard current.sourcePoint(fromView: anchor) != nil else { return nil }
++        if let destination = restoreDestination(for: current) { return destination }
++        guard let destination = current.focused(anchoredAt: anchor) else { return nil }
++        bookmark = current
++        return destination
++    }
++}
+--- a/RemotePhoneTests/MacParityPhoneTests.swift
++++ b/RemotePhoneTests/MacParityPhoneTests.swift
+@@ -194,3 +194,227 @@
+         XCTAssertTrue(actions.isEmpty)
+     }
+ }
++
++/// Real admitted model/coordinator packets; the DEBUG input probe is deliberately absent.
++@MainActor
++final class OpenAppPhoneTests: XCTestCase {
++    private final class Recorder {
++        var packets: [ControlPacket] = []
++        var accepts = true
++    }
++    private func deliver(_ action: RemoteAction, to model: PhoneRemoteModel) throws {
++        try XCTUnwrap(model.connection.onControl)(JSONEncoder().encode(action))
++    }
++    private func admit(_ model: PhoneRemoteModel, recorder: Recorder, session: String,
++                       epoch: UInt64, token: String) throws {
++        model.prepareConnection(mode: .picture)
++        model.sceneChanged(.active)
++        model.connection.startInputFixtureForTesting(session: session)
++        model.connection.inputPacketSenderForTesting = { recorder.packets.append($0); return recorder.accepts }
++        try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: epoch), to: model)
++        try deliver(RemoteAction(action: "viewing", x: 1, epoch: epoch), to: model)
++        try deliver(RemoteAction(action: "capture", x: 1, epoch: epoch,
++            interaction: NativeInteraction(token: token, doubleClickInterval: 0.5),
++            features: SessionFeature.host,
++            mode: "picture"), to: model)
++        model.frameReceived()
++        var context = try XCTUnwrap(recorder.packets.last(where: { $0.input?.kind == "offer" })?.input)
++        context.kind = "accept"; context.anchor = String(repeating: "a", count: 32)
++        try model.connection.receiveInputFixtureForTesting(ControlPacket(session: session, sequence: 1,
++            action: RemoteAction(action: "heartbeat", epoch: epoch), input: context))
++        XCTAssertNil(model.inputProbe)
++        XCTAssertTrue(model.canOpenMacApp)
++        recorder.packets.removeAll()
++    }
++    private func fixture() throws -> (PhoneRemoteModel, Recorder) {
++        let defaults = try XCTUnwrap(UserDefaults(suiteName: "open-app.\(UUID().uuidString)"))
++        let model = PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults,
++            coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()))
++        let recorder = Recorder()
++        try admit(model, recorder: recorder, session: "open-app", epoch: 2, token: "navigation-token")
++        return (model, recorder)
++    }
++    private func assertDenied(_ model: PhoneRemoteModel, recorder: Recorder,
++                              file: StaticString = #filePath, line: UInt = #line) {
++        recorder.packets.removeAll()
++        let draft = model.draft, composing = model.isComposingText
++        let latches = model.modifiers, revision = model.autoKeyboardRevision
++        XCTAssertFalse(model.canOpenMacApp, file: file, line: line)
++        XCTAssertFalse(model.openMacApp(), file: file, line: line)
++        XCTAssertTrue(recorder.packets.isEmpty, "Denied intent must not queue or retry input", file: file, line: line)
++        XCTAssertEqual(model.draft, draft, file: file, line: line)
++        XCTAssertEqual(model.isComposingText, composing, file: file, line: line)
++        XCTAssertEqual(model.modifiers, latches, file: file, line: line)
++        XCTAssertEqual(model.autoKeyboardRevision, revision, file: file, line: line)
++    }
++
++    func testOpenAppSendsExactlyCurrentCommandSpaceAndKeepsDraftLocal() throws {
++        let (model, recorder) = try fixture()
++        defer { model.disconnect() }
++        let draft = "Local draft\ncafé 🧪"
++        model.draft = draft
++        model.modifiers = ["option", "control"]
++        model.hardwareModifiers = ["shift"]
++        let revision = model.autoKeyboardRevision
++        XCTAssertTrue(model.openMacApp())
++        XCTAssertEqual(recorder.packets.count, 1)
++        let packet = try XCTUnwrap(recorder.packets.first)
++        XCTAssertEqual(packet.session, "open-app")
++        XCTAssertEqual(packet.action.action, "key")
++        XCTAssertEqual(packet.action.key, "space")
++        XCTAssertEqual(packet.action.modifiers, ["command"])
++        XCTAssertEqual(packet.action.epoch, 2)
++        XCTAssertEqual(packet.action.interaction?.token, "navigation-token")
++        XCTAssertNil(packet.action.interaction?.hold)
++        XCTAssertEqual(packet.input?.epoch, 2)
++        XCTAssertEqual(packet.input?.anchor, String(repeating: "a", count: 32))
++        XCTAssertTrue(packet.action.text.isEmpty)
++        XCTAssertTrue(model.modifiers.isEmpty)
++        XCTAssertEqual(model.hardwareModifiers, ["shift"], "Hardware modifiers retain their own lifetime")
++        XCTAssertEqual(model.draft, draft)
++        XCTAssertFalse(model.isComposingText)
++        XCTAssertTrue(model.textEditable)
++        XCTAssertEqual(model.autoKeyboardRevision, revision)
++    }
++
++    func testOpenAppSenderRefusalDoesNotRetryOrCommitDraft() throws {
++        let (model, recorder) = try fixture()
++        defer { model.disconnect() }
++        model.draft = "Do not send\n秘密"
++        model.modifiers = ["option"]
++        recorder.accepts = false
++        XCTAssertFalse(model.openMacApp())
++        XCTAssertEqual(recorder.packets.map { $0.action.action }, ["key"])
++        XCTAssertEqual(recorder.packets.first?.action.key, "space")
++        XCTAssertEqual(recorder.packets.first?.action.modifiers, ["command"])
++        XCTAssertTrue(model.modifiers.isEmpty, "Explicit admitted intent clears toolbar latches even on sender refusal")
++        XCTAssertEqual(model.draft, "Do not send\n秘密")
++        XCTAssertTrue(model.textEditable)
++    }
++
++    func testOpenAppRefusesHeldMouseWithoutReleasingIt() throws {
++        let (model, recorder) = try fixture()
++        defer { model.disconnect() }
++        model.drag()
++        XCTAssertTrue(model.dragging)
++        XCTAssertEqual(recorder.packets.last?.action.action, "dragDown")
++        model.modifiers = ["option"]
++        assertDenied(model, recorder: recorder)
++        XCTAssertTrue(model.dragging)
++        XCTAssertNotNil(model.explicitHoldDeadline)
++        // A stale presentation flag cannot bypass the actual private hold identity.
++        model.dragging = false
++        assertDenied(model, recorder: recorder)
++        model.release()
++        XCTAssertTrue(model.canOpenMacApp)
++        recorder.packets.removeAll()
++        XCTAssertTrue(model.openMacApp())
++        XCTAssertEqual(recorder.packets.map { $0.action.key }, ["space"])
++    }
++
++    func testOpenAppRefusesCompositionAndPendingCommittedText() throws {
++        let (model, recorder) = try fixture()
++        defer { model.disconnect() }
++        model.draft = "marked候補"
++        model.isComposingText = true
++        assertDenied(model, recorder: recorder)
++        model.isComposingText = false
++        model.sendText()
++        XCTAssertFalse(model.textEditable)
++        XCTAssertEqual(recorder.packets.last?.action.action, "text")
++        assertDenied(model, recorder: recorder)
++    }
++
++    func testOpenAppRefusesPendingVoiceCommitWithoutChangingDraft() throws {
++        let (model, recorder) = try fixture()
++        defer { model.disconnect() }
++        model.draft = "Keep local draft"
++        XCTAssertTrue(model.sendVoiceText("pending voice"))
++        XCTAssertEqual(model.voiceDeliveryStatus, .waiting)
++        assertDenied(model, recorder: recorder)
++        XCTAssertEqual(model.draft, "Keep local draft")
++        XCTAssertEqual(model.voiceDeliveryStatus, .waiting)
++    }
++
++    func testOpenAppRechecksControlFreshnessAndSceneAtInvocation() throws {
++        let mutations: [(String, (PhoneRemoteModel) -> Void)] = [
++            ("control", { $0.controlAllowed = false }),
++            ("fresh picture", { $0.fresh = false }),
++            ("capture", { $0.captureHealthy = false }),
++            ("drag presentation", { $0.dragging = true }),
++            ("inactive", { $0.sceneChanged(.inactive) }),
++            ("background", { $0.sceneChanged(.background) })
++        ]
++        for (name, mutate) in mutations {
++            let (model, recorder) = try fixture()
++            defer { model.disconnect() }
++            model.draft = "local " + name
++            mutate(model)
++            model.modifiers = ["control"]
++            assertDenied(model, recorder: recorder)
++        }
++    }
++
++    func testOpenAppRejectsMissingAndExpiredNativeTokens() throws {
++        for missing in [true, false] {
++            let (model, recorder) = try fixture()
++            defer { model.disconnect() }
++            if missing {
++                try deliver(RemoteAction(action: "capture", x: 1, epoch: 2,
++                    interaction: NativeInteraction(token: nil, doubleClickInterval: 0.5),
++                    features: SessionFeature.host, mode: "picture"), to: model)
++            } else {
++                // Existing deterministic clock seam ages the token by at most 0.5 s per call.
++                for _ in 0..<3 { model.ageCouchStatusForTesting(by: 0.5) }
++            }
++            XCTAssertTrue(model.fresh)
++            XCTAssertTrue(model.captureHealthy)
++            assertDenied(model, recorder: recorder)
++        }
++    }
++
++    func testOpenAppRejectsRetiredGeometryUntilCurrentAdmission() throws {
++        let (model, recorder) = try fixture()
++        defer { model.disconnect() }
++        try deliver(RemoteAction(action: "geometry", x: 1200, y: 800, epoch: 3), to: model)
++        model.frameReceived() // A decoded picture alone cannot restore the retired native token.
++        assertDenied(model, recorder: recorder)
++    }
++
++    func testOpenAppRejectsScopedViewAndPendingLock() throws {
++        for locked in [false, true] {
++            let (model, recorder) = try fixture()
++            defer { model.disconnect() }
++            if locked {
++                let request = PhoneAwayLockRequest(hostKey: "fixture-host", session: model.connection.presentationSessionID,
++                    epoch: 2, sentAt: ProcessInfo.processInfo.systemUptime)
++                XCTAssertTrue(model.sendAdmittedLockMacForTesting(request))
++                XCTAssertTrue(model.lockMacPendingForTesting)
++            } else {
++                try deliver(RemoteAction(action: "capture", x: 1, epoch: 2,
++                    interaction: NativeInteraction(token: "navigation-token", doubleClickInterval: 0.5),
++                    features: SessionFeature.host, mode: "picture",
++                    captureScope: .init(epoch: 4, kind: .window, label: "Shared window", viewOnly: true)), to: model)
++                XCTAssertTrue(model.captureScopeViewOnly)
++            }
++            assertDenied(model, recorder: recorder)
++        }
++    }
++
++    func testOpenAppRequiresNewSessionAdmissionAfterEnd() throws {
++        let (model, recorder) = try fixture()
++        defer { model.disconnect() }
++        model.disconnect()
++        assertDenied(model, recorder: recorder)
++        model.connection.startInputFixtureForTesting(session: "replacement-unadmitted")
++        assertDenied(model, recorder: recorder)
++        model.connection.stop()
++        try admit(model, recorder: recorder, session: "replacement", epoch: 9, token: "replacement-token")
++        XCTAssertTrue(model.openMacApp())
++        XCTAssertEqual(recorder.packets.count, 1)
++        XCTAssertEqual(recorder.packets.first?.session, "replacement")
++        XCTAssertEqual(recorder.packets.first?.action.epoch, 9)
++        XCTAssertEqual(recorder.packets.first?.action.interaction?.token, "replacement-token")
++    }
++
++}
+--- a/RemotePhoneTests/SessionLifecycleTests.swift
++++ b/RemotePhoneTests/SessionLifecycleTests.swift
+@@ -37,6 +37,88 @@
+ 
+ @MainActor
+ final class SessionLifecycleTests: XCTestCase {
++    func testViewportTransitionRejectsPointerInputKeepsKeysAndIgnoresOldCompletion() throws {
++        let model = PhoneRemoteModel(background: FakeBackgroundExecution(),
++            coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()))
++        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
++        model.connection.startInputFixtureForTesting(session: "smart-zoom-input-fence")
++        var sent: [RemoteAction] = []
++        model.connection.inputPacketSenderForTesting = { sent.append($0.action); return true }
++        defer { model.connection.stop() }
++        func deliver(_ action: RemoteAction) throws {
++            try XCTUnwrap(model.connection.onControl)(JSONEncoder().encode(action))
++        }
++        try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 3))
++        try deliver(RemoteAction(action: "viewing", x: 1, epoch: 3))
++        try deliver(RemoteAction(action: "capture", x: 1, epoch: 3, features: [SessionFeature.absolutePointer]))
++        model.frameReceived()
++        XCTAssertTrue(model.canControl)
++        let first = model.beginViewportTransition()
++        sent.removeAll()
++        XCTAssertFalse(model.pointTo(CGPoint(x: 100, y: 100)))
++        XCTAssertFalse(model.gesture(.click(count: 1)))
++        XCTAssertFalse(model.gesture(.move(CGSize(width: 10, height: 0))))
++        XCTAssertFalse(model.gesture(.secondaryClick))
++        XCTAssertTrue(model.hardwareKey("a", modifiers: []))
++        XCTAssertEqual(sent.map(\.action), ["key"], "Blocked pointer commands are discarded, not queued")
++        let second = model.beginViewportTransition()
++        model.endViewportTransition(first)
++        XCTAssertTrue(model.coordinateInputFenced, "An earlier completion cannot reopen a newer transition")
++        XCTAssertFalse(model.gesture(.click(count: 1)))
++        model.endViewportTransition(second)
++        XCTAssertTrue(model.gesture(.click(count: 1)))
++        XCTAssertEqual(sent.filter { $0.action == "click" }.count, 1)
++    }
++
++    func testGeometryAndEndRetireViewportTransitionBeforeLateCompletion() throws {
++        let model = PhoneRemoteModel(background: FakeBackgroundExecution(),
++            coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()))
++        model.connection.startInputFixtureForTesting(session: "smart-zoom-retirement")
++        model.connection.inputPacketSenderForTesting = { _ in true }
++        defer { model.connection.stop() }
++        let old = model.beginViewportTransition()
++        try XCTUnwrap(model.connection.onControl)(JSONEncoder().encode(RemoteAction(action: "geometry", x: 1440, y: 900, epoch: 4)))
++        XCTAssertFalse(model.coordinateInputFenced)
++        let current = model.beginViewportTransition()
++        model.endViewportTransition(old)
++        XCTAssertEqual(model.viewportTransitionGeneration, current)
++        model.connection.onEnded?()
++        XCTAssertFalse(model.coordinateInputFenced)
++        model.endViewportTransition(current)
++        XCTAssertFalse(model.coordinateInputFenced)
++    }
++
++    func testVoiceBlockedSmartZoomStartAndCancelledTaskCleanupCannotOrphanOrReplaceFence() async throws {
++        let model = PhoneRemoteModel(background: FakeBackgroundExecution(),
++            coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()))
++        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
++        model.connection.startInputFixtureForTesting(session: "smart-zoom-voice-guard")
++        model.connection.inputPacketSenderForTesting = { _ in true }
++        defer { model.connection.stop() }
++        XCTAssertNil(model.beginSmartZoomTransition(interactionBlocked: true), "Open Dictate/Controls must reject before acquiring a fence")
++        XCTAssertFalse(model.coordinateInputFenced)
++        let first = try XCTUnwrap(model.beginSmartZoomTransition(interactionBlocked: false))
++        let started = expectation(description: "transition suspended")
++        let task = Task { @MainActor in
++            defer { model.finishSmartZoomTransition(first, visible: CGRect(x: 0, y: 0, width: 100, height: 100)) }
++            started.fulfill()
++            do { try await Task.sleep(for: .seconds(5)) } catch { return }
++        }
++        await fulfillment(of: [started], timeout: 2)
++        task.cancel()
++        await task.value
++        XCTAssertFalse(model.coordinateInputFenced, "Cancelled await must execute owner cleanup without normal completion")
++        let next = try XCTUnwrap(model.beginSmartZoomTransition(interactionBlocked: false))
++        XCTAssertNil(model.beginSmartZoomTransition(interactionBlocked: true))
++        model.finishSmartZoomTransition(first, visible: .zero)
++        XCTAssertEqual(model.viewportTransitionGeneration, next, "Older cleanup and blocked starts cannot disturb a newer owner")
++        model.finishSmartZoomTransition(next, visible: .zero)
++        XCTAssertFalse(model.coordinateInputFenced)
++        model.sceneChanged(.inactive)
++        XCTAssertNil(model.beginSmartZoomTransition(interactionBlocked: false), "Lifecycle-invalid starts must not acquire a fence")
++    }
++
++
+     private func deliberateEndModel(background: FakeBackgroundExecution? = nil) throws -> (PhoneRemoteModel, () -> [ControlPacket]) {
+         let model = PhoneRemoteModel(background: background ?? FakeBackgroundExecution())
+         model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+--- a/RemotePhoneTests/OwnedVideoLifecycleTests.swift
++++ b/RemotePhoneTests/OwnedVideoLifecycleTests.swift
+@@ -6,6 +6,132 @@
+ @testable import PocketDeskRemote
+ 
+ final class OwnedVideoLifecycleTests: XCTestCase {
++    @MainActor
++    func testSmartZoomMotionDrainsOldCropFlightsThenRejectsLateNarrowPresentationAndRetainsSafeEndpoint() async throws {
++        for gpuFirst in [true, false] {
++            let admission = VideoPresentationAdmission(identity: identity(), validUntil: ProcessInfo.processInfo.systemUptime + 100)
++            let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission))
++            defer { view.invalidate() }
++            view.metal.isPaused = true
++            view.drawRequester = { _ in }
++            let full = CaptureRegion(epoch: 0, x: 0, y: 0, width: 200, height: 100, outputWidth: 200, outputHeight: 100)
++            let narrow = CaptureRegion(epoch: 9, x: 60, y: 20, width: 80, height: 40, outputWidth: 80, outputHeight: 40)
++            func frame(_ region: CaptureRegion, original: Bool = true, scope: UInt64 = 1, geometry: UInt64 = 1) throws -> VideoFrameEnvelope {
++                var pixels: CVPixelBuffer?
++                XCTAssertEqual(CVPixelBufferCreate(nil, region.outputWidth, region.outputHeight, kCVPixelFormatType_32BGRA,
++                    [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
++                return .init(receiptID: UUID(), identity: admission.identity,
++                    frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixels)), rotation: ._0, timeStampNs: 1),
++                    arrivalMs: MachClock.nowMs(), marker: nil, originalSource: original,
++                    videoTag: .init(generation: String(repeating: "a", count: 32), nonce: String(repeating: "b", count: 32),
++                        geometryEpoch: geometry, scopeEpoch: scope, ltrToken: nil, region: region))
++            }
++            let wide = try frame(full), crop = try frame(narrow)
++            func drainReceiptQueue() async {
++                await withCheckedContinuation { continuation in
++                    OwnedMetalVideoView.presentedReceiptQueue.async {
++                        DispatchQueue.main.async { continuation.resume() }
++                    }
++                }
++            }
++            XCTAssertTrue(view.beginViewportCoverage(generation: 9, required: full.rect, scope: 1))
++            let staleReceipt = try XCTUnwrap(view.viewportCoverageReceipt(wide))
++            // Stand in for a narrow submission already committed before return begins.
++            view.mailbox.offer(crop)
++            let old = try XCTUnwrap(view.mailbox.take(holdUntilPresented: true))
++            XCTAssertTrue(view.beginViewportCoverage(generation: 10, required: full.rect, scope: 1))
++            view.mailbox.offer(wide)
++            let covering = try XCTUnwrap(view.mailbox.take(holdUntilPresented: true))
++            XCTAssertFalse(view.viewportCoverageAllows(wide, submissionID: covering.id))
++            if gpuFirst { view.mailbox.gpuCompleted(old.id) } else { view.mailbox.presented(old.id) }
++            XCTAssertFalse(view.viewportCoverageAllows(wide, submissionID: covering.id), "One old completion edge cannot admit widening")
++            if gpuFirst { view.mailbox.presented(old.id) } else { view.mailbox.gpuCompleted(old.id) }
++            XCTAssertTrue(view.viewportCoverageAllows(wide, submissionID: covering.id))
++            XCTAssertFalse(view.viewportCoverageReady(generation: 10), "Submission/drain is not a physical receipt")
++            staleReceipt(ProcessInfo.processInfo.systemUptime)
++            await drainReceiptQueue()
++            XCTAssertFalse(view.viewportCoverageReady(generation: 10), "Old wide receipts cannot start a new camera")
++            let coveringReceipt = try XCTUnwrap(view.viewportCoverageReceipt(wide))
++            coveringReceipt(ProcessInfo.processInfo.systemUptime)
++            await drainReceiptQueue()
++            XCTAssertTrue(view.viewportCoverageReady(generation: 10))
++            view.synchronizeViewportCoverage(visible: full.rect)
++            XCTAssertFalse(view.viewportCoverageAllows(crop, submissionID: covering.id), "Unchanged endpoint observation must keep late narrow crops withheld")
++            XCTAssertFalse(view.viewportCoverageAllows(try frame(full, original: false), submissionID: covering.id))
++            XCTAssertFalse(view.viewportCoverageAllows(try frame(full, scope: 2), submissionID: covering.id))
++            XCTAssertFalse(view.viewportCoverageAllows(try frame(full, geometry: 2), submissionID: covering.id))
++            view.mailbox.completed(covering.id)
++            // Exercise the actual draw seam: a delayed narrow frame cannot acquire a drawable,
++            // publish placement or enter the receipt-free compatibility fallback.
++            var acquisitions = 0, placements = 0
++            view.drawableAcquirer = { _ in acquisitions += 1; return nil }
++            view.onFrameDrawn = { _ in placements += 1 }
++            view.offer(crop); view.draw(in: view.metal)
++            XCTAssertEqual(acquisitions, 0); XCTAssertEqual(placements, 0)
++            XCTAssertEqual(view.fallbackCreationCount, 0); XCTAssertEqual(view.drawsPresented, 0)
++            view.finishViewportCoverage(generation: 9, required: narrow.rect)
++            XCTAssertFalse(view.viewportCoverageAllows(crop, submissionID: covering.id), "Old cleanup cannot shrink the current required area")
++            view.finishViewportCoverage(generation: 10, required: full.rect)
++            XCTAssertFalse(view.viewportCoverageAllows(crop, submissionID: covering.id), "Return endpoint must retain wide coverage")
++            XCTAssertTrue(view.beginViewportCoverage(generation: 11, required: full.rect, scope: 1))
++            coveringReceipt(ProcessInfo.processInfo.systemUptime)
++            await drainReceiptQueue()
++            XCTAssertFalse(view.viewportCoverageReady(generation: 11))
++            view.finishViewportCoverage(generation: 11, required: narrow.rect)
++            let current = try XCTUnwrap(view.mailbox.take(holdUntilPresented: true))
++            XCTAssertTrue(view.viewportCoverageAllows(crop, submissionID: current.id), "Cancelled/zoom-in endpoint permits sharpening that covers its current pose")
++            view.mailbox.completed(current.id)
++            let terminalReceipt = try XCTUnwrap(view.viewportCoverageReceipt(crop))
++            admission.lifetime.retire()
++            terminalReceipt(ProcessInfo.processInfo.systemUptime)
++            await drainReceiptQueue()
++            XCTAssertFalse(view.viewportCoverageReady(generation: 11), "Retired source cannot reopen motion")
++        }
++    }
++    @MainActor
++    func testRetainedEndpointSurvivesUnchangedPoseAndRetiresForEveryManualPoseFamily() throws {
++        let admission = VideoPresentationAdmission(identity: identity(), validUntil: ProcessInfo.processInfo.systemUptime + 100)
++        let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission))
++        defer { view.invalidate() }
++        view.metal.isPaused = true
++        var base = ViewportTransform(sourceSize: CGSize(width: 200, height: 100), canvasSize: CGSize(width: 100, height: 50), mode: .fit)
++        base.setZoom(2, anchoredAt: CGPoint(x: 50, y: 25))
++        let mutations: [(String, (inout ViewportTransform) -> Void)] = [
++            ("map pan", { $0.pan(by: CGSize(width: 20, height: 0)) }),
++            ("map jump", { $0.center(onSourcePoint: CGPoint(x: 180, y: 75)) }),
++            ("zoom slider", { $0.setZoom(3, anchoredAt: CGPoint(x: 50, y: 25)) }),
++            ("pointer/keyboard reveal", { let safe = $0.safeRect; _ = $0.reveal(sourcePoint: CGPoint(x: 190, y: 90), in: safe, margin: 8) }),
++            ("safe insets", { $0.updateSafeInsets(ViewportInsets(top: 0, left: 0, bottom: 12, right: 0)) }),
++            ("resize", { $0.resize(sourceSize: CGSize(width: 200, height: 100), canvasSize: CGSize(width: 120, height: 50)) })
++        ]
++        for (index, mutation) in mutations.enumerated() {
++            let generation = UInt64(index + 1)
++            XCTAssertTrue(view.beginViewportCoverage(generation: generation, required: base.visibleSourceRect, scope: 1))
++            view.finishViewportCoverage(generation: generation, required: base.visibleSourceRect)
++            var moved = base
++            mutation.1(&moved)
++            let rect = moved.visibleSourceRect
++            var pixels: CVPixelBuffer?
++            XCTAssertEqual(CVPixelBufferCreate(nil, 64, 32, kCVPixelFormatType_32BGRA, nil, &pixels), kCVReturnSuccess)
++            let crop = CaptureRegion(epoch: 7, x: Double(rect.minX), y: Double(rect.minY), width: Double(rect.width), height: Double(rect.height), outputWidth: 64, outputHeight: 32)
++            let envelope = VideoFrameEnvelope(receiptID: UUID(), identity: admission.identity,
++                frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixels)), rotation: ._0, timeStampNs: 1),
++                arrivalMs: MachClock.nowMs(), marker: nil, originalSource: true,
++                videoTag: .init(generation: String(repeating: "a", count: 32), nonce: String(repeating: "b", count: 32), geometryEpoch: 1,
++                    scopeEpoch: 1, ltrToken: nil, region: crop))
++            view.mailbox.offer(envelope)
++            let submitted = try XCTUnwrap(view.mailbox.take(holdUntilPresented: true))
++            let before = view.viewportCoverageAllows(envelope, submissionID: submitted.id)
++            view.synchronizeViewportCoverage(visible: base.visibleSourceRect)
++            XCTAssertEqual(view.viewportCoverageAllows(envelope, submissionID: submitted.id), before,
++                           "Unchanged endpoint/deferred observation must preserve the coverage policy")
++            view.synchronizeViewportCoverage(visible: moved.visibleSourceRect)
++            XCTAssertTrue(view.viewportCoverageAllows(envelope, submissionID: submitted.id), mutation.0 + " must admit its new legitimate crop")
++            view.mailbox.completed(submitted.id)
++        }
++    }
++
++
+     @MainActor
+     func testDrawablePoolExperimentDefaultsToTwoRejectsInvalidValuesAndIsFrozenPerRenderer() throws {
+         let name = "OwnedVideoDrawablePool." + UUID().uuidString
+@@ -138,7 +264,7 @@
+     }
+ 
+     @MainActor
+-    func testSingleResampleTracksRedrawPresentationWithLegacyFenceSwitch() throws {
++    func testSmartZoomTracksEveryRedrawPresentationWithLegacyFenceSwitch() throws {
+         let name = "OwnedVideoMixedRollback." + UUID().uuidString
+         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+         defer { defaults.removePersistentDomain(forName: name) }
+@@ -148,8 +274,7 @@
+             let admission = VideoPresentationAdmission(identity: identity(), validUntil: ProcessInfo.processInfo.systemUptime + 100)
+             let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission), defaults: defaults)
+             XCTAssertTrue(view.observesPresentation(isNew: true))
+-            XCTAssertEqual(view.observesPresentation(isNew: false), singleResample,
+-                "every retained presentation flight, including a resize redraw, needs its own release callback")
++            XCTAssertTrue(view.observesPresentation(isNew: false), "A later Smart Zoom must drain redraws even with both optional preparation flags off")
+             view.invalidate()
+         }
+     }
+--- a/RemotePhoneTests/ViewportCaptureTests.swift
++++ b/RemotePhoneTests/ViewportCaptureTests.swift
+@@ -8,6 +8,40 @@
+ /// change leaves, and which `capture` status region the picture is placed by.
+ @MainActor
+ final class ViewportCaptureTests: XCTestCase {
++    func testSmartZoomWideningKeepsActualCroppedPixelsPlacedUntilMatchingWholeSourcePresents() throws {
++        let model = connectedModel()
++        model.sceneChanged(.active)
++        model.regionByFrame = false // Production optional package remains off.
++        try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 4), to: model)
++        let crop = CaptureRegion(epoch: 9, x: 300, y: 200, width: 640, height: 320, outputWidth: 640, outputHeight: 320)
++        try deliver(RemoteAction(action: "capture", x: 1, epoch: 4, features: [SessionFeature.viewportCapture], captureRegion: crop,
++            captureScope: .init(epoch: 1, kind: .display, label: "Entire display", viewOnly: false)), to: model)
++        _ = model.admitPiPProofForTesting(validUntil: ProcessInfo.processInfo.systemUptime + 20)
++        let admission = try XCTUnwrap(model.inlinePresentationAdmission)
++        func envelope(_ region: CaptureRegion) throws -> VideoFrameEnvelope {
++            var pixels: CVPixelBuffer?
++            XCTAssertEqual(CVPixelBufferCreate(nil, region.outputWidth, region.outputHeight, kCVPixelFormatType_32BGRA,
++                [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
++            return .init(receiptID: UUID(), identity: admission.identity,
++                frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixels)), rotation: ._0, timeStampNs: 1),
++                arrivalMs: 1, marker: nil, originalSource: true,
++                videoTag: .init(generation: String(repeating: "a", count: 32), nonce: String(repeating: "b", count: 32),
++                    geometryEpoch: 4, scopeEpoch: 1, ltrToken: nil, region: region))
++        }
++        let cropped = try envelope(crop)
++        model.frameDrawn(cropped)
++        XCTAssertEqual(model.picturePlacementRegion, crop)
++        let whole = CaptureRegion(epoch: 0, x: 0, y: 0, width: 1470, height: 956, outputWidth: 1470, outputHeight: 956)
++        try deliver(RemoteAction(action: "capture", x: 1, epoch: 4, features: [SessionFeature.viewportCapture], captureRegion: whole,
++            captureScope: .init(epoch: 1, kind: .display, label: "Entire display", viewOnly: false)), to: model)
++        XCTAssertNil(model.placementRegion, "Legacy status echo has widened")
++        XCTAssertEqual(model.picturePlacementRegion, crop, "Old pixels retain their actual crop placement")
++        let full = try envelope(whole)
++        model.frameDrawn(full)
++        XCTAssertNil(model.picturePlacementRegion)
++        XCTAssertFalse(model.regionByFrame, "The drawn-picture seam does not change optional switches")
++    }
++
+     private let display = CGSize(width: 1470, height: 956)
+     private let interval = ViewportReporter.minimumInterval
+     private var models: [PhoneRemoteModel] = []
+--- a/RemoteTests/ViewportTransformTests.swift
++++ b/RemoteTests/ViewportTransformTests.swift
+@@ -3,6 +3,92 @@
+ import XCTest
+ 
+ final class ViewportTransformTests: XCTestCase {
++    func testSmartZoomFocusDoublesPortraitFitWithoutForcingDeepFillCrop() throws {
++        let view = ViewportTransform(sourceSize: CGSize(width: 1920, height: 1080),
++            canvasSize: CGSize(width: 390, height: 844), mode: .fit)
++        let anchor = CGPoint(x: view.contentRect.midX, y: view.contentRect.midY)
++        let focus = try XCTUnwrap(view.focused(anchoredAt: anchor))
++        XCTAssertEqual(focus.scale, view.scale * 2, accuracy: 0.000_001)
++        XCTAssertLessThan(focus.scale, view.fillScale)
++        XCTAssertEqual(focus.sourcePoint(fromView: anchor), view.sourcePoint(fromView: anchor))
++    }
++
++    func testSmartZoomFocusReturnIsExactAfterManualPanAndPinchForFitAndPannedFill() throws {
++        for mode in ViewportMode.allCases {
++            var before = ViewportTransform(sourceSize: CGSize(width: 1920, height: 1080),
++                canvasSize: CGSize(width: 844, height: 390), mode: mode, zoom: 1.3)
++            before.pan(by: CGSize(width: 30, height: -20))
++            var bookmark = ViewportFocusReturn()
++            var focused = try XCTUnwrap(bookmark.destination(from: before, anchoredAt: CGPoint(x: 350, y: 195)))
++            focused.pan(by: CGSize(width: -55, height: 25))
++            focused.setZoom(focused.zoom * 1.1, anchoredAt: CGPoint(x: 400, y: 195))
++            let restored = try XCTUnwrap(bookmark.restoreDestination(for: focused))
++            XCTAssertEqual(restored.mode, before.mode)
++            XCTAssertEqual(restored.zoom, before.zoom)
++            XCTAssertEqual(restored.offset, before.offset)
++            XCTAssertEqual(restored.contentRect, before.contentRect)
++            bookmark.clear()
++            XCTAssertFalse(bookmark.canRestore)
++        }
++    }
++
++    func testSmartZoomFocusRejectsLetterboxAndBoundsCornersAndMaximumZoom() throws {
++        let view = ViewportTransform(sourceSize: CGSize(width: 1920, height: 1080),
++            canvasSize: CGSize(width: 390, height: 844), mode: .fit)
++        var bookmark = ViewportFocusReturn()
++        XCTAssertNil(bookmark.destination(from: view, anchoredAt: CGPoint(x: 10, y: 10)))
++        XCTAssertFalse(bookmark.canRestore)
++        let focused = try XCTUnwrap(bookmark.destination(from: view, anchoredAt: view.contentRect.origin))
++        XCTAssertGreaterThanOrEqual(focused.visibleSourceRect.minX, 0)
++        XCTAssertGreaterThanOrEqual(focused.visibleSourceRect.minY, 0)
++        XCTAssertLessThanOrEqual(focused.visibleSourceRect.maxX, view.sourceSize.width)
++        XCTAssertLessThanOrEqual(focused.visibleSourceRect.maxY, view.sourceSize.height)
++        let maxed = ViewportTransform(sourceSize: view.sourceSize, canvasSize: view.canvasSize, mode: .fit, zoom: view.zoomRange.upperBound)
++        XCTAssertNil(maxed.focused(anchoredAt: CGPoint(x: maxed.safeRect.midX, y: maxed.safeRect.midY)))
++    }
++
++    func testSmartZoomReturnInvalidatesOnSourceRotationOrKeyboardGeometryReplacement() throws {
++        let view = ViewportTransform(sourceSize: CGSize(width: 1000, height: 500),
++            canvasSize: CGSize(width: 500, height: 500), mode: .fit)
++        for change in 0..<3 {
++            var bookmark = ViewportFocusReturn()
++            var focused = try XCTUnwrap(bookmark.destination(from: view, anchoredAt: CGPoint(x: 250, y: 250)))
++            switch change {
++            case 0: focused.resize(sourceSize: CGSize(width: 1001, height: 500), canvasSize: view.canvasSize)
++            case 1: focused.resize(sourceSize: view.sourceSize, canvasSize: CGSize(width: 700, height: 350))
++            default: focused.updateSafeInsets(ViewportInsets(bottom: 200))
++            }
++            XCTAssertNil(bookmark.restoreDestination(for: focused))
++            XCTAssertFalse(bookmark.canRestore)
++        }
++    }
++
++    func testSmartZoomCameraSamplesRoundTripAndKeepsEndpointFramingDuringInterruptibleReturn() throws {
++        var from = ViewportTransform(sourceSize: CGSize(width: 1920, height: 1080),
++            canvasSize: CGSize(width: 844, height: 390), mode: .fill, zoom: 1.2)
++        from.pan(by: CGSize(width: -20, height: 10))
++        let target = try XCTUnwrap(from.focused(anchoredAt: CGPoint(x: 400, y: 190)))
++        for step in 0...20 {
++            let t = CGFloat(step) / 20
++            let sample = try XCTUnwrap(from.interpolated(to: target, progress: t))
++            let anchor = CGPoint(x: sample.safeRect.midX, y: sample.safeRect.midY)
++            let source = try XCTUnwrap(sample.sourcePoint(fromView: anchor))
++            XCTAssertEqual(sample.viewPoint(fromSource: source).x, anchor.x, accuracy: 0.000_001)
++            XCTAssertEqual(sample.viewPoint(fromSource: source).y, anchor.y, accuracy: 0.000_001)
++            XCTAssertGreaterThanOrEqual(sample.scale, from.scale)
++            XCTAssertLessThanOrEqual(sample.scale, target.scale)
++            if step == 9 {
++                let reverse = try XCTUnwrap(sample.interpolated(to: from, progress: 0))
++                XCTAssertEqual(reverse.contentRect, sample.contentRect, "Retargeting starts at the current sampled picture")
++            }
++        }
++        XCTAssertEqual(from.interpolated(to: target, progress: 1)?.contentRect, target.contentRect)
++        var rotated = target
++        rotated.resize(sourceSize: from.sourceSize, canvasSize: CGSize(width: 390, height: 844))
++        XCTAssertNil(from.interpolated(to: rotated, progress: 0.5))
++    }
++
++
+     func testDoubleTapZoomKeepsTappedContentThenReturnsToSafeFit() {
+         var view = ViewportTransform(sourceSize: CGSize(width: 1920, height: 1080),
+                                      canvasSize: CGSize(width: 390, height: 844), mode: .fill)
