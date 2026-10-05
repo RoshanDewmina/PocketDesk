@@ -146,3 +146,8 @@
 "PICTURE_MODE_PERFORMANCE_DETAIL" = "Lower resolution for responsive control. Smooth motion during scrolling and video adds about one frame of delay while active.";
 "PICTURE_MODE_SWITCHING" = "Switching to %@…";
 "PICTURE_MODE_PENDING" = "Mac is still using %@. Switch modes to retry.";
+
+"AGENT_COMPLETED_TITLE" = "A task on your Mac finished";
+"AGENT_COMPLETED_BODY" = "Open Farside to check the result.";
+"AGENT_FAILED_TITLE" = "A task on your Mac failed";
+"AGENT_FAILED_BODY" = "Open Farside to check what happened.";

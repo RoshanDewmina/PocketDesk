@@ -244,6 +244,8 @@ struct HostPreferences {
         /// returns to the pre-batch-7 default (curtain off until the person turns it on).
         static let privacyModeDefaultOff = "privacyModeDefaultOff"
         static let agentAlerts = "agentAlertsEnabled"
+        static let completedAlerts = "agentCompletedAlertsEnabled"
+        static let failedAlerts = "agentFailedAlertsEnabled"
         static let allowSystemAudio = "allowSystemAudio"
         static let localOnly = "localNetworkOnly"
         static let menuBarIconShown = "menuBarIconShown"
@@ -341,6 +343,15 @@ struct HostPreferences {
     var agentAlerts: Bool {
         get { defaults.bool(forKey: Key.agentAlerts) }
         nonmutating set { defaults.set(newValue, forKey: Key.agentAlerts) }
+    }
+
+    var completedAlerts: Bool {
+        get { defaults.bool(forKey: Key.completedAlerts) }
+        nonmutating set { defaults.set(newValue, forKey: Key.completedAlerts) }
+    }
+    var failedAlerts: Bool {
+        get { defaults.bool(forKey: Key.failedAlerts) }
+        nonmutating set { defaults.set(newValue, forKey: Key.failedAlerts) }
     }
 
     /// False once the person removes the icon from the menu bar; Settings puts it back.

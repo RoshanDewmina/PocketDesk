@@ -276,7 +276,15 @@ struct HostSettingsView: View {
                 HostSwitch(label: "Agent alerts", isOn: state.agentAlerts, set: actions.setAgentAlerts)
                     .accessibilityIdentifier("farside.settings.agentAlerts")
             }
-            if state.agentAlerts {
+            HostSettingsRow("Task completed alerts", subtitle: "Only explicit local job exit-status reports") {
+                HostSwitch(label: "Task completed alerts", isOn: state.completedAlerts, set: actions.setCompletedAlerts)
+                    .accessibilityIdentifier("farside.settings.completedAlerts")
+            }
+            HostSettingsRow("Task failed alerts", subtitle: "Only explicit local job exit-status reports") {
+                HostSwitch(label: "Task failed alerts", isOn: state.failedAlerts, set: actions.setFailedAlerts)
+                    .accessibilityIdentifier("farside.settings.failedAlerts")
+            }
+            if state.agentAlerts || state.completedAlerts || state.failedAlerts {
                 HostSettingsRow("Agent hooks", subtitle: "Sends a kind and a hash, never an agent’s words") {
                     HStack(spacing: 8) {
                         Button("Copy Setup", action: actions.copyAgentHookSetup)

@@ -15,6 +15,29 @@ final class AgentAlertPayloadTests: XCTestCase {
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [AnyHashable: Any])
     }
 
+    func testOutcomesHaveTheirOwnCategoryActionsAndNormalInterruption() throws {
+        let defaults = makeTestDefaults("AgentOutcomePayload")
+        let preferences = AgentAlertPreferences(defaults: defaults)
+        preferences.breakThroughFocus = true
+        for event in [AgentAlertEvent.completed, .failed] {
+            let payload = AgentAlertPayload(helpRequestID: "h_112233445566", kind: .other, event: event)
+            let content = AgentNotification.alertContent(for: payload, preferences: preferences)
+            XCTAssertEqual(content.categoryIdentifier, "AGENT_OUTCOME")
+            XCTAssertEqual(content.interruptionLevel, .active)
+            XCTAssertFalse(content.title.contains("needs you"))
+            let decoded = try XCTUnwrap(AgentAlertPayload(userInfo: content.userInfo))
+            XCTAssertEqual(decoded.event, event)
+            XCTAssertEqual(decoded.interruption, .active)
+            var wrong = content.userInfo
+            wrong["event"] = "needs_user"
+            XCTAssertNil(AgentAlertPayload(userInfo: wrong))
+        }
+        let category = try XCTUnwrap(AgentNotification.categories().first { $0.identifier == "AGENT_OUTCOME" })
+        XCTAssertEqual(category.actions.map(\.identifier), [AgentNotification.openAction])
+        XCTAssertTrue(category.actions[0].options.contains(.foreground))
+        XCTAssertFalse(preferences.completedEnabled); XCTAssertFalse(preferences.failedEnabled)
+    }
+
     // MARK: The schema in the spec
 
     func testTheSpecPayloadRoutesToItsHelpRequest() throws {
@@ -169,7 +192,7 @@ final class AgentAlertPayloadTests: XCTestCase {
 
         let reminder = try XCTUnwrap(categories.first { $0.identifier == "AGENT_HELP_REMINDER" })
         XCTAssertEqual(reminder.actions.map(\.identifier), ["NOT_NOW"], "The one reminder cannot be snoozed again")
-        XCTAssertEqual(categories.count, 2)
+        XCTAssertEqual(categories.count, 3)
     }
 
     func testSnoozeStaysFirstSoAWatchDoubleTapOnlySnoozes() throws {

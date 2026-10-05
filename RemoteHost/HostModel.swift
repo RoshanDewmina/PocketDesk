@@ -535,6 +535,8 @@ final class RemoteHostModel: ObservableObject {
             couchMode: sessionState == .couch && connection.connected,
             awayMode: awayModeEnabled, awayIntroShown: awayIntroShown, away: away.readout(available: awayAvailable), lockWarning: lockWarning,
             agentAlerts: agentAlerts.isOn,
+            completedAlerts: agentAlerts.completedOn,
+            failedAlerts: agentAlerts.failedOn,
             agentAlertsStatus: agentAlerts.statusLine(),
             compatibilityVideoEncoder: VideoEncoderCompatibility.isOn,
             newestFrameWins: NewestFrameWinsSwitch.isOn,
@@ -1435,6 +1437,13 @@ final class RemoteHostModel: ObservableObject {
     func setAgentAlerts(_ enabled: Bool) {
         events.record(.settings, "Agent alerts \(enabled ? "on" : "off")")
         Task { @MainActor [weak self] in await self?.agentAlerts.setEnabled(enabled) }
+    }
+
+    func setCompletedAlerts(_ enabled: Bool) {
+        Task { @MainActor [weak self] in await self?.agentAlerts.setOutcome(.completed, enabled: enabled) }
+    }
+    func setFailedAlerts(_ enabled: Bool) {
+        Task { @MainActor [weak self] in await self?.agentAlerts.setOutcome(.failed, enabled: enabled) }
     }
 
     func setCompatibilityVideoEncoder(_ enabled: Bool) {

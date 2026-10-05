@@ -138,7 +138,7 @@ final class AgentAlertCenter: ObservableObject {
 
         init?(actionIdentifier: String) {
             switch actionIdentifier {
-            case UNNotificationDefaultActionIdentifier: self = .open
+            case UNNotificationDefaultActionIdentifier, AgentNotification.openAction: self = .open
             case AgentNotification.snoozeAction: self = .snooze
             case AgentNotification.notNowAction: self = .notNow
             case UNNotificationDismissActionIdentifier: self = .dismissed
@@ -220,16 +220,20 @@ final class AgentAlertCenter: ObservableObject {
     /// Turning alerts on is the moment to ask iOS, never launch. Off removes what is scheduled and
     /// forgets this phone's push address.
     func setAlertsEnabled(_ on: Bool) async -> EnableResult {
+        await setEventEnabled(.needsUser, on: on)
+    }
+
+    func setEventEnabled(_ event: AgentAlertEvent, on: Bool) async -> EnableResult {
         guard on else {
-            preferences.alertsEnabled = false
+            preferences.set(event, enabled: false)
             center.removePending(remembered(Self.snoozedKey).map(AgentNotification.reminderIdentifier))
-            unregisterForRemoteNotifications()
+            if !preferences.anyEnabled { unregisterForRemoteNotifications() }
             return .enabled
         }
         await refreshAccess()
         switch access {
         case .allowed:
-            preferences.alertsEnabled = true
+            preferences.set(event, enabled: true)
             registerForRemoteNotifications()
             return .enabled
         case .denied:
@@ -240,11 +244,11 @@ final class AgentAlertCenter: ObservableObject {
     }
 
     @discardableResult
-    func requestAndEnable() async -> Bool {
+    func requestAndEnable(event: AgentAlertEvent = .needsUser) async -> Bool {
         let granted = await center.requestAuthorization()
         await refreshAccess()
         guard granted, access == .allowed else { return false }
-        preferences.alertsEnabled = true
+        preferences.set(event, enabled: true)
         registerForRemoteNotifications()
         return true
     }
@@ -252,7 +256,7 @@ final class AgentAlertCenter: ObservableObject {
     /// A person who allowed alerts before the settings link existed gets it without a prompt: iOS never
     /// asks again once they answered. Nothing is asked when alerts are off or not yet allowed.
     func refreshSettingsLink() async {
-        guard preferences.alertsEnabled else { return }
+        guard preferences.anyEnabled else { return }
         await refreshAccess()
         guard access == .allowed else { return }
         _ = await center.requestAuthorization()
@@ -283,6 +287,7 @@ final class AgentAlertCenter: ObservableObject {
     /// While a session is live the picture already shows the Mac, so an alert becomes a quiet banner
     /// instead of covering it. A request the person already declined is not announced again.
     func presentationOptions(for payload: AgentAlertPayload, deliveredAt: Date) -> UNNotificationPresentationOptions {
+        if !payload.event.isAttention && !preferences.allows(payload.event) { return [] }
         if wasDeclined(payload.helpRequestID) { return [] }
         if isSessionLive() {
             showBanner(AgentAlertPresentation(payload: payload, receivedAt: deliveredAt))
@@ -293,6 +298,7 @@ final class AgentAlertCenter: ObservableObject {
 
     /// A tap, an action button or a swipe-away on a "needs you" notification.
     func respond(_ action: Action, to payload: AgentAlertPayload, deliveredAt: Date, notificationIdentifier: String?) async {
+        guard payload.event.isAttention || action == .open || action == .dismissed else { return }
         let id = payload.helpRequestID
         let boundBeforeAttach = currentPairingIdentity == nil &&
             payload.pairingIdentity.map(SecureRandom.isToken) == true
@@ -359,12 +365,12 @@ final class AgentAlertCenter: ObservableObject {
     /// background it becomes the notification a push would have been. Alerts must be on, a request is
     /// announced once, and a declined one never again.
     func receive(fromMac frame: AgentAlertFrame) {
-        guard frame.isUnderstood, preferences.alertsEnabled, !wasDeclined(frame.id),
+        guard frame.isUnderstood, let event = frame.alertEvent, preferences.allows(event), !wasDeclined(frame.id),
               !seenFromMac.contains(frame.id) else { return }
         seenFromMac.append(frame.id)
         if seenFromMac.count > 32 { seenFromMac.removeFirst(seenFromMac.count - 32) }
         let payload = AgentAlertPayload(helpRequestID: frame.id, kind: frame.agentKind,
-                                        pairingIdentity: currentPairingIdentity?())
+                                        pairingIdentity: currentPairingIdentity?(), event: event)
         if isForeground() {
             showBanner(AgentAlertPresentation(payload: payload, receivedAt: frame.raisedDate))
         } else {
@@ -372,7 +378,13 @@ final class AgentAlertCenter: ObservableObject {
                 identifier: "agent-mac-\(frame.id)",
                 content: AgentNotification.alertContent(for: payload, preferences: preferences),
                 trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false))
-            Task { _ = await center.add(request) }
+            Task {
+                guard preferences.allows(event), isCurrentPairing(payload) else { return }
+                _ = await center.add(request)
+                if !preferences.allows(event) || !isCurrentPairing(payload) {
+                    center.removePending([request.identifier]); center.removeDelivered([request.identifier])
+                }
+            }
         }
     }
 

@@ -18,11 +18,14 @@ final class HostAgentAlerts: ObservableObject {
 
     struct Record: Equatable {
         var kind: AgentKind
+        var event: AgentAlertEvent
         var at: Date
         var disposition: AgentAlertDisposition
     }
 
     @Published private(set) var isOn: Bool
+    @Published private(set) var completedOn: Bool
+    @Published private(set) var failedOn: Bool
     @Published private(set) var last: Record?
     @Published private(set) var failure: String?
     @Published private(set) var hookSetupFailure: String?
@@ -39,6 +42,7 @@ final class HostAgentAlerts: ObservableObject {
     var record: (String) -> Void = { _ in }
 
     private var gate = AgentAlertGate()
+    private var deliveryRevision: UInt64 = 0
     private var bridge: AgentAlertBridge?
     private let directory: URL
     private var preferences: HostPreferences
@@ -47,29 +51,51 @@ final class HostAgentAlerts: ObservableObject {
         self.preferences = preferences
         self.directory = directory
         isOn = preferences.agentAlerts
+        completedOn = preferences.completedAlerts
+        failedOn = preferences.failedAlerts
     }
 
     var discoveryFile: URL { directory.appendingPathComponent(AgentAlertBridge.fileName) }
 
     /// Starts the bridge when alerts were left on, at launch.
     func startIfEnabled() async {
-        guard isOn else { return }
+        guard anyEnabled else { return }
         await startBridge()
     }
 
     func setEnabled(_ on: Bool) async {
         preferences.agentAlerts = on
         isOn = on
-        if on { await startBridge() } else { stopBridge() }
+        deliveryRevision &+= 1
+        if anyEnabled { if bridge == nil { await startBridge() } } else { stopBridge() }
+    }
+
+    var anyEnabled: Bool { isOn || completedOn || failedOn }
+    private func accepts(_ event: AgentAlertEvent) -> Bool {
+        switch event {
+        case .needsUser: isOn
+        case .completed: completedOn
+        case .failed: failedOn
+        }
+    }
+    func setOutcome(_ event: AgentAlertEvent, enabled: Bool) async {
+        switch event {
+        case .needsUser: await setEnabled(enabled); return
+        case .completed: preferences.completedAlerts = enabled; completedOn = enabled
+        case .failed: preferences.failedAlerts = enabled; failedOn = enabled
+        }
+        deliveryRevision &+= 1
+        if anyEnabled { if bridge == nil { await startBridge() } } else { stopBridge() }
     }
 
     func shutDown() {
-        bridge?.stop()
+        stopBridge()
     }
 
     /// New token, so every hook configured with the old one stops working until it re-reads the file.
     func resetLink() {
         do {
+            deliveryRevision &+= 1
             try bridge?.rotateToken()
             record("Agent alert link reset")
         } catch {
@@ -79,12 +105,14 @@ final class HostAgentAlerts: ObservableObject {
 
     private func startBridge() async {
         stopBridge()
+        let revision = deliveryRevision
         let bridge = AgentAlertBridge(directory: directory) { [weak self] alert in
             guard let self else { return .disabled }
             return await self.receive(alert)
         }
         do {
             try await bridge.start()
+            guard anyEnabled, deliveryRevision == revision else { bridge.stop(); return }
             self.bridge = bridge
             failure = nil
             record("Agent alerts on: listening on this Mac only")
@@ -95,6 +123,7 @@ final class HostAgentAlerts: ObservableObject {
     }
 
     private func stopBridge() {
+        deliveryRevision &+= 1
         bridge?.stop()
         bridge = nil
         gate = AgentAlertGate()
@@ -102,15 +131,15 @@ final class HostAgentAlerts: ObservableObject {
 
     /// One alert from a hook.
     func receive(_ alert: AgentAlert) async -> AgentAlertDisposition {
-        guard isOn else { return .disabled }
+        guard accepts(alert.event) else { return .disabled }
         let disposition = await dispatch(alert)
-        last = Record(kind: alert.kind, at: now(), disposition: disposition)
+        last = Record(kind: alert.kind, event: alert.event, at: now(), disposition: disposition)
         return disposition
     }
 
     private func dispatch(_ alert: AgentAlert) async -> AgentAlertDisposition {
         guard hasPairedPhone() else { return .noPhone }
-        switch gate.decide(sessionHash: alert.sessionHash, now: now()) {
+        switch gate.decide(sessionHash: alert.sessionHash, now: now(), event: alert.event, runHash: alert.runHash, eventID: alert.id) {
         case .duplicate:
             return .duplicate
         case .rateLimited:
@@ -120,15 +149,16 @@ final class HostAgentAlerts: ObservableObject {
             break
         }
         if isPhoneLive(), deliverToPhone(alert.frame) {
-            record("Told your iPhone that \(alert.kind.displayName) needs you")
+            record(alert.event.isAttention ? "Told your iPhone that \(alert.kind.displayName) needs you" : "Told your iPhone a task \(alert.event.rawValue)")
             return .forwarded
         }
         guard canUsePush(), let identity = pushIdentity() else { return .pushUnavailable }
+        let revision = deliveryRevision
         let outcome = await push.deliver(alert)
-        guard canUsePush(), pushIdentity() == identity else { return .pushUnavailable }
+        guard revision == deliveryRevision, accepts(alert.event), canUsePush(), pushIdentity() == identity else { return .pushUnavailable }
         switch outcome {
         case .sent:
-            record("Notification accepted for your iPhone: \(alert.kind.displayName) needs you")
+            record(alert.event.isAttention ? "Notification accepted for your iPhone: \(alert.kind.displayName) needs you" : "Notification accepted for your iPhone: a task \(alert.event.rawValue)")
             return .pushed
         case .unavailable(let reason):
             record("Could not reach a phone that is not in a session: \(reason)")
@@ -184,7 +214,7 @@ final class HostAgentAlerts: ObservableObject {
     /// One line for Settings: that the Mac is listening, or what the last alert did.
     func statusLine(now: Date = Date()) -> String? {
         if let hookSetupFailure { return hookSetupFailure }
-        guard isOn else { return nil }
+        guard anyEnabled else { return nil }
         if let failure { return failure }
         guard let last else { return "Listening on this Mac only" }
         let seconds = Int(max(0, now.timeIntervalSince(last.at)))
@@ -199,7 +229,7 @@ final class HostAgentAlerts: ObservableObject {
         case .pushUnavailable: outcome = "your iPhone is not in a session, and push is not on yet"
         case .disabled, .ignored: outcome = "ignored"
         }
-        return "\(last.kind.displayName) asked \(age) · \(outcome)"
+        return last.event.isAttention ? "\(last.kind.displayName) asked \(age) · \(outcome)" : "A task \(last.event.rawValue) \(age) · \(outcome)"
     }
 
     // MARK: Setup text
@@ -221,6 +251,11 @@ final class HostAgentAlerts: ObservableObject {
 
         Codex: add to ~/.codex/hooks.json, then review and trust it with /hooks
         \(hooksJSON(agent: "codex", scriptPath: scriptPath))
+
+        For a local job wrapper, report only its actual exit status with a new opaque run id each time:
+        "\(scriptPath)" --agent other --session JOB_ID --run RUN_ID --exit-status "$status" --no-stdin
+        Capture status=$? immediately after your local job. Stop and idle hooks never mean success.
+        Completion and failure alerts each need their own opt-in on the Mac and iPhone.
 
         The same JSON is printed by: "\(scriptPath)" --print-hooks claude-code
         """
@@ -276,19 +311,20 @@ actor HTTPAgentPushRelay: AgentPushRelay {
     }
 
     func deliver(_ alert: AgentAlert) async -> AgentPushOutcome {
-        guard alert.kind == .claudeCode || alert.kind == .codex,
-              alert.event == .needsUser,
+        guard (!alert.event.isAttention || alert.kind == .claudeCode || alert.kind == .codex),
+              (alert.event.isAttention || alert.runHash.map(AgentAlert.isSessionHash) == true),
               alert.id.hasPrefix("h_"),
               alert.id.count == 14,
               AgentAlert.isSessionHash(alert.sessionHash) else {
             return .unavailable("This agent event cannot use push.")
         }
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "room": room, "hostToken": hostToken, "id": alert.id,
             "kind": alert.kind.rawValue, "event": alert.event.rawValue,
             "sessionHash": alert.sessionHash,
             "raisedAt": Int(alert.raisedAt.timeIntervalSince1970.rounded())
         ]
+        if let runHash = alert.runHash { body["runHash"] = runHash }
         guard let data = try? JSONSerialization.data(withJSONObject: body) else {
             return .unavailable("Could not prepare agent alert.")
         }
