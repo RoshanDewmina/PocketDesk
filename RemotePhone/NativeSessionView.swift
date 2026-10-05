@@ -52,6 +52,9 @@ struct NativeSessionView: View {
     @State private var pinchRevision: UInt64 = 0
     @State private var revision: UInt64 = 0
     @State private var keyboardBarFrame: CGRect = .zero
+    @State private var focusedWindowGeometry: FocusGeometry?
+    @State private var focusedWindowEpoch: UInt64 = 0
+    @State private var previousWindowViewport: ResumeViewport?
     @State private var manualViewportRevision: UInt64 = 0
     @State private var readingLensOpen = false
     @StateObject private var precisionTap = PrecisionTapController()
@@ -201,6 +204,13 @@ struct NativeSessionView: View {
                 .accessibilityLabel("Keyboard")
                 .accessibilityIdentifier("remote.keyboard.open")
                 .padding(.trailing, 8)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if previousWindowViewport != nil && !showControls && !keyboardOpen && !model.contentConcealed && model.windowWorkspaceAllowed {
+                Button("Whole desktop", systemImage: "arrow.up.left.and.arrow.down.right") { restoreWindowViewport() }
+                    .buttonStyle(.glass).padding(.top, 56).padding(.trailing, 12)
+                    .accessibilityIdentifier("remote.workspace.wholeDesktop")
             }
         }
         .overlay(alignment: .bottomTrailing) {
@@ -372,11 +382,13 @@ struct NativeSessionView: View {
 
     var body: some View {
         sessionResume
-        .modifier(KeyboardFocusRevealModifier(model: model, viewport: $viewport, keyboardOpen: keyboardOpen,
+        .modifier(KeyboardFocusRevealModifier(model: model, viewport: $viewport, keyboardOpen: keyboardOpen && focusedWindowGeometry == nil,
                                               barFrame: keyboardBarFrame, canvasFrame: canvasFrame,
                                               manualViewportRevision: manualViewportRevision,
                                               preview: offlineLayoutCheck))
         .onChange(of: model.sourceSize) { _, _ in scheduleGeometry() }
+        .onChange(of: model.geometryEpoch) { _, _ in clearFocusedWindow() }
+        .onChange(of: model.windowWorkspaceAllowed) { _, allowed in if !allowed { clearFocusedWindow(); model.windowWorkspace.retire() } }
         .onChange(of: horizontalSizeClass, initial: true) { _, sizeClass in
             guard sizeClass != nil else { return }
             let mode = ViewportPreference.initialize(regularWidth: regularSessionLayout)
@@ -2031,7 +2043,7 @@ struct NativeSessionView: View {
 
     /// Pages pushed inside Controls. The key panel is the root.
     private enum ControlsPage: String, Hashable, CaseIterable {
-        case settings, display, picture, pointer, touch, view, clipboard, keyboard, steer, diagnostics
+        case settings, workspace, display, picture, pointer, touch, view, clipboard, keyboard, steer, diagnostics
 
         static func named(_ name: String) -> ControlsPage? { ControlsPage(rawValue: name) }
     }
@@ -2515,6 +2527,25 @@ struct NativeSessionView: View {
     @ViewBuilder private func controlsPage(_ page: ControlsPage) -> some View {
         switch page {
         case .settings: settingsPage(session: false)
+        case .workspace:
+            settingsForm("Workspace") {
+                WindowWorkspaceView(controller: model.windowWorkspace, allowed: model.windowWorkspaceAllowed)
+            }
+            .onAppear { if model.windowWorkspaceAllowed { model.windowWorkspace.list() } }
+            .onDisappear { model.windowWorkspace.close() }
+            .onChange(of: model.windowWorkspace.focus) { _, focus in
+                if let focus {
+                    guard focus.epoch == model.geometryEpoch,
+                          model.windowWorkspaceAllowed else { return }
+                    cancelGesture()
+                    if previousWindowViewport == nil { previousWindowViewport = viewport.resumeViewport(viewOnly: panMode) }
+                    focusedWindowGeometry = focus.geometry; focusedWindowEpoch = focus.epoch
+                    manualViewportRevision &+= 1
+                    closeControls()
+                    controlsCollapsed = true
+                    applyFocusedWindow()
+                }
+            }
         case .display: settingsForm("Display") { displaySection }
         case .picture: settingsForm("Picture") { pictureSection }
         case .pointer: settingsForm("Pointer") { feelSection }
@@ -2558,6 +2589,9 @@ struct NativeSessionView: View {
     /// One row per setting with its current value; each opens its own page.
     private func settingsPage(session: Bool) -> some View {
         settingsForm("Settings") {
+            if !couch && model.hostFeatures.contains(WorkspaceUtilities.feature) && WorkspaceUtilities.isEnabled() {
+                Section { summaryRow("Workspace", "macwindow", value: "Apps and focused view", page: .workspace) }
+            }
             if session && showsCouchRow {
                 Section { couchPanelRow }
             }
@@ -2928,6 +2962,7 @@ struct NativeSessionView: View {
 
     private var zoomBinding: Binding<Double> {
         Binding(get: { Double(viewport.zoom) }, set: { value in
+            focusedWindowGeometry = nil
             cancelGesture()
             let center = CGPoint(x: viewport.safeRect.midX, y: viewport.safeRect.midY)
             viewport.setZoom(CGFloat(value), anchoredAt: center)
@@ -3294,7 +3329,7 @@ struct NativeSessionView: View {
             }
             if !couchTouched { couchTouched = true }
         }
-        if command.movesViewport { manualViewportRevision &+= 1 }
+        if command.movesViewport { focusedWindowGeometry = nil; manualViewportRevision &+= 1 }
         switch command {
         case .precision(let phase, let finger):
             return precisionTap.handle(phase, finger: finger, viewport: viewport, model: model)
@@ -3367,7 +3402,7 @@ struct NativeSessionView: View {
     }
 
     private var followAllowed: Bool {
-        !couch && followStyle.follows && model.canControl && !keyboardOpen && !controlsBlockInput && !panMode
+        !couch && focusedWindowGeometry == nil && followStyle.follows && model.canControl && !keyboardOpen && !controlsBlockInput && !panMode
             && !model.privacyShield && !model.contentConcealed
     }
 
@@ -3444,6 +3479,7 @@ struct NativeSessionView: View {
             MiniMapView(viewport: current, pointer: pointer, maxSize: miniMapSize, thumbnail: miniMapThumbnail,
                         onPan: { translation in
                             model.pointerLocator.clear()
+                            focusedWindowGeometry = nil
                             viewport.pan(by: translation)
                             #if DEBUG
                             let visible = viewport.visibleSourceRect
@@ -3454,6 +3490,7 @@ struct NativeSessionView: View {
                         onJump: { point in
                             model.pointerLocator.clear()
                             withAnimation(reduceMotion ? nil : .smooth(duration: 0.28, extraBounce: 0)) {
+                                focusedWindowGeometry = nil
                                 viewport.center(onSourcePoint: point)
                             }
                             #if DEBUG
@@ -3534,6 +3571,20 @@ struct NativeSessionView: View {
         } else if viewport.safeInsets != insets {
             withAnimation(reduceMotion ? nil : .snappy) { viewport.updateSafeInsets(insets) }
         }
+        applyFocusedWindow()
+    }
+
+    private func applyFocusedWindow() {
+        guard focusedWindowEpoch == model.geometryEpoch, model.windowWorkspaceAllowed,
+              let geometry = focusedWindowGeometry, let fitted = WindowWorkspaceViewport.fit(geometry, viewport: viewport) else { return }
+        viewport = fitted
+        reportSettledViewport()
+    }
+    private func clearFocusedWindow() { focusedWindowGeometry = nil; previousWindowViewport = nil; focusedWindowEpoch = 0 }
+    private func restoreWindowViewport() {
+        cancelGesture()
+        if let previousWindowViewport { viewport.restore(previousWindowViewport) } else { viewport.setMode(.fit) }
+        clearFocusedWindow(); manualViewportRevision &+= 1; reportSettledViewport()
     }
 
     private func pictureAnchor(_ point: CGPoint) -> CGPoint {
@@ -3560,6 +3611,7 @@ struct NativeSessionView: View {
     }
 
     private func setMode(_ mode: ViewportMode) {
+        focusedWindowGeometry = nil
         guard mode != viewport.mode || !viewport.isAtBaseline else { return }
         cancelGesture()
         withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) { viewport.setMode(mode) }

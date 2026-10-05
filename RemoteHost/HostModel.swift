@@ -2370,7 +2370,7 @@ final class RemoteHostModel: ObservableObject {
 
     private func applyControlState(notifyPhone: Bool) {
         let effective = sessionControlAllowed && controlPermission.isGranted
-        if !effective || !inputAccess.accessibility.isGranted { invalidateTextFocus() }
+        if !effective || !inputAccess.accessibility.isGranted { invalidateTextFocus(); retireWindowWorkspace() }
         if sessionState == .couch { refreshCouchHealth() }
         input.enabled = HostControlPolicy.isEnabled(
             userConsent: sessionControlAllowed,
@@ -2707,6 +2707,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func endCapture() {
+        retireWindowWorkspace()
         away.refresh()
         shortcutAppTask?.cancel(); shortcutAppTask = nil
         shortcutAppPublication = FrontmostAppPublication(); shortcutAppPeer = nil
@@ -2877,11 +2878,54 @@ final class RemoteHostModel: ObservableObject {
         }
     }
 
+    private let windowWorkspace = HostWindowWorkspace()
+    private var windowWorkspaceTask: Task<Void, Never>?
+    private var windowWorkspaceAllowed: Bool {
+        WorkspaceUtilities.isEnabled() && connection.peerFeatures.contains(SessionFeature.extendedFeatureList) &&
+        connection.connected && active && sessionState == .picture && sessionHealthy && input.enabled &&
+        sessionControlAllowed && controlPermission.isGranted && inputAccess.accessibility.isGranted && AXIsProcessTrusted() &&
+        !captureScopeViewOnly && !liveViewOnly && !phonePause.isPaused && !away.isLocking &&
+        !screenLocked && !HostScreenLock.isLocked() && !bigTextHandlingScreenChanges && !bigText.isChanging
+    }
+    private func retireWindowWorkspace() {
+        windowWorkspaceTask?.cancel(); windowWorkspaceTask = nil; windowWorkspace.retire()
+    }
+    private func receiveWindowWorkspace(_ action: RemoteAction) {
+        guard (try? action.validateWorkspace()) == true, let frame = action.workspace, frame.kind == .windows,
+              let request = try? frame.decode(WindowWorkspaceRequest.self), (try? request.validate()) != nil else { return }
+        guard action.epoch == inputEpoch.value, windowWorkspaceAllowed, let display = capturedDisplayID else {
+            retireWindowWorkspace(); return
+        }
+        if request.operation == .close { retireWindowWorkspace(); return }
+        releaseRemoteInput(notifyPhone: true)
+        let session = connection.presentationSessionID, epoch = inputEpoch.value, bounds = input.displayBounds
+        guard let bounds else { return }
+        windowWorkspaceTask?.cancel()
+        windowWorkspaceTask = Task { [weak self] in
+            guard let self else { return }
+            let reply: WindowWorkspaceReply?
+            switch request.operation {
+            case .list: reply = await self.windowWorkspace.list(session: session, epoch: epoch, display: display, frame: bounds)
+            case .focusCurrent:
+                let geometry = await self.windowWorkspace.focusedGeometry(displayFrame: bounds)
+                reply = .init(operation: .focusCurrent, outcome: geometry == nil ? .unsupported : .confirmed, geometry: geometry, display: geometry == nil ? nil : display)
+            case .activate:
+                reply = self.windowWorkspace.activate(request, session: session, epoch: epoch, display: display, displayFrame: bounds, allowed: self.windowWorkspaceAllowed, authority: { self.windowWorkspaceAllowed && self.connection.presentationSessionID == session && self.inputEpoch.value == epoch })
+            case .close: reply = nil
+            }
+            guard !Task.isCancelled, self.windowWorkspaceAllowed, self.connection.presentationSessionID == session,
+                  self.inputEpoch.value == epoch, self.capturedDisplayID == display, self.input.displayBounds == bounds,
+                  let reply, let response = try? WorkspaceFrame(kind: .windows, requestID: frame.requestID, value: reply) else { return }
+            _ = self.connection.sendControl(.workspace(response, epoch: epoch))
+        }
+    }
+
     private func receive(_ data: Data) {
         guard let action = try? JSONDecoder().decode(RemoteAction.self, from: data) else {
             countInput("rejected-parse"); connection.endPhoneInputSession("Invalid phone input."); return
         }
         countInput("received")
+        if action.action == "workspace" { receiveWindowWorkspace(action); return }
         if action.action == "wakeRequest" { receiveWakeRequest(action); return }
         guard SharedCaptureScopePolicy.permits(action.action, kind: captureScopeKind) else {
             countInput("rejected-capture-scope"); return
@@ -3653,6 +3697,7 @@ final class RemoteHostModel: ObservableObject {
                 input.invalidateQueued(); inputFreshness.expireTokens()
                 releaseRemoteInput(notifyPhone: false)
                 guard !input.held else { return false }
+                retireWindowWorkspace()
                 liveViewOnly = next
                 return true
             }
@@ -3802,6 +3847,7 @@ final class RemoteHostModel: ObservableObject {
     /// The phone is backgrounding: stop capture and input now, but keep the peer and its
     /// session slot so a quick return resumes without renegotiation.
     private func pauseForPhoneBackground(ending: Bool = false) {
+        retireWindowWorkspace()
         cancelPictureRefresh()
         guard !phonePause.isPaused && (ending || !liveViewOnly) else { return }
         phoneAudioRequested = false
@@ -3860,6 +3906,7 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Sleep, lock and display availability
 
     private func handleAvailability(_ event: HostSleepPolicy.Event) {
+        retireWindowWorkspace()
         couchSessionSnapshot.observeAvailability(event)
         switch HostSleepPolicy.response(to: event) {
         case .tearDown(let presence):
@@ -4045,6 +4092,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func advanceEpoch() {
+        retireWindowWorkspace()
         phoneAudioRequested = false
         if usesPhoneAudioRequest { reconcileSystemAudio() }
         clipboard.stopAutomaticSync()
