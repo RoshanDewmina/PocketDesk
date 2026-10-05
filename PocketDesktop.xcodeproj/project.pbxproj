@@ -527,6 +527,7 @@
 		6B2FE715EF8AC2D65B61F3A6 /* SessionLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10107405AE87CFAB89018C7 /* SessionLifecycleTests.swift */; };
 		6B32B79ADA768EC21B5C1CBD /* ExactTextTraits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26B019D93CB3EB2FE8E65903 /* ExactTextTraits.swift */; };
 		6B4BD0823ED95A49E76AA6C4 /* MiniMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = A23F9F9BE132EBDFD48DACFA /* MiniMap.swift */; };
+		6B4DB0FEC5E069EAEE599FD3 /* StillTextQPBenchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9055A61DA58F74FAE0883EDC /* StillTextQPBenchTests.swift */; };
 		6B67E276F174051A483976BF /* StreamQuality.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68E0D2431AB187AE68C1ED2 /* StreamQuality.swift */; };
 		6B74AC1E199D283CBA101C63 /* LocalNetworkAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92C951C3F2B08D637CCA2D67 /* LocalNetworkAccess.swift */; };
 		6BF04489AA311C9D9C2E1AA9 /* DesktopH264Encoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A8764CD274C62102BEC76EB /* DesktopH264Encoder.swift */; };
@@ -1157,7 +1158,6 @@
 		F467F2AC18E666A0748C5E92 /* StreamTuning.swift in Sources */ = {isa = PBXBuildFile; fileRef = E36FFD3DA225862D411FE682 /* StreamTuning.swift */; };
 		F4C477395032885A12289F52 /* AnywhereAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 918B1C0137E63AC8DC396FEC /* AnywhereAccess.swift */; };
 		F4DD173F7F7812027D5F9BF0 /* OwnedVTEncoderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D71FFB2DEE9E72F9602C1DDE /* OwnedVTEncoderTests.swift */; };
-		4953F770C167388B4DB39E52 /* StillTextQPBenchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52584E410DA5E9B640D4B099 /* StillTextQPBenchTests.swift */; };
 		F56863A3C6F8A29444D26B04 /* ServerDataRemoval.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BE5ACECBC6DADB638DD5B01 /* ServerDataRemoval.swift */; };
 		F57D53382B2FB794C10726E7 /* LegalNoticesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AE917A2022CA1A828BFA243 /* LegalNoticesView.swift */; };
 		F5ADC2613AFC8F2B5C13D574 /* CommerceLocalizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CE11B4EDD008996DCD0E95A /* CommerceLocalizationTests.swift */; };
@@ -1679,6 +1679,7 @@
 		8F36AA8B0DB04E7E253D2B77 /* BigTextWindows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BigTextWindows.swift; sourceTree = "<group>"; };
 		8F3994558043A0D771F0487E /* MacVitalsNotices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacVitalsNotices.swift; sourceTree = "<group>"; };
 		8FE53ED98843F5A8A096B176 /* HostOnboardingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostOnboardingTests.swift; sourceTree = "<group>"; };
+		9055A61DA58F74FAE0883EDC /* StillTextQPBenchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StillTextQPBenchTests.swift; sourceTree = "<group>"; };
 		908169FFD3D57426CE04BCDD /* HEVCProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HEVCProbeTests.swift; sourceTree = "<group>"; };
 		908BCAB68293AD738FE2FD79 /* PhoneTrustStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneTrustStore.swift; sourceTree = "<group>"; };
 		90D90505BF498BF2C1FA801F /* HostReadiness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostReadiness.swift; sourceTree = "<group>"; };
@@ -1848,7 +1849,6 @@
 		D676C8D55890E8FEEBB02300 /* MacShareBlocker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacShareBlocker.swift; sourceTree = "<group>"; };
 		D6F48E835098ABC5915960B7 /* OFL-Doto.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "OFL-Doto.txt"; sourceTree = "<group>"; };
 		D71FFB2DEE9E72F9602C1DDE /* OwnedVTEncoderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OwnedVTEncoderTests.swift; sourceTree = "<group>"; };
-		52584E410DA5E9B640D4B099 /* StillTextQPBenchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StillTextQPBenchTests.swift; sourceTree = "<group>"; };
 		D789EA724D330A9ED4B742AC /* SessionResumeCapsule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionResumeCapsule.swift; sourceTree = "<group>"; };
 		D79BC9DD72DC37195BAFA979 /* PhoneSystemAudioPlayback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneSystemAudioPlayback.swift; sourceTree = "<group>"; };
 		D7FB21B6BC9FD24A39B82907 /* PacketRepairPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketRepairPolicy.swift; sourceTree = "<group>"; };
@@ -2446,7 +2446,6 @@
 				974DBC6590A3D7D66B8C20B1 /* NativeProtocolTests.swift */,
 				C5BDC1BD3290AC291C79D0AE /* OwnedHEVCCodecTests.swift */,
 				D71FFB2DEE9E72F9602C1DDE /* OwnedVTEncoderTests.swift */,
-				52584E410DA5E9B640D4B099 /* StillTextQPBenchTests.swift */,
 				6260AE7D364B38797238AE24 /* OwnerLocalCoordinatorTests.swift */,
 				66FDE764B193EF993CFCF635 /* PairStoreDeletionTests.swift */,
 				3213600B3AABB6616A17F34E /* PeerAudioLifetimeTests.swift */,
@@ -2470,6 +2469,7 @@
 				30E36D08F113A3C1570C8E2F /* SharedCaptureScopeTests.swift */,
 				1D4063558000405B9A8C3D84 /* SignalingKeepaliveTests.swift */,
 				EEDC26EC7C8DEE5BA1C95C79 /* StaleSignalTests.swift */,
+				9055A61DA58F74FAE0883EDC /* StillTextQPBenchTests.swift */,
 				5CCA24F9ACD8750FAA08EB3C /* StreamInstrumentStatsTests.swift */,
 				5C66DD577EE47D01D2F1DA6C /* StreamLoopbackBenchmarkTests.swift */,
 				6B1A621E30D5EBB91E5AF5AC /* StreamQualityTests.swift */,
@@ -4309,7 +4309,6 @@
 				6611485936BF9F8246C29D05 /* OwnedHEVCCodecTests.swift in Sources */,
 				97956E566BA252F947812C4B /* OwnedVTEncoder.swift in Sources */,
 				F4DD173F7F7812027D5F9BF0 /* OwnedVTEncoderTests.swift in Sources */,
-				4953F770C167388B4DB39E52 /* StillTextQPBenchTests.swift in Sources */,
 				3B14FB36A4DA2AD091432DDF /* OwnerLocalCoordinatorTests.swift in Sources */,
 				188A90533FF354B389C1B40B /* PacketRepairPolicy.swift in Sources */,
 				F614EBB3B5796328CD19E445 /* PairStoreDeletionTests.swift in Sources */,
@@ -4362,6 +4361,7 @@
 				A8CBCA8DA03D826EBB29342C /* SignalingKeepaliveTests.swift in Sources */,
 				76CA2F1D1845ECB6919DEEB8 /* StaleSignalTests.swift in Sources */,
 				DC74E5269AB40D22C104B7F7 /* StillTextPreferences.swift in Sources */,
+				6B4DB0FEC5E069EAEE599FD3 /* StillTextQPBenchTests.swift in Sources */,
 				61D5BD5665E9CB1B19430100 /* StreamColor.swift in Sources */,
 				D5D9E2D4F8E1320E75182A68 /* StreamInstrumentStatsTests.swift in Sources */,
 				B8F6977E9B7D3D31A77F2708 /* StreamLadder.swift in Sources */,
@@ -4832,7 +4832,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ARCHS = arm64;
-				EXCLUDED_ARCHS = x86_64;
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
@@ -4840,6 +4839,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				ENABLE_HARDENED_RUNTIME = YES;
+				EXCLUDED_ARCHS = x86_64;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -4865,7 +4865,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.RemoteE2ETests;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "RemoteE2ETests/RemoteE2ETests-Bridging-Header.h";
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = PocketDeskRemote;
 			};
 			name = Debug;
@@ -4939,7 +4939,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ARCHS = arm64;
-				EXCLUDED_ARCHS = x86_64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";
@@ -4949,6 +4948,7 @@
 				CURRENT_PROJECT_VERSION = 20261003.1;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				ENABLE_HARDENED_RUNTIME = YES;
+				EXCLUDED_ARCHS = x86_64;
 				FARSIDE_HOST_SERVICE_URL = "wss://signal.getfarside.com/signal";
 				FARSIDE_UPDATE_PUBLIC_KEY = "";
 				GENERATE_INFOPLIST_FILE = YES;
@@ -5003,7 +5003,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.RemoteE2ETests;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "RemoteE2ETests/RemoteE2ETests-Bridging-Header.h";
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = PocketDeskRemote;
 			};
 			name = Release;
@@ -5175,7 +5175,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ARCHS = arm64;
-				EXCLUDED_ARCHS = x86_64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";
@@ -5184,6 +5183,7 @@
 				CURRENT_PROJECT_VERSION = 20261003.1;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				ENABLE_HARDENED_RUNTIME = YES;
+				EXCLUDED_ARCHS = x86_64;
 				FARSIDE_HOST_SERVICE_URL = "";
 				FARSIDE_UPDATE_PUBLIC_KEY = "";
 				GENERATE_INFOPLIST_FILE = YES;
@@ -5515,13 +5515,13 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ARCHS = arm64;
-				EXCLUDED_ARCHS = x86_64;
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				ENABLE_HARDENED_RUNTIME = YES;
+				EXCLUDED_ARCHS = x86_64;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
