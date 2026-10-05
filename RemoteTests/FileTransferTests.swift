@@ -464,6 +464,39 @@ final class FileTransferEngineTests: XCTestCase {
         XCTAssertEqual(files(), [])
     }
 
+    func testBrowserRequestedDescriptorDownloadUsesIntegrityEngine() async throws {
+        let grantFolder = folder.appendingPathComponent("granted", isDirectory: true)
+        try FileManager.default.createDirectory(at: grantFolder, withIntermediateDirectories: true)
+        let data = Data(repeating: 0x42, count: 130_000)
+        try data.write(to: grantFolder.appendingPathComponent("browser.bin"))
+        let browser = FileBrowserAccess(), root = try browser.grant(fileBrowserTestCanonicalURL(grantFolder))
+        let entry = try XCTUnwrap(browser.list(root, offset: 0, filter: "").entries.first)
+        let id = FileTransferID.make()
+        XCTAssertTrue(phone.requestBrowserDownload(id) {
+            let request = FileBrowserRequest(operation: .download, entry: entry.id, transfer: id)
+            let frame = try! WorkspaceFrame(kind: .files, requestID: InputCausalEnvelope.identity(), value: request)
+            let decoded = try! frame.decode(FileBrowserRequest.self)
+            let (source, name) = try! browser.source(decoded.entry!)
+            _ = self.mac.send(source, name: name, type: nil, transfer: decoded.transfer)
+            return true
+        })
+        try await wait { phoneFinishes.count == 1 }
+        XCTAssertEqual(phoneFinishes.first?.status, .stored)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(phoneFinishes.first?.savedURL)), data)
+        XCTAssertNil(phone.pendingRequest)
+        XCTAssertTrue(controlFrames.contains("complete"))
+        XCTAssertTrue(phone.isIdle && mac.isIdle)
+    }
+    func testBrowserRegistrationKeepsUnsolicitedDownloadRejected() async throws {
+        let expected = FileTransferID.make()
+        XCTAssertTrue(phone.requestBrowserDownload(expected) { true })
+        _ = try mac.send(DataByteSource(Data([1])), name: "unsolicited.txt", type: nil).get()
+        try await wait { macFinishes.count == 1 }
+        XCTAssertEqual(macFinishes.first?.status, .notAllowed)
+        XCTAssertEqual(phone.pendingRequest, expected)
+        phone.cancelAll()
+    }
+
     func testMacToPhoneRequestDeliversThePickedFile() async throws {
         mac.onRequest = { [unowned self] transfer in
             _ = mac.send(DataByteSource(Data("from mac".utf8)), name: "notes.txt", type: "public.plain-text", transfer: transfer)

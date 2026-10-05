@@ -31,6 +31,7 @@ struct HostSettingsView: View {
                         phoneSection
                         captureScopeSection
                         sharingSection
+                        HostFileBrowserFoldersView()
                         HostGuestSettingsView(state: state, actions: actions)
                         serverDataSection
                     }

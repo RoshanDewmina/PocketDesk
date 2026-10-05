@@ -241,6 +241,7 @@ final class RemoteHostModel: ObservableObject {
     private var timedPauseTask: Task<Void, Never>?
     private let clipboard = HostClipboardService()
     private let fileTransfer = HostFileTransferService()
+    private lazy var fileBrowser = HostFileBrowserService(access: HostFileBrowserFolders.shared.access)
     private var phonePause = HostPhonePause()
     private var lifecycleTimer: Timer?
     private var permissionTimer: Timer?
@@ -353,7 +354,7 @@ final class RemoteHostModel: ObservableObject {
         guests.endAll()
         _ = capture.stop() // synchronous frame fence, before any await or peer teardown
         clipboard.reset()
-        fileTransfer.reset()
+        fileTransfer.reset(); fileBrowser.reset()
         stopSharing()
         advanceEpoch()
         captureScopeEpoch &+= 1
@@ -1235,6 +1236,18 @@ final class RemoteHostModel: ObservableObject {
             guard let self, let refusal = self.fileTransferRefusal else { return nil }
             return self.logFileRefusal(refusal)
         }
+        fileBrowser.engine = engine
+        fileBrowser.allowed = { [weak self] in
+            guard let self else { return false }
+            return WorkspaceUtilities.isEnabled(self.preferences.defaults) && self.connection.peerFeatures.contains(WorkspaceUtilities.feature)
+                && self.fileTransferRefusal == nil && self.controlPermission.isGranted && self.sessionState == .picture
+                && self.sessionHealthy && !self.screenLocked && !self.displayAsleep
+        }
+        fileBrowser.reply = { [weak self] frame in
+            guard let self, self.connection.connected, self.active, !self.sessionRefused else { return }
+            _ = self.connection.sendControl(.workspace(frame, epoch: self.inputEpoch.value))
+        }
+        HostFileBrowserFolders.shared.didRevoke = { [weak self] in self?.fileTransfer.revoke(); self?.fileBrowser.reset() }
         connection.fileTransfer = engine
     }
 
@@ -1768,7 +1781,7 @@ final class RemoteHostModel: ObservableObject {
         }
         if input.held { connection.dropPeerSession() }
         guests.endAll(); browserSession.stop()
-        invalidateTextFocus(); clipboard.reset(); fileTransfer.reset()
+        invalidateTextFocus(); clipboard.reset(); fileTransfer.reset(); fileBrowser.reset()
         connection.media?.setSystemAudioEnabled(false); capture.setSystemAudioEnabled(false)
         sendCaptureHealth(false)
     }
@@ -2382,7 +2395,7 @@ final class RemoteHostModel: ObservableObject {
         if !effective {
             releaseRemoteInput(notifyPhone: notifyPhone)
             clipboard.reset()
-            fileTransfer.revoke()
+            fileTransfer.revoke(); fileBrowser.reset()
         }
         reconcileAutomaticClipboard()
         if notifyPhone, connection.connected {
@@ -2755,7 +2768,7 @@ final class RemoteHostModel: ObservableObject {
         acceptedPhonePauseEpoch = nil
         liveViewOnly = false
         clipboard.reset()
-        fileTransfer.reset()
+        fileTransfer.reset(); fileBrowser.reset()
         releaseRemoteInput(notifyPhone: false)
         input.endCausalContext(); inputFreshness.invalidate()
         input.resetNativeSequence()
@@ -2955,6 +2968,13 @@ final class RemoteHostModel: ObservableObject {
         }
         if action.action == RemoteAction.modeAction {
             receiveModeRequest(action)
+            return
+        }
+        if action.action == "workspace", action.workspace?.kind == .files {
+            guard action.epoch == inputEpoch.value, (try? action.validateWorkspace()) == true,
+                  connection.connected, active, !sessionRefused, !deliberatePeerEnding,
+                  let frame = action.workspace else { return }
+            fileBrowser.receive(frame)
             return
         }
         if RemoteAction.sessionExtensionActions.contains(action.action) {
@@ -3657,7 +3677,7 @@ final class RemoteHostModel: ObservableObject {
                 return true
             }
             guard released else { connection.dropPeerSession(); return }
-            invalidateTextFocus(); clipboard.reset(); fileTransfer.reset()
+            invalidateTextFocus(); clipboard.reset(); fileTransfer.reset(); fileBrowser.reset()
             // Restore only the Mac owner's existing producer consent when leaving live PiP.
             // Phone playback remains muted until the person explicitly enables it again.
             if next { cancelHeldScale(); phoneAudioRequested = false }
@@ -3813,7 +3833,7 @@ final class RemoteHostModel: ObservableObject {
         phonePause.begin(at: ProcessInfo.processInfo.systemUptime)
         reconcileSystemAudio()
         clipboard.reset()
-        fileTransfer.reset()
+        fileTransfer.reset(); fileBrowser.reset()
         invalidateTextFocus()
         releaseRemoteInput(notifyPhone: false)
         input.invalidateQueued(); inputFreshness.expireTokens()
@@ -4051,7 +4071,7 @@ final class RemoteHostModel: ObservableObject {
         guests.endAll()
         // A transfer cannot continue across a new capture geometry. Tell the phone (it would otherwise show
         // progress until the stall timeout), before the epoch moves; with no phone there is nobody to tell.
-        if connection.connected { fileTransfer.revoke() } else { fileTransfer.reset() }
+        if connection.connected { fileTransfer.revoke(); fileBrowser.reset() } else { fileTransfer.reset(); fileBrowser.reset() }
         // Retire both posted and admitted holds before publishing the new scope.
         releaseRemoteInput(notifyPhone: true)
         invalidateTextFocus()

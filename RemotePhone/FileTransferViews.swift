@@ -1,6 +1,7 @@
 import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
+import QuickLook
 
 struct SessionFileDrop: ViewModifier {
     let model: PhoneRemoteModel
@@ -21,6 +22,7 @@ struct FileTransferRow: View {
     @State private var importing = false
     @State private var photo: PhotosPickerItem?
     @State private var loadingPhoto = false
+    @State private var browsing = false
 
     /// Unavailable buttons stay tappable so a tap can say why; only a transfer in flight disables them.
     private var enabled: Bool { model.fileTransferSupported && !files.isBusy && !loadingPhoto }
@@ -47,8 +49,14 @@ struct FileTransferRow: View {
             }
             .buttonStyle(FarsideSecondaryButtonStyle(height: 44, fullWidth: false))
             .disabled(!enabled)
+            if model.hostFeatures.contains(WorkspaceUtilities.feature) {
+                Button { attempt { browsing = true } } label: { Label("Browse Mac folders", systemImage: "folder") }
+                    .disabled(!model.fileBrowserAvailable || files.isBusy)
+                    .accessibilityIdentifier("remote.files.browseMac")
+            }
             Text(caption).font(.footnote).foregroundStyle(Farside.Palette.ash)
         }
+        .sheet(isPresented: $browsing) { FileBrowserView(model: model, browser: model.fileBrowser, files: files) }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
             guard case .success(let url) = result else { return }
             model.sendFileToMac(url, securityScoped: true)
@@ -157,7 +165,7 @@ struct FileTransferCapsule: View {
             return notice.tone == .success ? .success : .warning
         }
         .sheet(item: $files.received) { file in
-            ActivitySheet(url: file.url).ignoresSafeArea()
+            ReceivedFilePreviewView(url: file.url)
         }
     }
 
@@ -226,4 +234,25 @@ struct ActivitySheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+/// Preview is offered only for a locally stored, integrity-verified file. Sharing remains explicit.
+struct ReceivedFilePreviewView: View {
+    let url: URL
+    @State private var preview: URL?
+    @State private var sharing = false
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 24) {
+                Image(systemName: "doc").font(.largeTitle)
+                Text(url.lastPathComponent).multilineTextAlignment(.center)
+                if QLPreviewController.canPreview(url as NSURL) {
+                    Button("Preview") { preview = url }
+                }
+                Button("Share or Save to Files") { sharing = true }
+            }.padding().navigationTitle("Received file")
+        }
+        .quickLookPreview($preview)
+        .sheet(isPresented: $sharing) { ActivitySheet(url: url).ignoresSafeArea() }
+    }
 }

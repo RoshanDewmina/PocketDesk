@@ -119,6 +119,12 @@ final class PhoneFileTransfer: ObservableObject {
         }
     }
 
+    func requestBrowserDownload(_ id: String, send: () -> Bool) {
+        if engine.requestBrowserDownload(id, send: send) {
+            visibleIncomingAdmission = nil; locallyCancelledIncomingAdmission = nil; notice = nil
+        } else { post("This file could not be requested. Wait for the current transfer or reconnect.", .caution) }
+    }
+
     func cancel() {
         locallyCancelledIncomingAdmission = engine.incomingAdmissionID
         cancelledHere = true
