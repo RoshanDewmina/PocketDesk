@@ -1,6 +1,6 @@
 # Featuring claim verdict — 20aded1 / 20261002.2
 
-**Do not paste nomination v3 unchanged. Its iPad/Duo lower-half trackpad promise is not implemented on this build, its practice-pad timing is not guaranteed, and its add-on character calculation is stale. No new HANDS-gated candidate is approved by this source audit.** Source-supported facts can stay; physical, uploaded-binary and provider gates stay separate. The receipt table below distinguishes completed execution from pending UI checks.
+**Do not paste nomination v3 unchanged. Its iPad/Duo lower-half trackpad promise is not implemented on this build, its absolute connection wording and practice-pad timing are not accurate, and its add-on character calculation is stale. No new HANDS-gated candidate is approved by this source audit.** Source-supported facts can stay; physical, uploaded-binary and provider gates stay separate. The receipt table below distinguishes completed execution from pending UI checks.
 
 ## Safe wording and proof boundaries
 
@@ -44,18 +44,18 @@ This table is a copy decision with explicit scopes. It does not turn older-build
 | Candidate | Decision | What remains |
 |---|---|---|
 | C1 haptic tick | WAIT HANDS | Feel on shipping iPhone; source generator path only is proven. |
-| C2 practice pad | TRIM TIMING; WAIT FULL GESTURE ACCEPTANCE | All five completion gates; public XCTest lacks two-finger swipe, pointer-scroll attempt cannot substitute for touch. |
+| C2 practice pad | TRIM TIMING; WAIT FULL GESTURE ACCEPTANCE | Corrected phone features: Move/Zoom pass; Click misses Yes after pad resize, Drag lacks Next, public pointer Scroll is unsupported. All-five acceptance fails; physical checks remain. |
 | C3 shortcuts/on-device speech | WAIT HANDS | Simulator reachability and recognizer's required-on-device policy are narrower than Mac delivery and actual speech insertion. |
 | C4 Stop Sharing | WAIT HANDS | Host teardown source is real; no live host UI -> phone termination acceptance yet. |
 | C5 no time limit | WAIT AT LEAST 35 MIN | Native renewable-lease tests are not a long live shipping-session pass. Browser has cap. |
 | C6 paid Anywhere | WAIT EXTERNAL + HANDS | Purchasable plan, agreement, restore/expiry and real relay/cellular. Keep Coming Soon. |
 | C7 countries | WAIT ASC READ-BACK | Confirm actual availability under authorized store workflow. |
-| C8 audited / labels | WITHHOLD ORIGINAL C8 AND SUPPORTS LABELS | The old dedicated phone audits ended incomplete: an AX snapshot-query timeout and a parent cancellation. The old iPad preparation failed before any audit. Bounded fresh recovery is pending; keep ongoing-work wording and withhold the conditional audit statement until both platform inventories actually finish. Full common-task and device criteria remain separate. |
+| C8 audited / labels | WITHHOLD ORIGINAL C8 AND SUPPORTS LABELS | Fresh phone execution completed all 18 audits with failures (951 raw callbacks plus 10 fixture/navigation errors); the first iPad preparation failed before audit, and corrected iPad28 is active; keep ongoing-work wording and withhold the conditional audit statement until both platform inventories actually finish. Full common-task and device criteria remain separate. |
 | C9 launch readiness | WAIT RELEASE/PROVIDER | Production, notarized signed download and uploaded processed build remain open. The homepage URL alone has a passing HTTPS receipt. No provider/store action occurred here. |
 | C10 saved listing alignment | FLAG FOR OWNER/ORCHESTRATOR | Reported “no time limit” / purchasable Anywhere copy exceeds accepted evidence; no live ASC read or edit here. |
 | C11 naming Apple feature | TECHNICAL FACT VERIFIED; COPY CHOICE | Existing supplied wording can remain. Proposed trim frees space; no device check or new approval request is needed for this review. |
 | C12 platform requirement | KEEP SOURCE-SUPPORTED REQUIREMENT | Effective settings receipt below; macOS 26 runtime/release distribution separate. |
-| C13 pinch | WAIT HANDS ON UPLOADED BINARY | Simulator viewport/coach touch tests cannot certify physical feel/edges on upload. |
+| C13 pinch | WAIT HANDS ON UPLOADED BINARY | Corrected session-pinch validator still fails1.0→1.0; wider canvas/readout normalization needs separate interpretation. Coach Zoom passes only its local lesson. Physical feel/edges on upload remain open. |
 
 ## Copy budget and proposed trims
 
@@ -74,7 +74,7 @@ This table is a copy decision with explicit scopes. It does not turn older-build
 
 ## Execution receipts and their limits
 
-Production source and project settings remain byte-identical to **20aded1 / build 20261002.2**. The parent reports verification checkpoint **1dd537a**, including approved test-harness recovery **c48b20d**. Verification changes affect tests/scripts, not production behavior. Archived manifests bind app/test bundles and resources; a source or artifact identity match does not convert incomplete execution into acceptance. An uploaded Release artifact needs its own receipt and physical checks.
+Production source and project settings remain byte-identical to **20aded1 / build 20261002.2**. Verification checkpoint **26f4ae4** contains the reviewed corrections and runner safety; production remains the baseline. Verification changes affect tests/scripts, not production behavior. Archived manifests bind app/test bundles and resources; a source or artifact identity match does not convert incomplete execution into acceptance. An uploaded Release artifact needs its own receipt and physical checks.
 
 | Check | Actual result | Scope and remaining limit |
 |---|---|---|
@@ -87,19 +87,20 @@ Production source and project settings remain byte-identical to **20aded1 / buil
 | Old dedicated phone units | Finalized **89/89 passed**, zero failures/skips | Summary/tree and post-stop identity receipt in `logs/20261002T152929.742920Z`. Unit success is independent of claims coverage. |
 | Old dedicated phone claims UI | Finalized partial: **2/8 methods executed**, zero passed; one AX query timeout and one parent cancellation; six absent | AX **30/31** intended reached/attempted; default **42/44**. Full class not accepted. Cancellation is not a product assertion failure. |
 | Old dedicated iPad claims UI | Runner preparation failure; **zero claim methods and zero audit coverage** | `logs/20261002T163430.898388Z`. Infrastructure failure supplies neither feature pass nor product failure. |
-| Fresh bounded phone recovery | **PENDING**: parent session 70526; `logs/20261002T171227.844702Z` | Selection is 89 units + 24 UI methods. Frozen source/artifact manifest exists; no finalized native pass or coverage count yet. |
-| Fresh bounded iPad recovery | **PENDING**: planned 24 UI methods | Keep the old preparation failure separate. A pending selection does not establish runtime coverage. |
+| Fresh bounded phone recovery | Finalized **113 cases: 93 passed, 20 failed, zero skipped**; `logs/20261002T171227.844702Z` | 89 units + 4 UI passes; all 18 audits, aggregate Coach and pinch failed. 128 contexts attempted / 122 reached; 951 raw callbacks + 10 navigation errors. Cleanup/native exit 241 is separately a whole-stage failure. |
+| Corrected phone feature rerun | Finalized **10 methods: 6 passed, 4 failed**; `logs/20261002T193617.918907Z` | Move/Zoom, keyboard entry, portrait bar, voice preview and offline concealment pass. Click/Drag/Scroll/session pinch fail. Compiler/bundle/verifier identity MATCH; native65, owned Shutdown cleanup accepted. |
+| Corrected iPad recovery | **ACTIVE**:28UI methods, logs/20261002T191928.837221Z | Fresh same-source DD-ipad compile exit0 before reboot; no finalized acceptance yet. Original preparation failure remains separate. |
 | Assigned Duo iOS 27.1, single boot | Infrastructure failure: Data Migration Failed after 36 seconds | Process exit 0 was rejected by semantic boot acceptance. No retry or app/fold proof. |
 | Public homepage | PASS: HEAD 200; GET 104,223 bytes at 13:26 UTC on 2 October | Live URL from this Mac; supersedes earlier DNS failure. No download/notarization/backend/upload/global-availability inference. |
 | Verification harness guards | PASS: 23 synthetic checks, 15 prior + 8 isolation | Harness guard behavior, not app feature acceptance. |
 
 The core selections ran 83 tests in 34.139 seconds and 110 in 1.163 seconds. Local integration fixtures use short direct transport loops and fabricated TURN-refresh responses; a separate refresh fixture delivered 137 frames across four ICE restarts. They cannot unlock C4's live host-button teardown or C5's uninterrupted native session of at least 35 minutes. A standalone codec loopback would not exercise those acceptance conditions.
 
-`SIM-RESULTS.md` and `SIM-AUDIT-COUNTS.json` contain the authoritative finalized partial runtime analysis. The old dedicated phone captured **119 audit slices and 525 raw callback occurrences**, covering 72 marker-confirmed intended contexts out of 75 attempted. The callbacks include 257 Dynamic Type, 163 contrast and 77 clipping observations, plus 28 other observations. There are 127 unique surface/type pairs or 197 slice/type pairs; none is a deduplicated count of unique product defects. Final fixture-error collector totals are unknown because both audit methods ended incomplete. Markers establish semantic presence, not usable layout or successful VoiceOver tasks. The old iPad had no claim-method execution and therefore no audit result.
+`SIM-RESULTS.md` and `SIM-AUDIT-COUNTS.json` contain the authoritative finalized runtime analysis. The latest phone recovery completed 113 cases: **89 unit passes + 4 UI passes + 20 UI failures**. The passing UI scope is keyboard/dictation entry points, portrait key-bar reachability, landscape nonrecording voice-preview layout and offline concealment/Home background-foreground. It does not prove real Mac key delivery, spoken transcription or a live app-switcher thumbnail.
 
-Six original phone claim methods never ran: the two Home inventories, coach gestures, keyboard/dictation reachability, Home concealment lifecycle and pinch. Seeded coach, voice-preview or concealed markers in audit fixtures do not prove the missing interactions. No numeric session-pinch receipt, live speech recognition or physical app-switcher thumbnail acceptance is established by those partial runs.
+All 18 bounded audit methods failed; **128 contexts attempted/122 marker-confirmed**, across233 captured slices. The **951 raw callbacks +10 fixture/navigation errors** are repeated findings rather than 951 unique defects. The aggregate Coach method failed on unsupported public pointer input, and pinch recorded 1.0→1.0. The revised independent Coach and pinch fixtures require fresh native results. Finalized source/full artifact identity matches the frozen tested manifest; the later owned cleanup/native exit 241 is independently retained as a whole-stage failure. Neither a finished test tree nor its passing cases turn that command green.
 
-The fresh phone recovery selects **18 bounded audit methods across both sizes and six feature/reachability methods**, plus the 89 units. Its manifest lists 64 intended surfaces per size; that is a plan, not a measured coverage result. The fresh iPad 24-method selection is pending. **No finalized native passes from either fresh recovery are available at this document update.** The parent will provide actual result exports and coverage. Even successful bounded methods cannot retroactively pass the original full class or complete physical/common-task Nutrition Label criteria.
+The old partial91-case phone and runner-preparation iPad failure remain historical in the same records. Corrected **iPad28** and phone Home/Settings audit groups are active; corrected phone feature rerun finalized6pass/4fail after its9.156second compilation; neither is accepted yet. The corrected selectors retain all audit findings and separate five gesture lessons so unsupported public Scroll cannot prevent Drag/Zoom execution. Current generic iPad source and fixtures do not implement the absent baseline split/fold promise.
 
 Apple's iPhone Mirroring direction, Speech on-device requirements and accessibility criteria were checked against primary documentation on 2 October. Speech source checks recognition support and sets `requiresOnDeviceRecognition` before use; preview transcripts do not exercise the microphone. Minimum-OS settings do not establish runtime support for every SDK 27 API on OS 26.
 
@@ -108,3 +109,7 @@ Copy budgets apply exactly to the supplied **979-character** Block A and the exi
 ## Next-build acceptance
 
 Run the one-command runner in `script/claims/README.md` against the integrated batch 7 commit, reconcile deliberately removed/added UI surfaces, then complete `HANDS-CHECKLIST.md` on the next installed build and uploaded artifact. The 20-minute active sitting cannot include the separate session tail of at least 35 minutes, a full accessibility assessment or provider/release gates. This lane does not install, merge, deploy or change store fields.
+
+## Corrected feature failure interpretation
+
+Click was admitted by the real practice model, but the pointer ended outside Yes after the pad shrank (pointer254,149→254,128; padheight458.3→396.3; Yesexpandedtop130). Source rescales the pointer with the pad while the dialog Y stays fixed. This supports a real layout fragility; earlier Click timing passed, so do not call the gesture permanently absent. Drag moves the pointer without carrying the file; its double-tap/hold synthesis timing remains uncertain. Session pinch leaves Current zoom1.0 while the accessible canvas becomes roughly3.48times wider; missing immediate post-Done/pre-pinch geometry prevents attributing that width change solely to pinch. The strict failed receipt is retained. Independent PHONE-COACH-DIAGNOSIS.md and PHONE-PINCH-DIAGNOSIS.md in the lane output record source and attachment anchors. No production fix or threshold relaxation was made; these candidates remain withheld.

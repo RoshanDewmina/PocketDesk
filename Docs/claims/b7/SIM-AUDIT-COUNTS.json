@@ -1,7 +1,7 @@
 {
-  "schema_version": 7,
-  "analysis_status": "finalized_completed_113_case_phone_selection_failed_ipad_infrastructure_failure_retained",
-  "generated_at_utc": "2026-10-02T19:23:57.956541+00:00",
+  "schema_version": 8,
+  "analysis_status": "completed113_phone_failed_corrected10_phone_features_failed_prior_ipad_receipt_retained",
+  "generated_at_utc": "2026-10-02T19:56:54.990476+00:00",
   "expected_claims_methods": 8,
   "expected_named_surfaces_per_size": {
     "original": 55,
@@ -3562,5 +3562,503 @@
   },
   "latest_phone_receipt": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T171227.844702Z",
   "expected_original_monolithic_claims_methods": 8,
-  "expected_methods_latest_phone_receipt": 113
+  "expected_methods_latest_phone_receipt": 113,
+  "corrected_phone_features": {
+    "run_directory": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T193617.918907Z",
+    "runtime_state": "finalized_completed_selected_feature_methods_failed",
+    "selected_device": {
+      "architecture": "arm64",
+      "deviceId": "8DF0EC6C-A302-4156-81A4-60D527FF69F2",
+      "deviceName": "Farside B7 Claims phone",
+      "modelName": "iPhone 17",
+      "osBuildNumber": "24A434",
+      "osVersion": "27.0",
+      "platform": "iOS Simulator"
+    },
+    "scope": "Ten corrected feature/UI methods only. Zero accessibility audits, zero selected units. Separate from completed113-case and historical91-case receipts; overlaps cannot be summed into117-case completion/pass.",
+    "overall_suite_results": {
+      "result": "Failed",
+      "total": 10,
+      "passed": 6,
+      "failed": 4,
+      "skipped": 0,
+      "expected_failures": 0,
+      "runtime_start_utc": "2026-10-02T19:46:14.675000+00:00",
+      "runtime_finish_utc": "2026-10-02T19:54:33.584000+00:00",
+      "duration_seconds": 498.90900015830994,
+      "runtime_warnings": [
+        {
+          "issueType": "Runtime Warning",
+          "message": "Publishing changes from within view updates is not allowed, this will cause undefined behavior."
+        },
+        {
+          "issueType": "Runtime Warning",
+          "message": "Publishing changes from within view updates is not allowed, this will cause undefined behavior."
+        }
+      ],
+      "methods": [
+        {
+          "name": "ClaimsVerificationUITests/testCoachClickUsesSynthesizedGesture()",
+          "result": "Failed",
+          "duration_seconds": 89.52414298057556,
+          "failure_messages": [
+            "failed - Lesson 2 did not pass through its gesture completion gate"
+          ]
+        },
+        {
+          "name": "ClaimsVerificationUITests/testCoachDragUsesSynthesizedGesture()",
+          "result": "Failed",
+          "duration_seconds": 59.45098698139191,
+          "failure_messages": [
+            "failed - Lesson 4 did not pass through its gesture completion gate"
+          ]
+        },
+        {
+          "name": "ClaimsVerificationUITests/testCoachMoveUsesSynthesizedGesture()",
+          "result": "Passed",
+          "duration_seconds": 25.950610995292664,
+          "failure_messages": []
+        },
+        {
+          "name": "ClaimsVerificationUITests/testCoachScrollUsesPublicPointerScroll()",
+          "result": "Failed",
+          "duration_seconds": 13.718755006790161,
+          "failure_messages": [
+            "Pointer events are not supported for this device."
+          ]
+        },
+        {
+          "name": "ClaimsVerificationUITests/testCoachZoomUsesSynthesizedPinch()",
+          "result": "Passed",
+          "duration_seconds": 19.472012996673584,
+          "failure_messages": []
+        },
+        {
+          "name": "ClaimsVerificationUITests/testKeyboardAndNonRecordingDictationRemainReachable()",
+          "result": "Passed",
+          "duration_seconds": 114.97385394573212,
+          "failure_messages": []
+        },
+        {
+          "name": "ClaimsVerificationUITests/testOfflineConcealmentFixtureAndHomeBackgroundForeground()",
+          "result": "Passed",
+          "duration_seconds": 16.670016050338745,
+          "failure_messages": []
+        },
+        {
+          "name": "ClaimsVerificationUITests/testSessionPinchChangesAccessibleZoom()",
+          "result": "Failed",
+          "duration_seconds": 26.249514937400818,
+          "failure_messages": [
+            "XCTAssertGreaterThan failed: (\"1.0\") is not greater than (\"1.0\") - A synthesized pinch must change the accessible viewport zoom"
+          ]
+        },
+        {
+          "name": "FarsideRedesignUITests/testKeyboardBarPutsCommandFirstAndInReachInPortrait()",
+          "result": "Passed",
+          "duration_seconds": 14.645139932632446,
+          "failure_messages": []
+        },
+        {
+          "name": "SessionLayoutTests/testLongVoicePreviewKeepsDoneReachableInLandscapeWithoutRecording()",
+          "result": "Passed",
+          "duration_seconds": 13.01655399799347,
+          "failure_messages": []
+        }
+      ]
+    },
+    "selection_acceptance": {
+      "accepted": false,
+      "exit": 1,
+      "expected_count": 10,
+      "observed_count": 10,
+      "receipt": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T193617.918907Z/phone-features-selection-acceptance.log"
+    },
+    "identity": {
+      "tested_ui_source_sha256": "c8d833da440437b5c44bf35139815ffb40c50f6ab767b6a2746a13cca3691cbb",
+      "compiler_input_files": 966,
+      "complete_artifact_files": 49,
+      "tested_build_manifest": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T193617.918907Z/tested-build-manifest.json",
+      "source_and_complete_bundle_guard_before_after": "Matched at both guards: wrapper retained native65, no receipt invalidation78; parent independently confirmed. No new native guard issued by this analysis.",
+      "verifier_invocation_manifest": {
+        "script/claims/duo_probe.py": "889fd7b8b99b3a636c16ec4d585799b66fa4163d3e352180859adb1c709ec91c",
+        "script/claims/identity.py": "26da375edcaa7bad51d09155edbe0d4270b515807b986c2eb18805ef25aacb8d",
+        "script/claims/locked.py": "da9806f62be761db76e906dd5ff3cbe0f49f1b27075ac698d495cd6f918806cd",
+        "script/claims/recovery.py": "1bd74673101cfb852db0194c563125e2e50184b2f199febc8b196460b197ce29",
+        "script/claims/result_guard.py": "268dd56a884e081b947849d00ae39c5b8ca0165c9ce4daa165b4c6d40b3ec8f9",
+        "script/claims/run.py": "0b75ce904f28bb17f4d73597785c0cc9ef88f283ce9d5832363b51afff126df4",
+        "script/claims/simulators.py": "70ed8178280a8bf8794978a2a3743acf26925a7fed6745cd63b8de75d9504dd1",
+        "script/claims/source_audit.py": "abd63af2b73fc13da247dc4f70fc4b88ce2cd4fdc72d96fb714298196689a78d",
+        "script/claims/test_duo_probe.py": "c0e2de4128ccc998d7ab153df7c02b2add9090f670c44d3c3c4fe9e278f60543"
+      },
+      "verifier_source_after": {
+        "scripts": {
+          "script/claims/duo_probe.py": "889fd7b8b99b3a636c16ec4d585799b66fa4163d3e352180859adb1c709ec91c",
+          "script/claims/identity.py": "26da375edcaa7bad51d09155edbe0d4270b515807b986c2eb18805ef25aacb8d",
+          "script/claims/locked.py": "da9806f62be761db76e906dd5ff3cbe0f49f1b27075ac698d495cd6f918806cd",
+          "script/claims/recovery.py": "1bd74673101cfb852db0194c563125e2e50184b2f199febc8b196460b197ce29",
+          "script/claims/result_guard.py": "268dd56a884e081b947849d00ae39c5b8ca0165c9ce4daa165b4c6d40b3ec8f9",
+          "script/claims/run.py": "0b75ce904f28bb17f4d73597785c0cc9ef88f283ce9d5832363b51afff126df4",
+          "script/claims/simulators.py": "70ed8178280a8bf8794978a2a3743acf26925a7fed6745cd63b8de75d9504dd1",
+          "script/claims/source_audit.py": "abd63af2b73fc13da247dc4f70fc4b88ce2cd4fdc72d96fb714298196689a78d",
+          "script/claims/test_duo_probe.py": "c0e2de4128ccc998d7ab153df7c02b2add9090f670c44d3c3c4fe9e278f60543"
+        },
+        "matchesInvocation": true
+      },
+      "verifier_source_matches_before": true,
+      "raw_native_verifier_matches_before": true,
+      "scope": "Corrected c8d UI source/artifacts only; not an integrated/uploaded shipping build receipt."
+    },
+    "native_exit_and_cleanup": {
+      "native_stage_exit": 65,
+      "cleanup_command_exit": 149,
+      "owned_simulator_state": "Shutdown",
+      "cleanup_state_acceptable": true,
+      "scope": "Cleanup returned alreadyShutdown error405; explicit stateShutdown is accepted by wrapper. Native65 remains genuine selected-test failure, not cleanup241 or canceled runtime."
+    },
+    "coach_hierarchy_receipts": [
+      {
+        "name": "coach-2-completion-attempt-hierarchy",
+        "file": "F570A2FE-0C44-44D4-A575-5EAC4EA82205.txt",
+        "lesson_element": "StaticText, 0x11310a300, {{24.0, 81.3}, {168.0, 13.3}}, identifier: 'coach.lesson', label: 'LESSON 2 OF 5 \u00b7 CLICK'",
+        "practice_pad_element": "Other, 0x11310a800, {{24.0, 231.0}, {354.0, 396.3}}, identifier: 'coach.pad'",
+        "probe_pointer_x_y_target_x_y": "254,128,252,101",
+        "next_element": null,
+        "done_element": null
+      },
+      {
+        "name": "coach-2-start-before-real-gesture-hierarchy",
+        "file": "70601495-1B85-436D-B281-1EB99121DB0E.txt",
+        "lesson_element": "StaticText, 0x10af157c0, {{24.0, 81.3}, {168.0, 13.3}}, identifier: 'coach.lesson', label: 'LESSON 2 OF 5 \u00b7 CLICK'",
+        "practice_pad_element": "Other, 0x10af15cc0, {{24.0, 231.0}, {354.0, 458.3}}, identifier: 'coach.pad'",
+        "probe_pointer_x_y_target_x_y": "254,149,252,117",
+        "next_element": null,
+        "done_element": null
+      },
+      {
+        "name": "coach-4-completion-attempt-hierarchy",
+        "file": "BA36B4C9-8241-48B1-B4D7-A84F7D77B5EB.txt",
+        "lesson_element": "StaticText, 0x11310a080, {{24.0, 81.3}, {160.0, 13.3}}, identifier: 'coach.lesson', label: 'LESSON 4 OF 5 \u00b7 DRAG'",
+        "practice_pad_element": "Other, 0x11310a580, {{24.0, 231.0}, {354.0, 416.3}}, identifier: 'coach.pad'",
+        "probe_pointer_x_y_target_x_y": "272,309,252,106",
+        "next_element": null,
+        "done_element": null
+      },
+      {
+        "name": "coach-4-start-before-real-gesture-hierarchy",
+        "file": "057AFB06-EB4A-4443-997E-46440450C8F8.txt",
+        "lesson_element": "StaticText, 0x106f93200, {{24.0, 81.3}, {160.0, 13.3}}, identifier: 'coach.lesson', label: 'LESSON 4 OF 5 \u00b7 DRAG'",
+        "practice_pad_element": "Other, 0x106f92d00, {{24.0, 231.0}, {354.0, 458.3}}, identifier: 'coach.pad'",
+        "probe_pointer_x_y_target_x_y": "98,141,252,117",
+        "next_element": null,
+        "done_element": null
+      },
+      {
+        "name": "coach-1-after-real-next-hierarchy",
+        "file": "ECD6E0BC-1428-4062-9178-4983387BC1B5.txt",
+        "lesson_element": "StaticText, 0x10af17d40, {{24.0, 81.3}, {168.0, 13.3}}, identifier: 'coach.lesson', label: 'LESSON 2 OF 5 \u00b7 CLICK'",
+        "practice_pad_element": "Other, 0x10af17340, {{24.0, 231.0}, {354.0, 458.3}}, identifier: 'coach.pad'",
+        "probe_pointer_x_y_target_x_y": "254,153,120,100",
+        "next_element": null,
+        "done_element": null
+      },
+      {
+        "name": "coach-1-completion-attempt-hierarchy",
+        "file": "3DF0DAD7-65F5-4153-95F0-9F281F8B8003.txt",
+        "lesson_element": "StaticText, 0x11310a580, {{24.0, 81.3}, {160.0, 13.3}}, identifier: 'coach.lesson', label: 'LESSON 1 OF 5 \u00b7 MOVE'",
+        "practice_pad_element": "Other, 0x11310aa80, {{24.0, 231.0}, {354.0, 444.7}}, identifier: 'coach.pad'",
+        "probe_pointer_x_y_target_x_y": "140,106,120,97",
+        "next_element": "Button, 0x11310b840, {{270.0, 788.0}, {108.0, 40.0}}, identifier: 'coach.next', label: 'Next'",
+        "done_element": null
+      },
+      {
+        "name": "coach-1-start-before-real-gesture-hierarchy",
+        "file": "64A3282D-0BCA-47C7-976E-BE04C3A2738D.txt",
+        "lesson_element": "StaticText, 0x10af17ac0, {{24.0, 81.3}, {160.0, 13.3}}, identifier: 'coach.lesson', label: 'LESSON 1 OF 5 \u00b7 MOVE'",
+        "practice_pad_element": "Other, 0x10af17340, {{24.0, 231.0}, {354.0, 458.3}}, identifier: 'coach.pad'",
+        "probe_pointer_x_y_target_x_y": "70,357,254,137",
+        "next_element": null,
+        "done_element": null
+      },
+      {
+        "name": "coach-3-start-before-real-gesture-hierarchy",
+        "file": "8B1DB2BF-72A4-489F-BD2F-68B3FC5E89E3.txt",
+        "lesson_element": "StaticText, 0x106f91cc0, {{24.0, 81.3}, {176.0, 13.3}}, identifier: 'coach.lesson', label: 'LESSON 3 OF 5 \u00b7 SCROLL'",
+        "practice_pad_element": "Other, 0x106f91040, {{24.0, 140.3}, {354.0, 647.7}}, identifier: 'coach.pad'",
+        "probe_pointer_x_y_target_x_y": "219,249,252,123",
+        "next_element": null,
+        "done_element": null
+      },
+      {
+        "name": "coach-done-after-pinch-hierarchy",
+        "file": "5E65613F-77A2-4D98-999D-8BE48D41745E.txt",
+        "lesson_element": null,
+        "practice_pad_element": null,
+        "probe_pointer_x_y_target_x_y": null,
+        "next_element": null,
+        "done_element": "Button, 0x1131083c0, {{24.0, 756.0}, {354.0, 60.0}}, identifier: 'coach.done', label: 'Done'"
+      },
+      {
+        "name": "coach-5-completion-attempt-hierarchy",
+        "file": "98DE677A-141D-4566-81D8-403670EB7D2C.txt",
+        "lesson_element": "StaticText, 0x11459c280, {{24.0, 81.3}, {160.0, 13.3}}, identifier: 'coach.lesson', label: 'LESSON 5 OF 5 \u00b7 ZOOM'",
+        "practice_pad_element": "Other, 0x11459c780, {{24.0, 231.0}, {354.0, 444.7}}, identifier: 'coach.pad'",
+        "probe_pointer_x_y_target_x_y": "247,320,252,114",
+        "next_element": "Button, 0x11459d680, {{270.0, 788.0}, {108.0, 40.0}}, identifier: 'coach.next', label: 'Finish'",
+        "done_element": null
+      },
+      {
+        "name": "coach-5-start-before-real-gesture-hierarchy",
+        "file": "D255652A-FD39-44AF-8F69-ED8F31579F2B.txt",
+        "lesson_element": "StaticText, 0x11459b5c0, {{24.0, 81.3}, {160.0, 13.3}}, identifier: 'coach.lesson', label: 'LESSON 5 OF 5 \u00b7 ZOOM'",
+        "practice_pad_element": "Other, 0x11459bac0, {{24.0, 231.0}, {354.0, 458.3}}, identifier: 'coach.pad'",
+        "probe_pointer_x_y_target_x_y": "247,330,252,117",
+        "next_element": null,
+        "done_element": null
+      }
+    ],
+    "text_attachments": [
+      {
+        "method": "ClaimsVerificationUITests/testCoachClickUsesSynthesizedGesture()",
+        "name": "Debug description for `\"coach.next\" Button`",
+        "file": "776B8AB5-7F1F-4E45-9686-D83876F5E601.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachClickUsesSynthesizedGesture()",
+        "name": "Debug description for `\"coach.next\" Button`",
+        "file": "D56D8C02-F27A-44C9-86A4-BEAE0040E0B6.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachClickUsesSynthesizedGesture()",
+        "name": "Debug description for `\"coach.next\" Button`",
+        "file": "699EE6F3-5284-4CC1-931B-DFB7D331BD57.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachClickUsesSynthesizedGesture()",
+        "name": "coach-2-completion-attempt-hierarchy",
+        "file": "F570A2FE-0C44-44D4-A575-5EAC4EA82205.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachClickUsesSynthesizedGesture()",
+        "name": "coach-2-start-before-real-gesture-hierarchy",
+        "file": "70601495-1B85-436D-B281-1EB99121DB0E.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachClickUsesSynthesizedGesture()",
+        "name": "coach-2-planned",
+        "file": "D74DE5EA-A54B-4EB9-971E-830DB4C077F5.txt",
+        "payload": "Real-gate lesson 2; Next required, Done only after final Zoom. Scroll uses public pointer-scroll API and remains failed if unsupported; two-finger touch is HANDS."
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachDragUsesSynthesizedGesture()",
+        "name": "Debug description for `\"coach.next\" Button`",
+        "file": "DAA12ADF-8824-47DA-B291-D6DBF34F0754.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachDragUsesSynthesizedGesture()",
+        "name": "Debug description for `\"coach.next\" Button`",
+        "file": "FF9D019E-3147-4466-85DD-FDFD76F24B1E.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachDragUsesSynthesizedGesture()",
+        "name": "Debug description for `\"coach.next\" Button`",
+        "file": "D5227FA6-4D80-4BE8-A8F5-BA4FC4A34AD9.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachDragUsesSynthesizedGesture()",
+        "name": "coach-4-completion-attempt-hierarchy",
+        "file": "BA36B4C9-8241-48B1-B4D7-A84F7D77B5EB.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachDragUsesSynthesizedGesture()",
+        "name": "coach-4-start-before-real-gesture-hierarchy",
+        "file": "057AFB06-EB4A-4443-997E-46440450C8F8.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachDragUsesSynthesizedGesture()",
+        "name": "coach-4-planned",
+        "file": "DA9F2E0D-39F2-4C6B-8794-8472901A4B12.txt",
+        "payload": "Real-gate lesson 4; Next required, Done only after final Zoom. Scroll uses public pointer-scroll API and remains failed if unsupported; two-finger touch is HANDS."
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachMoveUsesSynthesizedGesture()",
+        "name": "coach-1-gesture-scope",
+        "file": "B004CCB1-C80D-4941-848A-B49D4A251587.txt",
+        "payload": "Selected lesson 1 only. Its real starting gate, gesture and Next/advancement were exercised. Done is required only after final Zoom. No Skip or forced completion. Physical gesture feel remains HANDS."
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachMoveUsesSynthesizedGesture()",
+        "name": "coach-1-after-real-next-hierarchy",
+        "file": "ECD6E0BC-1428-4062-9178-4983387BC1B5.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachMoveUsesSynthesizedGesture()",
+        "name": "coach-1-completion-attempt-hierarchy",
+        "file": "3DF0DAD7-65F5-4153-95F0-9F281F8B8003.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachMoveUsesSynthesizedGesture()",
+        "name": "coach-1-start-before-real-gesture-hierarchy",
+        "file": "64A3282D-0BCA-47C7-976E-BE04C3A2738D.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachMoveUsesSynthesizedGesture()",
+        "name": "coach-1-planned",
+        "file": "2FF3AD46-41EE-4AC1-AA0D-B8984F75B160.txt",
+        "payload": "Real-gate lesson 1; Next required, Done only after final Zoom. Scroll uses public pointer-scroll API and remains failed if unsupported; two-finger touch is HANDS."
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachScrollUsesPublicPointerScroll()",
+        "name": "coach-scroll-input-limitation",
+        "file": "DFF24CB3-7A8C-4DE7-8F23-E4362EC76A2C.txt",
+        "payload": "XCTest scroll(byDeltaX:deltaY:) synthesizes pointer scrolling. Two-finger touch scrolling remains a physical/manual acceptance gate even if Next appears."
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachScrollUsesPublicPointerScroll()",
+        "name": "coach-3-start-before-real-gesture-hierarchy",
+        "file": "8B1DB2BF-72A4-489F-BD2F-68B3FC5E89E3.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachScrollUsesPublicPointerScroll()",
+        "name": "coach-3-planned",
+        "file": "6672DBE1-2655-4D68-8292-612C335A5F5C.txt",
+        "payload": "Real-gate lesson 3; Next required, Done only after final Zoom. Scroll uses public pointer-scroll API and remains failed if unsupported; two-finger touch is HANDS."
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachZoomUsesSynthesizedPinch()",
+        "name": "coach-5-gesture-scope",
+        "file": "79132DA1-7905-4F28-980A-6202C74FA5F4.txt",
+        "payload": "Selected lesson 5 only. Its real starting gate, gesture and Next/advancement were exercised. Done is required only after final Zoom. No Skip or forced completion. Physical gesture feel remains HANDS."
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachZoomUsesSynthesizedPinch()",
+        "name": "coach-done-after-pinch-hierarchy",
+        "file": "5E65613F-77A2-4D98-999D-8BE48D41745E.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachZoomUsesSynthesizedPinch()",
+        "name": "coach-5-completion-attempt-hierarchy",
+        "file": "98DE677A-141D-4566-81D8-403670EB7D2C.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachZoomUsesSynthesizedPinch()",
+        "name": "coach-5-start-before-real-gesture-hierarchy",
+        "file": "D255652A-FD39-44AF-8F69-ED8F31579F2B.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testCoachZoomUsesSynthesizedPinch()",
+        "name": "coach-5-planned",
+        "file": "E0D38DB8-5C94-41EC-A600-BDF527A690E2.txt",
+        "payload": "Real-gate lesson 5; Next required, Done only after final Zoom. Scroll uses public pointer-scroll API and remains failed if unsupported; two-finger touch is HANDS."
+      },
+      {
+        "method": "ClaimsVerificationUITests/testKeyboardAndNonRecordingDictationRemainReachable()",
+        "name": "dictation-preview-AX-XXXL-3-hierarchy",
+        "file": "76649890-F130-4B09-BE83-DDC02F9D7D31.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testKeyboardAndNonRecordingDictationRemainReachable()",
+        "name": "keyboard-AX-XXXL-3-hierarchy",
+        "file": "4B271487-8D73-42F6-A514-662CBECF25A0.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testKeyboardAndNonRecordingDictationRemainReachable()",
+        "name": "dictation-preview-AX-XXXL-1-hierarchy",
+        "file": "37DDDB53-DD3B-48A5-BA8C-C114FE8E3802.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testKeyboardAndNonRecordingDictationRemainReachable()",
+        "name": "keyboard-AX-XXXL-1-hierarchy",
+        "file": "21354AB2-5ED9-4CF0-A002-F5D762F2239D.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testKeyboardAndNonRecordingDictationRemainReachable()",
+        "name": "dictation-preview-default-3-hierarchy",
+        "file": "F4C051C3-2E69-4A48-B75F-945F4BB47E06.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testKeyboardAndNonRecordingDictationRemainReachable()",
+        "name": "keyboard-default-3-hierarchy",
+        "file": "993C7FEE-3652-4F8C-B3CF-AEA3B781FF3A.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testKeyboardAndNonRecordingDictationRemainReachable()",
+        "name": "dictation-preview-default-1-hierarchy",
+        "file": "48236613-E4AA-4454-8E7A-5C654C69AFF9.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testKeyboardAndNonRecordingDictationRemainReachable()",
+        "name": "keyboard-default-1-hierarchy",
+        "file": "5D63121C-2C67-480F-A902-D6B40393D090.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testOfflineConcealmentFixtureAndHomeBackgroundForeground()",
+        "name": "privacy-evidence-boundary",
+        "file": "BF35E327-877A-4027-9A43-BFC19E25DB75.txt",
+        "payload": "Real Home background/foreground lifecycle on an offline simulator fixture. Attachments do not prove the live remote desktop's app-switcher snapshot on physical hardware is concealed."
+      },
+      {
+        "method": "ClaimsVerificationUITests/testOfflineConcealmentFixtureAndHomeBackgroundForeground()",
+        "name": "privacy-after-home-foreground-hierarchy",
+        "file": "DF199F40-2AFD-4DDF-A05E-F45F5A7689A9.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testOfflineConcealmentFixtureAndHomeBackgroundForeground()",
+        "name": "privacy-home-background-system-screen-hierarchy",
+        "file": "F1D0A1D6-1B0E-41BB-9357-B3E56907781A.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testOfflineConcealmentFixtureAndHomeBackgroundForeground()",
+        "name": "privacy-before-home-background-hierarchy",
+        "file": "91C20DDA-D4D1-4756-917E-D2DEC19BF806.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testOfflineConcealmentFixtureAndHomeBackgroundForeground()",
+        "name": "privacy-launch-concealed-hierarchy",
+        "file": "20AEB09C-0070-48DF-91C6-7A946D112BC7.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testSessionPinchChangesAccessibleZoom()",
+        "name": "session-zoom-after-pinch-hierarchy",
+        "file": "98566F68-3A6D-4879-BC7D-3EAD7062FCD9.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testSessionPinchChangesAccessibleZoom()",
+        "name": "session-pinch-zoom-values",
+        "file": "A565ADF7-6CAD-4A83-BEAB-60FCF22B9D9A.txt",
+        "payload": "Before: 1.0; after: 1.0. Offline viewport only; no Mac zoom claim."
+      },
+      {
+        "method": "ClaimsVerificationUITests/testSessionPinchChangesAccessibleZoom()",
+        "name": "session-after-real-pinch-touches-hierarchy",
+        "file": "CFD643ED-C9CE-485B-8DFE-A5D90B473E97.txt"
+      },
+      {
+        "method": "ClaimsVerificationUITests/testSessionPinchChangesAccessibleZoom()",
+        "name": "session-zoom-before-pinch-hierarchy",
+        "file": "3E372ABE-1A95-4BA9-80DA-43C8C1218EF5.txt"
+      }
+    ],
+    "export_receipt_state": {
+      "summary_export_exit": 0,
+      "tree_export_exit": 0,
+      "text_export_exit": 0,
+      "attachment_manifest_groups": 8,
+      "text_attachment_count": 42,
+      "xcresult_info_plist_present": true
+    },
+    "proof_boundaries": {
+      "coach_move": "Passed lesson1 real starting gate; Next revealed and hittable; tappingNext advanced to lesson2. No forced completion.",
+      "coach_click": "Failed: Lesson2 did not pass through its gesture completion gate. Correctly named lesson/pad present; Next absent after attempt. Probe254,149,252,117 atstart\u2192254,128,252,101 afterattempt; padheight458.3\u2192396.3. Geometry observation only, no causal diagnosis. Earlier aggregate trace remains separate.",
+      "coach_drag": "Failed: Lesson4 did not pass through its gesture completion gate. Correctly named lesson/pad present; Next absent after attempt. Probe98,141,252,117 atstart\u2192272,309,252,106 afterattempt; padheight458.3\u2192416.3. Geometry observation only.",
+      "coach_scroll": "Failed: Pointer events are not supported for this device. Starting lesson3/pad reached; no completion gate observed. Public pointer synthesis cannot prove two-finger touchscroll.",
+      "coach_zoom": "Passed lesson5 real starting gate; pinch revealed hittable Finish; Finish revealed hittableDone; Done dismissedcoach. Practicepad only, not session zoom.",
+      "session_pinch": "Failed corrected offline quietinput-probe fixture: Before1.0, after1.0. Numericpayload retained. No assumption that the probe correction resolves failure or that physical product cause is known.",
+      "keyboard_dictation": "Passed corrected selected keyboard/nonrecording-preview reachability atdefault/AXXXXL sensitivity1/3; portraitbar and landscapevoicepreview also passed. No real dictation,remote key delivery,OSpermission acceptance.",
+      "privacy": "Passed corrected offline concealed fixture and Homebackground/foreground; physical live app-switcher snapshot remains HANDS.",
+      "accessibility": "No audits ran; this receipt adds no C8/AccessibilityNutritionLabel evidence.",
+      "active_other_stages": "No active phoneaudit or iPad runtime/export read or outcome inferred by this analysis."
+    }
+  },
+  "latest_corrected_phone_feature_receipt": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T193617.918907Z"
 }

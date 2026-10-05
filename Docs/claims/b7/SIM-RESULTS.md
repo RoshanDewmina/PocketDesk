@@ -1,4 +1,35 @@
-# Simulator claims receipts — fresh phone selection completed, failed
+# Simulator claims receipts — completed selections fail acceptance
+
+## Corrected phone features — 10 completed, 6 passed, 4 failed
+
+The corrected feature run `logs/20261002T193617.918907Z` completed **10 selected methods: 6 passed, 4 failed, zero skipped**. Move and practice-pad Zoom passed their real completion gates. Click and Drag did not reveal Next, public pointer Scroll was unsupported, and corrected session pinch still yielded **1.0 → 1.0**. Keyboard/nonrecording dictation reachability, offline Home concealment lifecycle, portrait keyboard bar and landscape voice-preview layout passed. No five-lesson completion or session-pinch claim is unlocked.
+
+This is a separate feature receipt; it includes no accessibility audit and no unit selection. **Do not add overlapping receipts into a 117-method full pass.** The completed 113-case result and historical 91-case result remain intact below/in JSON. No active phone-audit/iPad result or export was used in this analysis.
+
+| Exact selected method | Result | Runtime evidence |
+|---|---|---|
+| `testCoachMoveUsesSynthesizedGesture` | Passed | Real lesson 1 starts without Next/Done. Gesture reveals hittable Next; tapping it advances the caption to lesson 2. |
+| `testCoachClickUsesSynthesizedGesture` | Failed | “Lesson 2 did not pass through its gesture completion gate.” Correct lesson and pad exist; Next is absent after the tap. |
+| `testCoachScrollUsesPublicPointerScroll` | Failed | “Pointer events are not supported for this device.” Lesson 3/pad starts correctly; pointer synthesis raises before any completion receipt. |
+| `testCoachDragUsesSynthesizedGesture` | Failed | “Lesson 4 did not pass through its gesture completion gate.” Correct lesson and pad exist; Next is absent after the bounded drag attempt. |
+| `testCoachZoomUsesSynthesizedPinch` | Passed | Real lesson 5 starts without Next/Done. Pinch reveals hittable Finish; Finish reveals hittable Done; Done dismisses the coach. Practice pad only. |
+| `testSessionPinchChangesAccessibleZoom` | Failed | Strict `XCTAssertGreaterThan`: 1.0 is not greater than 1.0. The quiet offline input probe is present in this corrected source; its addition did not make the assertion pass. |
+| `testKeyboardAndNonRecordingDictationRemainReachable` | Passed | Selected keyboard and nonrecording preview entry points at default/AX-XXXL and sensitivity 1/3. |
+| `testOfflineConcealmentFixtureAndHomeBackgroundForeground` | Passed | Offline concealed fixture and actual simulator Home background/foreground lifecycle. |
+| `testKeyboardBarPutsCommandFirstAndInReachInPortrait` | Passed | Selected portrait keyboard-bar layout. |
+| `testLongVoicePreviewKeepsDoneReachableInLandscapeWithoutRecording` | Passed | Selected nonrecording voice preview portrait/landscape layout. |
+
+Coach hierarchy payloads encode **pointer x,y,target x,y** (`RemotePhone/GestureCoach.swift:611`). For Click, start payload `254,149,252,117` becomes `254,128,252,101`; the pad height changes 458.3 → 396.3. For Drag, `98,141,252,117` becomes `272,309,252,106`; pad height changes 458.3 → 416.3. These are observed geometry changes, not a causal diagnosis. The start/attempt hierarchies retain absent Next for both failed methods. Move's successful completion hierarchy contains Next and its later hierarchy contains “LESSON 2 OF 5 · CLICK”; Zoom's completion contains Finish and its later hierarchy contains Done. The raw earlier aggregate's Click advancement remains a separate result; it cannot override this corrected atomic failure. Physical two-finger scrolling, all-five completion and gesture feel remain HANDS.
+
+The session pinch payload is `Before: 1.0; after: 1.0. Offline viewport only; no Mac zoom claim.` It is exported as `phone-features-attachments/A565ADF7-6CAD-4A83-BEAB-60FCF22B9D9A.txt`. The probe correction has now received runtime verification and still fails; the earlier 113-case statement that it needed a rerun is historical. Practice-pad Zoom's success does not establish the session viewport's zoom behavior.
+
+The corrected compiler-source SHA256 is `c8d833da440437b5c44bf35139815ffb40c50f6ab767b6a2746a13cca3691cbb`. Its `tested-build-manifest.json` retains 966 compiler inputs and 49 complete artifact files. The wrapper's before/after source and complete-bundle guards matched; native exit remained **65**, with no identity invalidation. Native log reports verifier `matchesBefore: true`; `runner-source-after.json` reports `matchesInvocation: true` and exactly matches the invocation manifest. Finalized summary/tree/text exports returned zero; exact-selection guard returned **1 / accepted false**, with all ten expected methods present. The text export contains 42 files across eight test groups; the two historical UI passes are established by summary/tree even though they have no exported text group.
+
+Runtime was **19:46:14.675–19:54:33.584 UTC**, 498.909 seconds, on the dedicated iPhone 17/iOS 27 simulator `8DF0EC6C-A302-4156-81A4-60D527FF69F2`. Two runtime warning records retain the same publishing-during-view-updates warning. Cleanup returned **149**, reporting an already-Shutdown error (405) and explicit **state=Shutdown**; that terminal state is accepted by the wrapper. It does not erase native 65 or the four failed methods and is separate from the earlier exit-241 recovery.
+
+All proof is corrected source/artifact scoped simulator evidence. It does not establish an integrated/uploaded shipping build, physical app-switcher thumbnail privacy, microphone recognition, real remote keys or C8/accessibility-label support. This analysis edited only the two assigned evidence files; it issued no native, process, gate or device action.
+
+## Earlier completed 113-case selection — failed
 
 The finalized fresh phone receipt **completed all 113 selected cases: 93 passed, 20 failed, zero skipped**. The 89 selected unit methods passed. Of 24 UI methods, four passed; all 18 accessibility audits failed, the aggregate five-lesson coach stopped on unsupported pointer events, and session pinch left accessible zoom at **1.0 → 1.0**. This is complete execution of this exact selection, with failed acceptance; it is neither a clean accessibility pass nor proof of all five lessons or pinch. No new iPad result is established here.
 
