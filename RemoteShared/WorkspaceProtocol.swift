@@ -5,7 +5,8 @@ import Foundation
 enum WorkspaceUtilities {
     static let feature = "workspace.1"
     static let disabledKey = "FarsideWorkspaceDisabled"
-    static let maximumPayloadBytes = 16 * 1024
+    // Data encodes as base64 inside RemoteAction/ControlPacket; reserve headroom below 16 KiB.
+    static let maximumPayloadBytes = 8 * 1024
     static func isEnabled(_ defaults: UserDefaults = .standard) -> Bool {
         !defaults.bool(forKey: disabledKey)
     }
