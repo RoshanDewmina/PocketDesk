@@ -4,6 +4,7 @@ import ScreenCaptureKit
 import CoreMedia
 import CoreVideo
 import CryptoKit
+import OSLog
 
 struct ScopedCaptureOwner {
     private(set) var current: UInt64 = 0
@@ -440,7 +441,7 @@ final class RemoteCapture {
         let previous = session
         previous?.fenceCapture()
         session = nil
-        await previous?.stop()
+        if let previous, !(await previous.stop()) { throw CaptureStartupTicket.Failure.cleanupPending }
         try Task.checkCancellation()
         guard ownership.owns(owner) else { throw CancellationError() }
         var excluding: [SCWindow] = []
@@ -478,12 +479,19 @@ final class RemoteCapture {
                 }
             }
         }
-        let next = try RemoteCaptureSession(resolved: resolved, lease: lease, peer: peer, quality: initialQuality,
-            clientLongEdge: initialClientLongEdge, guestFrame: onGuestFrame, guestSourceFence: scopedGuestFence)
+        let reservation = CaptureProducerReservation.shared
+        let producerToken = try reservation.reserve()
+        let next: RemoteCaptureSession
+        do {
+            next = try RemoteCaptureSession(resolved: resolved, lease: lease, peer: peer, quality: initialQuality,
+                clientLongEdge: initialClientLongEdge, guestFrame: onGuestFrame,
+                guestSourceFence: scopedGuestFence, producerToken: producerToken)
+        } catch { reservation.release(producerToken); throw error }
+        reservation.retain(next, token: producerToken)
         next.onHealth = { [weak self, weak next] healthy in
             Task { @MainActor in
                 guard let self, let next, self.ownership.owns(owner), self.session === next else { return }
-                self.onHealth?(healthy)
+                self.onHealth?(healthy && next.admitsPicture)
             }
         }
         next.onFailure = { [weak self, weak next] error in
@@ -495,11 +503,11 @@ final class RemoteCapture {
         // Delivered on the main queue in the order applied; a Task hop could reorder two regions.
         next.onCaptureRegion = { [weak self, weak next] region in
             MainActor.assumeIsolated {
-                guard let self, let next, self.ownership.owns(owner), self.session === next else { return }
+                guard let self, let next, self.ownership.owns(owner), self.session === next, next.admitsPicture else { return }
                 self.publishCaptureRegion(region)
             }
         }
-        guard beforeStart?(next.geometry) != false else { next.fenceCapture(); throw CancellationError() }
+        guard beforeStart?(next.geometry) != false else { next.requestStop(); throw CancellationError() }
         session = next
         if let target {
             scopeMonitor = Task { [weak self, weak next] in
@@ -524,7 +532,7 @@ final class RemoteCapture {
         do {
             try await next.start()
             try Task.checkCancellation()
-            guard ownership.owns(owner), session === next else { throw CancellationError() }
+            guard ownership.owns(owner), session === next, next.admitsPicture else { throw CancellationError() }
             captureStarted = true
             appliedQuality = initialQuality
             appliedClientLongEdge = initialClientLongEdge
@@ -545,7 +553,7 @@ final class RemoteCapture {
             return owner
         } catch {
             if ownership.owns(owner), session === next { scopeMonitor?.cancel(); scopeMonitor = nil; session = nil }
-            await next.stop()
+            next.requestStop()
             throw error
         }
     }
@@ -580,10 +588,10 @@ final class RemoteCapture {
         streamPeer = nil
         scopeMonitor?.cancel(); scopeMonitor = nil
         let previous = session
-        previous?.fenceCapture()
+        previous?.requestStop()
         session = nil
         guard let previous else { return nil }
-        return Task { await previous.stop() }
+        return Task { _ = await previous.stop() }
     }
 
     /// Hides the given windows (the privacy curtain) from the running stream. True only once the live
@@ -852,9 +860,45 @@ struct CaptureAudioAdmission {
     }
 }
 
+#if DEBUG
+private enum CaptureStartupPhysicalCheck {
+    private static let lock = NSLock()
+    private static var policy = CaptureStartupFaultPolicy()
+    static func consume() -> Bool {
+        lock.withLock {
+            policy.consume(requested: ProcessInfo.processInfo.arguments.contains("--farside-capture-start-recovery-check"),
+                           debugBuild: true)
+        }
+    }
+}
+#endif
+
 private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
     private let queue = DispatchQueue(label: "PocketDesk.capture", qos: .userInteractive)
     private var stream: SCStream!
+    #if DEBUG
+    private let suppressFirstPictureForCheck: Bool
+    #endif
+    private let producerToken: UUID
+    private var startup: CaptureStartupTicket!
+
+    private func makeStartupTicket() -> CaptureStartupTicket {
+        CaptureStartupTicket(
+            start: { [weak self] completion in
+                guard let self else { completion(CancellationError()); return }
+                self.stream.startCapture(completionHandler: completion)
+            }, stop: { [weak self] completion in
+                guard let self else { completion(CancellationError()); return }
+                self.stream.stopCapture(completionHandler: completion)
+            }, fence: { [weak self] in self?.retireLocalSession() },
+            retired: { [producerToken] in CaptureProducerReservation.shared.release(producerToken) },
+            stoppedError: { error in
+                let error = error as NSError
+                return error.domain == SCStreamErrorDomain && error.code == SCStreamError.Code.attemptToStopStreamState.rawValue
+            }, event: { [producerToken] event in
+                SessionLog.log.info("Capture startup producer=\(producerToken.uuidString, privacy: .public) event=\(event, privacy: .public)")
+            })
+    }
     private let audioConverter = SystemAudioPCMConverter()
     private let audioQueue: CaptureAudioQueue
     private var audioAdmission = CaptureAudioAdmission()
@@ -956,7 +1000,14 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     let initialRegion: CaptureRegion
 
     init(resolved: HostResolvedCaptureScope, lease: CaptureScopeLease, peer: PeerMedia, quality: StreamQuality, clientLongEdge: Int?,
-         guestFrame: ((CVPixelBuffer, TimeInterval) -> Void)? = nil, guestSourceFence: (() -> Void)? = nil) throws {
+         guestFrame: ((CVPixelBuffer, TimeInterval) -> Void)? = nil, guestSourceFence: (() -> Void)? = nil, producerToken: UUID) throws {
+        self.producerToken = producerToken
+        #if DEBUG
+        suppressFirstPictureForCheck = CaptureStartupPhysicalCheck.consume()
+        if suppressFirstPictureForCheck {
+            SessionLog.log.info("Capture startup check suppresses first producer complete-frame admission")
+        }
+        #endif
         onGuestFrame = guestFrame; onGuestSourceFence = guestSourceFence
         let display = resolved.display
         let filter = resolved.filter
@@ -999,6 +1050,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         queue.setSpecific(key: captureQueueKey, value: true)
         synchronizeAudioAdmission(capturesAudio: inputs.capturesAudio, allowed: peer.systemAudioEnabled)
         self.stream = SCStream(filter: filter, configuration: configuration, delegate: self)
+        startup = makeStartupTicket() // One ticket exists before any queue or caller can observe the session.
     }
 
     /// A new quality or client cap resets the held output and re-derives the crop in the same update.
@@ -1187,14 +1239,11 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     func start() async throws {
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         if scopeTarget == nil { try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQueue.queue) }
-        try await stream.startCapture()
-        let stoppedDuringStart = queue.sync { stopping }
-        if stoppedDuringStart {
-            try? await stream.stopCapture()
-            throw CancellationError()
-        }
+        do { try await startup.start() }
+        catch CaptureStartupTicket.Failure.deadline { throw CaptureStartupTimeout(ticket: startup) }
+        guard admitsPicture else { throw CancellationError() }
         if #available(macOS 27, *), !stream.isCapturing {
-            try? await stream.stopCapture()
+            requestStop()
             throw CaptureNotCapturingError()
         }
         queue.sync {
@@ -1207,9 +1256,22 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         }
     }
 
-    func stop() async {
+    var admitsPicture: Bool {
+        let stopped = DispatchQueue.getSpecific(key: captureQueueKey) == true ? stopping : queue.sync { stopping }
+        return CaptureStartupRecoveryPolicy.admitsCallback(ready: startup.isReady,
+            scopeValid: scopeLease.performIfValid({}), stopping: stopped)
+    }
+
+    func requestStop() { startup.requestStop() }
+
+    func stop() async -> Bool {
+        requestStop()
+        return await startup.waitForRetirement()
+    }
+
+    private func retireLocalSession() {
         fenceCapture()
-        queue.sync {
+        let retire = { [self] in
             if !stopping {
                 stopping = true
                 timer?.cancel()
@@ -1227,7 +1289,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
                 unanswered.forEach { $0(false) }
             }
         }
-        try? await stream.stopCapture()
+        if DispatchQueue.getSpecific(key: captureQueueKey) == true { retire() }
+        else { queue.sync(execute: retire) }
     }
 
     func stream(
@@ -1236,7 +1299,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         of type: SCStreamOutputType
     ) {
         if type == .audio {
-            guard scopeTarget == nil, let audioEpoch = audioAdmission.admittedEpoch(consent: audioPeer.systemAudioEnabled) else { return }
+            guard startup.isReady, scopeTarget == nil, let audioEpoch = audioAdmission.admittedEpoch(consent: audioPeer.systemAudioEnabled) else { return }
             let staleBefore = audioConverter.staleDrops // converter and counter read only on the audio queue
             for packet in audioConverter.packets(from: sampleBuffer) {
                 // Invalidation waits for actual submission, including a packet converted during a fence.
@@ -1274,6 +1337,11 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         guard status == .complete,
               let buffer = CMSampleBufferGetImageBuffer(sampleBuffer),
               peer != nil else { return }
+        #if DEBUG
+        // Real SCK starts/stops; only this one process-opted-in producer loses frame admission.
+        if suppressFirstPictureForCheck { return }
+        #endif
+        startup.completeFrame()
         peer?.captureContentChanged()
         lastBuffer = buffer
         bufferVersion &+= 1
@@ -1284,7 +1352,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             displayMs: displayMs, bufferWidth: CVPixelBufferGetWidth(buffer), bufferHeight: CVPixelBufferGetHeight(buffer),
             applied: appliedRegion, inFlight: regionSwitchInFlight, lastSwitch: lastRegionSwitch)
         lastBufferRegion = region
-        deliver(buffer, at: now, displayMs: displayMs, timing: timing, region: region)
+        if startup.isReady { deliver(buffer, at: now, displayMs: displayMs, timing: timing, region: region) }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
@@ -1294,6 +1362,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     private func reportStopped(_ error: Error) {
         guard !stopping, !failureReported else { return }
         failureReported = true
+        if !startup.isReady { startup.fail(error); return }
         fenceCapture()
         lastBuffer = nil
         health.observe(.stopped, at: CACurrentMediaTime())

@@ -2395,7 +2395,7 @@ final class RemoteHostModel: ObservableObject {
 
     // MARK: Capture session
 
-    private func beginCapture(keepingExclusions: Bool = false) {
+    private func beginCapture(keepingExclusions: Bool = false, startupRecoveryRemaining: Bool = true) {
         // Every restart/reconnect must honor an existing emergency pause, not only its first edge.
         guard !criticalThermalPause.isPaused else {
             if sessionState == .couch {
@@ -2456,6 +2456,11 @@ final class RemoteHostModel: ObservableObject {
         captureAttempt &+= 1
         if captureAttempt == 0 { captureAttempt = 1 }
         let attempt = captureAttempt
+        let selectedAtStart = selected
+        let scopeEpochAtStart = captureScopeEpoch
+        let scopeTargetAtStart = captureScopeTarget?.id
+        let presentationAtStart = connection.presentationSessionID
+        let trackAtStart = connection.presentationTrackID
         phonePause.clear()
         acceptedPhonePauseEpoch = nil
         capturedDisplayID = display.displayID
@@ -2504,6 +2509,32 @@ final class RemoteHostModel: ObservableObject {
             } catch {
                 guard self.captureAttempt == attempt else { return }
                 if error is HostCaptureScopeError, self.captureScopeViewOnly { self.captureScopeLost(); return }
+                if let timeout = error as? CaptureStartupTimeout, startupRecoveryRemaining {
+                    // Cleanup confirmation is necessary, never a substitute for current authority.
+                    let retired = await timeout.ticket.waitForRetirement()
+                    guard self.captureAttempt == attempt, !Task.isCancelled else { return }
+                    let exactAdmission = self.captureStartIsCurrent(attempt, peer: peer) &&
+                        self.selected == selectedAtStart && self.captureScopeEpoch == scopeEpochAtStart &&
+                        self.captureScopeTarget?.id == scopeTargetAtStart &&
+                        self.connection.presentationSessionID == presentationAtStart &&
+                        self.connection.presentationTrackID == trackAtStart
+                    let permissions = CGPreflightScreenCaptureAccess() && CaptureStopReason.systemAllowsCapture &&
+                        self.screenRecordingPermission.isGranted && self.controlPermission.isGranted && CGPreflightPostEventAccess()
+                    let trusted = self.connection.presentationDeadline() != nil && self.hasPairedPhone &&
+                        !self.sessionRefused && !self.deliberatePeerEnding && !self.terminating
+                    if CaptureStartupRecoveryPolicy.permits(remaining: startupRecoveryRemaining, retired: retired,
+                        exactAdmission: exactAdmission,
+                        activePicture: self.active && self.sessionState == .picture,
+                        paused: self.phonePause.isPaused || self.criticalThermalPause.isPaused,
+                        locked: self.screenLocked || HostScreenLock.isLocked() || self.away.isLocking || !self.awayPictureClear,
+                        permissions: permissions, routeTrusted: trusted,
+                        viewOnly: self.captureScopeViewOnly || self.liveViewOnly || self.captureScopeNeedsSelection) {
+                        self.events.record(.sharing, "Capture startup timed out; retrying once after confirmed cleanup")
+                        // Ordinary admission, input epoch, and capture-zero preflight all run again.
+                        self.beginCapture(keepingExclusions: keepingExclusions, startupRecoveryRemaining: false)
+                        return
+                    }
+                }
                 self.events.record(.error, "Capture could not start (\(Self.captureErrorCode(error)))")
                 if CaptureStopReason.classify(error) == .needsApproval {
                     self.captureNeedsApproval()
@@ -2511,7 +2542,11 @@ final class RemoteHostModel: ObservableObject {
                 }
                 self.stop()
                 self.autoStart.suspend()
-                self.detail = "Screen sharing couldn’t start. Try again."
+                let cleanupPending = CaptureProducerReservation.shared.isReserved ||
+                    (error as? CaptureStartupTicket.Failure) == .cleanupPending
+                self.detail = cleanupPending
+                    ? "Screen sharing is still stopping. Quit and reopen Farside on your Mac, then try again."
+                    : "Screen sharing couldn’t start. Try again."
             }
         }
     }
