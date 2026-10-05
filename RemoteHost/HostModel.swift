@@ -90,7 +90,7 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var keepAwakeActive = false
     @Published private(set) var onBattery = false
     @Published private(set) var consentPending = false
-    @Published private(set) var displayAsleep = false
+    @Published private(set) var displayAsleep = false { didSet { if displayAsleep { fileBrowser.reset() } } }
     @Published private(set) var openAtLogin = false
     @Published private(set) var chimeOnConnect: Bool
     @Published private(set) var allowSystemAudio = true
@@ -233,7 +233,7 @@ final class RemoteHostModel: ObservableObject {
     private let powerAssertions = HostPowerAssertions()
     private let displayWake = HostDisplayWake()
     private var screenLocked = false {
-        didSet { reconcileAutomaticClipboard() }
+        didSet { reconcileAutomaticClipboard(); if screenLocked { fileBrowser.reset() } }
     }
     private var couchSessionSnapshot = CouchSessionSnapshotCache()
     private var unavailabilityTeardown: Task<Void, Never>?
@@ -266,10 +266,10 @@ final class RemoteHostModel: ObservableObject {
     private var axPrewarmEdge = HostAXPrewarmEdge()
     private let axSessionGeneration = HostAXSessionGeneration()
     private var captureHealthy = false {
-        didSet { reconcileAutomaticClipboard() }
+        didSet { reconcileAutomaticClipboard(); if !captureHealthy { fileBrowser.reset() } }
     }
     private var sessionState: HostSessionState = .picture {
-        didSet { reconcileAutomaticClipboard() }
+        didSet { reconcileAutomaticClipboard(); if sessionState != .picture { fileBrowser.reset() } }
     }
     private var couchHealthy = false
     private var lastPhoneHeartbeatAt: TimeInterval?

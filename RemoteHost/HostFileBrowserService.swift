@@ -7,11 +7,17 @@ final class HostFileBrowserService {
     private let queue = DispatchQueue(label: "Farside.file-browser", qos: .userInitiated)
     private var generation = UUID()
     private var busy = false
+    private var activeBrowserTransfer: String?
     var allowed: () -> Bool = { false }
     var reply: ((WorkspaceFrame) -> Void)?
     var engine: FileTransferEngine?
     init(access: FileBrowserAccess) { self.access = access }
-    func reset() { generation = UUID(); busy = false; access.cancelEnumeration(); access.resetEntries() }
+    func reset() {
+        generation = UUID(); busy = false
+        if let activeBrowserTransfer { engine?.cancel(activeBrowserTransfer) }
+        activeBrowserTransfer = nil
+        access.cancelEnumeration(); access.resetEntries()
+    }
     func receive(_ frame: WorkspaceFrame) {
         guard let request = try? FileBrowserRequest.decode(frame) else { return }
         guard allowed() else { refuse(frame, request, .notAllowed); return }
@@ -40,8 +46,10 @@ final class HostFileBrowserService {
                 if let prepared, let transfer = request.transfer {
                     switch prepared {
                     case .success(let (source, name)):
-                        if case .failure(let status) = self.engine?.send(source, name: name, type: UTType(filenameExtension: (name as NSString).pathExtension)?.identifier, transfer: transfer) {
-                            self.engine?.answerRequest(transfer, status)
+                        guard let engine = self.engine else { source.close(); return }
+                        switch engine.send(source, name: name, type: UTType(filenameExtension: (name as NSString).pathExtension)?.identifier, transfer: transfer) {
+                        case .success: self.activeBrowserTransfer = transfer
+                        case .failure(let status): engine.answerRequest(transfer, status)
                         }
                     case .failure: self.engine?.answerRequest(transfer, .unreadable)
                     }
