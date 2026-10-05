@@ -45,6 +45,7 @@ final class PhoneRichImageLoader: ObservableObject {
     }
     func requestImageFromMac(_ model: PhoneRemoteModel) {
         guard !PhoneRichImagePreparationGate.shared.isBusy else { showPreparationBusy(); return }
+        notice = nil
         model.richClipboard.requestImage()
     }
     private func showPreparationBusy() {
