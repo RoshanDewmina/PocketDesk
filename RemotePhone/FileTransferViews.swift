@@ -180,7 +180,7 @@ struct FileTransferCapsule: View {
     private var cancelButton: some View {
         Button { files.cancel() } label: {
             Image(systemName: "xmark").font(.subheadline.weight(.semibold)).frame(width: 34, height: 34)
-                .frame(minWidth: 44, minHeight: 44)
+                .frame(minWidth: 48, minHeight: 48)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)

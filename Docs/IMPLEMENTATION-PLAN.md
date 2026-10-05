@@ -1,3 +1,7 @@
+# Candidate10 Cancel native rounding correction — 2026-10-05T12:11:16.278511+00:00
+
+Initial real native matrix compiled: picker-wait four-layout matrix PASS; progress default portrait failed strict44-point minimum with actual AX44.00000000000006×43.66666666666667. Only outer label minimum44→48 changed; glyph34/action/contentShape/ID and tests unchanged. Fresh independent source reviewAPPROVE at SHAad704069dba9953d09a8e489a1d787c7f11617750abc84c26098c5d5031500b8. Same native matrix rerun pending; initial red retained. Installed production9 and parked manual tests unchanged. No candidate10 runtime or install acceptance.
+
 # Candidate10 native fixture source checkpoint — 2026-10-05T12:03:58.366927+00:00
 
 Independent reviewAPPROVE for4file bounded fixture/tests package: forcedalready-paired nativeMacpage; DEBUG offline-only independent in-memory transfer engine/progress/pickerwait; eight simulatorlayout/cornerCancel flows plus noflagabsencecontrol. No livewire/disk/modelauthority change. ProtectedHostSetupView92fa1dd8…/FileTransferViews9c3eb888… remainunchanged. Compilation/nativeexecution/PNG inspection/negative/signing/integration/install remainpending. Production9 remainsinstalledboth with3ownerfunctionalpasses and parkedKeyboardcheck. Sourcecheckpointonly; no10versionbump or readyreleaseclaim.
