@@ -85,7 +85,7 @@ struct SecuritySettingsSheet: View {
             }
         }
         .tint(Farside.Palette.bone)
-        .farsideCompactDetents([.medium, .large])
+        .farsideCompactDetents([.large])
         .farsideSheet()
         .sheet(isPresented: $showAlerts) { AgentAlertsSettingsSheet(center: .shared, registrar: .shared) }
         .sheet(isPresented: $showServerData) {
