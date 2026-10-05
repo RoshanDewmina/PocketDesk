@@ -442,6 +442,8 @@ final class PushRegistrarTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(registrar.registration()).failedEnabled)
         prefs.completedEnabled = false; prefs.failedEnabled = false
         await registrar.submit()
+        // The first sync retires the address and stages durable opt-out; drain that staged work.
+        await registrar.submit()
         XCTAssertNil(registrar.deviceToken)
         XCTAssertGreaterThan(sink.disables, 0)
     }
