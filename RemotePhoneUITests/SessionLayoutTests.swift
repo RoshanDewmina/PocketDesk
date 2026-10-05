@@ -39,7 +39,7 @@ final class SessionLayoutTests: XCTestCase {
         launchOfflineFixture(app)
         XCTAssertFalse(app.buttons["Session check"].exists)
         revealDock(app)
-        let controls = app.buttons["Controls"].firstMatch
+        let controls = app.buttons["More"].firstMatch
         XCTAssertTrue(controls.isHittable)
         controls.tap()
         openSettingsPage(app, "steer")
@@ -144,7 +144,7 @@ final class SessionLayoutTests: XCTestCase {
             XCTAssertTrue(handle.waitForExistence(timeout: 20), "Connect must construct the session on hardware")
             XCTAssertEqual(app.state, .runningForeground)
             handle.swipeUp()
-            let controls = app.buttons["Controls"].firstMatch
+            let controls = app.buttons["More"].firstMatch
             XCTAssertTrue(controls.waitForExistence(timeout: 10))
             controls.tap()
             let click = app.buttons["Double-click"].firstMatch
@@ -216,7 +216,7 @@ final class SessionLayoutTests: XCTestCase {
         let end = app.buttons["End session"].firstMatch
         XCTAssertTrue(end.waitForExistence(timeout: 3))
         XCTAssertTrue(end.isHittable, "The notice must not cover End session")
-        XCTAssertTrue(app.buttons["Controls"].firstMatch.isHittable)
+        XCTAssertTrue(app.buttons["More"].firstMatch.isHittable)
         XCTAssertFalse(card.frame.intersects(end.frame))
         XCTAssertFalse(app.buttons["remote.dataWarning.less"].exists, "No preset change before the Mac applies one")
         attachScreenshot("Cellular data notice over the session dock")
@@ -238,7 +238,7 @@ final class SessionLayoutTests: XCTestCase {
             let card = app.descendants(matching: .any)["remote.dataWarning"].firstMatch
             let end = app.buttons["End session"].firstMatch
             XCTAssertTrue(card.waitForExistence(timeout: 5))
-            XCTAssertTrue(end.isHittable && app.buttons["Controls"].firstMatch.isHittable)
+            XCTAssertTrue(end.isHittable && app.buttons["More"].firstMatch.isHittable)
             XCTAssertFalse(card.frame.intersects(end.frame), "Notice below another banner must stop above End")
             for id in ["remote.dataWarning.less", "remote.dataWarning.keep"] {
                 let button = app.buttons[id]
@@ -372,7 +372,7 @@ final class SessionLayoutTests: XCTestCase {
         app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill"]
         launchOfflineFixture(app)
         revealDock(app)
-        app.buttons["Controls"].tap()
+        app.buttons["More"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["remote.controls.content"].firstMatch.waitForExistence(timeout: 3))
         openSettingsPage(app, "picture")
         let responsive = app.buttons["Performance"]
@@ -502,7 +502,7 @@ final class SessionLayoutTests: XCTestCase {
         let start = landscapeHandle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -100)))
         }
-        let controls = app.buttons["Controls"].firstMatch
+        let controls = app.buttons["More"].firstMatch
         XCTAssertTrue(controls.waitForExistence(timeout: 5))
         controls.tap()
         XCTAssertTrue(app.buttons["Double-click"].waitForExistence(timeout: 3))
@@ -553,7 +553,7 @@ final class SessionLayoutTests: XCTestCase {
         let handle = app.buttons["Show controls"]
         XCTAssertTrue(handle.waitForExistence(timeout: 5))
         handle.tap()
-        let controls = app.buttons["Controls"]
+        let controls = app.buttons["More"]
         XCTAssertTrue(controls.waitForExistence(timeout: 5))
         controls.tap()
 
@@ -573,16 +573,20 @@ final class SessionLayoutTests: XCTestCase {
         app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit"]
         launchOfflineFixture(app)
         revealDock(app)
+        app.buttons["More"].tap()
 
         let moveView = app.buttons["Move view"]
         XCTAssertTrue(moveView.waitForExistence(timeout: 3))
         moveView.tap()
+        XCTAssertTrue(app.buttons["Show controls"].waitForExistence(timeout: 5),
+                      "Choosing View closes More and the dock so the whole picture can move")
         let canvas = app.descendants(matching: .any)["remote.canvas"].firstMatch
         XCTAssertTrue(canvas.waitForExistence(timeout: 3))
         XCTAssertEqual(canvas.label, "Remote desktop view")
         canvas.doubleTap()
         attachScreenshot("View mode zoomed - offline layout")
-        app.buttons["Controls"].tap()
+        revealDock(app)
+        app.buttons["More"].tap()
         openSettingsPage(app, "view")
         let zoomValue = app.staticTexts["Current zoom"]
         XCTAssertTrue(zoomValue.waitForExistence(timeout: 3))
@@ -637,7 +641,7 @@ final class SessionLayoutTests: XCTestCase {
         XCTAssertTrue(concealed.waitForExistence(timeout: 5), "Backgrounded content must stay concealed on return")
         XCTAssertFalse(app.descendants(matching: .any)["remote.canvas"].firstMatch.exists)
         XCTAssertFalse(app.buttons["Show controls"].exists)
-        XCTAssertFalse(app.buttons["Controls"].exists)
+        XCTAssertFalse(app.buttons["More"].exists)
         XCTAssertFalse(app.buttons["Keyboard"].exists)
         XCTAssertFalse(app.buttons["Release"].exists)
         let returnButton = app.buttons["Return to Farside"]
@@ -675,7 +679,7 @@ final class SessionLayoutTests: XCTestCase {
         XCTAssertTrue(dock.waitForExistence(timeout: 3))
         XCTAssertGreaterThanOrEqual(dock.frame.minY, pill.frame.maxY)
         XCTAssertLessThanOrEqual(dock.frame.width, 560.5)
-        app.buttons["Controls"].firstMatch.tap()
+        app.buttons["More"].firstMatch.tap()
         let keys = app.descendants(matching: .any)["remote.controls.content"].firstMatch
         XCTAssertTrue(keys.waitForExistence(timeout: 3))
         XCTAssertGreaterThanOrEqual(keys.frame.minY, pill.frame.maxY)

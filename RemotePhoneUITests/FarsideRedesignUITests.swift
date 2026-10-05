@@ -142,18 +142,44 @@ final class FarsideRedesignUITests: XCTestCase {
         let handle = app.buttons["Show controls"]
         handle.swipeUp()
         XCTAssertTrue(app.buttons["Hide controls"].waitForExistence(timeout: 5))
-        for label in ["Keyboard", "Voice input", "Clipboard", "Controls", "Control desktop", "Move view",
-                      "Fit whole display", "Fill screen", "End session"] {
+        for label in ["Keyboard", "Clipboard", "More", "Fit whole display", "Fill screen", "End session"] {
             XCTAssertTrue(app.buttons[label].exists, "Dock is missing \(label)")
         }
-        XCTAssertTrue(app.buttons["Control desktop"].isSelected, "Control is the default touch mode")
+        for label in ["Voice input", "Control desktop", "Move view"] {
+            XCTAssertFalse(app.buttons[label].exists, "The simple dock no longer shows \(label)")
+        }
         XCTAssertTrue(app.buttons["Fill screen"].isSelected, "The fixture starts in Fill")
+        app.buttons["More"].tap()
+        let control = app.buttons["Control desktop"].firstMatch
+        XCTAssertTrue(control.waitForExistence(timeout: 5), "The Control | View switch lives in More")
+        XCTAssertTrue(control.isSelected, "Control is the default touch mode")
+        XCTAssertTrue(app.buttons["Move view"].firstMatch.exists)
+        app.buttons["Done"].firstMatch.tap()
+        XCTAssertTrue(control.waitForNonExistence(timeout: 5))
         app.buttons["Clipboard"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["remote.clipboard.row"].firstMatch.waitForExistence(timeout: 3))
         attach("Dock - clipboard row")
         app.buttons["Hide controls"].swipeDown()
         XCTAssertTrue(handle.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["End session"].exists)
+    }
+
+    /// FarsideBottomControls NO restores the earlier dock: Dictate, Controls and the touch-mode switch.
+    @MainActor
+    func testBottomControlsNoRestoresPreviousDockAndPanel() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill", "-FarsideBottomControls", "NO"]
+        launchOfflineFixture(app)
+        app.buttons["Show controls"].swipeUp()
+        XCTAssertTrue(app.buttons["Hide controls"].waitForExistence(timeout: 5))
+        for label in ["Voice input", "Controls", "Control desktop", "Move view", "Fit whole display", "End session"] {
+            XCTAssertTrue(app.buttons[label].exists, "Rollback dock is missing \(label)")
+        }
+        XCTAssertFalse(app.buttons["More"].exists)
+        app.buttons["Controls"].tap()
+        XCTAssertTrue(app.buttons["Double-click"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Controls"].exists, "Rollback panel keeps its Controls title")
+        attach("Rollback dock and Controls panel")
     }
 
     @MainActor

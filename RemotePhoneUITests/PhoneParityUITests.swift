@@ -486,7 +486,7 @@ final class PhoneParityUITests: XCTestCase {
             XCTAssertGreaterThan(button.frame.midY, app.windows.firstMatch.frame.height * 0.75,
                                  "The Keyboard button sits along the bottom, level with the controls handle")
             revealDock(app)
-            let controls = app.buttons["Controls"].firstMatch
+            let controls = app.buttons["More"].firstMatch
             XCTAssertTrue(controls.isHittable)
             XCTAssertTrue(button.waitForNonExistence(timeout: 5), "The open dock has its own Keyboard tile")
             XCTAssertTrue(app.buttons["Keyboard"].firstMatch.isHittable)
@@ -541,12 +541,12 @@ final class PhoneParityUITests: XCTestCase {
         XCTAssertTrue(button.waitForExistence(timeout: 5))
         revealDock(app)
         XCTAssertTrue(button.waitForNonExistence(timeout: 5), "The open dock has its own Keyboard tile")
+        app.buttons["More"].firstMatch.tap()
         app.buttons["Move view"].firstMatch.tap()
-        app.buttons["Hide controls"].firstMatch.swipeDown()
+        XCTAssertTrue(app.buttons["Show controls"].waitForExistence(timeout: 5), "View closes More and the dock")
         XCTAssertFalse(button.waitForExistence(timeout: 2), "No Keyboard button while only moving the view")
-        revealDock(app)
+        // The View pill's Control button returns to controlling the Mac.
         app.buttons["Control desktop"].firstMatch.tap()
-        app.buttons["Hide controls"].firstMatch.swipeDown()
         XCTAssertTrue(button.waitForExistence(timeout: 5))
     }
 
@@ -844,7 +844,7 @@ final class PhoneParityUITests: XCTestCase {
     @MainActor
     private func openControls(_ app: XCUIApplication) {
         revealDock(app)
-        let controls = app.buttons["Controls"].firstMatch
+        let controls = app.buttons["More"].firstMatch
         XCTAssertTrue(controls.waitForExistence(timeout: 5))
         controls.tap()
         let content = app.descendants(matching: .any)["remote.controls.content"].firstMatch

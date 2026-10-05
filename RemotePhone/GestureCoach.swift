@@ -864,9 +864,16 @@ private struct GestureSummaryView: View {
     private var rows: [(String, String)] {
         [("Click", "Double-tap the desktop. The click lands where the Mac pointer is."),
          ("Right-click and double-click", "On the desktop, swipe up or down to choose an action, then double-tap."),
-         ("Controls", "Open the controls handle at the bottom for the keyboard, voice, clipboard, Fit and View modes."),
-         ("Drag and workspaces", "Use Controls for Drag, Mission Control and switching Spaces.")]
+         simpleSession
+            ? ("Controls", "Open the controls handle at the bottom for the keyboard, files, Fit and Fill, and More.")
+            : ("Controls", "Open the controls handle at the bottom for the keyboard, voice, clipboard, Fit and View modes."),
+         simpleSession
+            ? ("Drag and workspaces", "Use More for Drag, Mission Control, switching Spaces and View mode.")
+            : ("Drag and workspaces", "Use Controls for Drag, Mission Control and switching Spaces.")]
     }
+
+    /// Mirrors the session's internal FarsideBottomControls switch (unset/YES = the simple surface).
+    private var simpleSession: Bool { UserDefaults.standard.object(forKey: "FarsideBottomControls") as? Bool ?? true }
 }
 
 /// A dotted tap target that breathes, showing where a thumb can tap.
