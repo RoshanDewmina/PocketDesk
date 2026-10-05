@@ -17,7 +17,7 @@ final class FarsideNotifyScriptTests: XCTestCase {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("farside-notify-\(UUID().uuidString)")
         received = LockedBox([])
         let box = received
-        bridge = AgentAlertBridge(directory: directory) { alert in
+        bridge = AgentAlertBridge(directory: directory) { alert, _ in
             box.mutate { $0.append(alert) }
             return .forwarded
         }

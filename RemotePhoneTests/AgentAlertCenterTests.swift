@@ -48,6 +48,27 @@ final class AgentAlertCenterTests: XCTestCase {
 
     // MARK: Permission
 
+    func testAttentionOffOnDuringSnoozeAddCannotReviveTheCancelledReminder() async throws {
+        fake.accessValue = .allowed
+        center.preferences.alertsEnabled = true
+        let entered = expectation(description: "snooze add suspended")
+        var continuation: CheckedContinuation<Void, Never>?
+        fake.beforeAdd = { _ in
+            await withCheckedContinuation { resume in
+                continuation = resume
+                entered.fulfill()
+            }
+        }
+        let scheduling = Task { await center.respond(.snooze, to: payload(), deliveredAt: clock, notificationIdentifier: nil) }
+        await fulfillment(of: [entered], timeout: 3)
+        _ = await center.setEventEnabled(.needsUser, on: false)
+        _ = await center.setEventEnabled(.needsUser, on: true)
+        try XCTUnwrap(continuation).resume()
+        await scheduling.value
+        XCTAssertEqual(fake.added.map(\.identifier), ["agent-snooze-h_20af"])
+        XCTAssertEqual(fake.removedPending.filter { $0 == "agent-snooze-h_20af" }.count, 2)
+    }
+
     func testTurningAlertsOnAsksIOSOnlyAfterExplaining() async {
         fake.accessValue = .notDetermined
         let result = await center.setAlertsEnabled(true)

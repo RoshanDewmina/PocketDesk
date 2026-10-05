@@ -77,7 +77,8 @@ enum AgentAlertDisposition: String, Equatable, Sendable {
 /// How an alert would reach a phone that is not in a session: an APNs push through Farside's service.
 /// Nothing implements it yet, so the default says exactly why it cannot.
 protocol AgentPushRelay: Sendable {
-    func deliver(_ alert: AgentAlert) async -> AgentPushOutcome
+    /// Check the intake again on the relay's executor before starting an outbound request.
+    func deliver(_ alert: AgentAlert, admission: AgentAlertBridge.Admission?) async -> AgentPushOutcome
 }
 
 enum AgentPushOutcome: Equatable, Sendable {
@@ -89,7 +90,7 @@ enum AgentPushOutcome: Equatable, Sendable {
 /// auth key per environment, the service's push registry and `agent_event` relay, the phone's token
 /// registration, and the Mac's `agent_event` message on its host socket.
 struct UnconfiguredAgentPushRelay: AgentPushRelay {
-    func deliver(_ alert: AgentAlert) async -> AgentPushOutcome {
+    func deliver(_ alert: AgentAlert, admission: AgentAlertBridge.Admission?) async -> AgentPushOutcome {
         .unavailable("Push delivery is not configured: no APNs key or push service yet.")
     }
 }

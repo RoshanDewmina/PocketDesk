@@ -40,6 +40,9 @@ final class HostAgentAlerts: ObservableObject {
     var canUsePush: () -> Bool = { false }
     var pushIdentity: () -> String? = { nil }
     var record: (String) -> Void = { _ in }
+    var bridgeFactory: (URL, @escaping AgentAlertBridge.Handler) -> AgentAlertBridge = {
+        AgentAlertBridge(directory: $0, handler: $1)
+    }
 
     private var gate = AgentAlertGate()
     private var deliveryRevision: UInt64 = 0
@@ -67,6 +70,7 @@ final class HostAgentAlerts: ObservableObject {
         preferences.agentAlerts = on
         isOn = on
         deliveryRevision &+= 1
+        bridge?.invalidateAdmissions()
         if anyEnabled { if bridge == nil { await startBridge() } } else { stopBridge() }
     }
 
@@ -85,6 +89,7 @@ final class HostAgentAlerts: ObservableObject {
         case .failed: preferences.failedAlerts = enabled; failedOn = enabled
         }
         deliveryRevision &+= 1
+        bridge?.invalidateAdmissions()
         if anyEnabled { if bridge == nil { await startBridge() } } else { stopBridge() }
     }
 
@@ -106,9 +111,9 @@ final class HostAgentAlerts: ObservableObject {
     private func startBridge() async {
         stopBridge()
         let revision = deliveryRevision
-        let bridge = AgentAlertBridge(directory: directory) { [weak self] alert in
+        let bridge = bridgeFactory(directory) { [weak self] alert, admission in
             guard let self else { return .disabled }
-            return await self.receive(alert)
+            return await self.receive(alert, admission: admission)
         }
         do {
             try await bridge.start()
@@ -130,14 +135,15 @@ final class HostAgentAlerts: ObservableObject {
     }
 
     /// One alert from a hook.
-    func receive(_ alert: AgentAlert) async -> AgentAlertDisposition {
-        guard accepts(alert.event) else { return .disabled }
-        let disposition = await dispatch(alert)
+    func receive(_ alert: AgentAlert, admission: AgentAlertBridge.Admission? = nil) async -> AgentAlertDisposition {
+        guard accepts(alert.event), admission?.isCurrent() != false else { return .disabled }
+        let disposition = await dispatch(alert, admission: admission)
+        guard admission?.isCurrent() != false else { return .disabled }
         last = Record(kind: alert.kind, event: alert.event, at: now(), disposition: disposition)
         return disposition
     }
 
-    private func dispatch(_ alert: AgentAlert) async -> AgentAlertDisposition {
+    private func dispatch(_ alert: AgentAlert, admission: AgentAlertBridge.Admission?) async -> AgentAlertDisposition {
         guard hasPairedPhone() else { return .noPhone }
         switch gate.decide(sessionHash: alert.sessionHash, now: now(), event: alert.event, runHash: alert.runHash, eventID: alert.id) {
         case .duplicate:
@@ -148,14 +154,16 @@ final class HostAgentAlerts: ObservableObject {
         case .admit:
             break
         }
-        if isPhoneLive(), deliverToPhone(alert.frame) {
+        guard admission?.isCurrent() != false else { return .disabled }
+        if isPhoneLive(), admission?.isCurrent() != false, deliverToPhone(alert.frame) {
             record(alert.event.isAttention ? "Told your iPhone that \(alert.kind.displayName) needs you" : "Told your iPhone a task \(alert.event.rawValue)")
             return .forwarded
         }
+        guard admission?.isCurrent() != false else { return .disabled }
         guard canUsePush(), let identity = pushIdentity() else { return .pushUnavailable }
         let revision = deliveryRevision
-        let outcome = await push.deliver(alert)
-        guard revision == deliveryRevision, accepts(alert.event), canUsePush(), pushIdentity() == identity else { return .pushUnavailable }
+        let outcome = await push.deliver(alert, admission: admission)
+        guard revision == deliveryRevision, admission?.isCurrent() != false, accepts(alert.event), canUsePush(), pushIdentity() == identity else { return .pushUnavailable }
         switch outcome {
         case .sent:
             record(alert.event.isAttention ? "Notification accepted for your iPhone: \(alert.kind.displayName) needs you" : "Notification accepted for your iPhone: a task \(alert.event.rawValue)")
@@ -310,7 +318,8 @@ actor HTTPAgentPushRelay: AgentPushRelay {
         session = URLSession(configuration: .ephemeral, delegate: AgentPushNoRedirect(), delegateQueue: nil)
     }
 
-    func deliver(_ alert: AgentAlert) async -> AgentPushOutcome {
+    func deliver(_ alert: AgentAlert, admission: AgentAlertBridge.Admission?) async -> AgentPushOutcome {
+        guard admission?.isCurrent() != false else { return .unavailable("The agent link was reset or disabled.") }
         guard (!alert.event.isAttention || alert.kind == .claudeCode || alert.kind == .codex),
               (alert.event.isAttention || alert.runHash.map(AgentAlert.isSessionHash) == true),
               alert.id.hasPrefix("h_"),
@@ -333,6 +342,7 @@ actor HTTPAgentPushRelay: AgentPushRelay {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = data
         do {
+            guard admission?.isCurrent() != false else { return .unavailable("The agent link was reset or disabled.") }
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse, http.url == url,
                   http.statusCode == 202,
