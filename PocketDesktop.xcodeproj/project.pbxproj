@@ -568,6 +568,7 @@
 		F56863A3C6F8A29444D26B04 /* ServerDataRemoval.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BE5ACECBC6DADB638DD5B01 /* ServerDataRemoval.swift */; };
 		F57D53382B2FB794C10726E7 /* LegalNoticesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AE917A2022CA1A828BFA243 /* LegalNoticesView.swift */; };
 		F5CB58D631CDD130C27EBE66 /* PointerLocationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B45BA3810586D5E7548CC90 /* PointerLocationTests.swift */; };
+		F614EBB3B5796328CD19E445 /* PairStoreDeletionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66FDE764B193EF993CFCF635 /* PairStoreDeletionTests.swift */; };
 		F631B70328B2173231051AE8 /* E2EMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E609125CE2A4A1E42653D11 /* E2EMedia.swift */; };
 		F63F824E0BF289C797D43263 /* FarsideHalftone.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D465DB529F7AFB91CFA9A74 /* FarsideHalftone.swift */; };
 		F7ECA03114F91A73C644A771 /* PointerGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40F2AC5A22A82DCC4F04012B /* PointerGlyph.swift */; };
@@ -823,6 +824,7 @@
 		652B094C95978F6D605C1E82 /* LadderPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LadderPolicy.swift; sourceTree = "<group>"; };
 		66837EB113FE152C4BBA7BBA /* WatchdogE2E.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchdogE2E.swift; sourceTree = "<group>"; };
 		66CE61B858A64288AAC8E996 /* HostAppActivation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostAppActivation.swift; sourceTree = "<group>"; };
+		66FDE764B193EF993CFCF635 /* PairStoreDeletionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairStoreDeletionTests.swift; sourceTree = "<group>"; };
 		67CC891F087F9506F67A4C05 /* HostMark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostMark.swift; sourceTree = "<group>"; };
 		691D8B414697903DBB69B460 /* SessionRenewalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRenewalTests.swift; sourceTree = "<group>"; };
 		694DE44889891163508E18D2 /* SessionActivityPush.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionActivityPush.swift; sourceTree = "<group>"; };
@@ -1336,6 +1338,7 @@
 				DAC85148D3F395A0D9046A13 /* NativeGestureEngineTests.swift */,
 				CE2406BCA00220ED02C01518 /* NativeInputSafetyTests.swift */,
 				974DBC6590A3D7D66B8C20B1 /* NativeProtocolTests.swift */,
+				66FDE764B193EF993CFCF635 /* PairStoreDeletionTests.swift */,
 				5B45BA3810586D5E7548CC90 /* PointerLocationTests.swift */,
 				0C792ABF9D495176D081B6D7 /* PointerTelemetryTests.swift */,
 				C20DEAFF126EDB5CF5CAB164 /* PrivacyCurtainTests.swift */,
@@ -2516,6 +2519,7 @@
 				B50B079336BFB89EE634BC2B /* NativeInputSafetyTests.swift in Sources */,
 				296531DEFB7342A11AF2CDED /* NativeInteraction.swift in Sources */,
 				D59A2D04E0D66384CE5E4986 /* NativeProtocolTests.swift in Sources */,
+				F614EBB3B5796328CD19E445 /* PairStoreDeletionTests.swift in Sources */,
 				1C1C88B47E7708FA8010F74A /* Pairing.swift in Sources */,
 				AE9AC143ECFF68174B9561FF /* PeerMedia.swift in Sources */,
 				647D0FD25F73AAE67602CCA9 /* PocketDeskStyle.swift in Sources */,
