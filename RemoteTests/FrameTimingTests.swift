@@ -361,6 +361,28 @@ final class FrameTimingTests: XCTestCase {
         }
     }
 
+    func testH264ReleaseRetiresUnreadOwnTracesAndPreservesOtherDecoderObservations() throws {
+        let log = PhoneFrameTimingLog(renderTimingEnabled: true)
+        let firstInner = StubH264Decoder(), secondInner = StubH264Decoder()
+        let first = TimedH264Decoder(log: log, inner: firstInner)
+        let second = TimedH264Decoder(log: log, inner: secondInner)
+        let firstFrame = try decodedFrame(rtp: 1, timeStampNs: 100)
+        let secondFrame = try decodedFrame(rtp: 2, timeStampNs: 200)
+        var firstDeliveries = 0
+        first.setCallback { _ in firstDeliveries += 1 } // Deliberately leave its trace unread.
+        second.setCallback { _ in }
+        firstInner.callback?(firstFrame); secondInner.callback?(secondFrame)
+        let ownedHEVC = PhoneDecodeTrace(submitMs: 1, callbackMs: 2, ownershipMs: 3, deliveryMs: 4)
+        log.decodedDelivery(rtp: 3, timeStampNs: 300, trace: ownedHEVC)
+        XCTAssertEqual(first.release(), 11)
+        XCTAssertNil(log.takeDecodeTrace(rtp: 1, timeStampNs: 100), "Release retires unread trace before any late callback")
+        firstInner.callback?(firstFrame)
+        XCTAssertEqual(firstDeliveries, 2, "Measurement retirement preserves stock forwarding")
+        XCTAssertNil(log.takeDecodeTrace(rtp: 1, timeStampNs: 100), "Late output cannot borrow old delivery")
+        XCTAssertNotNil(log.takeDecodeTrace(rtp: 2, timeStampNs: 200), "Another H264 wrapper retains its observation")
+        XCTAssertEqual(log.takeDecodeTrace(rtp: 3, timeStampNs: 300), ownedHEVC)
+    }
+
     func testDuplicateDeliveryIdentityIsQuarantinedBeforeAndAfterConsumption() {
         for consumeFirst in [false, true] {
             let log = PhoneFrameTimingLog(renderTimingEnabled: true)
