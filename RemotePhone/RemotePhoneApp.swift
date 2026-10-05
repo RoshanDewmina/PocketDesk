@@ -750,6 +750,7 @@ final class PhoneRemoteModel: ObservableObject {
         presentationHost = host
     }
     private func retireContentPresentation() {
+        shortcutWorkspace.retire()
         windowWorkspace.retire()
         diagnostics.cancel()
         pipTransitional = false
@@ -759,6 +760,7 @@ final class PhoneRemoteModel: ObservableObject {
         finishPiPRestore(false)
     }
     private func invalidatePresentation(keepingPiP: Bool = false, requestHostExit: Bool = true) {
+        shortcutWorkspace.retire()
         windowWorkspace.retire()
         fileBrowser.reset()
         phoneLoadCache.invalidate()
@@ -1187,6 +1189,16 @@ final class PhoneRemoteModel: ObservableObject {
         clipboard.pressPaste = { [weak self] in self?.commandShortcut("v") ?? false }
         clipboardObserver = clipboard.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         wireFileTransfer()
+        shortcutWorkspace.authority = { [weak self] in
+            guard let self, self.windowWorkspaceAllowed else { return nil }
+            return (self.connection.presentationSessionID, self.geometryEpoch)
+        }
+        shortcutWorkspace.transport = { [weak self] frame, epoch in
+            guard let self, self.windowWorkspaceAllowed, epoch == self.geometryEpoch else { return false }
+            self.modifiers.removeAll(); self.cancelInput()
+            return self.connection.sendControl(.workspace(frame, epoch: epoch))
+        }
+        shortcutWorkspaceObserver = shortcutWorkspace.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         windowWorkspace.authority = { [weak self] in
             guard let self, self.windowWorkspaceAllowed else { return nil }
             return (self.connection.presentationSessionID, self.geometryEpoch)
@@ -1212,6 +1224,8 @@ final class PhoneRemoteModel: ObservableObject {
     }
     #endif
 
+    let shortcutWorkspace = ShortcutWorkspaceController()
+    private var shortcutWorkspaceObserver: AnyCancellable?
     let windowWorkspace = WindowWorkspaceController()
     private var windowWorkspaceObserver: AnyCancellable?
     var windowWorkspaceAllowed: Bool {
@@ -2634,7 +2648,94 @@ let now = ProcessInfo.processInfo.systemUptime
     var shortcutChips: [ShortcutChip] {
         guard ShortcutChips.negotiated(enabled: ShortcutChips.isEnabled(preferences), peerFeatures: hostFeatures),
               !passwordFieldFocused, canControl else { return [] }
-        return ShortcutCatalog.chips(for: frontmostApp?.bundleID)
+        let catalog = ShortcutCatalog.chips(for: frontmostApp?.bundleID)
+        guard let host = connection.presentationHostTrust else { return catalog }
+        let bundle = frontmostApp?.bundleID ?? "global"
+        return ShortcutWorkspaceStore(defaults: preferences).visible(host: host, bundleID: bundle, catalog: catalog)
+    }
+
+    @Published var taskViewMessage = ""
+    var taskViewHostKey: String? { connection.presentationHostTrust.map(AwayMemory.macKey) }
+    var savedTaskViews: [SavedTaskView] {
+        guard let host = connection.presentationHostTrust else { return [] }
+        return TaskViewWorkspaceStore(defaults: preferences).all(host: host)
+    }
+    func saveTaskView(label: String, viewport: ResumeViewport) -> Bool {
+        guard windowWorkspaceAllowed, pendingDisplayID == nil, bigText.pendingTarget == nil,
+              let host = connection.presentationHostTrust, let display = displays.first(where: { $0.id == currentDisplayID }),
+              abs(display.width - sourceSize.width) < 0.5, abs(display.height - sourceSize.height) < 0.5,
+              let view = SavedTaskView(label: label, host: host, display: display, viewport: viewport) else { return false }
+        objectWillChange.send()
+        guard TaskViewWorkspaceStore(defaults: preferences).save(view, host: host) else { taskViewMessage = "Saved views are full."; return false }
+        taskViewMessage = "Saved on this phone."; return true
+    }
+    func renameTaskView(_ id: UUID, label: String) {
+        guard let host = connection.presentationHostTrust else { return }
+        objectWillChange.send(); TaskViewWorkspaceStore(defaults: preferences).rename(id, label: label, host: host)
+    }
+    func deleteTaskView(_ id: UUID) {
+        guard let host = connection.presentationHostTrust else { return }
+        objectWillChange.send(); TaskViewWorkspaceStore(defaults: preferences).delete(id, host: host)
+    }
+    func forgetWorkspacePreferences(host: PhoneHostTrust) {
+        TaskViewWorkspaceStore(defaults: preferences).forget(host: host)
+        ShortcutWorkspaceStore(defaults: preferences).forget(host: host)
+    }
+
+    @Published var personalShortcutEditingBundle: String?
+    var personalShortcutBundleID: String { personalShortcutEditingBundle ?? frontmostApp?.bundleID ?? "global" }
+    var personalShortcutCatalog: [ShortcutChip] {
+        let catalog = ShortcutCatalog.chips(for: personalShortcutBundleID == "global" ? nil : personalShortcutBundleID)
+        guard let profile = personalShortcutProfile else { return catalog }
+        return catalog.sorted { (profile.order.firstIndex(of: ShortcutWorkspaceStore.catalogID($0)) ?? 99) < (profile.order.firstIndex(of: ShortcutWorkspaceStore.catalogID($1)) ?? 99) }
+    }
+    var personalShortcutProfile: ShortcutWorkspaceProfile? {
+        guard let host = connection.presentationHostTrust else { return nil }
+        let bundle = personalShortcutBundleID
+        return ShortcutWorkspaceStore(defaults: preferences).profile(host: host, bundleID: bundle, catalog: ShortcutCatalog.chips(for: bundle))
+    }
+    @discardableResult
+    private func savePersonalShortcutProfile(_ value: ShortcutWorkspaceProfile) -> Bool {
+        guard let host = connection.presentationHostTrust else { return false }
+        let bundle = personalShortcutBundleID
+        objectWillChange.send()
+        return ShortcutWorkspaceStore(defaults: preferences).save(value, host: host, bundleID: bundle)
+    }
+    func togglePersonalShortcut(_ chip: ShortcutChip) {
+        guard var profile = personalShortcutProfile else { return }
+        let id = ShortcutWorkspaceStore.catalogID(chip)
+        if profile.hidden.contains(id) { profile.hidden.remove(id) } else { profile.hidden.insert(id) }
+        savePersonalShortcutProfile(profile)
+    }
+    func movePersonalShortcut(_ chip: ShortcutChip, direction: Int) {
+        guard var profile = personalShortcutProfile, let index = profile.order.firstIndex(of: ShortcutWorkspaceStore.catalogID(chip)) else { return }
+        let destination = index + direction
+        guard profile.order.indices.contains(destination) else { return }
+        profile.order.swapAt(index, destination); savePersonalShortcutProfile(profile)
+    }
+    func restorePersonalShortcuts() {
+        guard let host = connection.presentationHostTrust else { return }
+        let bundle = personalShortcutBundleID
+        objectWillChange.send(); ShortcutWorkspaceStore(defaults: preferences).restoreDefaults(host: host, bundleID: bundle)
+    }
+    func addPersonalChord(label: String, key: String, modifiers: [String]) -> Bool {
+        guard var profile = personalShortcutProfile, personalShortcutBundleID != "global", profile.custom.count < 12 else { return false }
+        let bundle = personalShortcutBundleID
+        let chord = PersonalShortcut(id: UUID(), label: label, bundleID: bundle, key: key, modifiers: modifiers)
+        guard chord.valid else { return false }
+        profile.custom.append(chord); return savePersonalShortcutProfile(profile)
+    }
+    func removePersonalChord(_ id: UUID) {
+        guard var profile = personalShortcutProfile else { return }
+        profile.custom.removeAll { $0.id == id }; savePersonalShortcutProfile(profile)
+    }
+    var activePersonalChords: [PersonalShortcut] {
+        guard let host = connection.presentationHostTrust, let bundle = frontmostApp?.bundleID, windowWorkspaceAllowed else { return [] }
+        return ShortcutWorkspaceStore(defaults: preferences).profile(host: host, bundleID: bundle, catalog: ShortcutCatalog.chips(for: bundle)).custom
+    }
+    func runPersonalChord(_ chord: PersonalShortcut) {
+        guard windowWorkspaceAllowed, personalShortcutProfile?.custom.contains(chord) == true || activePersonalChords.contains(chord) else { return }
+        modifiers.removeAll(); shortcutWorkspace.run(chord)
     }
 
     @discardableResult
@@ -3102,6 +3203,7 @@ let now = ProcessInfo.processInfo.systemUptime
             guard (try? action.validateWorkspace()) == true, let frame = action.workspace else { return }
             switch frame.kind {
             case .windows: windowWorkspace.receive(frame, epoch: action.epoch)
+            case .scopedChord: shortcutWorkspace.receive(frame, epoch: action.epoch)
             case .files:
                 guard action.epoch == geometryEpoch, fileBrowserAvailable else { return }
                 fileBrowser.receive(frame)
