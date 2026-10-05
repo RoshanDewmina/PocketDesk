@@ -96,6 +96,8 @@ final class PhysicalLifecycleSmokeTests: XCTestCase {
                              "-farsidePhoneRendererDrawableCount", String(count),
                              "-phoneImmediateSourceDrawDisabled", "NO"]
             let app = try pairedSession(launchArguments: arguments)
+            let hide = app.buttons["Hide controls"]
+            if hide.exists { hide.tap() }
             defer { app.terminate() }
             let started = Date(), startedUptime = ProcessInfo.processInfo.systemUptime
             // No remote click/typing, foreground transition or quality setting during acquisition.
@@ -112,7 +114,7 @@ final class PhysicalLifecycleSmokeTests: XCTestCase {
             Acquisition UTC end: \(format.string(from: ended))
             Test-runner uptime start: \(startedUptime)
             Test-runner uptime end: \(endedUptime)
-            Connected dwell seconds: \(endedUptime - startedUptime)
+            Observation dwell seconds: \(endedUptime - startedUptime)
             Match the same externally controlled Mac content and isolate logs to these windows.
             No performance or sharpness verdict is asserted by this observation test.
             """)
