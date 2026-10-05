@@ -14,10 +14,14 @@ final class FrozenTextController: ObservableObject {
     private weak var session: VideoPresentationSession?
     private static weak var active: FrozenTextController?
     static func cancelActive() { active?.cancel() }
+    private static let workGate = FrozenTextWorkGate()
     private static let queue = DispatchQueue(label: "farside.text-recognition", qos: .userInitiated)
 
     func start(model: PhoneRemoteModel, visible: CGRect) {
         cancel()
+        guard !Self.workGate.isBusy else {
+            isPresented = true; status = "The previous recognition is finishing. Close and try again in a moment."; return
+        }
         guard model.textRecognitionAvailable, !model.passwordFieldFocused,
               !model.contentConcealed, !model.privacyShield, !model.captureScopeViewOnly,
               let admission = model.inlinePresentationAdmission,
@@ -46,9 +50,11 @@ final class FrozenTextController: ObservableObject {
             DispatchQueue.main.async {
                 guard let self, self.token == job, self.allowed?() == true else { return }
                 guard let copied else { self.status = "This frame could not be copied. Close and try again."; return }
+                guard Self.workGate.begin() else { self.status = "Recognition is still finishing. Close and try again."; return }
                 self.image = copied; self.status = "Recognizing text on this device…"
                 Self.queue.async {
                     let result = try? FrozenTextSnapshot.recognize(copied)
+                    Self.workGate.finish()
                     DispatchQueue.main.async {
                         guard self.token == job, self.allowed?() == true else { return }
                         self.text = result ?? ""

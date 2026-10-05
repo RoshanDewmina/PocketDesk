@@ -2,6 +2,15 @@ import XCTest
 @testable import PocketDeskRemote
 
 final class FrozenTextSnapshotTests: XCTestCase {
+    func testCancelledPublicationCannotAdmitAnotherVisionJobUntilWorkFinishes() {
+        let gate = FrozenTextWorkGate()
+        XCTAssertTrue(gate.begin())
+        XCTAssertTrue(gate.isBusy)
+        XCTAssertFalse(gate.begin())
+        gate.finish()
+        XCTAssertTrue(gate.begin())
+        gate.finish()
+    }
     func testCropIncludesOnlyVisiblePlacementWithNonzeroOrigin() throws {
         let crop = try XCTUnwrap(FrozenTextSnapshot.normalizedCrop(visible: CGRect(x: 100, y: 50, width: 200, height: 100),
             placement: CGRect(x: 50, y: 0, width: 400, height: 200)))

@@ -1,3 +1,4 @@
+import Foundation
 import CoreImage
 import Vision
 import WebRTC
@@ -54,4 +55,16 @@ enum FrozenTextSnapshot {
         }
         return String(lines.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n").prefix(65_536))
     }
+}
+
+/// Cancellation retires publication but does not pretend Vision has released its image yet.
+final class FrozenTextWorkGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var processing = false
+    var isBusy: Bool { lock.lock(); defer { lock.unlock() }; return processing }
+    func begin() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !processing else { return false }; processing = true; return true
+    }
+    func finish() { lock.lock(); processing = false; lock.unlock() }
 }
