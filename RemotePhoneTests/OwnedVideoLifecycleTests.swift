@@ -6,6 +6,59 @@ import XCTest
 @testable import PocketDeskRemote
 
 final class OwnedVideoLifecycleTests: XCTestCase {
+    @MainActor
+    func testDrawablePoolExperimentDefaultsToTwoRejectsInvalidValuesAndIsFrozenPerRenderer() throws {
+        let name = "OwnedVideoDrawablePool." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let admission = VideoPresentationAdmission(identity: identity(), validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        let original = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission), defaults: defaults)
+        defer { original.invalidate() }
+        XCTAssertEqual(original.drawablePoolCount, 2)
+        XCTAssertEqual((original.metal.layer as? CAMetalLayer)?.maximumDrawableCount, 2)
+        XCTAssertFalse(OwnedVideoPacingExperiment.diagnosticsEnabled(defaults: defaults))
+        for invalid in [0, 1, 4, -1, 100] {
+            defaults.set(invalid, forKey: OwnedVideoPacingExperiment.drawableCountKey)
+            XCTAssertEqual(OwnedVideoPacingExperiment.drawableCount(defaults: defaults), 2)
+        }
+        defaults.set(3, forKey: OwnedVideoPacingExperiment.drawableCountKey)
+        defaults.set(true, forKey: OwnedVideoPacingExperiment.diagnosticsKey)
+        let experiment = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission), defaults: defaults)
+        defer { experiment.invalidate() }
+        #if DEBUG
+        XCTAssertEqual(experiment.drawablePoolCount, 3)
+        XCTAssertEqual((experiment.metal.layer as? CAMetalLayer)?.maximumDrawableCount, 3)
+        XCTAssertTrue(OwnedVideoPacingExperiment.diagnosticsEnabled(defaults: defaults))
+        #else
+        XCTAssertEqual(experiment.drawablePoolCount, 2)
+        XCTAssertFalse(OwnedVideoPacingExperiment.diagnosticsEnabled(defaults: defaults))
+        #endif
+        XCTAssertEqual(original.drawablePoolCount, 2, "changing defaults cannot mutate an existing drawable pool")
+        defaults.removeObject(forKey: OwnedVideoPacingExperiment.drawableCountKey)
+        defaults.removeObject(forKey: OwnedVideoPacingExperiment.diagnosticsKey)
+        XCTAssertEqual(OwnedVideoPacingExperiment.drawableCount(defaults: defaults), 2)
+        XCTAssertFalse(OwnedVideoPacingExperiment.diagnosticsEnabled(defaults: defaults))
+    }
+
+    func testPacingWindowSeparatesWakeDrawsFromTicksAndBoundsAcquisitionEvidence() {
+        var window = OwnedVideoPacingWindow()
+        window.draw(.tick); window.draw(.sourceWake); window.draw(.tick)
+        window.acquired(milliseconds: 0, available: true)
+        window.acquired(milliseconds: 20, available: false)
+        window.acquired(milliseconds: 1000 / 60, available: true)
+        window.acquired(milliseconds: .nan, available: false)
+        window.acquired(milliseconds: .infinity, available: false)
+        window.acquired(milliseconds: -1, available: false)
+        XCTAssertEqual(window.ticks, 2); XCTAssertEqual(window.sourceWakes, 1)
+        XCTAssertEqual(window.acquisitions, 3); XCTAssertEqual(window.missingDrawables, 1)
+        XCTAssertEqual(window.maximumAcquireMs, 20); XCTAssertEqual(window.waitsOverFrame, 1)
+        XCTAssertEqual(window.meanAcquireMs, (20 + 1000 / 60) / 3, accuracy: 0.00001)
+        window = OwnedVideoPacingWindow()
+        XCTAssertEqual(window.acquisitions, 0); XCTAssertEqual(window.meanAcquireMs, 0)
+        XCTAssertEqual(window.maximumAcquireMs, 0); XCTAssertEqual(window.ticks, 0)
+        XCTAssertEqual(window.sourceWakes, 0); XCTAssertEqual(window.waitsOverFrame, 0)
+    }
+
     func testSettledBackingPolicyHonorsRollbackAndBothOwnershipEdges() {
         let big = CGSize(width: 2560, height: 1600), small = CGSize(width: 1920, height: 1200)
         var enabled = OwnedVideoBackingPolicy(enabled: true)

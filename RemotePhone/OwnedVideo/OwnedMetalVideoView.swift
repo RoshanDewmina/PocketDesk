@@ -46,6 +46,12 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     // Internal A/B controls, read once for this immutable renderer registration.
     private let unfencedPreparation: Bool
     private let immediateSourceDraw: Bool
+    /// Explicit development experiment only; ordinary and distribution launches keep two drawables.
+    let drawablePoolCount: Int
+    private let pacingDiagnosticsEnabled: Bool
+    private var pacingDiagnostics = OwnedVideoPacingWindow()
+    private var pacingDrawOrigin = OwnedVideoPacingWindow.Origin.tick
+    private var pacingWindowStartedAt: TimeInterval?
     /// Test seam uses the same acquisition boundary as Metal's blocking lazy drawable access.
     var drawableAcquirer: (MTKView) -> (MTLRenderPassDescriptor, CAMetalDrawable)? = { view in
         guard let descriptor = view.currentRenderPassDescriptor, let drawable = view.currentDrawable else { return nil }
@@ -69,6 +75,8 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         self.fence = fence; identity = admission.identity
         unfencedPreparation = !defaults.bool(forKey: "phoneUnfencedDrawableDisabled")
         immediateSourceDraw = !defaults.bool(forKey: "phoneImmediateSourceDrawDisabled")
+        drawablePoolCount = OwnedVideoPacingExperiment.drawableCount(defaults: defaults)
+        pacingDiagnosticsEnabled = OwnedVideoPacingExperiment.diagnosticsEnabled(defaults: defaults)
         // On in Roshan's combined .7 device test (3 Oct); NO turns each off. Release defaults follow that test.
         backingPolicy = OwnedVideoBackingPolicy(enabled: defaults.object(forKey: "PocketDeskSingleResample") == nil
             || defaults.bool(forKey: "PocketDeskSingleResample"))
@@ -90,7 +98,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         metal.layer.contentsGravity = .resize
         metal.framebufferOnly = true
         metal.preferredFramesPerSecond = fps
-        (metal.layer as? CAMetalLayer)?.maximumDrawableCount = 2
+        (metal.layer as? CAMetalLayer)?.maximumDrawableCount = drawablePoolCount
         (metal.layer as? CAMetalLayer)?.colorspace = CGColorSpace(name: CGColorSpace.itur_709)
         // Taps, the pointer glyph and the mini map's markers all map over the full placement, so
         // the picture must fill it: a letterbox inset would move every one off its target pixel.
@@ -158,7 +166,8 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
                 // This wake consumes only the pass-through mailbox; interpolation still pumps
                 // on MTKView's ordinary ticks, with its existing deadlines and ordering.
                 self.drawingPromptSource = prompt
-                defer { self.drawingPromptSource = false }
+                self.pacingDrawOrigin = .sourceWake
+                defer { self.drawingPromptSource = false; self.pacingDrawOrigin = .tick }
                 self.drawRequester(self.metal)
             }
         }
@@ -181,6 +190,12 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { redraw = true }
     func draw(in view: MTKView) {
         guard fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, { true }) == true else { invalidate(); return }
+        if pacingDiagnosticsEnabled {
+            let now = ProcessInfo.processInfo.systemUptime
+            if pacingWindowStartedAt == nil { pacingWindowStartedAt = now }
+            pacingDiagnostics.draw(pacingDrawOrigin)
+        }
+        defer { logPacingIfDue(view) }
         // Presenter holds its own lock while delivering to the presentation fence. Do not
         // invert that order by pumping the presenter under this fence.
         if !drawingPromptSource { beforeDraw?(view) }
@@ -203,17 +218,24 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     private func drawAdmitted(in view: MTKView) {
         guard let submission = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, {
             mailbox.take(redraw: redraw, holdUntilPresented: unfencedPreparation || backingPolicy.enabled)
-        }) ?? nil else { return }
+        }) ?? nil else {
+            if pacingDiagnosticsEnabled { pacingDiagnostics.noSubmission += 1 }
+            return
+        }
         let envelope = submission.frame
         guard let geometry = envelope.geometry else { mailbox.completed(submission.id); invalidate(); return }
         guard let backing = backingPolicy.target(picture: geometry.displaySize,
                 current: view.drawableSize == CGSize(width: 1, height: 1) ? nil : view.drawableSize,
                 at: ProcessInfo.processInfo.systemUptime, drained: mailbox.isOnlyFlight(submission.id)) else {
+            if pacingDiagnosticsEnabled { pacingDiagnostics.geometryRetries += 1 }
             mailbox.requeue(submission.id, frame: envelope, wasNew: submission.isNew)
             redraw = true
             return
         }
-        if view.drawableSize != backing { view.drawableSize = backing }
+        if view.drawableSize != backing {
+            if pacingDiagnosticsEnabled { pacingDiagnostics.backingChanges += 1 }
+            view.drawableSize = backing
+        }
         guard let pixels = envelope.pixels, let pipeline = pipelines[pixels.bgra], let cache,
               let command = commandQueue?.makeCommandBuffer() else {
             mailbox.completed(submission.id)
@@ -224,6 +246,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         let acquisitionStartMs = MachClock.nowMs()
         let acquired = drawableAcquirer(view)
         let acquireMs = MachClock.nowMs() - acquisitionStartMs
+        if pacingDiagnosticsEnabled { pacingDiagnostics.acquired(milliseconds: acquireMs, available: acquired != nil) }
         counters?.phoneRenderTiming(.drawableAcquire, milliseconds: acquireMs)
         drawableWaits.record(acquireMs)
         renderDiagnostics?.drawableAcquisition(ms: acquireMs)
@@ -329,12 +352,27 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         // effect is fenced; rejected preparation cannot publish or resurrect old pixels.
         let submitted = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) {
             command.present(drawable); command.commit(); drawsPresented += 1
+            if pacingDiagnosticsEnabled {
+                if submission.isNew && envelope.originalSource { pacingDiagnostics.originalSubmissions += 1 }
+                else { pacingDiagnostics.otherSubmissions += 1 }
+            }
             if submission.isNew && envelope.originalSource {
                 counters?.presented(latencyMs: max(0, MachClock.nowMs() - envelope.arrivalMs))
             }
             return true
         }
         if submitted != true { mailbox.completed(submission.id); invalidate() }
+    }
+    /// Main-thread counters only. This measures scheduling/submission, never actual presentation.
+    /// No callback, fence, identity, pixel or original-frame ownership rule changes for this A/B.
+    private func logPacingIfDue(_ view: MTKView) {
+        guard pacingDiagnosticsEnabled, let start = pacingWindowStartedAt else { return }
+        let now = ProcessInfo.processInfo.systemUptime, elapsed = now - start
+        guard elapsed >= 10 else { return }
+        let window = pacingDiagnostics
+        Self.renderLogger.notice("pacing window seconds=\(elapsed, privacy: .public) drawables=\(self.drawablePoolCount, privacy: .public) requestedFPS=\(view.preferredFramesPerSecond, privacy: .public) immediate=\(self.immediateSourceDraw, privacy: .public) ticks=\(window.ticks, privacy: .public) sourceWakes=\(window.sourceWakes, privacy: .public) noSubmission=\(window.noSubmission, privacy: .public) originalSubmitted=\(window.originalSubmissions, privacy: .public) otherSubmitted=\(window.otherSubmissions, privacy: .public) geometryRetries=\(window.geometryRetries, privacy: .public) backingChanges=\(window.backingChanges, privacy: .public) acquisitions=\(window.acquisitions, privacy: .public) missing=\(window.missingDrawables, privacy: .public) waitMeanMs=\(window.meanAcquireMs, privacy: .public) waitMaxMs=\(window.maximumAcquireMs, privacy: .public) waitsOver16ms=\(window.waitsOverFrame, privacy: .public)")
+        pacingDiagnostics = OwnedVideoPacingWindow()
+        pacingWindowStartedAt = now
     }
     /// Core Animation runs presented handlers while holding the layer's private lock, and this view
     /// calls `addPresentedHandler` on main while holding the fence. Waiting on the fence inside the
@@ -461,6 +499,55 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         return float4(refined(displayEncoded(image.sample(s,t).rgb,u),v.uv,r,refinement),1);
     }
     """
+}
+
+/// Internal opt-in experiment, frozen once per registered renderer; no shipping default change.
+enum OwnedVideoPacingExperiment {
+    static let drawableCountKey = "farsidePhoneRendererDrawableCount"
+    static let diagnosticsKey = "farsidePhoneRendererPacingDiagnostics"
+    static func drawableCount(defaults: UserDefaults) -> Int {
+        #if DEBUG
+        return defaults.integer(forKey: drawableCountKey) == 3 ? 3 : 2
+        #else
+        return 2
+        #endif
+    }
+    static func diagnosticsEnabled(defaults: UserDefaults) -> Bool {
+        #if DEBUG
+        return defaults.bool(forKey: diagnosticsKey)
+        #else
+        return false
+        #endif
+    }
+}
+
+/// One bounded main-thread telemetry window; no frames, identifiers or growing sample history.
+struct OwnedVideoPacingWindow {
+    enum Origin { case tick, sourceWake }
+    private(set) var ticks = 0
+    private(set) var sourceWakes = 0
+    var noSubmission = 0
+    var originalSubmissions = 0
+    var otherSubmissions = 0
+    var geometryRetries = 0
+    var backingChanges = 0
+    private(set) var acquisitions = 0
+    private(set) var missingDrawables = 0
+    private(set) var maximumAcquireMs = 0.0
+    private(set) var waitsOverFrame = 0
+    private var totalAcquireMs = 0.0
+    var meanAcquireMs: Double { acquisitions > 0 ? totalAcquireMs / Double(acquisitions) : 0 }
+    mutating func draw(_ origin: Origin) {
+        switch origin { case .tick: ticks += 1; case .sourceWake: sourceWakes += 1 }
+    }
+    mutating func acquired(milliseconds: Double, available: Bool) {
+        guard milliseconds.isFinite, milliseconds >= 0 else { return }
+        acquisitions += 1
+        if !available { missingDrawables += 1 }
+        totalAcquireMs += milliseconds
+        maximumAcquireMs = max(maximumAcquireMs, milliseconds)
+        if milliseconds > 1000 / 60 { waitsOverFrame += 1 }
+    }
 }
 
 /// Preserve the legacy ratchet during transient rung/crop changes. An opt-in stable downshift
