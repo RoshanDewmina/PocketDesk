@@ -4,7 +4,7 @@ import XCTest
 /// No fixture, pairing reset, remote clicks/typing, or Mac permission change.
 final class PhysicalLifecycleSmokeTests: XCTestCase {
     @MainActor
-    private func pairedSession(launchArguments: [String] = []) throws -> XCUIApplication {
+    private func pairedSession(launchArguments: [String] = [], application: XCUIApplication? = nil) throws -> XCUIApplication {
         guard ProcessInfo.processInfo.environment["FARSIDE_PHYSICAL_LIFECYCLE_SMOKE"] == "1" else {
             throw XCTSkip("Requires explicit physical-device lifecycle testing with a ready paired Mac")
         }
@@ -12,7 +12,7 @@ final class PhysicalLifecycleSmokeTests: XCTestCase {
         throw XCTSkip("A simulator is not physical lifecycle acceptance")
         #else
         continueAfterFailure = false
-        let app = XCUIApplication()
+        let app = application ?? XCUIApplication()
         app.launchArguments = launchArguments
         app.launch()
         let connect = app.buttons["home.connect"].firstMatch
@@ -154,6 +154,76 @@ final class PhysicalLifecycleSmokeTests: XCTestCase {
             boundaries.lifetime = .keepAlways
             add(boundaries)
         }
+        #endif
+    }
+
+    /// One acquisition per job. The parent switches the Mac codec externally between jobs;
+    /// the same installed phone renderer and externally controlled moving scene serve all codecs.
+    @MainActor
+    func testSingleCodecComparisonAcquisition() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["FARSIDE_PHYSICAL_CODEC_COMPARISON"] == "1",
+              environment["FARSIDE_PHYSICAL_LIFECYCLE_SMOKE"] == "1" else {
+            throw XCTSkip("Requires both explicit physical codec acquisition and lifecycle-testing opt-ins")
+        }
+        #if targetEnvironment(simulator)
+        throw XCTSkip("A simulator cannot acquire physical codec comparison evidence")
+        #else
+        let label = environment["FARSIDE_PHYSICAL_CODEC_COMPARISON_LABEL"] ?? "externally selected codec"
+        let hostPID = environment["FARSIDE_PHYSICAL_CODEC_HOST_PID"].flatMap(Int.init).flatMap { $0 > 0 ? $0 : nil }
+        let arguments = ["-PocketDeskStreamStats", "YES",
+                         "-PocketDeskMarkerReading", "YES",
+                         "-farsidePhoneRendererPacingDiagnostics", "YES",
+                         "-farsidePhoneRendererDrawableCount", "2",
+                         "-phoneImmediateSourceDrawDisabled", "NO"]
+        let app = XCUIApplication()
+        let format = ISO8601DateFormatter()
+        format.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        format.timeZone = TimeZone(secondsFromGMT: 0)
+        var boundaries = [
+            "Single codec acquisition label: \(label) (external label; not a codec assertion)",
+            "Drawable pool requested: 2; frame flights and SmoothMotion remain unchanged.",
+            "Launch arguments: \(arguments.joined(separator: " "))",
+            "Test-runner PID: \(ProcessInfo.processInfo.processIdentifier)",
+            "Host PID supplied externally: \(hostPID.map(String.init) ?? "unavailable")",
+            "Phone app PID: unavailable through public XCUIAutomation; correlate external process logs.",
+            "Match the same externally controlled Mac scene and verify actual codec/geometry from telemetry.",
+            "Only fresh enabled Controls is asserted; no FPS, profile, latency, sharpness or metric verdict."
+        ]
+        func boundary(_ phase: String) -> TimeInterval {
+            let utc = Date(), uptime = ProcessInfo.processInfo.systemUptime
+            boundaries.append("\(phase) UTC: \(format.string(from: utc)); test-runner uptime: \(uptime)")
+            return uptime
+        }
+        defer {
+            _ = boundary("Cleanup requested")
+            app.terminate() // Installed pairing survives; always retire this phone process.
+            _ = boundary("Phone app terminated")
+            let attachment = XCTAttachment(string: boundaries.joined(separator: "\n"))
+            attachment.name = "Codec comparison " + label + " acquisition boundaries"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        _ = boundary("Phone launch requested")
+        _ = try pairedSession(launchArguments: arguments, application: app)
+        _ = boundary("Fresh Controls admitted")
+        let hide = app.buttons["Hide controls"].firstMatch
+        if hide.exists { hide.tap() }
+        let settlementStart = boundary("Settlement start")
+        record("Codec comparison " + label + " settlement start", app)
+        Thread.sleep(forTimeInterval: 30)
+        let settlementEnd = boundary("Settlement end")
+        boundaries.append("Observed settlement seconds: \(settlementEnd - settlementStart)")
+        record("Codec comparison " + label + " settlement end", app)
+        let dwellStart = boundary("Motion dwell start")
+        // No Mac input, quality change, foreground transition or renderer adjustment during dwell.
+        Thread.sleep(forTimeInterval: 60)
+        let dwellEnd = boundary("Motion dwell end")
+        boundaries.append("Observed motion dwell seconds: \(dwellEnd - dwellStart)")
+        record("Codec comparison " + label + " motion dwell end", app)
+        try requireFreshControls(app)
+        _ = boundary("Post-dwell fresh Controls admitted")
+        record("Codec comparison " + label + " post-dwell fresh controls", app)
         #endif
     }
 
