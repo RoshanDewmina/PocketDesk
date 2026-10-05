@@ -21,10 +21,18 @@ final class VideoFeedbackTests: XCTestCase {
     #endif
     @MainActor
     private func runNative(hevc: Bool, fencedRoute: Bool = false, exactTiming: Bool = false) async throws {
+        // Match Connect's real readiness step before freezing the factories' capabilities.
+        // A cold conservative H.264 snapshot cannot negotiate the High 5.2 path that enables LTR.
+        let hostCapabilities = NativeVideoCapabilitySnapshot.enabled
+            ? await NativeVideoCapabilitySnapshot.ready(isHost: true) : nil
+        let phoneCapabilities = NativeVideoCapabilitySnapshot.enabled
+            ? await NativeVideoCapabilitySnapshot.ready(isHost: false) : nil
         let previousLoopback = E2EMedia.loopbackOnly; E2EMedia.loopbackOnly = true
         let previousTiming = FrameTimingSwitch.override; FrameTimingSwitch.override = false
-        let host = PeerMedia(isHost: true, servers: [], fileChannel: true, hevc: hevc, videoLTR: !hevc)
-        let phone = PeerMedia(isHost: false, servers: [], fileChannel: true, hevc: hevc)
+        let host = PeerMedia(isHost: true, servers: [], fileChannel: true, hevc: hevc, videoLTR: !hevc,
+                             capabilitySnapshot: hostCapabilities)
+        let phone = PeerMedia(isHost: false, servers: [], fileChannel: true, hevc: hevc,
+                              capabilitySnapshot: phoneCapabilities)
         FrameTimingSwitch.override = previousTiming
         defer { host.close(); phone.close(); E2EMedia.loopbackOnly = previousLoopback }
         #if DEBUG && AUDIO_LIFETIME_TESTS
@@ -269,6 +277,65 @@ final class VideoFeedbackTests: XCTestCase {
         XCTAssertEqual(receiver.tag(for: output), tag)
         receiver.decoded(output); XCTAssertTrue(sender.takeOptions().tokens.isEmpty)
     }
+    func testSustainedExactCropAssociationsAt60_120And240FPSAcrossFiveSecondWindows() throws {
+        for fps in [60, 120, 240] {
+            let context = VideoFeedbackContext()
+            context.configure(allowed: true, ltr: false, geometry: 7, scope: 3)
+            // Cross both the signed boundary and UInt32 rollover used by native RTP timestamps.
+            var wire = UInt32.max - 6000
+            for index in 0..<(fps * 12) {
+                let now = 1000 + Double(index) / Double(fps)
+                let crop = CaptureRegion(epoch: UInt64(index + 1), x: Double(index % 3) * 16,
+                    y: 8, width: 640, height: 400, outputWidth: 1280, outputHeight: 800)
+                var tag = VideoFrameTag(generation: String(repeating: "a", count: 32),
+                    nonce: String(format: "%032x", index + 1), geometryEpoch: 7, scopeEpoch: 3, ltrToken: nil)
+                tag.region = crop
+                context.received(tag, wire: wire, at: now)
+                let output = try frame(wire)
+                context.decoded(output, at: now)
+                XCTAssertEqual(context.tag(for: output, at: now), tag,
+                    "Every current native output retains its exact crop at \(fps) FPS, frame \(index)")
+                // Replay of a retired wire must not manufacture a new tag.
+                context.received(tag, wire: wire, at: now)
+                let replay = try frame(wire); context.decoded(replay, at: now)
+                XCTAssertNil(context.tag(for: replay, at: now))
+                wire = wire &+ UInt32(90_000 / fps)
+            }
+        }
+    }
+
+    func testRetiredAssociationBoundFailsClosedAndExpiresOnlyAfterFiveSeconds() throws {
+        let context = VideoFeedbackContext()
+        context.configure(allowed: true, ltr: false, geometry: 7, scope: 3)
+        let tag = VideoFrameTag(generation: String(repeating: "a", count: 32),
+            nonce: String(repeating: "b", count: 32), geometryEpoch: 7, scopeEpoch: 3, ltrToken: nil)
+        for wire in UInt32(0)..<2048 {
+            context.received(tag, wire: wire, at: 1000)
+            let output = try frame(wire); context.decoded(output, at: 1000)
+            XCTAssertEqual(context.tag(for: output, at: 1000), tag)
+        }
+        for (wire, time) in [(UInt32(2048), 1000.0), (UInt32(0), 1005.0)] {
+            context.received(tag, wire: wire, at: time)
+            let output = try frame(wire); context.decoded(output, at: time)
+            XCTAssertNil(context.tag(for: output, at: time), "No live tombstone is evicted, including TTL boundary")
+        }
+        context.received(tag, wire: 0, at: 1005.001)
+        let fresh = try frame(0); context.decoded(fresh, at: 1005.001)
+        XCTAssertEqual(context.tag(for: fresh, at: 1005.001), tag)
+        context.received(tag, wire: 9000, at: 1006)
+        context.beginDecoder(at: 1006)
+        let oldDecoderOutput = try frame(9000); context.decoded(oldDecoderOutput, at: 1006)
+        XCTAssertNil(context.tag(for: oldDecoderOutput, at: 1006))
+        context.received(tag, wire: 9001, at: 1006)
+        context.rejected(wire: 9001, at: 1006)
+        let rejectedOutput = try frame(9001); context.decoded(rejectedOutput, at: 1006)
+        XCTAssertNil(context.tag(for: rejectedOutput, at: 1006))
+        context.configure(allowed: true, ltr: false, geometry: 8, scope: 3)
+        context.received(tag, wire: 9002, at: 1007)
+        let staleOutput = try frame(9002); context.decoded(staleOutput, at: 1007)
+        XCTAssertNil(context.tag(for: staleOutput, at: 1007))
+    }
+
     func testNativeFanoutWrapperRequiresExactWeakPixelsAndPublicTimestamp() throws {
         let context = VideoFeedbackContext(); context.configure(allowed: true, geometry: 7, scope: 3)
         let tag = try XCTUnwrap(context.encoded(token: nil)), original = try frame(42)
