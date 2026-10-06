@@ -46,7 +46,10 @@ final class ScreenRecordingApprovalPhoneTests: XCTestCase {
                        "First60 is advertised by default independently of optional features")
         noClipboard.set(true, forKey: First60.disabledDefaultsKey)
         noClipboard.set(false, forKey: ShortcutChips.defaultsKey)
-        XCTAssertEqual(MacShareBlocker.Handshake.phoneRequest([], defaults: noClipboard), modern)
+        var withoutOptionalFeatures = modern
+        withoutOptionalFeatures.phoneLoadWindows = true
+        XCTAssertEqual(MacShareBlocker.Handshake.phoneRequest([], defaults: noClipboard), withoutOptionalFeatures,
+                       "Default phone load windows remain independently negotiated without consuming a feature-list slot")
         let withClipboard = MacShareBlocker.Handshake.phoneRequest([], defaults: UserDefaults(suiteName: "TrustPackPhoneTests.\(UUID().uuidString)")!)
         XCTAssertEqual(withClipboard.options, [SessionFeature.clipboardSync, SessionFeature.phoneAudio, SessionFeature.deliberateEnd], "Default options remain outside the eight-name feature bound")
         XCTAssertEqual(withClipboard.features, modern.features)

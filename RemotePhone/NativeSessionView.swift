@@ -49,6 +49,10 @@ struct NativeSessionView: View {
     @State private var reconnectBack = false
     @StateObject private var voiceInput = VoiceInputController()
     @State private var panMode = false
+    @State private var focusReturn = ViewportFocusReturn()
+    @State private var smartZoomTask: Task<Void, Never>?
+    @State private var smartZoomToken: UInt64?
+    @State private var smartZoomAcceptedToken: UInt64?
     @State private var clickAcknowledged = false
     @State private var couchTouched = false
     @State private var couchClickBaseline: UInt64 = 0
@@ -123,7 +127,7 @@ struct NativeSessionView: View {
                     }
                 }
             LockedMousePresenter(requested: $lockedMouseRequested,
-                eligible: model.canControl && scenePhase == .active && !showControls && !showVoiceInput && !keyboardOpen && !panMode,
+                eligible: model.canControl && !model.coordinateInputFenced && scenePhase == .active && !showControls && !showVoiceInput && !keyboardOpen && !panMode,
                 revision: model.inputRevision &+ revision, gain: Double(sensitivity), remapShortcuts: remapShortcuts,
                 send: { command in noteSessionPillActivity(); return model.gesture(command) },
                 key: { key, modifiers in noteSessionPillActivity(); return model.hardwareKey(key, modifiers: modifiers) },
@@ -360,7 +364,10 @@ struct NativeSessionView: View {
             showControls: showControls, controlsCollapsed: controlsCollapsed)))
         .onChange(of: viewport.mode) { _, mode in ViewportPreference.store(mode) }
         .onChange(of: viewport.captureRequest(displayScale: displayScale), initial: true) { _, request in
-            model.viewportChanged(request)
+            if smartZoomToken == nil { model.viewportChanged(request) }
+        }
+        .onChange(of: viewport.visibleSourceRect) { _, visible in
+            model.synchronizeSmartZoomPresentation(visible: visible)
         }
         .onChange(of: viewport.offset) { _, _ in pokeMiniMap(); VideoPresentationProbe.noteUserActivity() }
         .onChange(of: viewport.zoom) { _, _ in pokeMiniMap(); VideoPresentationProbe.noteUserActivity() }
@@ -389,7 +396,7 @@ struct NativeSessionView: View {
 
     var body: some View {
         sessionResume
-        .modifier(KeyboardFocusRevealModifier(model: model, viewport: $viewport, keyboardOpen: keyboardOpen && focusedWindowGeometry == nil,
+        .modifier(KeyboardFocusRevealModifier(model: model, viewport: $viewport, keyboardOpen: keyboardOpen && focusedWindowGeometry == nil && !model.coordinateInputFenced,
                                               barFrame: keyboardBarFrame, canvasFrame: canvasFrame,
                                               manualViewportRevision: manualViewportRevision,
                                               preview: offlineLayoutCheck))
@@ -401,7 +408,9 @@ struct NativeSessionView: View {
         .onChange(of: model.pendingDisplayID) { _, _ in settleTaskView() }
         .onChange(of: model.bigText.pendingTarget) { _, _ in settleTaskView() }
         .onChange(of: model.windowWorkspaceAllowed) { _, allowed in if allowed { settleTaskView() } }
-        .onChange(of: model.geometryEpoch) { _, _ in clearFocusedWindow() }
+        .onChange(of: model.geometryEpoch) { _, _ in cancelSmartZoom(clearBookmark: true); clearFocusedWindow() }
+        .onChange(of: model.sharedCaptureScope?.epoch) { _, _ in cancelSmartZoom(clearBookmark: true) }
+        .onChange(of: model.inlinePresentationAdmission?.identity) { _, _ in cancelSmartZoom(clearBookmark: true) }
         .onChange(of: model.windowWorkspaceAllowed) { _, allowed in if !allowed { clearFocusedWindow(); model.windowWorkspace.retire() } }
         .onChange(of: horizontalSizeClass, initial: true) { _, sizeClass in
             guard sizeClass != nil else { return }
@@ -481,7 +490,7 @@ struct NativeSessionView: View {
                 model.clipboard.stopPasteboardMonitoring()
             }
         }
-        .onDisappear { cancelTaskView(); cancelGesture(); cancelVoiceInput(); model.clipboard.stopPasteboardMonitoring() }
+        .onDisappear { cancelSmartZoom(clearBookmark: true); cancelTaskView(); cancelGesture(); cancelVoiceInput(); model.clipboard.stopPasteboardMonitoring() }
         .sensoryFeedback(.success, trigger: model.clipboard.automaticCopyRevision)
         .task(id: model.acceptedClicks) {
             guard model.acceptedClicks > 0 else { return }
@@ -591,7 +600,7 @@ struct NativeSessionView: View {
     }
 
     private var inputSurface: some View {
-            NativeTrackpadSurface(enabled: model.canControl && !panMode && !controlsBlockInput && !showVoiceInput,
+            NativeTrackpadSurface(enabled: model.canControl && !model.coordinateInputFenced && !panMode && !controlsBlockInput && !showVoiceInput,
                                   panMode: panMode && !couch,
                                   direct: directTouch && !couch && !regularSessionLayout,
                                   coalescedFingerMotion: couch,
@@ -828,20 +837,20 @@ struct NativeSessionView: View {
                 if model.showsInlinePiPSource {
                     // Auto-start PiP needs its source inline: the same live picture, behind the visible one.
                     // Kept while concealed so a started PiP keeps its layer; the shield and concealment overlays cover it.
-                    let picture = viewport.picturePlacement(for: model.placementRegion)
+                    let picture = viewport.picturePlacement(for: model.picturePlacementRegion)
                     LivePiPPreview(layer: model.livePiP.displayLayer, inline: true)
                         .frame(width: picture.width, height: picture.height)
                         .offset(x: picture.minX, y: picture.minY)
                         .accessibilityHidden(true)
                 }
                 if let track = connection.remoteVideo, !model.contentConcealed {
-                    let picture = viewport.picturePlacement(for: model.placementRegion)
+                    let picture = viewport.picturePlacement(for: model.picturePlacementRegion)
                     RemoteVideoSurface(track: track, counters: connection.media?.counters,
                                        statistics: streamStatsEnabled && markerReadingEnabled,
-                                       sourceSize: streamStatsEnabled && model.placementRegion == nil
+                                       sourceSize: streamStatsEnabled && model.picturePlacementRegion == nil
                                         ? model.sourceSize : .zero,
                                        displayedPixelWidth: streamStatsEnabled ? rect.width * displayScale : 0,
-                                       fillsFrame: model.placementRegion != nil,
+                                       fillsFrame: model.picturePlacementRegion != nil,
                                        smoothMotion: legacyPictureSettings ? smoothMotion : model.pictureMode.smoothMotion,
                                        smoothMotionUpscale: smoothMotionUpscale,
                                        admission: model.inlinePresentationAdmission,
@@ -996,21 +1005,8 @@ struct NativeSessionView: View {
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
             }
-            if panMode && !regularSessionLayout {
-                HStack(spacing: 10) {
-                    Image(systemName: "hand.draw").accessibilityHidden(true)
-                    Text("View · drag or pinch").font(.subheadline.weight(.medium))
-                    Button("Control") { setInteractionMode(false) }
-                        .buttonStyle(FarsidePrimaryButtonStyle(height: PhoneCommandAccessibility.target(34, enabled: PhoneCommandAccessibility.targetsEnabled)))
-                        .fixedSize()
-                        .accessibilityLabel("Control desktop")
-                        .accessibilityShowsLargeContentViewer()
-                }
-                .foregroundStyle(Farside.Palette.bone)
-                .dynamicTypeSize(...(accessibleCommands ? dynamicTypeSize : (adaptiveLayout ? DynamicTypeSize.xxxLarge : dynamicTypeSize)))
-                .padding(.leading, 16).padding(.trailing, 5).padding(.vertical, 5)
-                .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.96), stroke: Farside.Palette.line2)
-                .transition(.opacity)
+            if panMode && !regularSessionLayout && !showControls && !keyboardOpen {
+                smartZoomControls
             }
             #if DEBUG
             if offlineLayoutCheck,
@@ -2211,6 +2207,7 @@ struct NativeSessionView: View {
     /// Header, two rows of keys and up to three session rows. Nothing in the panel scrolls.
     private var panelHeight: CGFloat {
         var height: CGFloat = 292
+        if !couch { height += 60 } // Separate 48-point Spotlight row and its spacing.
         if bottomControls {
             if showsTouchModeInPanel { height += 66 }
             if showsDisplayRow { height += 14 + 52 }
@@ -2228,6 +2225,36 @@ struct NativeSessionView: View {
     private var panelDetent: PresentationDetent { accessibleCommands ? .large : .height(panelHeight) }
 
     private var macKeysDisabled: Bool { !model.canControl || panMode }
+
+    private var openAppAllowed: Bool {
+        model.canOpenMacApp && scenePhase == .active && !couch && !panMode && !showOverlaySettings &&
+            controlsPath.isEmpty && !showVoiceInput && !keyboardOpen && !primingMicrophone &&
+            !frozenText.isPresented && precisionTap.tap == nil && !model.coordinateInputFenced
+    }
+
+    private var openAppRow: some View {
+        Button {
+            guard openAppAllowed, model.openMacApp() else { return }
+            closeControls()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "magnifyingglass").accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Open app…").font(.body.weight(.semibold))
+                    Text("Spotlight · ⌘Space").font(.footnote)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(!openAppAllowed)
+        .accessibilityLabel("Open app")
+        .accessibilityHint("Sends Command Space to your Mac. Use Keyboard to type an app name and Return to choose it.")
+        .accessibilityIdentifier("remote.openApp")
+    }
 
     private var controlsSheet: some View {
         NavigationStack(path: $controlsPath) {
@@ -2305,6 +2332,7 @@ struct NativeSessionView: View {
                     .dynamicTypeSize(...commandTypeLimit)
                     .padding(.bottom, 12)
             }
+            if !couch { openAppRow.padding(.bottom, 12) }
             macKeys(compact: false)
             if showsSessionRows {
                 // The panel height is fixed and nothing in it scrolls, so the rows stop growing at
@@ -2617,7 +2645,7 @@ struct NativeSessionView: View {
                         controlsDoneButton
                     }
                     if showsTouchModeInPanel { panelTouchModeSegments }
-                    ScrollView { macKeys(compact: false) }
+                    ScrollView { VStack(spacing: 10) { if !couch { openAppRow }; macKeys(compact: false) } }
                         .accessibilityIdentifier("remote.controls.scroll")
                 }
                 .padding(12)
@@ -2647,6 +2675,7 @@ struct NativeSessionView: View {
 
     private var compactOverlayControls: some View {
         VStack(spacing: 10) {
+            if !couch { openAppRow }
             if showsTouchModeInPanel {
                 panelTouchModeSegments
                     .dynamicTypeSize(...commandTypeLimit)
@@ -3131,7 +3160,7 @@ struct NativeSessionView: View {
 
     private var gesturesSection: some View {
         Section {
-            Text(panMode ? "View: drag with one or two fingers to move the screen. Pinch to zoom. Double-tap to zoom in or fit the whole display."
+            Text(panMode ? "View: drag with one or two fingers to move the screen. Pinch to zoom. Double-tap to focus or return to your previous view."
                  : (directTouch
                     ? "Control, direct: tap to click where you touch; drag to click and drag. Two fingers scroll what is under them. Pinch to zoom the view."
                     : "Control: drag one finger to move the pointer. Two fingers scroll. Pinch to zoom the view.")
@@ -3170,6 +3199,7 @@ struct NativeSessionView: View {
 
     private func settleSlider(_ editing: Bool) {
         guard !editing else { return }
+        cancelSmartZoom(clearBookmark: false)
         withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) {
             _ = viewport.settleZoom()
         }
@@ -3508,6 +3538,48 @@ struct NativeSessionView: View {
         }
     }
 
+    private var smartZoomControls: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) { Text("View").font(.subheadline.weight(.medium)); smartZoomButton; smartZoomControlButton }
+                .fixedSize(horizontal: true, vertical: false)
+            VStack(spacing: 8) { Text("View").font(.subheadline.weight(.medium)); smartZoomButton; smartZoomControlButton }
+        }
+        .foregroundStyle(Farside.Palette.bone)
+        .padding(8)
+        .farsidePlate(Farside.Radius.card, fill: Farside.Palette.panel.opacity(0.96), stroke: Farside.Palette.line2)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("remote.smartZoom")
+    }
+
+    private var smartZoomButton: some View {
+        Button {
+            if focusReturn.canRestore { restoreSmartZoom() }
+            else { _ = toggleSmartZoom(at: CGPoint(x: viewport.contentRect.midX, y: viewport.contentRect.midY)) }
+        } label: {
+            ZStack {
+                Text("Zoom in").hidden().accessibilityHidden(true)
+                Text("Back to view").hidden().accessibilityHidden(true)
+                Text(focusReturn.canRestore ? "Back to view" : "Zoom in")
+            }
+            .font(.body.weight(.semibold))
+            .frame(minWidth: 48, minHeight: 48).contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(!smartZoomMayStart)
+        .accessibilityLabel(focusReturn.canRestore ? "Back to view" : "Zoom in")
+        .accessibilityHint(focusReturn.canRestore ? "Restores your previous framing" : "Focuses your view; Back to view restores your framing")
+        .accessibilityIdentifier("remote.smartZoom.action")
+    }
+
+    private var smartZoomControlButton: some View {
+        Button { setInteractionMode(false) } label: {
+            Text("Control").font(.body.weight(.semibold))
+                .frame(minWidth: 48, minHeight: 48).contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Control desktop")
+    }
+
     private var zoomDescription: String {
         if viewport.zoom == 1 { return viewport.mode == .fill ? "Fill" : "Fit" }
         let magnification = viewport.fitScale > 0 ? viewport.scale / viewport.fitScale : 1
@@ -3528,19 +3600,14 @@ struct NativeSessionView: View {
             }
             if !couchTouched { couchTouched = true }
         }
-        if command.movesViewport { cancelTaskView(); focusedWindowGeometry = nil; manualViewportRevision &+= 1 }
+        if command.movesViewport { cancelSmartZoom(clearBookmark: false); cancelTaskView(); focusedWindowGeometry = nil; manualViewportRevision &+= 1 }
         switch command {
         case .precision(let phase, let finger):
+            guard !model.coordinateInputFenced else { return false }
             return precisionTap.handle(phase, finger: finger, viewport: viewport, model: model)
         case .zoomToggle(let anchor):
-            model.pointerLocator.clear()
-            pinchRevision &+= 1
-            withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) {
-                viewport.toggleZoom(anchoredAt: pictureAnchor(anchor))
-            }
-            reportSettledViewport()
-            showZoomBadge()
-            return true
+            guard panMode else { return false }
+            return toggleSmartZoom(at: pictureAnchor(anchor))
         case .navigate(let factor, let anchor, let translation):
             model.pointerLocator.clear()
             pinchRevision &+= 1
@@ -3586,12 +3653,123 @@ struct NativeSessionView: View {
             viewport.pan(by: delta)
             return true
         case .pointTo(let point):
+            guard !model.coordinateInputFenced else { return false }
             // Letterbox bands and anything outside the picture have no Mac point: no click there.
             guard let source = DirectTouchMapping.sourcePoint(for: point, in: viewport) else { return false }
             return model.pointTo(source)
         default:
             return model.gesture(command)
         }
+    }
+
+    @discardableResult
+    private func toggleSmartZoom(at anchor: CGPoint) -> Bool {
+        guard smartZoomMayStart, viewport.sourcePoint(fromView: anchor) != nil else { return false }
+        cancelSmartZoom(clearBookmark: false)
+        let returning = focusReturn.canRestore
+        guard let target = focusReturn.destination(from: viewport, anchoredAt: anchor) else { return false }
+        return startSmartZoom(to: target, returning: returning)
+    }
+
+    private func restoreSmartZoom() {
+        guard smartZoomMayStart else { return }
+        cancelSmartZoom(clearBookmark: false)
+        guard let target = focusReturn.restoreDestination(for: viewport) else { return }
+        startSmartZoom(to: target, returning: true)
+    }
+
+    private func cancelSmartZoom(clearBookmark: Bool) {
+        smartZoomTask?.cancel(); smartZoomTask = nil
+        if let token = smartZoomToken { model.finishSmartZoomTransition(token, visible: viewport.visibleSourceRect, retainEndpoint: smartZoomAcceptedToken == token) }
+        smartZoomToken = nil
+        smartZoomAcceptedToken = nil
+        if clearBookmark { focusReturn.clear() }
+    }
+
+    private var smartZoomInteractionBlocked: Bool {
+        !panMode || showControls || showOverlaySettings || showVoiceInput || keyboardOpen || primingMicrophone ||
+            frozenText.isPresented || precisionTap.tap != nil || scenePhase != .active
+    }
+
+    private var smartZoomMayStart: Bool {
+        model.smartZoomStartAllowed(interactionBlocked: smartZoomInteractionBlocked)
+    }
+
+    @discardableResult
+    private func startSmartZoom(to target: ViewportTransform, returning: Bool) -> Bool {
+        guard smartZoomMayStart,
+              let token = model.beginSmartZoomTransition(interactionBlocked: smartZoomInteractionBlocked) else { return false }
+        cancelTaskView(); focusedWindowGeometry = nil
+        readingLensOpen = false
+        manualViewportRevision &+= 1
+        let from = viewport
+        let required = from.visibleSourceRect.union(target.visibleSourceRect)
+        guard model.constrainSmartZoomPresentation(required, generation: token) else {
+            model.finishSmartZoomTransition(token, visible: from.visibleSourceRect)
+            model.announce("Waiting for more of your Mac’s picture. Try again.")
+            return false
+        }
+        smartZoomToken = token
+        smartZoomAcceptedToken = nil
+        pinchRevision &+= 1
+        model.pointerLocator.clear()
+        let geometry = model.geometryEpoch
+        let scope = model.sharedCaptureScope?.epoch
+        smartZoomTask = Task { @MainActor in
+            var acceptedPose = false
+            // Every exit owns cleanup; an older task may never alter a newer fence/constraint.
+            defer {
+                model.finishSmartZoomTransition(token, visible: viewport.visibleSourceRect, retainEndpoint: acceptedPose)
+                if smartZoomToken == token { smartZoomToken = nil; smartZoomAcceptedToken = nil; smartZoomTask = nil }
+            }
+            // The renderer drains old GPU/presentation flights and then requires this generation's
+            // covering original presentation. A cached earlier wide receipt cannot start the camera.
+            guard smartZoomStillCurrent(token, geometry: geometry, scope: scope, requiresCoverage: false) else { return }
+            var coverage = from
+            coverage.fit()
+            model.viewportChanged(coverage.captureRequest(displayScale: displayScale), settled: true)
+            let deadline = ProcessInfo.processInfo.systemUptime + 1.5
+            while !model.smartZoomPresentationReady(generation: token) {
+                guard smartZoomStillCurrent(token, geometry: geometry, scope: scope, requiresCoverage: false),
+                      ProcessInfo.processInfo.systemUptime < deadline else {
+                    if smartZoomToken == token { model.announce("Waiting for more of your Mac’s picture. Try again.") }
+                    return
+                }
+                do { try await Task.sleep(for: .milliseconds(16)) } catch { return }
+            }
+            let start = ProcessInfo.processInfo.systemUptime
+            while true {
+                guard smartZoomStillCurrent(token, geometry: geometry, scope: scope) else { return }
+                let t = reduceMotion ? 1 : min(1, (ProcessInfo.processInfo.systemUptime - start) / 0.36)
+                let eased = t * t * (3 - 2 * t)
+                guard let sampled = from.interpolated(to: target, progress: CGFloat(eased)) else {
+                    focusReturn.clear(); return
+                }
+                var transaction = Transaction(animation: nil); transaction.disablesAnimations = true
+                withTransaction(transaction) { viewport = sampled }
+                smartZoomAcceptedToken = token
+                acceptedPose = true
+                if t >= 1 { break }
+                do { try await Task.sleep(for: .milliseconds(16)) } catch { return }
+            }
+            // Scheduling protection only; the endpoint keeps a presentation coverage constraint.
+            do { try await Task.sleep(for: .milliseconds(32)) } catch { return }
+            guard smartZoomStillCurrent(token, geometry: geometry, scope: scope) else { return }
+            if returning { focusReturn.clear() }
+            model.finishSmartZoomTransition(token, visible: viewport.visibleSourceRect, retainEndpoint: smartZoomAcceptedToken == token)
+            smartZoomToken = nil; smartZoomAcceptedToken = nil; smartZoomTask = nil
+            reportSettledViewport(); showZoomBadge()
+            model.announce(returning ? "Back to your view" : "Zoomed in. Back to view restores your framing.")
+        }
+        return true
+    }
+
+    private func smartZoomStillCurrent(_ token: UInt64, geometry: UInt64, scope: UInt64?, requiresCoverage: Bool = true) -> Bool {
+        !Task.isCancelled && smartZoomToken == token && model.viewportTransitionGeneration == token
+            && model.geometryEpoch == geometry && model.sharedCaptureScope?.epoch == scope
+            && !smartZoomInteractionBlocked && connection.connected
+            && !model.privacyShield && !model.contentConcealed
+            && (!requiresCoverage || model.smartZoomPresentationReady(generation: token))
     }
 
     private var followUsableRect: CGRect {
@@ -3601,7 +3779,7 @@ struct NativeSessionView: View {
     }
 
     private var followAllowed: Bool {
-        !couch && focusedWindowGeometry == nil && followStyle.follows && model.canControl && !keyboardOpen && !controlsBlockInput && !panMode
+        !couch && !model.coordinateInputFenced && focusedWindowGeometry == nil && followStyle.follows && model.canControl && !keyboardOpen && !controlsBlockInput && !panMode
             && !model.privacyShield && !model.contentConcealed
     }
 
@@ -3677,6 +3855,7 @@ struct NativeSessionView: View {
         MiniMapPointerSource(model: model.pointerOverlay, viewport: viewport) { pointer, current in
             MiniMapView(viewport: current, pointer: pointer, maxSize: miniMapSize, thumbnail: miniMapThumbnail,
                         onPan: { translation in
+                             cancelSmartZoom(clearBookmark: false)
                             model.pointerLocator.clear()
                             cancelTaskView(); focusedWindowGeometry = nil
                             viewport.pan(by: translation)
@@ -3687,6 +3866,7 @@ struct NativeSessionView: View {
                             #endif
                         },
                         onJump: { point in
+                             cancelSmartZoom(clearBookmark: false)
                             model.pointerLocator.clear()
                             withAnimation(reduceMotion ? nil : .smooth(duration: 0.28, extraBounce: 0)) {
                                 cancelTaskView(); focusedWindowGeometry = nil
@@ -3715,7 +3895,7 @@ struct NativeSessionView: View {
     }
 
     @ViewBuilder private func miniMapThumbnail(_ size: CGSize) -> some View {
-        if let track = connection.remoteVideo, !model.contentConcealed, let region = model.placementRegion {
+        if let track = connection.remoteVideo, !model.contentConcealed, let region = model.picturePlacementRegion {
             let placement = ViewportTransform.placement(of: region.rect, displaySize: model.sourceSize,
                                                         in: CGRect(origin: .zero, size: size))
             ZStack(alignment: .topLeading) {
@@ -3765,9 +3945,11 @@ struct NativeSessionView: View {
                                     bottom: max(keyboardBottom, max(0, canvasFrame.maxY - safeFrame.maxY)),
                                     right: max(0, canvasFrame.maxX - safeFrame.maxX))
         if viewport.canvasSize != size || viewport.sourceSize != model.sourceSize {
+            cancelSmartZoom(clearBookmark: true)
             cancelGesture()
             viewport.resize(sourceSize: model.sourceSize, canvasSize: size, safeInsets: insets)
         } else if viewport.safeInsets != insets {
+            cancelSmartZoom(clearBookmark: true)
             withAnimation(reduceMotion ? nil : .snappy) { viewport.updateSafeInsets(insets) }
         }
         applyFocusedWindow()
@@ -3808,10 +3990,12 @@ struct NativeSessionView: View {
         case .cancel: cancelTaskView()
         case .fit:
             guard model.windowWorkspaceAllowed else { return }
+            cancelSmartZoom(clearBookmark: true)
             viewport.setMode(.fit); cancelTaskView(); reportSettledViewport()
             model.taskViewMessage = "Display size changed. Showing the whole display in Fit."
         case .restore(let saved):
             guard model.windowWorkspaceAllowed else { return }
+            cancelSmartZoom(clearBookmark: true)
             if pendingTaskViewFit { viewport.setMode(.fit) } else { viewport.restore(saved) }
             // A saved controlling view never changes the current input/view authority.
             if saved.viewOnly { setInteractionMode(true) }
@@ -3822,11 +4006,13 @@ struct NativeSessionView: View {
     private func applyFocusedWindow() {
         guard focusedWindowEpoch == model.geometryEpoch, model.windowWorkspaceAllowed,
               let geometry = focusedWindowGeometry, let fitted = WindowWorkspaceViewport.fit(geometry, viewport: viewport) else { return }
+        cancelSmartZoom(clearBookmark: true)
         viewport = fitted
         reportSettledViewport()
     }
     private func clearFocusedWindow() { focusedWindowGeometry = nil; previousWindowViewport = nil; focusedWindowEpoch = 0 }
     private func restoreWindowViewport() {
+        cancelSmartZoom(clearBookmark: true)
         cancelGesture()
         if let previousWindowViewport { viewport.restore(previousWindowViewport) } else { viewport.setMode(.fit) }
         clearFocusedWindow(); manualViewportRevision &+= 1; reportSettledViewport()
@@ -3843,6 +4029,7 @@ struct NativeSessionView: View {
     }
 
     private func applyResume(_ resume: ResumeViewport) {
+        cancelSmartZoom(clearBookmark: true)
         model.viewportResumeApplied()
         guard !offlineLayoutCheck else { return }
         if viewport.sourceSize != model.sourceSize { applyGeometry() }
@@ -3856,6 +4043,7 @@ struct NativeSessionView: View {
     }
 
     private func setMode(_ mode: ViewportMode) {
+        cancelSmartZoom(clearBookmark: true)
         cancelTaskView()
         focusedWindowGeometry = nil
         guard mode != viewport.mode || !viewport.isAtBaseline else { return }
@@ -3887,6 +4075,7 @@ struct NativeSessionView: View {
     }
 
     private func cancelGesture() {
+        cancelSmartZoom(clearBookmark: false)
         pinchRevision &+= 1
         model.cancelInput()
         revision &+= 1

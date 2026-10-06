@@ -477,6 +477,13 @@ final class PhoneRemoteModel: ObservableObject {
     /// and showed old-crop frames stretched into the new rect. Fallbacks, for frames without a region:
     /// the last echoed region of the frame's pixel size, then the echo itself.
     @Published private(set) var placementRegion: CaptureRegion?
+    // Place the drawn picture by its own tagged crop, not by a newer pending status echo.
+    // This display seam does not activate the optional ScrollFixes package.
+    @Published private(set) var drawnFramePlacementRegion: CaptureRegion?
+    private var drawnFramePlacementKnown = false
+    var picturePlacementRegion: CaptureRegion? {
+        drawnFramePlacementKnown ? drawnFramePlacementRegion : placementRegion
+    }
     private var regionHistory: [CaptureRegion] = []
     static let regionHistoryLimit = 16
     /// While frames carry regions, a frame without one (a Smooth Motion midpoint, or one encoded before
@@ -630,6 +637,58 @@ final class PhoneRemoteModel: ObservableObject {
     @Published private(set) var contentConcealed = false { willSet { if newValue { invalidatePresentation(keepingPiP: pipBackground && mayHoldBackgroundPiP) } } }
 
     @Published var sourceSize = CGSize(width: 1440, height: 900)
+    @Published private(set) var viewportTransitionGeneration: UInt64?
+    private var nextViewportTransition: UInt64 = 0
+    var coordinateInputFenced: Bool { viewportTransitionGeneration != nil }
+    func smartZoomStartAllowed(interactionBlocked: Bool) -> Bool {
+        !interactionBlocked && sceneIsActive && connection.connected &&
+            sessionMode == .picture && !privacyShield && !contentConcealed
+    }
+    func beginSmartZoomTransition(interactionBlocked: Bool) -> UInt64? {
+        guard smartZoomStartAllowed(interactionBlocked: interactionBlocked) else { return nil }
+        return beginViewportTransition()
+    }
+    private var smartZoomRenderer: OwnedMetalVideoView? {
+        guard let session = VideoPresentationSession.active, let admission = inlinePresentationAdmission,
+              session.admissionIdentity == admission.identity, session.admissionLifetime === admission.lifetime,
+              admission.permits(at: ProcessInfo.processInfo.systemUptime) else { return nil }
+        return session.view
+    }
+    func constrainSmartZoomPresentation(_ required: CGRect, generation: UInt64) -> Bool {
+        guard viewportTransitionGeneration == generation, let scope = sharedCaptureScope?.epoch else { return false }
+        return smartZoomRenderer?.beginViewportCoverage(generation: generation, required: required, scope: scope) == true
+    }
+    func smartZoomPresentationReady(generation: UInt64) -> Bool {
+        viewportTransitionGeneration == generation && smartZoomRenderer?.viewportCoverageReady(generation: generation) == true
+    }
+    func finishSmartZoomTransition(_ generation: UInt64, visible: CGRect, retainEndpoint: Bool = false) {
+        // Renderer ownership also survives a model input cancellation: release its old union
+        // to the current pose, while its generation check still protects any newer camera.
+        smartZoomRenderer?.finishViewportCoverage(generation: generation, required: visible, retainEndpoint: retainEndpoint)
+        endViewportTransition(generation)
+    }
+    func clearSmartZoomPresentationConstraint() { smartZoomRenderer?.clearViewportCoverage() }
+    func synchronizeSmartZoomPresentation(visible: CGRect) {
+        guard viewportTransitionGeneration == nil else { return }
+        smartZoomRenderer?.synchronizeViewportCoverage(visible: visible)
+    }
+
+    @discardableResult
+    func beginViewportTransition() -> UInt64 {
+        cancelInput()
+        nextViewportTransition &+= 1
+        viewportTransitionGeneration = nextViewportTransition
+        return nextViewportTransition
+    }
+    func endViewportTransition(_ generation: UInt64) {
+        guard viewportTransitionGeneration == generation else { return }
+        viewportTransitionGeneration = nil
+    }
+    func cancelViewportTransition() {
+        nextViewportTransition &+= 1
+        viewportTransitionGeneration = nil
+    }
+
     @Published private(set) var inputRevision: UInt64 = 0
     @Published private(set) var acceptedClicks: UInt64 = 0
     /// Which click the last accepted one was ("click", "right" or "double"), for the contact ripple.
@@ -769,6 +828,7 @@ final class PhoneRemoteModel: ObservableObject {
         finishPiPRestore(false)
     }
     private func invalidatePresentation(keepingPiP: Bool = false, requestHostExit: Bool = true) {
+        cancelViewportTransition()
         shortcutWorkspace.retire()
         windowWorkspace.retire()
         fileBrowser.reset(); richClipboard.reset()
@@ -1385,6 +1445,7 @@ final class PhoneRemoteModel: ObservableObject {
     var scrollModifiers = ScrollModifierPolicy.phoneProcessEnabled
     private var extendedKeyNoticeShown = false
 
+    private static let viewportSensitiveActions: Set<String> = ["move", "moveTo", "click", "right", "double", "middle", "auxClick", "dragDown", "scroll", "pencil"]
     private static let pointerActions: Set<String> = ["move", "moveTo", "click", "right", "double", "middle", "dragDown", "scroll"]
     private static let couchPressActions: Set<String> = ["click", "double", "right", "middle", "dragDown"]
 
@@ -1947,6 +2008,23 @@ final class PhoneRemoteModel: ObservableObject {
 
     /// Called on the main thread for every frame the Metal view draws.
     func frameDrawn(_ envelope: VideoFrameEnvelope) {
+        guard envelope.identity == inlinePresentationAdmission?.identity,
+              inlinePresentationAdmission?.permits(at: ProcessInfo.processInfo.systemUptime) == true else { return }
+        // A delayed draw from another geometry or scope cannot alter this picture's placement.
+        if let tag = envelope.videoTag,
+           tag.geometryEpoch != geometryEpoch || tag.scopeEpoch != sharedCaptureScope?.epoch { return }
+        if let tag = envelope.videoTag, (try? tag.validate()) != nil,
+           let region = tag.region,
+           region.outputWidth == Int(envelope.frame.width), region.outputHeight == Int(envelope.frame.height) {
+            let placed = region.isWholeDisplay ? nil : region
+            drawnFramePlacementKnown = true
+            if Self.regionCoverageChanged(drawnFramePlacementRegion, placed) { drawnFramePlacementRegion = placed }
+        } else {
+            // Compatibility draws have no matching crop metadata. Restore the existing status/raster
+            // fallback instead of stretching every later untagged frame into an obsolete tagged crop.
+            drawnFramePlacementKnown = false
+            drawnFramePlacementRegion = nil
+        }
         framePlacement(tag: envelope.videoTag, width: Int(envelope.frame.width), height: Int(envelope.frame.height))
     }
 
@@ -1975,6 +2053,8 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     private func resetRegions() {
+        drawnFramePlacementKnown = false
+        drawnFramePlacementRegion = nil
         captureRegion = nil
         regionHistory.removeAll()
         taggedRegionFrames = 0
@@ -2386,6 +2466,20 @@ final class PhoneRemoteModel: ObservableObject {
         showSessionNotice(PhoneSessionNotice.reducedPicture(size: size))
     }
 
+    /// Explicit Spotlight intent. A draft remains local; this never chooses or launches an app.
+    var canOpenMacApp: Bool {
+        sceneIsActive && canControl && !dragging && activeHold == nil &&
+            !isComposingText && textEditable
+    }
+
+    @discardableResult
+    func openMacApp() -> Bool {
+        guard canOpenMacApp else { return false }
+        // Deliberately retire toolbar latches; physical keyboard state still belongs to its owner.
+        modifiers.removeAll()
+        return commandShortcut("space")
+    }
+
     @discardableResult
     func commandShortcut(_ key: String) -> Bool {
         guard canControl, pendingLockMac == nil else { return false }
@@ -2501,6 +2595,7 @@ final class PhoneRemoteModel: ObservableObject {
                            text: String = "", key: String = "", modifiers: [String] = [],
                            probeTextFocus: Bool = false, pointerSync: PointerSync? = nil, pencil: PencilFrame? = nil) -> Bool {
         textFocusProbe.invalidate()
+        guard !coordinateInputFenced || !Self.viewportSensitiveActions.contains(name) else { return false }
         guard canControl, pendingLockMac == nil else { return false }
         // Moves still go while the Mac is behind, so it can catch up; presses wait.
         if sessionMode == .couch, Self.couchPressActions.contains(name),
@@ -3733,6 +3828,7 @@ let now = ProcessInfo.processInfo.systemUptime
     }
 
     private func end() {
+        cancelViewportTransition()
         firstPictureTask?.cancel(); firstPictureTask = nil
         firstPictureSettlement.cancel()
         firstPictureSession = false

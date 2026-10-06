@@ -156,6 +156,21 @@ final class ProductionControlPolishUITests: XCTestCase {
             XCTAssertTrue(control.isSelected)
             let macKey = panel.buttons["Double-click"].firstMatch
             XCTAssertTrue(macKey.isEnabled, "Existing local probe admission must remain active")
+            let openApp = panel.buttons["remote.openApp"].firstMatch
+            assertTarget(openApp, in: app, name: "Explicit Open app")
+            let beforeSpotlight = probeMark(app)
+            openApp.tap()
+            XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "Open app closes More")
+            let spotlight = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                self.probeEntries(app, after: beforeSpotlight).contains("key space command")
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [spotlight], timeout: 5), .completed)
+            let typed = probeEntries(app, after: beforeSpotlight).filter { $0 == "text" || $0.hasPrefix("text ") }
+            XCTAssertTrue(typed.isEmpty, "Open app cannot type or submit a draft")
+            XCTAssertEqual(probeEntries(app, after: beforeSpotlight).filter { $0.hasPrefix("key ") }, ["key space command"])
+            revealDock(app)
+            app.buttons["More"].firstMatch.tap()
+            XCTAssertTrue(panel.waitForExistence(timeout: 5))
             openAndCloseSettings(app)
 
             revealDock(app)
@@ -170,6 +185,14 @@ final class ProductionControlPolishUITests: XCTestCase {
             XCTAssertFalse(app.buttons["remote.keyboard.open"].exists)
             let canvas = element("remote.canvas", app)
             XCTAssertEqual(canvas.label, "Remote desktop view")
+            if !requireStackedPortrait {
+                let zoom = app.buttons["remote.smartZoom.action"].firstMatch
+                XCTAssertTrue(zoom.waitForExistence(timeout: 5))
+                XCTAssertFalse(zoom.isEnabled, "Offline preview has no live presentation admission for Zoom")
+                XCTAssertGreaterThanOrEqual(zoom.frame.width, 44)
+                XCTAssertGreaterThanOrEqual(zoom.frame.height, 44)
+                XCTAssertTrue(app.windows.firstMatch.frame.contains(zoom.frame))
+            }
             let mark = probeMark(app)
             canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
             XCTAssertEqual(canvas.label, "Remote desktop view")

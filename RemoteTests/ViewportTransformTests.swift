@@ -3,6 +3,92 @@ import CoreGraphics
 import XCTest
 
 final class ViewportTransformTests: XCTestCase {
+    func testSmartZoomFocusDoublesPortraitFitWithoutForcingDeepFillCrop() throws {
+        let view = ViewportTransform(sourceSize: CGSize(width: 1920, height: 1080),
+            canvasSize: CGSize(width: 390, height: 844), mode: .fit)
+        let anchor = CGPoint(x: view.contentRect.midX, y: view.contentRect.midY)
+        let focus = try XCTUnwrap(view.focused(anchoredAt: anchor))
+        XCTAssertEqual(focus.scale, view.scale * 2, accuracy: 0.000_001)
+        XCTAssertLessThan(focus.scale, view.fillScale)
+        XCTAssertEqual(focus.sourcePoint(fromView: anchor), view.sourcePoint(fromView: anchor))
+    }
+
+    func testSmartZoomFocusReturnIsExactAfterManualPanAndPinchForFitAndPannedFill() throws {
+        for mode in ViewportMode.allCases {
+            var before = ViewportTransform(sourceSize: CGSize(width: 1920, height: 1080),
+                canvasSize: CGSize(width: 844, height: 390), mode: mode, zoom: 1.3)
+            before.pan(by: CGSize(width: 30, height: -20))
+            var bookmark = ViewportFocusReturn()
+            var focused = try XCTUnwrap(bookmark.destination(from: before, anchoredAt: CGPoint(x: 350, y: 195)))
+            focused.pan(by: CGSize(width: -55, height: 25))
+            focused.setZoom(focused.zoom * 1.1, anchoredAt: CGPoint(x: 400, y: 195))
+            let restored = try XCTUnwrap(bookmark.restoreDestination(for: focused))
+            XCTAssertEqual(restored.mode, before.mode)
+            XCTAssertEqual(restored.zoom, before.zoom)
+            XCTAssertEqual(restored.offset, before.offset)
+            XCTAssertEqual(restored.contentRect, before.contentRect)
+            bookmark.clear()
+            XCTAssertFalse(bookmark.canRestore)
+        }
+    }
+
+    func testSmartZoomFocusRejectsLetterboxAndBoundsCornersAndMaximumZoom() throws {
+        let view = ViewportTransform(sourceSize: CGSize(width: 1920, height: 1080),
+            canvasSize: CGSize(width: 390, height: 844), mode: .fit)
+        var bookmark = ViewportFocusReturn()
+        XCTAssertNil(bookmark.destination(from: view, anchoredAt: CGPoint(x: 10, y: 10)))
+        XCTAssertFalse(bookmark.canRestore)
+        let focused = try XCTUnwrap(bookmark.destination(from: view, anchoredAt: view.contentRect.origin))
+        XCTAssertGreaterThanOrEqual(focused.visibleSourceRect.minX, 0)
+        XCTAssertGreaterThanOrEqual(focused.visibleSourceRect.minY, 0)
+        XCTAssertLessThanOrEqual(focused.visibleSourceRect.maxX, view.sourceSize.width)
+        XCTAssertLessThanOrEqual(focused.visibleSourceRect.maxY, view.sourceSize.height)
+        let maxed = ViewportTransform(sourceSize: view.sourceSize, canvasSize: view.canvasSize, mode: .fit, zoom: view.zoomRange.upperBound)
+        XCTAssertNil(maxed.focused(anchoredAt: CGPoint(x: maxed.safeRect.midX, y: maxed.safeRect.midY)))
+    }
+
+    func testSmartZoomReturnInvalidatesOnSourceRotationOrKeyboardGeometryReplacement() throws {
+        let view = ViewportTransform(sourceSize: CGSize(width: 1000, height: 500),
+            canvasSize: CGSize(width: 500, height: 500), mode: .fit)
+        for change in 0..<3 {
+            var bookmark = ViewportFocusReturn()
+            var focused = try XCTUnwrap(bookmark.destination(from: view, anchoredAt: CGPoint(x: 250, y: 250)))
+            switch change {
+            case 0: focused.resize(sourceSize: CGSize(width: 1001, height: 500), canvasSize: view.canvasSize)
+            case 1: focused.resize(sourceSize: view.sourceSize, canvasSize: CGSize(width: 700, height: 350))
+            default: focused.updateSafeInsets(ViewportInsets(bottom: 200))
+            }
+            XCTAssertNil(bookmark.restoreDestination(for: focused))
+            XCTAssertFalse(bookmark.canRestore)
+        }
+    }
+
+    func testSmartZoomCameraSamplesRoundTripAndKeepsEndpointFramingDuringInterruptibleReturn() throws {
+        var from = ViewportTransform(sourceSize: CGSize(width: 1920, height: 1080),
+            canvasSize: CGSize(width: 844, height: 390), mode: .fill, zoom: 1.2)
+        from.pan(by: CGSize(width: -20, height: 10))
+        let target = try XCTUnwrap(from.focused(anchoredAt: CGPoint(x: 400, y: 190)))
+        for step in 0...20 {
+            let t = CGFloat(step) / 20
+            let sample = try XCTUnwrap(from.interpolated(to: target, progress: t))
+            let anchor = CGPoint(x: sample.safeRect.midX, y: sample.safeRect.midY)
+            let source = try XCTUnwrap(sample.sourcePoint(fromView: anchor))
+            XCTAssertEqual(sample.viewPoint(fromSource: source).x, anchor.x, accuracy: 0.000_001)
+            XCTAssertEqual(sample.viewPoint(fromSource: source).y, anchor.y, accuracy: 0.000_001)
+            XCTAssertGreaterThanOrEqual(sample.scale, from.scale)
+            XCTAssertLessThanOrEqual(sample.scale, target.scale)
+            if step == 9 {
+                let reverse = try XCTUnwrap(sample.interpolated(to: from, progress: 0))
+                XCTAssertEqual(reverse.contentRect, sample.contentRect, "Retargeting starts at the current sampled picture")
+            }
+        }
+        XCTAssertEqual(from.interpolated(to: target, progress: 1)?.contentRect, target.contentRect)
+        var rotated = target
+        rotated.resize(sourceSize: from.sourceSize, canvasSize: CGSize(width: 390, height: 844))
+        XCTAssertNil(from.interpolated(to: rotated, progress: 0.5))
+    }
+
+
     func testDoubleTapZoomKeepsTappedContentThenReturnsToSafeFit() {
         var view = ViewportTransform(sourceSize: CGSize(width: 1920, height: 1080),
                                      canvasSize: CGSize(width: 390, height: 844), mode: .fill)

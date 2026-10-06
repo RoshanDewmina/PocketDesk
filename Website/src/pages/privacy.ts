@@ -1,5 +1,6 @@
 // Source: Docs/launch/PRIVACY-POLICY.md §2; clipboard, metadata, removal and purchase wording
-// reconciled with main 4524689 on 5 Oct 2026. Unpublished draft; remaining review markers stay below.
+// reconciled with main 4524689 on 5 Oct 2026; image/OCR/folder/workspace wording additionally
+// reconciled with combined 84dc0a5 on 5 Oct 2026. Unpublished draft; remaining review markers stay below.
 
 import { config } from "../../site.config";
 import { html, raw } from "../lib/html";
@@ -12,7 +13,8 @@ const OPEN_ITEMS = [
   "[TO FILL] Who we are: legal entity or individual name, registered address, country (config.contact.legalName / postalAddress).",
   "[TO FILL] privacy@ address on the real domain (config.contact.privacyEmail).",
   "[TO FILL] EU/UK representative or data protection officer, only if counsel says one is required. Not rendered.",
-  "[CONFIRM] Exact shipping clipboard behavior: default-enabled negotiated Mac-to-phone sync during an admitted control session, user-initiated phone-to-Mac Paste, and local-only phone clipboard writes with a five-minute expiry request. No user-facing sync toggle is claimed.",
+  "[CONFIRM] Exact shipping text clipboard behavior: default-enabled negotiated Mac-to-phone text sync during an admitted control session, user-initiated phone-to-Mac Paste, and incoming text written local-only with a five-minute expiry request. Images request local-only storage without expiry; reviewed OCR copies request neither option. No user-facing sync toggle is claimed.",
+  "[CONFIRM] Final archive and disclosures match explicit image transfer, temporary local OCR processing, persisted Mac folder grants, phone downloads, and saved workspace preferences; no provider or physical acceptance is inferred from this draft.",
   "[CONFIRM] Connection-service logging and retention once the production stack is final. Recommended: no request logs beyond 7 days, none containing message bodies.",
   "[CONFIRM] STUN configuration (rendered as 'may contact a STUN server operated by Cloudflare').",
   "[CONFIRM] Notifications section assumes agent alerts ship in 1.0 as a beta (PRODUCT D29). Remove the section if push does not ship.",
@@ -39,8 +41,8 @@ const S: Section[] = [
     id: "short",
     title: "The short version",
     body: html`<ul class="short">
-  <li>Farside lets you see and control your own Mac from your iPhone or iPad. There is no Farside account. We do not ask for your name, email address or phone number.</li>
-  <li>What is on your Mac’s screen, what you type and what you say travel between your own devices, encrypted. We do not record, store or look at your screen, keystrokes or voice. Clipboard text moves between your devices and is written to the receiving system clipboard as described below.</li>
+  <li>Farside lets you see and control your own Mac from your iPhone. There is no Farside account. We do not ask for your name, email address or phone number.</li>
+  <li>Your Mac screen, control input and accepted voice text travel between your devices, encrypted. Our connection service does not receive their readable contents. Farside does not save a stream recording; explicit local text recognition, clipboard copies and file downloads have the storage described below.</li>
   <li>Our servers introduce your devices to each other and, if you subscribe to the Anywhere plan, pass encrypted traffic along when your devices cannot connect directly. To do that they see technical details such as IP addresses, timing and data volume, and a random identifier for each paired Mac.</li>
   <li>We check your subscription with Apple. Apple handles your payment; we never see your card or Apple Account details.</li>
   <li>No ads. No tracking. No analytics or advertising SDKs. We do not sell your data.</li>
@@ -51,13 +53,17 @@ const S: Section[] = [
     id: "devices",
     title: "What stays on your devices",
     body: html`<ul>
-  <li><b>Screen.</b> After you allow Screen Recording in macOS, the Farside Mac app captures the display you choose and streams it to your paired phone using WebRTC with DTLS-SRTP encryption. The stream is not saved. It is not sent to us in readable form.</li>
+  <li><b>Screen.</b> After you allow Screen Recording in macOS, the Farside Mac app captures the display you choose and streams it to your paired phone using WebRTC with DTLS-SRTP encryption. The stream is not saved as a recording. Text recognition can temporarily copy a displayed frame on the phone, as described below. It is not sent to us in readable form.</li>
   <li><b>Control.</b> After you enable control and allow Accessibility in macOS, taps and keys on your phone become pointer and keyboard actions on your Mac. They are not logged.</li>
   <li><b>Typing help.</b> When you click on your Mac, the Mac app can check whether the clicked item is a text field so your phone can open its keyboard. It checks only the type of item. It does not read what is in it.</li>
   <li><b>Voice input.</b> When you tap the microphone, your iPhone converts speech to text using Apple’s speech recognition on the device. Only the text is sent to your Mac, when you tap Done. We never receive audio. If on-device recognition is not available for your language, Farside turns voice input off; it does not send audio to a server instead.</li>
   <li><b>Camera.</b> Used only to scan the pairing code on your Mac. Pictures are not saved or sent.</li>
   <li><b>Local network.</b> Used to connect your phone to your Mac when they are on the same network.</li>
-  <li><b>Clipboard.</b> Text moves encrypted between your paired devices. When both devices support it, automatic Mac-to-phone text sync is enabled by default: Farside watches for changes to the Mac clipboard during an active, authorized control session. It does not send the clipboard contents already present when sync starts. Automatic sync is unavailable while the session is paused, locked, concealed, View-only or in Low Data Mode. On the phone, Farside checks clipboard metadata to offer Paste; it reads clipboard text for transfer to the Mac only when you choose the system Paste action. Farside keeps no clipboard history. Incoming Mac text replaces the phone’s system clipboard with a local-only entry and a requested five-minute expiry; text pasted into another app has that app’s retention. Text sent to the Mac can remain in its system clipboard until replaced or cleared. Concealed/transient Mac clipboard items are refused, and each transfer is limited to 256 KB.</li>
+  <li><b>Text clipboard.</b> Text moves encrypted between your paired devices. When both devices support it, automatic Mac-to-phone text sync is enabled by default: Farside watches for changes to the Mac clipboard during an active, authorized control session. It does not send the clipboard contents already present when sync starts. Automatic sync is unavailable while the session is paused, locked, concealed, View-only or in Low Data Mode. On the phone, Farside checks clipboard metadata to offer Paste; it reads clipboard text for transfer to the Mac only when you choose the system Paste action. Farside keeps no clipboard history. Incoming Mac text replaces the phone’s system clipboard with a local-only entry and a requested five-minute expiry; text pasted into another app has that app’s retention. Text sent to the Mac can remain in its system clipboard until replaced or cleared. Concealed/transient Mac clipboard items are refused, and each text transfer is limited to 256 KB.</li>
+  <li><b>Image clipboard.</b> Choose the system Paste control to send one image to the Mac, or Get Mac image to fetch its clipboard image. After current-authority and marked-private checks, the image is normalized to PNG and transferred encrypted, with limits of 8 MiB encoded and 16 million pixels. Images are not automatically synced or pasted into another app. Incoming phone images request local-only clipboard storage but no timed expiry; Mac clipboard images can remain until replaced or cleared. Copies saved or pasted elsewhere follow the receiving app's retention.</li>
+  <li><b>Text from a picture.</b> When you choose Select text from picture, Farside temporarily copies the visible part of a displayed frame and recognizes text locally with Apple's Vision framework. You can edit it before choosing Copy reviewed text. No frame or recognized text is sent to a recognition server. Closing clears the tool's displayed image and text, although an in-flight recognition job keeps its working image until it finishes. Copy reviewed text uses the ordinary system clipboard without requesting local-only storage or expiry; closing does not erase that copied result.</li>
+  <li><b>Shared folders and downloads.</b> Mac Settings lets you choose read-only shared folders. Bookmarks and filesystem identities persist on that Mac across restarts. During an allowed control session, your paired phone can receive folder/file names, kinds, sizes and modification times, and download chosen files over encrypted transport. The browser uses opaque entry identifiers rather than transmitting absolute Mac paths. Revoke removes the Mac grant; ending a session does not delete it. Completed downloads remain in the phone app's Documents, manageable in Files. Revocation or disconnect does not erase downloaded copies or copies saved elsewhere.</li>
+  <li><b>Workspace preferences.</b> Requested workspace lists can show running app names and window titles on your paired phone. Saved task views keep your label, Mac association, display hint and viewing-position numbers in phone preferences, not a screenshot or document contents. Personalized shortcuts keep app associations, labels, ordering and key combinations. These survive ending a session; you can delete a saved view or restore an app's default shortcuts. Avoid private information in labels you do not want retained there.</li>
   <li><b>Settings and trust.</b> Your pairing trust is stored in the Keychain on your devices and is not synced to iCloud. Preferences such as pointer speed live on the device.</li>
 </ul>`,
   },
@@ -98,7 +104,7 @@ const S: Section[] = [
   {
     id: "not-collected",
     title: "What we do not collect",
-    body: html`<p>The contents of your screen, keystrokes, clipboard, voice or audio recordings, contacts, photos, location, advertising identifiers, browsing history, or health information.</p>`,
+    body: html`<p>Our connection service does not receive readable screen, keystroke, clipboard, chosen file or recognized-text contents. The local processing and storage you request are described above. Farside does not collect your contacts, location, advertising identifiers, browsing history or health information for the connection service.</p>`,
   },
   {
     id: "use",
@@ -131,7 +137,7 @@ const S: Section[] = [
     <tr><td>Apple notification deduplication</td><td>Eligible after 90 days.</td></tr>
     <tr><td>Server request logs, if any</td><td>${tbc("7 days")}</td></tr>
     <tr><td>Support emails</td><td>${tbc("24 months")}</td></tr>
-    <tr><td>Data on your devices</td><td>Local trust retirement, preferences and system clipboard entries have separate lifetimes. Removing a pairing does not clear everything stored by the system or other apps; see the clipboard limits above.</td></tr>
+    <tr><td>Data on your devices</td><td>Local trust retirement, folder grants, downloads, workspace preferences and system clipboard entries have separate lifetimes. Only incoming Mac text requests a five-minute clipboard expiry; images and reviewed OCR copies do not. Ending a session or removing a pairing does not clear every saved file, folder grant or copy in another app. Delete saved views, restore shortcut defaults, revoke folders and manage downloaded files using their respective controls.</td></tr>
   </tbody>
 </table>`,
   },
@@ -170,7 +176,7 @@ Who we are: ${detail(config.contact.legalName, "legal name")}, ${detail(config.c
   },
 ];
 
-const DESC = "How Farside handles information: no account, no ads, no tracking. Your screen, keystrokes and voice travel between your own devices, encrypted.";
+const DESC = "How Farside handles information: no account, no ads, no tracking. Your screen, control input and chosen content travel between your own devices, encrypted.";
 
 export function privacyPage(assets: Assets) {
   const crumbs: [string, string][] = [

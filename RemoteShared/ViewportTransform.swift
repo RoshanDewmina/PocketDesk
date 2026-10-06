@@ -169,6 +169,35 @@ public struct ViewportTransform {
         }
     }
 
+    /// A local focus destination never forces Fill on a portrait canvas.
+    public func focused(anchoredAt anchor: CGPoint) -> ViewportTransform? {
+        guard sourcePoint(fromView: anchor) != nil, baselineScale > 0 else { return nil }
+        var result = self
+        result.setZoom(zoom * 2, anchoredAt: anchor)
+        guard result.scale > scale * 1.000_001 else { return nil }
+        return result
+    }
+
+    /// Sample one camera pose. Picture and hit mapping consume this same transform.
+    /// Source/safe-area replacement must cancel the owner rather than interpolate stale geometry.
+    public func interpolated(to target: ViewportTransform, progress: CGFloat) -> ViewportTransform? {
+        guard sourceSize == target.sourceSize, canvasSize == target.canvasSize,
+              safeInsets == target.safeInsets, progress.isFinite else { return nil }
+        let t = min(max(progress, 0), 1)
+        if t == 0 { return self }
+        if t == 1 { return target }
+        let sampledScale = scale + (target.scale - scale) * t
+        var result = ViewportTransform(sourceSize: sourceSize, canvasSize: canvasSize,
+            mode: target.mode, safeInsets: safeInsets)
+        result.baselineFillCrop = baselineFillCrop
+        guard result.baselineScale > 0 else { return nil }
+        result.setZoom(sampledScale / result.baselineScale, anchoredAt: .zero)
+        let from = contentRect.origin, to = target.contentRect.origin
+        let origin = CGPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t)
+        result.pan(by: CGSize(width: origin.x - result.contentRect.minX, height: origin.y - result.contentRect.minY))
+        return result
+    }
+
     /// Ends a pinch. Pinching Fill below its own size and releasing nearer Fit switches to
     /// Fit; releasing a Fit zoom close to the Fill size switches to Fill. Returns true when
     /// the mode changed.
@@ -597,4 +626,26 @@ enum WidenCapSwitch {
 enum BaselineFillCropSwitch {
     static let defaultsKey = "PocketDeskBaselineFillCrop"
     static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? false
+}
+
+/// Ephemeral framing only: no pixels, authority or host content. Geometry changes discard return.
+public struct ViewportFocusReturn {
+    private var bookmark: ViewportTransform?
+    public init() {}
+    public var canRestore: Bool { bookmark != nil }
+    public mutating func clear() { bookmark = nil }
+    public mutating func restoreDestination(for current: ViewportTransform) -> ViewportTransform? {
+        guard let bookmark else { return nil }
+        guard bookmark.sourceSize == current.sourceSize, bookmark.canvasSize == current.canvasSize,
+              bookmark.safeInsets == current.safeInsets else { clear(); return nil }
+        // Consume only after the caller actually reaches the destination.
+        return bookmark
+    }
+    public mutating func destination(from current: ViewportTransform, anchoredAt anchor: CGPoint) -> ViewportTransform? {
+        guard current.sourcePoint(fromView: anchor) != nil else { return nil }
+        if let destination = restoreDestination(for: current) { return destination }
+        guard let destination = current.focused(anchoredAt: anchor) else { return nil }
+        bookmark = current
+        return destination
+    }
 }

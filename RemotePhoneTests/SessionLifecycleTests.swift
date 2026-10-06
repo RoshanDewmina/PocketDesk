@@ -37,6 +37,88 @@ private final class LifecyclePiPPlatform: LivePiPPlatformController {
 
 @MainActor
 final class SessionLifecycleTests: XCTestCase {
+    func testViewportTransitionRejectsPointerInputKeepsKeysAndIgnoresOldCompletion() throws {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(),
+            coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()))
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "smart-zoom-input-fence")
+        var sent: [RemoteAction] = []
+        model.connection.inputPacketSenderForTesting = { sent.append($0.action); return true }
+        defer { model.connection.stop() }
+        func deliver(_ action: RemoteAction) throws {
+            try XCTUnwrap(model.connection.onControl)(JSONEncoder().encode(action))
+        }
+        try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 3))
+        try deliver(RemoteAction(action: "viewing", x: 1, epoch: 3))
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 3, features: [SessionFeature.absolutePointer]))
+        model.frameReceived()
+        XCTAssertTrue(model.canControl)
+        let first = model.beginViewportTransition()
+        sent.removeAll()
+        XCTAssertFalse(model.pointTo(CGPoint(x: 100, y: 100)))
+        XCTAssertFalse(model.gesture(.click(count: 1)))
+        XCTAssertFalse(model.gesture(.move(CGSize(width: 10, height: 0))))
+        XCTAssertFalse(model.gesture(.secondaryClick))
+        XCTAssertTrue(model.hardwareKey("a", modifiers: []))
+        XCTAssertEqual(sent.map(\.action), ["key"], "Blocked pointer commands are discarded, not queued")
+        let second = model.beginViewportTransition()
+        model.endViewportTransition(first)
+        XCTAssertTrue(model.coordinateInputFenced, "An earlier completion cannot reopen a newer transition")
+        XCTAssertFalse(model.gesture(.click(count: 1)))
+        model.endViewportTransition(second)
+        XCTAssertTrue(model.gesture(.click(count: 1)))
+        XCTAssertEqual(sent.filter { $0.action == "click" }.count, 1)
+    }
+
+    func testGeometryAndEndRetireViewportTransitionBeforeLateCompletion() throws {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(),
+            coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()))
+        model.connection.startInputFixtureForTesting(session: "smart-zoom-retirement")
+        model.connection.inputPacketSenderForTesting = { _ in true }
+        defer { model.connection.stop() }
+        let old = model.beginViewportTransition()
+        try XCTUnwrap(model.connection.onControl)(JSONEncoder().encode(RemoteAction(action: "geometry", x: 1440, y: 900, epoch: 4)))
+        XCTAssertFalse(model.coordinateInputFenced)
+        let current = model.beginViewportTransition()
+        model.endViewportTransition(old)
+        XCTAssertEqual(model.viewportTransitionGeneration, current)
+        model.connection.onEnded?()
+        XCTAssertFalse(model.coordinateInputFenced)
+        model.endViewportTransition(current)
+        XCTAssertFalse(model.coordinateInputFenced)
+    }
+
+    func testVoiceBlockedSmartZoomStartAndCancelledTaskCleanupCannotOrphanOrReplaceFence() async throws {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(),
+            coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()))
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "smart-zoom-voice-guard")
+        model.connection.inputPacketSenderForTesting = { _ in true }
+        defer { model.connection.stop() }
+        XCTAssertNil(model.beginSmartZoomTransition(interactionBlocked: true), "Open Dictate/Controls must reject before acquiring a fence")
+        XCTAssertFalse(model.coordinateInputFenced)
+        let first = try XCTUnwrap(model.beginSmartZoomTransition(interactionBlocked: false))
+        let started = expectation(description: "transition suspended")
+        let task = Task { @MainActor in
+            defer { model.finishSmartZoomTransition(first, visible: CGRect(x: 0, y: 0, width: 100, height: 100)) }
+            started.fulfill()
+            do { try await Task.sleep(for: .seconds(5)) } catch { return }
+        }
+        await fulfillment(of: [started], timeout: 2)
+        task.cancel()
+        await task.value
+        XCTAssertFalse(model.coordinateInputFenced, "Cancelled await must execute owner cleanup without normal completion")
+        let next = try XCTUnwrap(model.beginSmartZoomTransition(interactionBlocked: false))
+        XCTAssertNil(model.beginSmartZoomTransition(interactionBlocked: true))
+        model.finishSmartZoomTransition(first, visible: .zero)
+        XCTAssertEqual(model.viewportTransitionGeneration, next, "Older cleanup and blocked starts cannot disturb a newer owner")
+        model.finishSmartZoomTransition(next, visible: .zero)
+        XCTAssertFalse(model.coordinateInputFenced)
+        model.sceneChanged(.inactive)
+        XCTAssertNil(model.beginSmartZoomTransition(interactionBlocked: false), "Lifecycle-invalid starts must not acquire a fence")
+    }
+
+
     private func deliberateEndModel(background: FakeBackgroundExecution? = nil) throws -> (PhoneRemoteModel, () -> [ControlPacket]) {
         let model = PhoneRemoteModel(background: background ?? FakeBackgroundExecution())
         model.prepareConnection(mode: .picture); model.sceneChanged(.active)

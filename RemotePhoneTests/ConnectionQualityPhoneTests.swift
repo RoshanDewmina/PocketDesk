@@ -37,7 +37,7 @@ final class ConnectionQualityPhoneTests: XCTestCase {
 
 @MainActor
 final class ConnectionQualityResumeSceneTests: XCTestCase {
-    func testBackgroundToInactiveStartsReturnUnderTheExistingShieldWithoutAnotherBackgroundRequest() throws {
+    func testBackgroundToInactiveKeepsHoldShieldedUntilActiveWithoutAnotherBackgroundRequest() throws {
         let background = FakeBackgroundExecution()
         let model = PhoneRemoteModel(background: background)
         model.sceneChanged(.active)
@@ -49,11 +49,16 @@ final class ConnectionQualityResumeSceneTests: XCTestCase {
         model.sceneChanged(.inactive)
         XCTAssertEqual(background.begins, requests)
         XCTAssertTrue(model.privacyShield)
-        XCTAssertFalse(background.isActive)
+        XCTAssertTrue(background.isActive, "Inactive is still shielded background continuity, not a foreground return")
+        XCTAssertTrue(model.contentConcealed)
+        XCTAssertNil(model.lastResume)
         XCTAssertFalse(model.canControl)
         model.sceneChanged(.background)
         XCTAssertTrue(model.contentConcealed, "an interrupted return is concealed again")
         XCTAssertNil(model.lastResume, "a half-return is never reported as a completed slow return")
+        model.sceneChanged(.active)
+        XCTAssertFalse(background.isActive, "Only actual foreground return releases the existing hold")
+        XCTAssertFalse(model.privacyShield)
         model.disconnect()
     }
 }
