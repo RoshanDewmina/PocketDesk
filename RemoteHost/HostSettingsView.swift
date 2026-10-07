@@ -619,7 +619,7 @@ struct HostSettingsView: View {
                         ForEach(state.captureScopes) { Text($0.name).tag($0.id) }
                     }
                     .labelsHidden()
-                    .fixedSize()
+                    .frame(minWidth: 160, maxWidth: 320, alignment: .trailing)
                     .accessibilityIdentifier("farside.settings.captureScope")
                     Button(action: actions.refreshCaptureScopes) {
                         Image(systemName: "arrow.clockwise")

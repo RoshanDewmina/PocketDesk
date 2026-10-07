@@ -65,13 +65,29 @@ final class HostFileBrowserFolders: ObservableObject {
 struct HostFileBrowserFoldersView: View {
     @ObservedObject private var folders = HostFileBrowserFolders.shared
     var body: some View {
-        HostSettingsSection("Shared folders", footer: "Read-only browsing and downloads from your connected phone. Symlinks, aliases, packages and cloud-only files are unavailable.") {
-            ForEach(folders.folders) { folder in
-                HStack { Text(folder.name).lineLimit(1); Spacer(); Button("Revoke") { folders.revoke(folder.id) } }
+        HostSettingsSection("Shared folders", footer: folders.notice
+            ?? "Your phone can open and download files in these folders. It can't change or delete anything.") {
+            if folders.folders.isEmpty {
+                HostSettingsRow("No folders shared", subtitle: "Add a folder to open its files from your phone", systemImage: "folder") {
+                    addButton(kind: .primary)
+                }
+            } else {
+                ForEach(folders.folders) { folder in
+                    HostSettingsRow(folder.name, subtitle: "View and download only", systemImage: "folder") {
+                        Button("Remove") { folders.revoke(folder.id) }
+                            .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
+                            .accessibilityLabel("Stop sharing \(folder.name)")
+                    }
+                }
+                HostSettingsRow("Share another folder", systemImage: "plus") { addButton(kind: .plate) }
             }
-            Button("Choose Folder…", action: folders.chooseFolder)
-                .accessibilityIdentifier("farside.settings.sharedFolder.add")
-            if let notice = folders.notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
         }
+    }
+
+    private func addButton(kind: HostButtonStyle.Kind) -> some View {
+        Button("Add…", action: folders.chooseFolder)
+            .buttonStyle(HostButtonStyle(kind: kind, height: 30))
+            .accessibilityLabel("Add a shared folder")
+            .accessibilityIdentifier("farside.settings.sharedFolder.add")
     }
 }
