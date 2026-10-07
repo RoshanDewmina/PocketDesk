@@ -561,6 +561,8 @@ struct StreamStatsReport: Codable, Equatable {
     var remoteRouteLANPair: Bool?
     /// The `LANBitrateFloor` under the estimate this second, nil while the link is not trusted.
     var lanFloorKbps: Double?
+    /// Host, `StreamTuning.fastStartLAN` on: `FastStartLANPolicy`'s phase ("idle", "hold", "done", "guard").
+    var fastStartLAN: String?
     var senderQueueMs: Double?
     var networkQueueMs: Double?
     var backlogDrainMs: Double?

@@ -338,7 +338,7 @@ final class CaptureRateTuningTests: XCTestCase {
                        StreamTuning.encoderMaxFrameDelayKey, StreamTuning.captureQueueDepthKey,
                        StreamTuning.captureResolutionKey, StreamTuning.encodingMinBitrateLANKey, StreamTuning.backdropTrackKey, StreamTuning.unlockDisplayRefreshKey, StreamTuning.remoteRouteLANProofKey,
                        StreamTuning.displayedPixelsCapKey, StreamTuning.displayedPixelsScaleKey,
-                       StreamTuning.outputLongEdgeKey]
+                       StreamTuning.outputLongEdgeKey, StreamTuning.fastStartLANKey]
         for key in newKeys { XCTAssertTrue(StreamTuning.experimentKeys.contains(key), key) }
 
         defaults.set(true, forKey: StreamTuning.legacyDefaultsKey)

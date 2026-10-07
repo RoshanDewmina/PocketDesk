@@ -1157,7 +1157,7 @@ final class PeerMedia: NSObject {
         appliedRate = rate
         if tuning.qualityBitrates {
             let maximum = bandwidthCeilingBps
-            _ = connection?.setBweMinBitrateBps(lanFloorBps.map { NSNumber(value: min($0, maximum)) }, currentBitrateBps: nil,
+            _ = connection?.setBweMinBitrateBps(bweMinimumBps(maximum: maximum).map { NSNumber(value: $0) }, currentBitrateBps: nil,
                                                  maxBitrateBps: NSNumber(value: maximum))
             appliedBweMaxBps = maximum
         }
@@ -1186,7 +1186,7 @@ final class PeerMedia: NSObject {
               !closed, remoteDescriptionReady else { return }
         let maximum = bandwidthCeilingBps
         guard maximum != appliedBweMaxBps else { return }
-        _ = connection?.setBweMinBitrateBps(lanFloorBps.map { NSNumber(value: min($0, maximum)) }, currentBitrateBps: nil,
+        _ = connection?.setBweMinBitrateBps(bweMinimumBps(maximum: maximum).map { NSNumber(value: $0) }, currentBitrateBps: nil,
                                              maxBitrateBps: NSNumber(value: maximum))
         appliedBweMaxBps = maximum
     }
@@ -1194,6 +1194,15 @@ final class PeerMedia: NSObject {
     /// The `LANBitrateFloor` in force, nil while the link is not trusted. Every bitrate-settings call
     /// carries the floor and the ceiling together: libwebrtc keeps the last settings as a whole.
     private var lanFloorBps: Int?
+    /// `FastStartLANPolicy`'s minimum while it holds the start seed, nil otherwise.
+    private var fastStartFloorBps: Int?
+    private var fastStart = FastStartLANPolicy()
+    /// Host, `StreamTuning.fastStartLAN`: whether the selected pair is a `LikelyLANPair` this sample.
+    private var likelyLANPairSelected = false
+    private func bweMinimumBps(maximum: Int?, current: Int? = nil) -> Int? {
+        BweMinimum.bps(lanFloorBps: lanFloorBps, fastStartFloorBps: fastStartFloorBps, lowData: lowDataPolicyActive,
+                       maximumBps: maximum, currentBps: current)
+    }
     /// Latency item 5: the encoding minimum in force, nil while the link is not trusted or the flag is unset.
     private var encodingFloorBps: Int?
     private var lanTrust = LANTrustTracker()
@@ -1222,9 +1231,9 @@ final class PeerMedia: NSObject {
         if let maximum = appliedBweMaxBps { floor = min(floor, maximum) }
         let next = trusted ? floor : nil
         guard next != lanFloorBps else { return }
-        _ = connection?.setBweMinBitrateBps(NSNumber(value: next ?? 0), currentBitrateBps: nil,
-                                             maxBitrateBps: appliedBweMaxBps.map { NSNumber(value: $0) })
         lanFloorBps = next
+        _ = connection?.setBweMinBitrateBps(NSNumber(value: bweMinimumBps(maximum: appliedBweMaxBps) ?? 0), currentBitrateBps: nil,
+                                             maxBitrateBps: appliedBweMaxBps.map { NSNumber(value: $0) })
     }
 
     private func followEncodingFloor(trusted: Bool) {
@@ -1327,6 +1336,7 @@ final class PeerMedia: NSObject {
     /// libwebrtc's ramp; with it, LAN, internet P2P and relay each get their own start rate.
     private func seedBandwidthEstimate(_ stats: StreamStatsReport, route: String, detail: String?) {
         guard isHost, nativeDesktopCodecs, tuning.qualityBitrates else { return }
+        if tuning.fastStartLAN, followFastStart(stats, detail: detail) { return }
         let seedRoute: SeedRoute? = tuning.routeAwareSeed
             ? SeedRoute.classify(detail: detail, rttMs: stats.rttMs)
             : (route == "Direct" ? .lan : nil)
@@ -1335,9 +1345,36 @@ final class PeerMedia: NSObject {
                                     lossPercent: stats.remoteLossPercent, seedKbps: Double(seedBps) / 1000) else { return }
         let maximum = bandwidthCeilingBps
         let seed = min(seedBps, maximum)
-        _ = connection?.setBweMinBitrateBps(lanFloorBps.map { NSNumber(value: min($0, seed)) },
+        _ = connection?.setBweMinBitrateBps(bweMinimumBps(maximum: maximum, current: seed).map { NSNumber(value: $0) },
                                              currentBitrateBps: NSNumber(value: seed), maxBitrateBps: NSNumber(value: maximum))
         appliedBweMaxBps = maximum
+    }
+
+    /// `FastStartLANPolicy`: true when this sample seeded, so the ordinary seed does not count it.
+    private func followFastStart(_ stats: StreamStatsReport, detail: String?) -> Bool {
+        let action = fastStart.observe(seedPending: bandwidthSeed.attempts == 0 && !lowDataPolicyActive,
+                                       likelyLANPair: likelyLANPairSelected,
+                                       route: SeedRoute.classify(detail: detail, rttMs: stats.rttMs),
+                                       lossPercent: stats.remoteLossPercent, rttMs: stats.rttMs, pacerDelayMs: stats.pacerDelayMs)
+        switch action {
+        case .none:
+            return false
+        case .start:
+            let maximum = bandwidthCeilingBps
+            let seed = min(streamQuality.startBitrateBps(for: .lan), maximum)
+            fastStartFloorBps = seed
+            bandwidthSeed.markSeeded()
+            _ = connection?.setBweMinBitrateBps(bweMinimumBps(maximum: maximum, current: seed).map { NSNumber(value: $0) },
+                                                 currentBitrateBps: NSNumber(value: seed),
+                                                 maxBitrateBps: NSNumber(value: maximum))
+            appliedBweMaxBps = maximum
+            return true
+        case .release:
+            fastStartFloorBps = nil
+            _ = connection?.setBweMinBitrateBps(NSNumber(value: bweMinimumBps(maximum: appliedBweMaxBps) ?? 0), currentBitrateBps: nil,
+                                                 maxBitrateBps: appliedBweMaxBps.map { NSNumber(value: $0) })
+            return false
+        }
     }
 
     /// Host: the encoder ceiling actually applied to the video sender, in kbps.
@@ -1518,6 +1555,9 @@ final class PeerMedia: NSObject {
                 }
                 self.followRemoteRouteLANPair(localType: localType, remoteType: remoteType, localAddress: localAddress,
                                               remoteAddress: remoteAddress, adapterType: adapterType, networkType: networkType, vpn: vpn)
+                self.likelyLANPairSelected = self.isHost && self.tuning.fastStartLAN && LikelyLANPair.matches(
+                    localType: localType, remoteType: remoteType, localAddress: localAddress, remoteAddress: remoteAddress,
+                    adapterType: adapterType, networkType: networkType, vpn: vpn)
                 let route = MediaRoute.classify(selected: pair != nil, local: localType, remote: remoteType)
                 self.lastRoute = route
                 self.followRepairRoute()
@@ -1590,6 +1630,7 @@ final class PeerMedia: NSObject {
                 stats.bweCeilingKbps = appliedBweMaxBps.map { Double($0) / 1000 }
                 stats.lanCeilingApplied = lanCeilingApplied
                 stats.lanFloorKbps = lanFloorBps.map { Double($0) / 1000 }
+                if tuning.fastStartLAN { stats.fastStartLAN = fastStart.phase.rawValue }
             }
             let frameTiming = frameTimingLog?.drain()
             if let frameTiming { stats.applyHostFrameTiming(frameTiming) }
