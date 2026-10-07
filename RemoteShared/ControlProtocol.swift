@@ -67,6 +67,9 @@ struct RemoteAction: Codable {
     var phoneLoad: PhoneLoadFeedback? = nil
     /// G4: the region the stream covers, on `capture` status.
     var captureRegion: CaptureRegion? = nil
+    /// The scroll area under the Mac pointer, on `capture` status, only for a phone that asked for
+    /// `SessionFeature.localScroll`. Older phones ignore it.
+    var scrollRegion: ScrollRegionFrame? = nil
     /// G12: the active ladder rung, on `capture` status.
     var ladder: LadderState? = nil
     /// The Mac's load state for the phone's pill, on `capture` status.
@@ -138,7 +141,8 @@ try pencil?.validate(action: action, interaction: interaction)
         try ladder?.validate()
         try busy?.validate()
         try macVitals?.validate()
-        guard (captureRegion == nil && ladder == nil && busy == nil && macVitals == nil) || action == "capture" else {
+        try scrollRegion?.validate()
+        guard (captureRegion == nil && ladder == nil && busy == nil && macVitals == nil && scrollRegion == nil) || action == "capture" else {
             throw RemoteError.invalidMessage
         }
         guard textFocusSecure == nil || (action == "heartbeat" && textFocusProbe != nil && textFocusEditable != nil)

@@ -15,6 +15,12 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     var onFrameDrawn: ((VideoFrameEnvelope) -> Void)?
     private var drawnEnvelope: VideoFrameEnvelope?
     private var viewportCoverage: ViewportCoverageConstraint?
+    /// Main picture only (`PocketDeskLocalScroll`): the finger-scroll slide applied to redraws of the shown frame.
+    weak var localScroll: LocalScrollEchoController? {
+        didSet { if localScroll !== oldValue { localScroll?.renderer = self } }
+    }
+    private var localScrollRedrawPending = false
+    private var slideSubmissionID: UInt64?
 
     /// Main-thread presentation constraint. Decoding and the compressed reference chain are unchanged.
     func beginViewportCoverage(generation: UInt64, required: CGRect, scope: UInt64) -> Bool {
@@ -232,6 +238,14 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             }
         }
     }
+    /// Main thread: the local scroll slide moved. A display tick redraws the shown frame, only while no
+    /// other draw is in flight and no real frame is due within the coming refresh (`LocalScrollEcho.redrawAllowed`).
+    func localScrollChanged() {
+        wakeLock.lock(); let closed = self.closed; wakeLock.unlock()
+        guard !closed else { return }
+        localScrollRedrawPending = true
+        noteActivity(at: ProcessInfo.processInfo.systemUptime)
+    }
     func noteActivity(at now: TimeInterval) {
         _ = refresh.signal(at: now, newFrame: false)
         metal.preferredFramesPerSecond = refresh.framesPerSecond
@@ -241,6 +255,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         fence.invalidate(); mailbox.invalidate()
         wakeLock.lock(); closed = true; wakeLock.unlock()
         beforeDraw = nil; onFrameDrawn = nil; drawnEnvelope = nil; viewportCoverage = nil; timingAvailable = false
+        localScroll = nil; localScrollRedrawPending = false
         videoFeedback = nil
         originalSourcePresented = nil // The terminal fence already drained any earlier callback.
         metal.isPaused = true; metal.isHidden = true
@@ -259,6 +274,14 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         // Presenter holds its own lock while delivering to the presentation fence. Do not
         // invert that order by pumping the presenter under this fence.
         if !drawingPromptSource { beforeDraw?(view) }
+        if localScrollRedrawPending, !drawingPromptSource {
+            // A waiting frame replaces the slide anyway; otherwise redraw only into an idle pipeline.
+            if mailbox.hasPending || localScroll == nil { localScrollRedrawPending = false }
+            else if mailbox.isIdle, localScroll?.redrawAllowed(at: ProcessInfo.processInfo.systemUptime,
+                        refresh: 1 / Double(max(1, view.preferredFramesPerSecond))) == true {
+                localScrollRedrawPending = false; redraw = true
+            }
+        }
         if unfencedPreparation {
             drawAdmitted(in: view) // Preparation never holds the delivery/privacy fence.
         } else {
@@ -289,6 +312,12 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             return
         }
         guard let geometry = envelope.geometry else { mailbox.completed(submission.id); invalidate(); return }
+        // Any newer picture replaces the local scroll slide outright, even if this draw must retry.
+        if submission.isNew, let localScroll {
+            localScroll.frameArrived(envelope.receiptID, original: envelope.originalSource, at: ProcessInfo.processInfo.systemUptime)
+            if let slide = slideSubmissionID, mailbox.isInFlight(slide) { localScroll.framesBehindSlide += 1 }
+            slideSubmissionID = nil
+        }
         guard let backing = backingPolicy.target(picture: geometry.displaySize,
                 current: view.drawableSize == CGSize(width: 1, height: 1) ? nil : view.drawableSize,
                 at: ProcessInfo.processInfo.systemUptime, drained: mailbox.isOnlyFlight(submission.id)) else {
@@ -367,6 +396,11 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             color: SIMD4(pixels.conversion?.kr ?? 0, pixels.conversion?.kb ?? 0, pixels.conversion?.yOffset ?? 0, pixels.conversion?.yScale ?? 1),
             range: SIMD4(pixels.conversion?.uvScale ?? 1, Float(0.5 / Double(pixels.bgra ? CVPixelBufferGetWidth(buffer) : CVPixelBufferGetWidthOfPlane(buffer, 1))), Float(0.5 / Double(pixels.bgra ? CVPixelBufferGetHeight(buffer) : CVPixelBufferGetHeightOfPlane(buffer, 1))), pixels.transfer == .srgb ? 1 : 0))
         var lens = SIMD2<Float>(glassLensEnabled ? 1 : 0, Float(view.bounds.width / max(view.bounds.height, 1)))
+        var scroll = LocalScrollUniform.off
+        if !submission.isNew, !glassLensEnabled,
+           let shift = localScroll?.uniform(picture: localScrollPicture(envelope), pixels: geometry.displaySize) {
+            scroll = shift
+        }
         var refinement = RefinementUniform(rect: .zero, options: .zero)
         var refinementPixels: CVPixelBuffer?
         var refinementTexture: MTLTexture?
@@ -384,6 +418,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         }
         encoder.setFragmentBytes(&refinement, length: MemoryLayout<RefinementUniform>.stride, index: 1)
         encoder.setFragmentBytes(&lens, length: MemoryLayout<SIMD2<Float>>.stride, index: 2)
+        encoder.setFragmentBytes(&scroll, length: MemoryLayout<LocalScrollUniform>.stride, index: 3)
         encoder.setFragmentTexture(refinementTexture ?? first, index: 2)
         encoder.setRenderPipelineState(pipeline)
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
@@ -422,6 +457,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             guard viewportCoverageAllows(envelope, submissionID: submission.id) else { return false }
             command.present(drawable); command.commit(); drawsPresented += 1
             drawnEnvelope = envelope // Only the accepted commit may update model placement.
+            if scroll != .off { slideSubmissionID = submission.id; localScroll?.slideDraws += 1 }
             if pacingDiagnosticsEnabled {
                 if submission.isNew && envelope.originalSource { pacingDiagnostics.originalSubmissions += 1 }
                 else { pacingDiagnostics.otherSubmissions += 1 }
@@ -434,7 +470,18 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         if submitted != true {
             mailbox.completed(submission.id)
             if fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, { true }) != true { invalidate() }
+        } else if submission.isNew, envelope.originalSource, let localScroll, localScroll.wantsChangeCheck {
+            localScroll.observe(pixels, geometry: geometry, picture: localScrollPicture(envelope)) // After commit: never delays it.
         }
+    }
+    /// The Mac-point rect the frame covers: its own tagged crop, else the model's last placement.
+    private func localScrollPicture(_ envelope: VideoFrameEnvelope) -> CGRect {
+        if let tag = envelope.videoTag, tag.geometryEpoch == identity.geometryEpoch, let region = tag.region,
+           (try? region.validate()) != nil,
+           region.outputWidth == Int(envelope.frame.width), region.outputHeight == Int(envelope.frame.height) {
+            return region.rect
+        }
+        return localScroll?.picture ?? .zero
     }
     /// Main-thread counters only. This measures scheduling/submission, never actual presentation.
     /// No callback, fence, identity, pixel or original-frame ownership rule changes for this A/B.
@@ -537,6 +584,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     using namespace metal;
     struct U { float2 extent; int rotation; int bgra; float4 crop; float4 color; float4 range; };
     struct R { float4 rect; float4 options; };
+    struct S { float4 rect; float4 shift; };
     struct V { float4 position [[position]]; float2 uv; float2 displayUV; };
     // Bend only the outer 30% of the circular picture. Coordinates are measured in
     // the displayed view, so a rotated source bends at the visible rim as well.
@@ -560,6 +608,16 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         if(u.rotation==2) mapped=1.0-mapped;
         if(u.rotation==3) mapped=float2(1.0-mapped.y,mapped.x);
         return u.crop.xy+mapped*u.crop.zw;
+    }
+    // Optimistic local scroll: inside the clip rect, show the picture moved by shift.xy; the strip it
+    // vacates repeats the rect's own edge pixels (shift.zw is half a picture pixel).
+    float2 scrolledSourceUV(float2 displayUV, constant U &u, constant S &s) {
+        float2 d=displayUV;
+        if(all(d>=s.rect.xy) && all(d<s.rect.xy+s.rect.zw)) d=clamp(d-s.shift.xy,s.rect.xy+s.shift.zw,s.rect.xy+s.rect.zw-s.shift.zw);
+        if(u.rotation==1) d=float2(d.y,1.0-d.x);
+        if(u.rotation==2) d=1.0-d;
+        if(u.rotation==3) d=float2(1.0-d.y,d.x);
+        return u.crop.xy+d*u.crop.zw;
     }
     float3 displayEncoded(float3 rgb, constant U &u) {
         if(u.range.w==0) return rgb;
@@ -585,18 +643,18 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         if(u.rotation==3) uv=float2(1-uv.y,uv.x);
         V o; o.position=float4(p[i]*u.extent,0,1); o.uv=u.crop.xy+uv*u.crop.zw; o.displayUV=t[i]; return o;
     }
-    fragment float4 fragmentNV12(V v [[stage_in]], constant U &u [[buffer(0)]], texture2d<float> y [[texture(0)]], texture2d<float> uv [[texture(1)]], constant R &r [[buffer(1)]], texture2d<float> refinement [[texture(2)]], constant float2 &lens [[buffer(2)]]) {
+    fragment float4 fragmentNV12(V v [[stage_in]], constant U &u [[buffer(0)]], texture2d<float> y [[texture(0)]], texture2d<float> uv [[texture(1)]], constant R &r [[buffer(1)]], texture2d<float> refinement [[texture(2)]], constant float2 &lens [[buffer(2)]], constant S &scroll [[buffer(3)]]) {
         constexpr sampler s(filter::linear,address::clamp_to_edge);
-        float2 sampleUV=lens.x==0.0 ? v.uv : glassSourceUV(v.displayUV,u,lens.y);
+        float2 sampleUV=lens.x!=0.0 ? glassSourceUV(v.displayUV,u,lens.y) : (scroll.shift.x==0.0 && scroll.shift.y==0.0 ? v.uv : scrolledSourceUV(v.displayUV,u,scroll));
         float2 t=clamp(sampleUV,u.crop.xy+u.range.yz,u.crop.xy+u.crop.zw-u.range.yz);
         float l=(y.sample(s,t).r-u.color.z)*u.color.w;
         float2 c=(uv.sample(s,t).rg-float2(128.0/255.0))*u.range.x;
         float kr=u.color.x,kb=u.color.y,kg=1-kr-kb;
         return float4(refined(displayEncoded(float3(l+2*(1-kr)*c.y,l-2*kb*(1-kb)/kg*c.x-2*kr*(1-kr)/kg*c.y,l+2*(1-kb)*c.x),u),sampleUV,r,refinement),1);
     }
-    fragment float4 fragmentBGRA(V v [[stage_in]], constant U &u [[buffer(0)]], texture2d<float> image [[texture(0)]], constant R &r [[buffer(1)]], texture2d<float> refinement [[texture(2)]], constant float2 &lens [[buffer(2)]]) {
+    fragment float4 fragmentBGRA(V v [[stage_in]], constant U &u [[buffer(0)]], texture2d<float> image [[texture(0)]], constant R &r [[buffer(1)]], texture2d<float> refinement [[texture(2)]], constant float2 &lens [[buffer(2)]], constant S &scroll [[buffer(3)]]) {
         constexpr sampler s(filter::linear,address::clamp_to_edge);
-        float2 sampleUV=lens.x==0.0 ? v.uv : glassSourceUV(v.displayUV,u,lens.y);
+        float2 sampleUV=lens.x!=0.0 ? glassSourceUV(v.displayUV,u,lens.y) : (scroll.shift.x==0.0 && scroll.shift.y==0.0 ? v.uv : scrolledSourceUV(v.displayUV,u,scroll));
         float2 t=clamp(sampleUV,u.crop.xy+u.range.yz,u.crop.xy+u.crop.zw-u.range.yz);
         return float4(refined(displayEncoded(image.sample(s,t).rgb,u),sampleUV,r,refinement),1);
     }

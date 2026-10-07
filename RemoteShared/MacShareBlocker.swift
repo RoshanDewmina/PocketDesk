@@ -38,6 +38,8 @@ enum MacShareBlocker: String, Codable, Equatable {
         /// `SessionFeature.keysOnDemand`, as its own opt-in: `features` and `options` are both at the
         /// bound older Macs decode (a fifth option drops every option on an installed Mac).
         var keysOnDemand: Bool? = nil
+        /// `SessionFeature.localScroll`, its own opt-in for the same reason as `keysOnDemand`.
+        var localScroll: Bool? = nil
         static let maximumOptions = 4
         /// Only known opt-ins; an option can never stand in for a feature such as causal input.
         static let knownOptions: Set<String> = [SessionFeature.textClarity, SessionFeature.clipboardSync, SessionFeature.phoneAudio, SessionFeature.deliberateEnd]
@@ -52,11 +54,13 @@ enum MacShareBlocker: String, Codable, Equatable {
                 + (DeliberateSessionEnd.isEnabled(defaults) ? [SessionFeature.deliberateEnd] : [])
             return Handshake(features: phone.features + (optional.contains(SessionFeature.videoRefinement) ? [SessionFeature.videoRefinement] : []),
                              mode: mode, first60: First60.isEnabled(defaults) ? true : nil, shortcutChips: ShortcutChips.isEnabled(defaults) ? true : nil, phoneLoadWindows: true, options: options.isEmpty ? nil : options,
-                             keysOnDemand: KeysOnDemandRequest.isEnabled(defaults) ? true : nil)
+                             keysOnDemand: KeysOnDemandRequest.isEnabled(defaults) ? true : nil,
+                             localScroll: LocalScrollSwitch.isEnabled(defaults) ? true : nil)
         }
         var requested: Set<String> {
             Set(features + (options ?? []) + (shortcutChips == true ? [SessionFeature.shortcutChips] : [])
-                + (keysOnDemand == true ? [SessionFeature.keysOnDemand] : []))
+                + (keysOnDemand == true ? [SessionFeature.keysOnDemand] : [])
+                + (localScroll == true ? [SessionFeature.localScroll] : []))
         }
 
         static func supportsPhoneLoadWindows(in body: Data?) -> Bool {
@@ -88,7 +92,8 @@ enum MacShareBlocker: String, Codable, Equatable {
                   decoded.features.count <= 8 else { return [] }
             let options = (decoded.options?.count ?? 0) <= maximumOptions ? (decoded.options ?? []).filter(knownOptions.contains) : []
             return Set((decoded.features + options + (decoded.shortcutChips == true ? [SessionFeature.shortcutChips] : [])
-                        + (decoded.keysOnDemand == true ? [SessionFeature.keysOnDemand] : [])).filter { (1...32).contains($0.utf8.count) })
+                        + (decoded.keysOnDemand == true ? [SessionFeature.keysOnDemand] : [])
+                        + (decoded.localScroll == true ? [SessionFeature.localScroll] : [])).filter { (1...32).contains($0.utf8.count) })
         }
     }
 

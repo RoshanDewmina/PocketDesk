@@ -294,6 +294,18 @@ final class RemoteHostModel: ObservableObject {
         return false
     }
     private var capturedDisplayID: CGDirectDisplayID?
+    private lazy var scrollRegionProbe: HostScrollRegionProbe = {
+        let probe = HostScrollRegionProbe()
+        probe.onChange = { [weak self] in
+            guard let self, self.connection.connected, self.wantsScrollRegion else { return }
+            self.sendCaptureHealth(self.sessionHealthy)
+        }
+        return probe
+    }()
+    /// Only a phone that asked for it hears `scrollRegion`; its own `PocketDeskLocalScroll` gates the whole feature.
+    private var wantsScrollRegion: Bool {
+        sessionState == .picture && connection.peerFeatures.contains(SessionFeature.localScroll)
+    }
     private var pointerLocator = HostPointerLocator()
     private let pointerTelemetry = HostPointerTelemetry()
     private var displayRefreshTask: Task<Void, Never>?
@@ -3232,6 +3244,10 @@ final class RemoteHostModel: ObservableObject {
         if action.action == "move" || action.action == "moveTo", outcome.accepted {
             pointerTelemetry.moveInjected(globalPoint: point, at: now)
         }
+        if outcome.accepted, wantsScrollRegion, HostScrollRegionProbe.refreshes(after: action) {
+            scrollRegionProbe.pointerMoved(to: point, display: input.displayBounds,
+                                           force: HostScrollRegionProbe.startsScroll(action), at: now)
+        }
         if upgraded, action.action == "dragDown", !outcome.accepted,
            let notice = inputFreshness.rejectedDragDownNotice(
                 action, activeHold: activeHold
@@ -3705,7 +3721,9 @@ final class RemoteHostModel: ObservableObject {
             curtain: curtainState.rawValue, hostEvent: event,
             away: advertisedFeatures.contains(SessionFeature.away) ? away.protocolState.rawValue : nil,
             display: capturedDisplayID, agentAlert: alert,
-            captureRegion: capture.appliedCaptureRegion, ladder: ladderState, busy: busyState,
+            captureRegion: capture.appliedCaptureRegion,
+            scrollRegion: wantsScrollRegion ? scrollRegionProbe.region(on: input.displayBounds) : nil,
+            ladder: ladderState, busy: busyState,
             macVitals: vitalsMonitor?.current(now: ProcessInfo.processInfo.systemUptime),
             mode: sessionState.wireMode, modeReason: pendingModeReason?.rawValue ?? sessionState.wireReason,
             captureScope: captureScopeStatus,

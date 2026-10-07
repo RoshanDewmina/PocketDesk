@@ -28,6 +28,9 @@ struct NativeTrackpadSurface: UIViewRepresentable {
     var keyboardFocus: Bool = false
     var remapShortcuts: Bool = true
     var onCommand: (NativeGestureCommand) -> Bool
+    /// Finger scroll only (direct touch and two-finger trackpad, never a hardware pointer): each scroll
+    /// command with its delta and phase after `onCommand` handled it; a refused one arrives as `cancelled`.
+    var onFingerScroll: ((CGSize, String) -> Void)? = nil
     var onPointerMotionEnded: () -> Void
     var onHardwareKey: (String, [String]) -> Bool = { _, _ in false }
     var onHardwareModifiers: ([String]) -> Void = { _ in }
@@ -51,7 +54,17 @@ struct NativeTrackpadSurface: UIViewRepresentable {
         view.coalescedFingerMotion = coalescedFingerMotion
         view.pencil.configure(enabled: view.pencilInputEnabled, revision: revision)
         view.pencil.send = onPencil
-        view.engine.onCommand = onCommand
+        if let onFingerScroll {
+            view.engine.onCommand = { [onCommand] command in
+                let accepted = onCommand(command)
+                if case .scroll(let delta, let phase, _) = command {
+                    onFingerScroll(accepted ? delta : .zero, accepted ? phase : "cancelled")
+                }
+                return accepted
+            }
+        } else {
+            view.engine.onCommand = onCommand
+        }
         view.engine.precisionTarget = precisionTarget
         view.engine.onPointerMotionEnded = onPointerMotionEnded
         view.engine.momentumEnabled = momentumScroll

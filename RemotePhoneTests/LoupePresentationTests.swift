@@ -72,6 +72,54 @@ final class LoupePresentationTests: XCTestCase {
         }
     }
 
+    // Local scroll slides only the region, by the shift, in the displayed picture's own space for
+    // every rotation and crop, and the vacated strip repeats the region's edge row.
+    func testLocalScrollShiftsOnlyInsideTheRegionAndFillsTheVacatedStripWithItsEdge() throws {
+        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+        let queue = try XCTUnwrap(device.makeCommandQueue())
+        let libraries: [(String, MTLLibrary)] = [
+            ("bundled", try XCTUnwrap(device.makeDefaultLibrary())),
+            ("runtime", try device.makeLibrary(source: OwnedMetalVideoView.shader, options: nil))
+        ]
+        let side = Float(Self.side)
+        let scroll = LocalScrollUniform(rect: SIMD4(16 / side, 16 / side, 32 / side, 32 / side),
+                                        shift: SIMD4(0, 4 / side, 0.5 / side, 0.5 / side))
+        for (libraryName, library) in libraries {
+            for bgra in [true, false] {
+                let pipeline = try makePipeline(device: device, library: library, bgra: bgra)
+                let input = try makeInput(device: device, bgra: bgra)
+                for rotation in 0..<4 {
+                    let crop = rotation == 0 ? SIMD4<Float>(0, 0, 1, 1) : SIMD4<Float>(0.125, 0.125, 0.75, 0.75)
+                    let still = try render(device: device, queue: queue, pipeline: pipeline, input: input, bgra: bgra,
+                                           rotation: rotation, crop: crop, enabled: false)
+                    let elsewhere = try render(device: device, queue: queue, pipeline: pipeline, input: input, bgra: bgra,
+                                               rotation: rotation, crop: crop, enabled: false,
+                                               scroll: LocalScrollUniform(rect: .zero, shift: scroll.shift))
+                    let slid = try render(device: device, queue: queue, pipeline: pipeline, input: input, bgra: bgra,
+                                          rotation: rotation, crop: crop, enabled: false, scroll: scroll)
+                    let context = "\(libraryName) \(bgra ? "BGRA" : "NV12") rotation \(rotation)"
+                    func close(_ a: [UInt8], _ b: [UInt8]) -> Bool { zip(a, b).allSatisfy { abs(Int($0) - Int($1)) <= 1 } }
+                    XCTAssertTrue(zip(still, elsewhere).allSatisfy { abs(Int($0) - Int($1)) <= 1 },
+                                  "Outside an empty region the shifted path draws today's picture: \(context)")
+                    if bgra && rotation == 0 {
+                        XCTAssertTrue(still == input.bgraBytes, "With no slide the BGRA path still copies the source exactly")
+                    }
+                    for (x, y) in [(5, 5), (60, 30), (30, 10), (30, 50)] {
+                        XCTAssertEqual(pixel(slid, x: x, y: y), pixel(still, x: x, y: y), "Outside the region nothing moves: \(context)")
+                    }
+                    for (x, y) in [(20, 24), (30, 30), (44, 47)] {
+                        XCTAssertTrue(close(pixel(slid, x: x, y: y), pixel(still, x: x, y: y - 4)),
+                                      "Inside, the content moved down four pixels: \(context) \(x),\(y)")
+                    }
+                    for y in 16..<20 {
+                        XCTAssertTrue(close(pixel(slid, x: 30, y: y), pixel(still, x: 30, y: 16)),
+                                      "The vacated strip repeats the region's top row: \(context) row \(y)")
+                    }
+                }
+            }
+        }
+    }
+
     private static let side = 64
     private struct Uniforms {
         var extent = SIMD2<Float>(1, 1)
@@ -124,7 +172,8 @@ final class LoupePresentationTests: XCTestCase {
     }
 
     private func render(device: MTLDevice, queue: MTLCommandQueue, pipeline: MTLRenderPipelineState, input: Input, bgra: Bool,
-                        rotation: Int, crop: SIMD4<Float>, enabled: Bool) throws -> [UInt8] {
+                        rotation: Int, crop: SIMD4<Float>, enabled: Bool,
+                        scroll: LocalScrollUniform = .off) throws -> [UInt8] {
         let side = Self.side
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: side, height: side, mipmapped: false)
         descriptor.storageMode = .shared; descriptor.usage = .renderTarget
@@ -138,11 +187,13 @@ final class LoupePresentationTests: XCTestCase {
         var uniforms = Uniforms(rotation: Int32(rotation), bgra: bgra ? 1 : 0, crop: crop)
         var refinement = Refinement()
         var lens = SIMD2<Float>(enabled ? 1 : 0, 1)
+        var scroll = scroll
         encoder.setRenderPipelineState(pipeline)
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
         encoder.setFragmentBytes(&refinement, length: MemoryLayout<Refinement>.stride, index: 1)
         encoder.setFragmentBytes(&lens, length: MemoryLayout<SIMD2<Float>>.stride, index: 2)
+        encoder.setFragmentBytes(&scroll, length: MemoryLayout<LocalScrollUniform>.stride, index: 3)
         encoder.setFragmentTexture(input.first, index: 0)
         encoder.setFragmentTexture(input.second, index: 1)
         encoder.setFragmentTexture(input.first, index: 2)

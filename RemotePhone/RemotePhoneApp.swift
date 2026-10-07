@@ -480,6 +480,8 @@ final class PhoneRemoteModel: ObservableObject {
     // Place the drawn picture by its own tagged crop, not by a newer pending status echo.
     // This display seam does not activate the optional ScrollFixes package.
     @Published private(set) var drawnFramePlacementRegion: CaptureRegion?
+    /// Optimistic local scroll (`PocketDeskLocalScroll`, off by default).
+    let localScroll = LocalScrollEchoController()
     private var drawnFramePlacementKnown = false
     var picturePlacementRegion: CaptureRegion? {
         drawnFramePlacementKnown ? drawnFramePlacementRegion : placementRegion
@@ -2026,6 +2028,9 @@ final class PhoneRemoteModel: ObservableObject {
             drawnFramePlacementRegion = nil
         }
         framePlacement(tag: envelope.videoTag, width: Int(envelope.frame.width), height: Int(envelope.frame.height))
+        if localScroll.enabled {
+            localScroll.picture = picturePlacementRegion?.rect ?? ViewportTransform.wholeDisplayRect(for: sourceSize)
+        }
     }
 
     func framePlacement(tag: VideoFrameTag?, width: Int, height: Int) {
@@ -3507,6 +3512,8 @@ let now = ProcessInfo.processInfo.systemUptime
             if Self.regionCoverageChanged(captureRegion, region) { captureRegion = region }
             if !regionByFrame, Self.regionCoverageChanged(placementRegion, region) { placementRegion = region }
             if action.busy != busy { busy = action.busy }
+            localScroll.setRegion(action.epoch == geometryEpoch && (try? action.scrollRegion?.validate()) != nil
+                                  ? action.scrollRegion?.rect : nil)
             let now = ProcessInfo.processInfo.systemUptime
             let vitals = hostFeatures.contains(SessionFeature.macVitals) ? action.macVitals : nil
             if vitals != macVitals { macVitals = vitals }
@@ -3537,6 +3544,7 @@ let now = ProcessInfo.processInfo.systemUptime
             couchAck.reset()
             couchStalled = false
             resetRegions()
+            localScroll.setRegion(nil)
             busy = nil
             ladder = nil
             connection.media?.observeLadder(nil)
@@ -4102,6 +4110,8 @@ struct RemoteVideoSurface: UIViewRepresentable {
     var frameTiming: PhoneFrameTimingLog?
     var sourceCrop: CGRect?
     var glassLens = false
+    /// The main picture only: finger scroll slides the shown frame (`PocketDeskLocalScroll`).
+    var localScroll: LocalScrollEchoController? = nil
     let onFrame: () -> Void
 
     static func contentMode(fillsFrame: Bool) -> UIView.ContentMode { fillsFrame ? .scaleToFill : .scaleAspectFit }
@@ -4134,6 +4144,7 @@ struct RemoteVideoSurface: UIViewRepresentable {
         }
         context.coordinator.session?.onOriginalSourcePresented = onOriginalSourcePresented
         context.coordinator.session?.onFrameDrawn = onFrameDrawn
+        context.coordinator.session?.view.localScroll = sourceCrop == nil && !glassLens ? localScroll : nil
         context.coordinator.session?.configure(admission: admission, counters: counters, statistics: statistics,
             sourceSize: sourceSize, displayedPixelWidth: displayedPixelWidth, fillsFrame: fillsFrame,
             mode: smoothMotion, upscale: smoothMotionUpscale, onSourceFrame: onSourceFrame, videoFeedback: videoFeedback, sourceCrop: sourceCrop, frameTiming: frameTiming, glassLens: glassLens)
