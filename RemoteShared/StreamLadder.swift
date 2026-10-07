@@ -192,6 +192,8 @@ struct LadderInputs: Equatable {
     var phoneSampleState: PhoneLoadSampleState = .fresh
     /// Key frames encoded in the window (`StreamStatsReport.keyFrames`). nil on an older report.
     var keyFrames: Int? = nil
+    /// Key frame requests (PLI) received in the window (`StreamStatsReport.pliReceived`). nil on an older report.
+    var pliReceived: Int? = nil
 
     var frameIntervalMs: Double { 1000 / Double(max(1, targetFPS)) }
 }

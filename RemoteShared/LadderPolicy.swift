@@ -51,7 +51,7 @@ enum LadderTrigger: CaseIterable {
         // it collapses to the sent rate of a still screen (1 Oct 2026, .4: 25,000 -> 3,720 -> 2,395 kbps
         // at rtt 6-8 ms, loss 0, sent 1 Mbps), and the next key frame's pacer wait then stepped the size.
         if lanTrustRules, isNetwork, inputs.lanTrusted { return false }
-        if keyNeutral, isKeyFrameCost, LadderPolicy.hasKeyFrame(inputs) { return false }
+        if keyNeutral, isKeyFrameCost, LadderPolicy.hasUnsolicitedKeyFrame(inputs) { return false }
         switch self {
         case .hostThermal:
             return (LadderPolicy.thermalLevel(inputs.hostThermalState) ?? 0) >= LadderPolicy.seriousThermalLevel
@@ -222,10 +222,12 @@ struct LANTrustTracker: Equatable {
 /// - A target change restarts at the top of the new ladder.
 /// - On a trusted LAN (`LANTrustPolicy`) the network triggers are not evidence: the estimate collapses
 ///   on a still screen while the link itself is fine.
-/// - Key-neutral (`StreamTuning.ladderKeyNeutral`, off by default): a window with a key frame is not
-///   pacer-wait or low-estimate evidence and does not hold the climb for its pacer wait, and a sample
-///   that fires once resets the climb clock only when the next sample fires too (two in a row already
-///   step down). Off, every firing sample resets the clock, so a key frame every 10 s can pin a 10 s climb.
+/// - Key-neutral (`StreamTuning.ladderKeyNeutral`, off by default): a window with a key frame the phone
+///   did not ask for (no PLI) is not pacer-wait or low-estimate evidence and does not hold the climb for
+///   its pacer wait, and a sample whose only firing triggers are those two resets the climb clock only
+///   when the next sample fires too (two in a row already step down). A window with a requested key is
+///   judged as before: on a lossy link the phone asks every 500 ms, and that congestion is real. Off,
+///   every firing sample resets the clock, so a key frame every 10 s can pin a 10 s climb.
 struct LadderPolicy: LadderEngine {
     static let downSamples = 2
     static let upAfter: TimeInterval = 10
@@ -374,8 +376,8 @@ struct LadderPolicy: LadderEngine {
         let firedBefore = firedLastSample
         firedLastSample = !firing.isEmpty
         guard firing.isEmpty, !phonePressurePending, !warming, fitsAbove, clean else {
-            // Key-neutral: a lone firing sample keeps the clock; the second in a row resets it (or steps).
-            let loneFiring = keyNeutralRules && !firing.isEmpty && !firedBefore
+            // Key-neutral: a lone network sample keeps the clock; the second in a row resets it (or steps).
+            let loneFiring = keyNeutralRules && !firing.isEmpty && !firedBefore && firing.allSatisfy(\.isKeyFrameCost)
                 && !phonePressurePending && !warming && fitsAbove && clean
             if !loneFiring { calmSince = time }
             return
@@ -437,13 +439,14 @@ struct LadderPolicy: LadderEngine {
         guard keepsUp(inputs, at: rung, falseLoadRules: falseLoadRules) else { return false }
         let budget = frameIntervalMs(rung) * (encoderPipelining ? 2 : 1)
         if let latency = inputs.encodeLatencyP90Ms, latency >= budget { return false }
-        if isStill(inputs), (inputs.pacerDelayMs ?? 0) > 50, !(keyNeutral && hasKeyFrame(inputs)) { return false }
+        if isStill(inputs), (inputs.pacerDelayMs ?? 0) > 50, !(keyNeutral && hasUnsolicitedKeyFrame(inputs)) { return false }
         return true
     }
 
-    /// The window carried at least one key frame (session start, size move, restart, PLI, or the 10 s key).
-    static func hasKeyFrame(_ inputs: LadderInputs) -> Bool {
-        (inputs.keyFrames ?? 0) >= 1
+    /// The window carried a key frame the phone did not ask for (session start, size move, restart, or
+    /// the 10 s key): at least one key frame and a reported PLI count of zero.
+    static func hasUnsolicitedKeyFrame(_ inputs: LadderInputs) -> Bool {
+        (inputs.keyFrames ?? 0) >= 1 && inputs.pliReceived == 0
     }
 
     static func keepsUp(_ inputs: LadderInputs, at rung: LadderState, falseLoadRules: Bool) -> Bool {

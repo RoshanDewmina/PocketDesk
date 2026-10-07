@@ -185,7 +185,8 @@ struct OwnedEncoderOptions: Equatable {
     /// ExpectedFrameRate never below this, so VideoToolbox does not slow down for a lower capture rate.
     var minimumExpectedFPS = 0
     /// With `periodicKeyFrames` off: no 10 s safety key either, because this phone asked for keys on
-    /// demand and the host switch allows it (`StreamTuning.keysOnDemand`).
+    /// demand and the host switch allows it (`StreamTuning.keysOnDemand`). HEVC sessions only: the
+    /// phone's owned HEVC decoder asks for a key on a decode error, the stock H.264 decoder may not.
     var keysOnDemand = false
     init(prioritizeSpeed: Bool = false, hevcLowLatency: Bool = false, periodicKeyFrames: Bool = true, realTime: Bool = true, minimumExpectedFPS: Int = 0,
          keysOnDemand: Bool = false) {
@@ -204,7 +205,9 @@ struct OwnedEncoderOptions: Equatable {
     /// `kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration`'s documented default: no limit. The frame
     /// interval above stays, as 0 there would hand placement back to the encoder.
     static let keysOnDemandDurationSeconds = 0.0
-    var keyFrameIntervalDurationSeconds: Double { keysOnDemand ? Self.keysOnDemandDurationSeconds : Self.requestedKeysOnlyDurationSeconds }
+    func keyFrameIntervalDurationSeconds(hevc: Bool) -> Double {
+        keysOnDemand && hevc ? Self.keysOnDemandDurationSeconds : Self.requestedKeysOnlyDurationSeconds
+    }
 }
 
 /// Public VideoToolbox encoder, with a per-peer callback and the newest-frame-wins bound.
@@ -366,7 +369,8 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
             ? VTSessionSetProperty(created, key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, value: kCFBooleanTrue) == noErr : nil
         storedRequestedKeysOnly = sessionOptions.periodicKeyFrames ? nil
             : VTSessionSetProperty(created, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: OwnedEncoderOptions.requestedKeysOnlyInterval as CFNumber) == noErr
-                && VTSessionSetProperty(created, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: sessionOptions.keyFrameIntervalDurationSeconds as CFNumber) == noErr
+                && VTSessionSetProperty(created, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
+                                        value: sessionOptions.keyFrameIntervalDurationSeconds(hevc: configuration.codecType == kCMVideoCodecType_HEVC) as CFNumber) == noErr
         // Asked for only when the phone requested it and the still ceiling is tighter than the session's own.
         textClarityArmed = textClarity?.enabled == true && !textClarityRejected && storedMaximumQPApplied
             && TextClarityPolicy.stillFrameQP(hevc: configuration.codecType == kCMVideoCodecType_HEVC, sessionBound: maximumQP) < maximumQP
@@ -407,7 +411,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         if let storedSpeedPriority { parts.append(storedSpeedPriority ? "speed priority" : "speed priority rejected") }
         if let storedRequestedKeysOnly {
             parts.append(storedRequestedKeysOnly ? "requested keys only" : "key interval rejected")
-            if storedRequestedKeysOnly, sessionOptions.keysOnDemand { parts.append("keys on demand") }
+            if storedRequestedKeysOnly, sessionOptions.keysOnDemand, configuration.codecType == kCMVideoCodecType_HEVC { parts.append("keys on demand") }
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }

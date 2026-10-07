@@ -17,8 +17,10 @@ final class LadderKeyNeutralTests: XCTestCase {
         return inputs
     }
 
-    /// The window of the 10 s key: one key frame, its 500 KB draining behind the pacer, the estimate dented.
-    private var keyWindow: LadderInputs { with { $0.keyFrames = 1; $0.pacerDelayMs = 90; $0.availableKbps = 5_000 } }
+    /// The window of the 10 s key: one unrequested key frame, its 500 KB draining behind the pacer, the estimate dented.
+    private var keyWindow: LadderInputs { with { $0.keyFrames = 1; $0.pliReceived = 0; $0.pacerDelayMs = 90; $0.availableKbps = 5_000 } }
+    /// The same window on a lossy link: the phone asked for the key (PLI), so the congestion is the link's.
+    private var requestedKeyWindow: LadderInputs { with { $0.keyFrames = 1; $0.pliReceived = 1; $0.pacerDelayMs = 90; $0.availableKbps = 5_000 } }
     private var backlog: LadderInputs { with { $0.encodeInFlightMax = 2; $0.encodeLatencyP90Ms = 40 } }
 
     private func policy(keyNeutral: Bool) -> LadderPolicy {
@@ -50,8 +52,10 @@ final class LadderKeyNeutralTests: XCTestCase {
         XCTAssertEqual(LadderTrigger.firing(keyWindow, at: top, lanTrustRules: true, keyNeutral: true), [])
         XCTAssertEqual(LadderTrigger.firing(with { $0.pacerDelayMs = 90; $0.availableKbps = 5_000 }, at: top, lanTrustRules: true, keyNeutral: true),
                        [.pacerDelay, .lowEstimate], "a window without a key frame is judged as before")
-        XCTAssertEqual(LadderTrigger.firing(with { $0.keyFrames = 2; $0.pacerDelayMs = 90 }, at: top, lanTrustRules: true, keyNeutral: true), [])
-        XCTAssertEqual(LadderTrigger.firing(with { $0.keyFrames = 0; $0.pacerDelayMs = 90 }, at: top, lanTrustRules: true, keyNeutral: true), [.pacerDelay])
+        XCTAssertEqual(LadderTrigger.firing(with { $0.keyFrames = 2; $0.pliReceived = 0; $0.pacerDelayMs = 90 }, at: top, lanTrustRules: true, keyNeutral: true), [])
+        XCTAssertEqual(LadderTrigger.firing(with { $0.keyFrames = 0; $0.pliReceived = 0; $0.pacerDelayMs = 90 }, at: top, lanTrustRules: true, keyNeutral: true), [.pacerDelay])
+        XCTAssertEqual(LadderTrigger.firing(with { $0.keyFrames = 1; $0.pacerDelayMs = 90 }, at: top, lanTrustRules: true, keyNeutral: true), [.pacerDelay],
+                       "no PLI count on the report: the key is not known to be unsolicited")
         XCTAssertEqual(LadderTrigger.firing(with { $0.keyFrames = 1; $0.qualityLimitation = "bandwidth" }, at: top, lanTrustRules: true, keyNeutral: true),
                        [.bandwidthLimited], "libwebrtc's own verdict is not the key frame's cost")
         var slowKey = backlog; slowKey.keyFrames = 1
@@ -62,6 +66,45 @@ final class LadderKeyNeutralTests: XCTestCase {
         XCTAssertTrue(LadderPolicy.isClean(still, at: top, keyNeutral: true))
         still.keyFrames = 0
         XCTAssertFalse(LadderPolicy.isClean(still, at: top, keyNeutral: true), "a still screen queueing packets with no key frame still holds it")
+    }
+
+    func testARequestedKeyFrameWindowIsStillNetworkEvidenceAndStepsDown() {
+        let top = ladder60[0]
+        XCTAssertFalse(LadderPolicy.hasUnsolicitedKeyFrame(requestedKeyWindow))
+        XCTAssertTrue(LadderPolicy.hasUnsolicitedKeyFrame(keyWindow))
+        XCTAssertEqual(LadderTrigger.firing(requestedKeyWindow, at: top, lanTrustRules: true, keyNeutral: true), [.pacerDelay, .lowEstimate])
+        var still = requestedKeyWindow; still.captureFPS = 1; still.sourceFPS = 1; still.encodedFPS = 1; still.availableKbps = 20_000
+        XCTAssertFalse(LadderPolicy.isClean(still, at: top, keyNeutral: true), "a requested key's pacer wait on a still screen still holds the climb")
+        for keyNeutral in [false, true] {
+            var policy = policy(keyNeutral: keyNeutral)
+            XCTAssertNil(policy.evaluate(requestedKeyWindow, at: 0))
+            XCTAssertEqual(policy.evaluate(requestedKeyWindow, at: 1), rung(1, "network"), "keyNeutral=\(keyNeutral): a lossy link with keys every window steps within 2 s")
+            for second in 2...4 { XCTAssertNil(policy.evaluate(calm(), at: TimeInterval(second))) }
+            XCTAssertNil(policy.evaluate(requestedKeyWindow, at: 5), "counted as load, not yet a step")
+            // A lone window is a lone network sample either way: forgiven only by the key-neutral clock rule.
+            let climb = keyNeutral ? 11 : 15
+            for second in 6..<climb { XCTAssertNil(policy.evaluate(calm(), at: TimeInterval(second)), "second \(second)") }
+            XCTAssertEqual(policy.evaluate(calm(), at: TimeInterval(climb)), ladder60[0], "keyNeutral=\(keyNeutral)")
+        }
+    }
+
+    func testALoneEncoderOrPhoneSampleStillResetsTheClockWhenKeyNeutral() {
+        let slowEncoder = with { $0.encodeLatencyP90Ms = 70 }
+        let slowPhone = with { $0.phoneDecodeMs = 50 }
+        for sample in [slowEncoder, slowPhone] {
+            XCTAssertEqual(LadderTrigger.firing(sample, at: ladder60[1], lanTrustRules: true, keyNeutral: true).count, 1)
+            XCTAssertFalse(LadderTrigger.firing(sample, at: ladder60[1], lanTrustRules: true, keyNeutral: true).contains(where: \.isKeyFrameCost))
+            for keyNeutral in [false, true] {
+                var policy = steppedDown(keyNeutral: keyNeutral)
+                for second in 2...25 {
+                    XCTAssertNil(policy.evaluate(second.isMultiple(of: 2) ? calm() : sample, at: TimeInterval(second)),
+                                 "keyNeutral=\(keyNeutral) second \(second): alternating load neither steps nor climbs")
+                }
+                XCTAssertEqual(policy.state, rung(1, "encoding"))
+                for second in 26...34 { XCTAssertNil(policy.evaluate(calm(), at: TimeInterval(second))) }
+                XCTAssertEqual(policy.evaluate(calm(), at: 35), ladder60[0], "keyNeutral=\(keyNeutral): the clock restarted at the last firing sample (25)")
+            }
+        }
     }
 
     func testAKeyFrameEveryTenSecondsPinsTheClimbTodayAndNotWhenKeyNeutral() {

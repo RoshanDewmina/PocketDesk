@@ -102,10 +102,10 @@ struct StreamTuning: Equatable {
     /// on a still screen collapsed the bandwidth estimate. On restores VideoToolbox's own placement.
     var encoderPeriodicKeyFrames = false
     /// Keys on demand (ENCODER-OPTIMIZATIONS row 1): with a phone that asked for
-    /// `SessionFeature.keysOnDemand`, the owned encoder sets no key frame duration limit, so the only key
-    /// frames are the requested ones (start, PLI/FIR, restart, size step). Each 10 s safety key costs the
-    /// receiver a 216–309 ms gap behind the screenshare pacer. Off until a device A/B; a phone that does
-    /// not ask keeps the 10 s key whatever this says.
+    /// `SessionFeature.keysOnDemand`, the owned HEVC encoder sets no key frame duration limit, so the only
+    /// key frames are the requested ones (start, PLI/FIR, restart, size step). Each 10 s safety key costs
+    /// the receiver a 216–309 ms gap behind the screenshare pacer. Off until a device A/B; a phone that
+    /// does not ask, and any H.264 session (stock phone decoder), keeps the 10 s key whatever this says.
     var keysOnDemand = false
     /// Key-neutral ladder (row 2): a statistics window with a key frame is not pacer-wait or low-estimate
     /// evidence and does not reset the climb clock, and one firing sample resets the clock only when the

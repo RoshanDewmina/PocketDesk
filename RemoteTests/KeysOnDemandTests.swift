@@ -93,7 +93,8 @@ final class KeysOnDemandTests: XCTestCase {
             let options = OwnedEncoderOptions(item.tuning, phoneRequestsKeysOnDemand: item.phone.contains(SessionFeature.keysOnDemand))
             XCTAssertFalse(options.periodicKeyFrames, item.name)
             XCTAssertEqual(options.keysOnDemand, item.onDemand, item.name)
-            XCTAssertEqual(options.keyFrameIntervalDurationSeconds, item.onDemand ? 0 : 10, item.name)
+            XCTAssertEqual(options.keyFrameIntervalDurationSeconds(hevc: true), item.onDemand ? 0 : 10, item.name)
+            XCTAssertEqual(options.keyFrameIntervalDurationSeconds(hevc: false), 10, "\(item.name): an H.264 session keeps the 10 s key")
             let host = PeerMedia(isHost: true, servers: [], hevc: false, hevc444: false, textClarity: item.phone.contains(SessionFeature.textClarity),
                                  keysOnDemand: item.phone.contains(SessionFeature.keysOnDemand))
             defer { host.close() }
@@ -151,6 +152,66 @@ final class KeysOnDemandTests: XCTestCase {
             lock.lock(); defer { lock.unlock() }
             XCTAssertEqual(outputs, 12)
             XCTAssertEqual(keys, [0, 5, 9], "onDemand=\(onDemand): the start key, a PLI/FIR request and a forced recovery still produce key frames")
+        }
+    }
+
+    func testAnH264SessionKeepsTheTenSecondKeyWithTheFlagAndCapabilityOn() throws {
+        let configuration = try XCTUnwrap(OwnedVTConfiguration(parameters: ["packetization-mode": "1", "profile-level-id": "640033"]))
+        XCTAssertFalse(configuration.lowLatency)
+        let counters = StreamCounters()
+        let encoder = OwnedVTEncoder(configuration: configuration, counters: counters, inFlightLimit: { 1 }, maximumQPCeiling: { 26 },
+                                     newestFrameWins: { true }, options: { OwnedEncoderOptions(periodicKeyFrames: false, keysOnDemand: true) })
+        defer { _ = encoder.release() }
+        let settings = RTCVideoEncoderSettings()
+        settings.name = "H264"; settings.width = 640; settings.height = 416; settings.startBitrate = 8000
+        settings.maxBitrate = 8000; settings.maxFramerate = 60; settings.qpMax = 30; settings.mode = .screensharing
+        XCTAssertEqual(encoder.startEncode(with: settings, numberOfCores: 1), 0, "stage=\(encoder.lastStage) status=\(encoder.lastStatus)")
+        XCTAssertEqual(encoder.optionsEvidence, "requested keys only", "no 'keys on demand' on the stock-decoder codec")
+        let evidence = try XCTUnwrap(counters.drain(inputBufferedBytes: nil).encoderEvidence)
+        XCTAssertEqual(evidence.options, "requested keys only")
+    }
+
+    /// Presentation timestamps one second apart stand in for ten seconds of session: VideoToolbox places
+    /// its duration-based key by PTS. Only the first frame asks for a key.
+    func testTheTenSecondKeyArrivesByPresentationTimeOnlyWithTheFlagOff() throws {
+        let configuration = try XCTUnwrap(OwnedHEVCConfiguration(parameters: OwnedHEVCConfiguration.codecInfo.parameters))
+        for onDemand in [false, true] {
+            let encoder = OwnedVTEncoder(configuration: configuration, counters: StreamCounters(), inFlightLimit: { 1 }, maximumQPCeiling: { 26 },
+                                         newestFrameWins: { true }, options: { OwnedEncoderOptions(periodicKeyFrames: false, keysOnDemand: onDemand) })
+            defer { _ = encoder.release() }
+            let settings = RTCVideoEncoderSettings()
+            settings.name = "H265"; settings.width = 640; settings.height = 416; settings.startBitrate = 8000
+            settings.maxBitrate = 8000; settings.maxFramerate = 60; settings.qpMax = 30; settings.mode = .screensharing
+            XCTAssertEqual(encoder.startEncode(with: settings, numberOfCores: 1), 0, "stage=\(encoder.lastStage) status=\(encoder.lastStatus)")
+            let lock = NSLock(), signal = DispatchSemaphore(value: 0)
+            var keys: [Int] = [], outputs = 0
+            encoder.setCallback { image, _ in
+                lock.lock(); outputs += 1
+                if image.frameType == .videoFrameKey { keys.append(Int(image.timeStamp) - 1000) }
+                lock.unlock(); signal.signal(); return true
+            }
+            var pixels: CVPixelBuffer?
+            XCTAssertEqual(CVPixelBufferCreate(nil, 640, 416, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+            let buffer = try XCTUnwrap(pixels)
+            let key = [NSNumber(value: RTCFrameType.videoFrameKey.rawValue)]
+            for index in 0..<13 {
+                CVPixelBufferLockBaseAddress(buffer, [])
+                for plane in 0..<2 { memset(CVPixelBufferGetBaseAddressOfPlane(buffer, plane), plane == 0 ? Int32(40 + index * 9) : 128, CVPixelBufferGetBytesPerRowOfPlane(buffer, plane) * CVPixelBufferGetHeightOfPlane(buffer, plane)) }
+                CVPixelBufferUnlockBaseAddress(buffer, [])
+                let frame = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: 1_000_000_000 + Int64(index) * 1_000_000_000)
+                frame.timeStamp = Int32(1000 + index)
+                XCTAssertEqual(encoder.encode(frame, codecSpecificInfo: nil, frameTypes: index == 0 ? key : []), 0)
+                XCTAssertEqual(signal.wait(timeout: .now() + 2), .success, "frame \(index)")
+            }
+            lock.lock(); defer { lock.unlock() }
+            XCTAssertEqual(outputs, 13)
+            if onDemand {
+                XCTAssertEqual(keys, [0], "keys on demand: nothing after the requested start key")
+            } else {
+                XCTAssertEqual(keys.count, 2, "today's 10 s key: \(keys)")
+                XCTAssertTrue((10...12).contains(keys.last ?? -1), "the safety key lands about 10 s of PTS after the start key: \(keys)")
+            }
         }
     }
 
