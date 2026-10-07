@@ -1085,9 +1085,11 @@ final class ViewportCaptureTests: XCTestCase {
 extension ViewportCaptureTests {
     private typealias Displayed = DisplayedPixelsPolicy
 
+    /// The cap at unit scale, so these tests pin the policy, not the shipping 1.25 headroom.
     private var capOn: StreamTuning {
         var tuning = StreamTuning.tuned
         tuning.displayedPixelsCap = true
+        tuning.displayedPixelsScale = 1
         return tuning
     }
 
@@ -1359,6 +1361,7 @@ extension ViewportCaptureTests {
     private func replay(cap: Bool, crop: Bool) throws -> Replay {
         var tuning = StreamTuning.tuned
         tuning.displayedPixelsCap = cap
+        tuning.displayedPixelsScale = 1
         tuning.viewportCapture = crop
         let budget = try composed(moreSpace, displayed: nil, tuning: tuning)
         return Replay(tuning: tuning, display: moreSpace, budget: budget,

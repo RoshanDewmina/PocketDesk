@@ -159,7 +159,7 @@ final class CaptureRatePolicyTests: XCTestCase {
         }
         XCTAssertEqual(switched.fieldTrials, StreamTuning.tuned.fieldTrials)
 
-        for (scale, expected) in [(0.5, 0.5), (1.5, 1.5), (0.49, 1.0), (1.51, 1.0), (Double.nan, 1.0)] {
+        for (scale, expected) in [(0.5, 0.5), (1.5, 1.5), (0.49, 1.25), (1.51, 1.25), (Double.nan, 1.25)] {
             defaults.set(scale, forKey: StreamTuning.displayedPixelsScaleKey)
             XCTAssertEqual(StreamTuning.resolve(defaults: defaults).displayedPixelsScale, expected, "\(scale)")
         }
