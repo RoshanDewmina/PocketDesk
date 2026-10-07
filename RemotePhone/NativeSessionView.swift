@@ -872,6 +872,14 @@ struct NativeSessionView: View {
                                        onFrame: model.frameReceived)
                         .frame(width: picture.width, height: picture.height)
                         .offset(x: picture.minX, y: picture.minY)
+                    if BackdropRequest.isOn, model.inlinePresentationAdmission != nil, let coverage = BackdropComposite.coverage(viewport: viewport, region: model.picturePlacementRegion,
+                                                                                       displayScale: displayScale) {
+                        BackdropLayer(store: connection.backdrop, display: model.sourceSize, coverage: coverage,
+                                      region: model.picturePlacementRegion, scale: viewport.scale,
+                                      featherPoints: BackdropComposite.featherPixels / displayScale)
+                            .frame(width: rect.width, height: rect.height)
+                            .accessibilityHidden(true)
+                    }
                 } else if offlineLayoutCheck {
                     DesktopPreview(size: model.sourceSize)
                         .scaleEffect(viewport.scale, anchor: .topLeading)

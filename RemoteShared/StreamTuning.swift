@@ -133,6 +133,10 @@ struct StreamTuning: Equatable {
     /// alone (`maintainFramerateAndResolution`, as `highRefreshNoAdaptation` does above 60), so the
     /// overuse detector cannot cut the frame rate behind the ladder's back. On is today's behaviour.
     var webRTCAdaptationAt60 = true
+    /// Idea 2 (LATENCY-PLAN §2.2): for a phone that asked (`SessionFeature.backdrop`), a second 640 px,
+    /// 4 fps whole-display capture sent as snapshots on the `backdrop.1` channel. Off: no second capture
+    /// and no channel.
+    var backdropTrack = false
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
         encoderCeilingKbps.map { $0 * 1000 } ?? quality.maximumBitrateBps
@@ -206,6 +210,7 @@ struct StreamTuning: Equatable {
     static let encoderMaxFrameDelayRange = 1...8
     static let captureQueueDepthRange = 3...8
     static let encodingMinBitrateLANRange = 300...100_000
+    static let backdropTrackKey = "PocketDeskBackdropTrack"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
@@ -215,7 +220,8 @@ struct StreamTuning: Equatable {
                                  encoderPrioritizeSpeedKey, hevcLowLatencyKey, encoderPeriodicKeyFramesKey, encoderPipeliningKey,
                                  keysOnDemandKey, ladderKeyNeutralKey, webRTCAdaptationAt60Key,
                                  keysOnDemandH264Key, encoderMaxFrameDelayKey, captureQueueDepthKey, captureResolutionKey,
-                                 encodingMinBitrateLANKey]
+                                 encodingMinBitrateLANKey,
+                                 backdropTrackKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -345,6 +351,9 @@ struct StreamTuning: Equatable {
             let kbps = defaults.integer(forKey: encodingMinBitrateLANKey)
             tuning.encodingMinBitrateLANKbps = encodingMinBitrateLANRange.contains(kbps) ? kbps : nil
         }
+        if defaults.object(forKey: backdropTrackKey) != nil {
+            tuning.backdropTrack = defaults.bool(forKey: backdropTrackKey)
+        }
         return tuning
     }
 
@@ -405,6 +414,7 @@ struct StreamTuning: Equatable {
         if let captureQueueDepth { parts.append("capture queue \(captureQueueDepth)") }
         if captureResolution != .automatic { parts.append("capture resolution \(captureResolution.rawValue)") }
         if let encodingMinBitrateLANKbps { parts.append("LAN encoding floor \(encodingMinBitrateLANKbps)") }
+        if backdropTrack { parts.append("backdrop track") }
         if ladder { parts.append("governor " + (!senderQueueGovernor ? "off" : senderQueueGovernorApply ? "apply" : "shadow")) }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }

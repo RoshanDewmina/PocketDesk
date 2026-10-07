@@ -400,6 +400,8 @@ final class RemoteCapture {
     private var scopeMonitor: Task<Void, Never>?
     private var exclusionGeneration: UInt64 = 0
     private var exclusionTask: Task<Bool, Never>?
+    private var backdrop: BackdropCapture?
+    private var backdropStopping: Task<Void, Never>?
 
     /// Fence PCM synchronously, then serialize audio with picture configuration updates.
     /// Listening never restarts the picture or retires its geometry/input epoch.
@@ -469,9 +471,14 @@ final class RemoteCapture {
         scopeMonitor?.cancel(); scopeMonitor = nil
         let previous = session
         previous?.fenceCapture()
+        retireBackdrop()
         session = nil
         if let previous { retirement.retire(previous.retirementTicket) }
         try await retirement.waitForRetirement(whileCurrent: { self.ownership.owns(owner) })
+        // At most one picture producer: the old backdrop stream is gone before the next picture reserves.
+        if let stopping = backdropStopping { await stopping.value }
+        try Task.checkCancellation()
+        guard ownership.owns(owner) else { throw CancellationError() }
         var excluding: [SCWindow] = []
         if keepingExclusions {
             excluding = await keptExclusionWindows()
@@ -568,6 +575,7 @@ final class RemoteCapture {
             appliedQuality = initialQuality
             appliedClientLongEdge = initialClientLongEdge
             streamPeer = peer
+            startBackdrop(resolved, peer: peer, session: next)
             peer.applyStreamQuality(initialQuality)
             peer.applyCaptureRate(targetFPS: next.targetFPS, displayRefreshHz: next.displayRefreshHz,
                                   display: next.displayDescription)
@@ -618,6 +626,7 @@ final class RemoteCapture {
         captureStarted = false
         streamPeer = nil
         scopeMonitor?.cancel(); scopeMonitor = nil
+        retireBackdrop()
         let previous = session
         if let previous { retirement.retire(previous.retirementTicket) }
         session = nil
@@ -659,7 +668,33 @@ final class RemoteCapture {
             return false
         }
         excludedWindowIDs = ids
+        backdrop?.excludeWindows(windows)
         return true
+    }
+
+    /// Idea 2: only for a whole-display session whose phone negotiated it; follows the picture's lifetime.
+    private func startBackdrop(_ resolved: HostResolvedCaptureScope, peer: PeerMedia, session next: RemoteCaptureSession) {
+        guard BackdropCapturePolicy.runs(negotiated: peer.backdropLink != nil, scoped: resolved.target != nil),
+              let link = peer.backdropLink,
+              let capture = BackdropCapture(display: resolved.display, filter: resolved.filter,
+                  link: .init(readiness: { [weak link] in link?.readiness ?? .closed },
+                              nextSequence: { [weak link] in link?.nextSequence() ?? 0 },
+                              send: { [weak peer] in peer?.sendBackdrop($0) ?? false }),
+                  admits: { [weak next] in next?.admitsPicture == true }) else { return }
+        backdrop = capture
+        Task {
+            do { try await capture.start() } catch {
+                SessionLog.log.info("backdrop capture did not start: \(error.localizedDescription, privacy: .public)")
+                await capture.stop()
+            }
+        }
+    }
+
+    private func retireBackdrop() {
+        guard let retired = backdrop else { return }
+        backdrop = nil
+        retired.fence()
+        backdropStopping = Task { await retired.stop() }
     }
 
     private func keptExclusionWindows() async -> [SCWindow] {

@@ -685,11 +685,14 @@ final class PeerMedia: NSObject {
     /// The phone asked for `SessionFeature.keysOnDemand`; the encoder honours it only with `StreamTuning.keysOnDemand`
     /// (HEVC) or `StreamTuning.keysOnDemandH264` (H.264).
     let keysOnDemandRequested: Bool
+    /// Idea 2: the `backdrop.1` snapshot channel, only when this session negotiated it.
+    let backdropLink: BackdropLink?
     func captureContentChanged() { textClarity.contentChanged() }
     init(isHost: Bool, servers: [ICEServerConfiguration], forceRelay: Bool = false, nativeDesktopCodecs: Bool = true,
          localLink: ProvenLocalLink? = nil, fileChannel: Bool = false, hevc: Bool? = nil, hevc444: Bool? = nil, videoLTR: Bool = false,
-         textClarity: Bool = false, keysOnDemand: Bool = false, capabilitySnapshot: NativeVideoCapabilitySnapshot? = nil) {
+         textClarity: Bool = false, keysOnDemand: Bool = false, backdrop: Bool = false, capabilitySnapshot: NativeVideoCapabilitySnapshot? = nil) {
         self.isHost = isHost
+        backdropLink = backdrop && nativeDesktopCodecs ? BackdropLink() : nil
         self.textClarity = TextClarityContext(enabled: isHost && nativeDesktopCodecs && textClarity)
         keysOnDemandRequested = isHost && nativeDesktopCodecs && keysOnDemand
         acceptsFileChannel = fileChannel
@@ -830,6 +833,9 @@ final class PeerMedia: NSObject {
                 let file = connection?.dataChannel(forLabel: Self.fileChannelLabel, configuration: fileConfig)
                 file?.delegate = self
                 self.fileChannel = file
+            }
+            if let backdropLink, let created = connection?.dataChannel(forLabel: BackdropLink.label, configuration: BackdropLink.configuration) {
+                backdropLink.attach(created)
             }
         }
     }
@@ -1382,6 +1388,11 @@ final class PeerMedia: NSObject {
         let (total, overflow) = control.addingReportingOverflow(pointer.bufferedAmount)
         return overflow ? nil : total
     }
+    /// Host: one encoded `BackdropSnapshot`, under the same local-route authority as the picture.
+    func sendBackdrop(_ message: Data) -> Bool {
+        guard isHost, let backdropLink, localGateOpen() else { return false }
+        return withNativeRouteSubmissionAuthority { backdropLink.send(message) } ?? false
+    }
     /// `displayMs` is the frame's ScreenCaptureKit display time in mach ms, 0 for a re-send.
     func pushFrame(_ buffer: CVPixelBuffer, timeStampNs: Int64, displayMs: Double = 0, exactTiming: ExactVideoTiming? = nil,
                    region: CaptureRegion? = nil) {
@@ -1669,6 +1680,8 @@ final class PeerMedia: NSObject {
         control?.delegate = nil; control?.close()
         fileLock.lock(); let file = fileChannel; fileChannel = nil; fileLock.unlock()
         file?.delegate = nil; file?.close()
+        let backdrop = backdropLink?.end()
+        backdrop?.delegate = nil; backdrop?.close()
         connection?.delegate = nil; connection?.close(); connection = nil
         candidates.removeAll(); video = nil
         videoFeedback.end()
@@ -1779,6 +1792,7 @@ extension PeerMedia: RTCPeerConnectionDelegate {
             return
         }
         if dataChannel.label == Self.fileChannelLabel, adoptFileChannel(dataChannel) { return }
+        if !isHost, dataChannel.label == BackdropLink.label, backdropLink?.adopt(dataChannel) == true { return }
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.closed, dataChannel.label == "control", self.channel == nil else {
                 dataChannel.delegate = nil; dataChannel.close(); return
@@ -1840,7 +1854,7 @@ extension PeerMedia: RTCDataChannelDelegate {
             refinementQueue.async { [weak self] in self?.retireClosedRefinementChannel(dataChannel) }
             return
         }
-        if isPointerChannel(dataChannel) { return }
+        if isPointerChannel(dataChannel) || backdropLink?.owns(dataChannel) == true { return }
         if isFileChannel(dataChannel) {
             if dataChannel.readyState == .closed { onFileBufferedAmountChange?() }
             return
@@ -1872,6 +1886,12 @@ extension PeerMedia: RTCDataChannelDelegate {
         if isFileChannel(dataChannel) {
             guard buffer.isBinary, buffer.data.count <= FileTransferLimits.maximumMessageBytes, localGateOpen() else { return }
             deliverFileMessage(buffer.data)
+            return
+        }
+        if let backdropLink, backdropLink.owns(dataChannel) {
+            if !isHost, buffer.isBinary, localGateOpen() {
+                backdropLink.receive(buffer.data) { [weak self] in self?.localGateOpen() ?? false }
+            }
             return
         }
         let arrivedFrames = counters.arrivedTotal
