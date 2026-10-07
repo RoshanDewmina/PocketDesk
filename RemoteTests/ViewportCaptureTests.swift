@@ -1115,6 +1115,10 @@ extension ViewportCaptureTests {
         XCTAssertEqual(Displayed.targetLongEdge(viewport: portrait, display: moreSpace, tuning: capOn), 1216,
                        "1920 pt × 0.628 = 1206, up to whole macroblocks")
         XCTAssertEqual(Displayed.targetLongEdge(viewport: landscape, display: moreSpace, tuning: capOn), 1872)
+        var wire = portrait
+        (wire.pixelWidth, wire.pixelHeight) = (1206, 781)
+        XCTAssertEqual(Displayed.targetLongEdge(viewport: wire, display: moreSpace, tuning: capOn), 1216,
+                       "the phone sends the display rect × zoom, landscape-shaped in either orientation; only zoom counts")
 
         let fill = iPhone17(zoom: 2.11, portrait: true, on: moreSpace)
         XCTAssertEqual(Displayed.targetLongEdge(viewport: fill, display: moreSpace, tuning: capOn), 3840,
@@ -1166,8 +1170,15 @@ extension ViewportCaptureTests {
 
     func testDisplayedEdgeHoldsInsideTheBandAndChangesOnlyAfterItsDwell() {
         let held = Displayed.Hold(edge: 1216)
-        XCTAssertEqual(Displayed.resolve(target: nil, held: held, now: 0), Displayed.Decision(edge: nil, hold: nil, deadline: nil),
-                       "cap off or no viewport: today's output at once")
+        XCTAssertEqual(Displayed.resolve(target: nil, held: nil, now: 0), Displayed.Decision(edge: nil, hold: nil, deadline: nil),
+                       "cap off: today's output")
+        let lost = Displayed.resolve(target: nil, held: held, now: 0)
+        XCTAssertEqual(lost.edge, 1216, "a lost viewport is a grow, not an undamped jump")
+        XCTAssertEqual(lost.deadline, 0.25)
+        XCTAssertEqual(Displayed.resolve(target: nil, held: lost.hold, now: 0.25),
+                       Displayed.Decision(edge: nil, hold: nil, deadline: nil))
+        XCTAssertEqual(Displayed.resolve(target: 1216, held: lost.hold, now: 0.1),
+                       Displayed.Decision(edge: 1216, hold: held, deadline: nil), "the viewport is back within the dwell")
         XCTAssertEqual(Displayed.resolve(target: 1216, held: nil, now: 0),
                        Displayed.Decision(edge: 1216, hold: held, deadline: nil), "the first viewport applies at once")
         for target in [1104, 1150, 1216, 1300, 1328] {
@@ -1283,5 +1294,41 @@ extension ViewportCaptureTests {
         XCTAssertEqual(cappedRegion(for: zoomed, display: moreSpace, output: capped, budget: budget, tuning: capOn,
                                      previous: nil, nearNative: true),
                        region(zoomed, on: moreSpace, output: budget, nearNative: true))
+    }
+
+    func testAHeldEdgeFromBeforeAPinchNeitherEngagesNorDropsACrop() throws {
+        let budget = try composed(moreSpace, displayed: nil)
+        let fitEdge = try composed(moreSpace, displayed: 1216)
+        let pinched = iPhone17(zoom: 1.2, portrait: true, on: moreSpace)
+        for engaged in [false, true] {
+            let stale = cappedRegion(for: pinched, display: moreSpace, output: fitEdge, budget: budget, tuning: capOn,
+                                     previous: nil, nearNative: true, cropEngaged: engaged)
+            let today = region(pinched, on: moreSpace, output: budget, nearNative: true, cropEngaged: engaged)
+            XCTAssertEqual(stale.isWholeDisplay, today.isWholeDisplay, "the gain is judged on the budget, engaged \(engaged)")
+            XCTAssertTrue(stale.isWholeDisplay)
+        }
+
+        let zoomed = iPhone17(zoom: 1.5, portrait: true, on: moreSpace)
+        let crop = region(zoomed, on: moreSpace, output: budget)
+        XCTAssertFalse(crop.isWholeDisplay)
+        let wobble = iPhone17(zoom: 1.56, portrait: true, on: moreSpace)
+        for output in [fitEdge, try composed(moreSpace, displayed: 2304), budget] {
+            XCTAssertEqual(cappedRegion(for: wobble, display: moreSpace, output: output, budget: budget, tuning: capOn,
+                                        previous: crop),
+                           region(wobble, on: moreSpace, output: budget, previous: crop),
+                           "a new displayed edge keeps the held crop: \(output)")
+        }
+    }
+
+    func testTheWidenedCropRuleAlsoTakesItsAspectAndSizeFromTheBudget() throws {
+        let budget = try composed(moreSpace, displayed: nil)
+        for zoom in [1.3, 2, 3] {
+            let viewport = iPhone17(zoom: zoom, portrait: false, on: moreSpace)
+            let before = region(viewport, on: moreSpace, output: budget, phoneNative: false)
+            let after = Policy.region(for: viewport, display: moreSpace, output: try composed(moreSpace, displayed: 1216),
+                                      budget: budget, tuning: capOn, previous: nil, phoneNative: false,
+                                      nearNative: false, keepBand: true)
+            if before.isWholeDisplay { XCTAssertTrue(after.isWholeDisplay) } else { XCTAssertEqual(after, before, "zoom \(zoom)") }
+        }
     }
 }

@@ -124,7 +124,8 @@ enum ViewportCapturePolicy {
         if nearNative, phoneNative, rect.width > 0, display.size.width > 0 {
             // Judged on the phone-native target, not a held size that may lag it by up to 10 %.
             let target = phoneNativeOutputSize(source: source, zoom: viewport.zoom, display: display, budget: budget, held: nil)
-            let gain = (Double(target.width) / rect.width) / (Double(output.width) / display.size.width)
+            // Against the uncapped budget: a displayed edge still held from before a pinch must not engage a crop.
+            let gain = (Double(target.width) / rect.width) / (Double(budget.width) / display.size.width)
             // `cropEngaged` carries the state across a quality or rung change, when `previous` is nil.
             let engaged = cropEngaged ?? (previous.map { !$0.isWholeDisplay } ?? false)
             if gain < (engaged ? cropGainRelease : cropGainEngage) { return whole }
@@ -296,14 +297,15 @@ enum ViewportCapturePolicy {
     }
 }
 
-/// Idea 1 (LATENCY-PLAN §4, `StreamTuning.displayedPixelsCap`): the whole-display long edge that gives one
+/// Displayed-pixels cap (`StreamTuning.displayedPixelsCap`): the whole-display long edge that gives one
 /// stream pixel per phone pixel the Mac picture occupies (× `displayedPixelsScale`), from the phone's
 /// `viewport.zoom` (device pixels per Mac point, already reflecting orientation, insets and user zoom).
 /// Every change of the whole output costs a ScreenCaptureKit reconfiguration (100-460 ms stall), a new
 /// encoder and a key frame, so a new edge applies only once it leaves the `shrinkBelow`...`growFrom` band of
 /// the held one and stays out for `shrinkDwell` (smaller) or `growDwell` (larger). The phone's whole-display
 /// rect is the display's own shape in either orientation, so a rotation is not told apart from a keyboard:
-/// portrait → landscape is a grow, the reverse a shrink.
+/// portrait → landscape is a grow, the reverse a shrink. Losing the viewport is a grow to the uncapped output.
+/// The caller applies a pending edge early when it reconfigures for another reason anyway.
 enum DisplayedPixelsPolicy {
     static let shrinkDwell: TimeInterval = 1.0
     static let growDwell: TimeInterval = 0.25
@@ -345,9 +347,10 @@ enum DisplayedPixelsPolicy {
     }
 
     static func resolve(target: Int?, held: Hold?, now: TimeInterval) -> Decision {
-        guard let target else { return Decision(edge: nil, hold: nil, deadline: nil) }
-        guard var hold = held, hold.edge > 0 else { return Decision(edge: target, hold: Hold(edge: target), deadline: nil) }
-        let ratio = Double(target) / Double(hold.edge)
+        guard var hold = held, hold.edge > 0 else {
+            return Decision(edge: target, hold: target.map { Hold(edge: $0) }, deadline: nil)
+        }
+        let ratio = target.map { Double($0) / Double(hold.edge) } ?? .infinity
         guard ratio < ViewportCapturePolicy.shrinkBelow || ratio >= ViewportCapturePolicy.growFrom else {
             return Decision(edge: hold.edge, hold: Hold(edge: hold.edge), deadline: nil)
         }
@@ -358,7 +361,7 @@ enum DisplayedPixelsPolicy {
         }
         let due = (hold.leftBandAt ?? now) + (growing ? growDwell : shrinkDwell)
         guard now >= due else { return Decision(edge: hold.edge, hold: hold, deadline: due) }
-        return Decision(edge: target, hold: Hold(edge: target), deadline: nil)
+        return Decision(edge: target, hold: target.map { Hold(edge: $0) }, deadline: nil)
     }
 }
 

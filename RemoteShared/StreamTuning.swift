@@ -70,15 +70,15 @@ struct StreamTuning: Equatable {
     var encoderPipelining = true
     /// Cap the capture long edge to the client's advertised screen pixels (reduction only).
     var capToClientPixels = true
-    /// Idea 1 (LATENCY-PLAN §4): cap the whole-display output at the pixels the Mac picture occupies on the
+    /// Displayed-pixels cap: limit the whole-display output to the pixels the Mac picture occupies on the
     /// phone (`DisplayedPixelsPolicy`). Applies only to a whole-display session whose phone reports its
     /// viewport (viewport capture on, not view-only); window-scoped capture keeps the mode/client cap. Off
     /// until a device A/B.
     var displayedPixelsCap = false
     /// Headroom multiplier on the displayed-pixels cap (0.5…1.5).
     var displayedPixelsScale = 1.0
-    /// Resolution-floor test (LATENCY-PLAN §3.5): the whole-display long edge, under the mode cap only;
-    /// wins over the client and displayed-pixels caps. Unset by default.
+    /// Resolution-floor test: the capture long edge (any scope), under the mode cap only; wins over the
+    /// client and displayed-pixels caps and ignores the 640 client floor. Unset by default.
     var outputLongEdgeOverride: Int?
     /// G4: crop the capture to the phone's reported viewport (`SessionFeature.viewportCapture`).
     var viewportCapture = true
