@@ -265,6 +265,7 @@ final class RemoteCoordinator: ObservableObject {
     private var motionPrefix = InputMotionPrefix()
     private var motionSequence: UInt64 = 0
     private var motionReplay = InputMotionReplay()
+    private var lastUnreliableMotionAt = -TimeInterval.infinity
     private var deferredInput: [RemoteAction] = []
     private var deferredInputSizes: [Int] = []
     private var deferredInputBytes = 0
@@ -291,6 +292,7 @@ final class RemoteCoordinator: ObservableObject {
         self.session = session; connected = true; stopped = false; hostRegistered = isHost
         peerFeatures = [SessionFeature.extendedFeatureList, SessionFeature.causalInput]
     }
+    func receivePointerFixtureForTesting(_ data: Data) { receivePointerData(data) }
     func receiveInputFixtureForTesting(_ packet: ControlPacket, motion: Bool = false) throws {
         if motion {
             guard packet.session == session, packet.version == 1 else { throw RemoteError.stale }
@@ -508,6 +510,28 @@ final class RemoteCoordinator: ObservableObject {
         } catch { return requestInputRecovery() }
     }
 
+    /// Wi-Fi keep-awake (phone, `PocketDeskLinkKeepAwake`): a packet of about 190 bytes on the unreliable
+    /// pointer channel, so the phone's radio does not doze between touches. Every Mac drops a pointer packet
+    /// whose version is not 1 unread (`receivePointerData`), so an older Mac neither logs nor ends the session.
+    /// Never while motion is unacknowledged or within `keepAwakeMotionQuiet` of it: motion keeps the radio
+    /// awake by itself, and the Mac's pointer mailbox holds only the newest packet, which must stay the motion.
+    static let keepAwakeMotionQuiet: TimeInterval = 0.1
+    static func linkKeepAwakePacket(session: String) -> ControlPacket {
+        ControlPacket(version: 0, session: session, sequence: 0, action: RemoteAction(action: "heartbeat"))
+    }
+
+    @discardableResult
+    func sendLinkKeepAwake(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+        guard !isHost, connected, causalContext != nil, !inputRecoveryPending, motionPrefix.segments.isEmpty,
+              now - lastUnreliableMotionAt >= Self.keepAwakeMotionQuiet else { return false }
+        let packet = Self.linkKeepAwakePacket(session: session)
+        #if DEBUG
+        if let sender = inputPacketSenderForTesting { return sender(packet) }
+        #endif
+        guard let data = try? JSONEncoder().encode(packet) else { return false }
+        return media?.sendPointer(data) == true
+    }
+
     private func envelope(kind: String) -> InputCausalEnvelope? {
         guard var value = causalContext else { return nil }
         value.kind = kind; value.applied = motionPrefix.next; value.segments = motionPrefix.segments
@@ -526,6 +550,7 @@ final class RemoteCoordinator: ObservableObject {
             return true
         }
         motionSequence &+= 1
+        lastUnreliableMotionAt = ProcessInfo.processInfo.systemUptime
         let packet = ControlPacket(session: session, sequence: motionSequence,
                                    action: RemoteAction(action: "heartbeat", epoch: envelope.epoch), input: envelope,
                                    inputTiming: phoneInputSendTiming())
@@ -581,6 +606,16 @@ final class RemoteCoordinator: ObservableObject {
             deferredInput.removeFirst(); deferredInputBytes -= deferredInputSizes.removeFirst()
         }
         if !motionPrefix.segments.isEmpty { _ = sendMotionPrefix(reliable: !deferredInput.isEmpty) }
+    }
+    /// A packet from the unreliable pointer channel. Any version but 1, or another session, is dropped unread:
+    /// the phone's keep-awake relies on that, and every shipped Mac does the same.
+    private func receivePointerData(_ data: Data) {
+        do {
+            let packet = try JSONDecoder().decode(ControlPacket.self, from: data)
+            guard packet.version == 1, packet.session == session else { return }
+            try packet.action.validate()
+            try receiveCausal(packet, motion: true)
+        } catch { sessionFailed("Invalid pointer checkpoint. Session ended safely.") }
     }
     private func receiveCausal(_ packet: ControlPacket, motion: Bool) throws {
         guard let input = packet.input else { throw RemoteError.invalidMessage }
@@ -1860,12 +1895,7 @@ final class RemoteCoordinator: ObservableObject {
                 guard let self, let peer, self.media === peer else { return }
                 self.currentControlArrivalMs = peer.pointerArrivalMs
                 defer { self.currentControlArrivalMs = nil }
-                do {
-                    let packet = try JSONDecoder().decode(ControlPacket.self, from: data)
-                    guard packet.version == 1, packet.session == self.session else { return }
-                    try packet.action.validate()
-                    try self.receiveCausal(packet, motion: true)
-                } catch { self.sessionFailed("Invalid pointer checkpoint. Session ended safely.") }
+                self.receivePointerData(data)
             }
         }
         peer.onControl = { [weak self, weak peer] data in

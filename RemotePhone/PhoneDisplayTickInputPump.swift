@@ -13,6 +13,10 @@ final class PhoneDisplayTickInputPump: NSObject {
     static let optimizationDefaultsKey = "phoneDisplayTickInputPump.optimizedCadenceEnabled"
     static let leadingMotionDefaultsKey = "phoneDisplayTickInputPump.leadingMotionEnabled"
     static let couchMaximumCadenceDisabledKey = "couchInputMaximumCadenceDisabled"
+    /// Picture mode drains moves at the panel's maximum too (`defaults write <phone bundle id>
+    /// PocketDeskInputPump120 -bool YES`, then relaunch the app): up to 8 ms less wait on ProMotion, for
+    /// twice the move packets. Off: Picture keeps the 60 Hz hint.
+    static let maximumCadenceDefaultsKey = "PocketDeskInputPump120"
     static let retainedLinkIdleDuration: TimeInterval = 0.15
 
     struct Configuration {
@@ -33,6 +37,9 @@ final class PhoneDisplayTickInputPump: NSObject {
         fileprivate var leadingMotionEnabled: Bool {
             userDefaults.object(forKey: PhoneDisplayTickInputPump.leadingMotionDefaultsKey) as? Bool != false
         }
+        fileprivate var maximumCadenceEnabled: Bool {
+            userDefaults.bool(forKey: PhoneDisplayTickInputPump.maximumCadenceDefaultsKey)
+        }
     }
 
     private var pending: [RemoteAction] = []
@@ -45,6 +52,7 @@ final class PhoneDisplayTickInputPump: NSObject {
     private let optimizedCadenceEnabled: Bool
     private let leadingMotionEnabled: Bool
     private let couchMaximumCadenceEnabled: Bool
+    private let maximumCadenceEnabled: Bool
     private var lastActivityTime: TimeInterval?
     private var lastDisplayTickTime: TimeInterval?
     private var burstActive = false
@@ -63,6 +71,7 @@ final class PhoneDisplayTickInputPump: NSObject {
         self.optimizedCadenceEnabled = configuration.optimizationEnabled
         self.leadingMotionEnabled = configuration.leadingMotionEnabled
         self.couchMaximumCadenceEnabled = !configuration.userDefaults.bool(forKey: Self.couchMaximumCadenceDisabledKey)
+        self.maximumCadenceEnabled = configuration.maximumCadenceEnabled
         super.init()
     }
 
@@ -93,9 +102,9 @@ final class PhoneDisplayTickInputPump: NSObject {
     private func startLinkIfNeeded() {
         guard automaticTicks, displayLink == nil, injectedLink == nil else { return }
         let maximum = Float(max(60, configuration.maximumFramesPerSecond()))
+        let atMaximum = maximumCadenceEnabled || prefersDisplayMaximum && couchMaximumCadenceEnabled
         let range: CAFrameRateRange? = optimizedCadenceEnabled
-            ? CAFrameRateRange(minimum: 60, maximum: maximum,
-                               preferred: prefersDisplayMaximum && couchMaximumCadenceEnabled ? maximum : 60) : nil
+            ? CAFrameRateRange(minimum: 60, maximum: maximum, preferred: atMaximum ? maximum : 60) : nil
         linkGeneration += 1
         let generation = linkGeneration
         let tick: () -> Void = { [weak self] in

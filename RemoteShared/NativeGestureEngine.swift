@@ -15,7 +15,22 @@ enum PrecisionTapTrigger: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-enum PrecisionPhase: Equatable { case began, moved, ended, cancelled }
+/// Aim, then drag (`defaults write <phone bundle id> PocketDeskHoldShowsLoupe -bool YES`, then relaunch the
+/// app). A still direct-touch hold opens the Precision Tap loupe even with Precision Tap off, and a loupe a
+/// hold opened presses the button where it aims once the finger rests, so the drag that follows starts on
+/// the exact point: a Finder title bar is about 11 pt tall in portrait. Off: a hold presses where it landed.
+enum HoldShowsLoupeSwitch {
+    static let defaultsKey = "PocketDeskHoldShowsLoupe"
+    static let isOn = UserDefaults.standard.bool(forKey: defaultsKey)
+
+    static func trigger(_ chosen: PrecisionTapTrigger, on: Bool = isOn) -> PrecisionTapTrigger {
+        on && chosen == .off ? .hold : chosen
+    }
+}
+
+/// `pressed`: the finger rested on a loupe a hold opened (`HoldShowsLoupeSwitch`); the receiver puts the
+/// pointer on the loupe's target, then the engine presses there and closes the loupe with `cancelled`.
+enum PrecisionPhase: Equatable { case began, moved, pressed, ended, cancelled }
 
 /// Commands emitted by direct phone touches. `move` is already in host logical points.
 enum NativeGestureCommand {
@@ -68,6 +83,8 @@ final class NativeGestureEngine {
     static let directHoldDelay: TimeInterval = 0.5
     /// A still direct touch held this long opens the Precision Tap loupe, before it could press.
     static let precisionHoldDelay: TimeInterval = 0.3
+    /// Movement within this of where a finger came to rest on the loupe is jitter, not aiming.
+    static let precisionRestSlop: CGFloat = 4
     /// A three-finger tap: every finger lifts within this time and moves less than `tapTravel`.
     static let threeFingerTapDuration: TimeInterval = 0.45
     static let threeFingerTapTravel: CGFloat = 12
@@ -130,6 +147,15 @@ final class NativeGestureEngine {
     private var zoomActive = false
     private var precisionActive = false
     private var precisionDeclined = false
+    /// `HoldShowsLoupeSwitch`: a loupe a hold opened presses once the finger rests `directHoldDelay`.
+    var loupeRestPresses = HoldShowsLoupeSwitch.isOn
+    /// The loupe's target on the canvas, read at the press.
+    var precisionTarget: () -> CGPoint? = { nil }
+    private var precisionFromHold = false
+    private var precisionRest: (point: CGPoint, time: TimeInterval) = (.zero, 0)
+    /// A drag a resting loupe pressed keeps the target's offset from the finger (the loupe moves its target at
+    /// half the finger's speed), so the pressed point does not jump under the finger.
+    private var aimOffset: CGSize = .zero
     private var residual: CGSize = .zero
     private var lastTap: (time: TimeInterval, point: CGPoint)?
     private var secondTap = false
@@ -244,6 +270,8 @@ final class NativeGestureEngine {
             startTime = time
             lastMotionTime = time
             precisionDeclined = false
+            precisionFromHold = false
+            aimOffset = .zero
             firstPoint = point
             lastPoint = point
             maxDistance = 0
@@ -403,13 +431,23 @@ final class NativeGestureEngine {
             _ = onCommand(.scroll(delta: .zero, phase: "changed", stream: id))
             return
         }
+        if mode == .precision, precisionFromHold, loupeRestPresses, active.count == 1, enabled, !panMode,
+           time - precisionRest.time >= Self.directHoldDelay {
+            pressAimedLoupe(at: time)
+            return
+        }
         guard active.count == 1, mode == .candidate, enabled, !panMode else { return }
         if secondTap {
             guard time - startTime >= 0.22 else { return }
             beginDrag(count: 2)
         } else if direct, precision != .off, !precisionDeclined, time - startTime >= Self.precisionHoldDelay {
             beginPrecision(at: active.values.first ?? firstPoint)
-            if mode != .precision { precisionDeclined = true }
+            if mode == .precision {
+                precisionFromHold = true
+                precisionRest = (lastPoint, time)
+            } else {
+                precisionDeclined = true
+            }
         } else if direct, time - startTime >= Self.directHoldDelay {
             beginDrag(count: 1)
         }
@@ -457,6 +495,7 @@ final class NativeGestureEngine {
         case .precision:
             guard point != lastPoint else { return }
             lastPoint = point
+            if distance(point, precisionRest.point) > Self.precisionRestSlop { precisionRest = (point, time) }
             _ = onCommand(.precision(.moved, point))
         case .pointer, .drag:
             sendMotion(point, at: time)
@@ -477,6 +516,24 @@ final class NativeGestureEngine {
         mode = .precision
         lastPoint = point
         lastTap = nil
+    }
+
+    /// The receiver refuses while the loupe is set to cancel or its target has no Mac point; a refused
+    /// press waits for another full rest. A refused drag keeps the loupe, so the lift still clicks.
+    private func pressAimedLoupe(at time: TimeInterval) {
+        precisionRest.time = time
+        guard onCommand(.precision(.pressed, lastPoint)) else { return }
+        let finger = lastPoint
+        let target = precisionTarget() ?? finger
+        precisionFromHold = false
+        beginDrag(count: 1)
+        guard mode == .drag else {
+            mode = .precision
+            return
+        }
+        aimOffset = CGSize(width: target.x - finger.x, height: target.y - finger.y)
+        precisionActive = false
+        _ = onCommand(.precision(.cancelled, finger))
     }
 
     private func beginDrag(count: Int) {
@@ -506,11 +563,12 @@ final class NativeGestureEngine {
         lastMotionTime += (time - lastMotionTime) * Double(fraction)
     }
 
-    /// Absolute motion needs no gain or residual: the pointer is wherever the finger is.
+    /// Absolute motion needs no gain or residual: the pointer is wherever the finger is, plus the aim offset
+    /// of a drag a resting loupe pressed.
     private func pointDirectly(at point: CGPoint) {
         guard enabled, point != lastPoint else { return }
         lastPoint = point
-        _ = onCommand(.pointTo(point))
+        _ = onCommand(.pointTo(CGPoint(x: point.x + aimOffset.width, y: point.y + aimOffset.height)))
     }
 
     private func sendMotion(_ point: CGPoint, at time: TimeInterval) {
@@ -875,6 +933,8 @@ final class NativeGestureEngine {
     private func resetSequence() {
         endPointerMotion()
         mode = .blocked
+        precisionFromHold = false
+        aimOffset = .zero
         workspaceSequence = false
         workspaceOrigins = [:]
         workspaceTapEligible = false

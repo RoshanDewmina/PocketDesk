@@ -36,6 +36,7 @@ final class SmoothMotionController: @unchecked Sendable {
         var colorTags = InterpolationColorTagsSwitch.isOn
         var lowPower: () -> Bool = { ProcessInfo.processInfo.isLowPowerModeEnabled }
         var lowPowerBypass = InterpolationLPMBypassSwitch.isOn
+        var yieldsToTouch = SmoothMotionYieldsToTouchSwitch.isOn
 
         static var live: Environment {
             Environment(makeEngine: InterpolationAvailability.makeEngine,
@@ -92,6 +93,7 @@ final class SmoothMotionController: @unchecked Sendable {
     init(mode: SmoothMotionMode = .stored(), environment: Environment = .live) {
         self.environment = environment
         policy = SmoothMotionPolicy(mode: mode)
+        policy.yieldsToTouch = environment.yieldsToTouch
         interpolator = FrameInterpolator(queue: environment.queue, colorTags: environment.colorTags,
                                          makeEngine: environment.makeEngine)
         presenter = SmoothMotionPresenter<Output>(deliver: { [sink] in sink.deliver?($0) })
@@ -139,8 +141,10 @@ final class SmoothMotionController: @unchecked Sendable {
         interpolator.stop()
         presenter.flush(at: environment.now())
         lock.lock()
-        let mode = policy.mode
+        let mode = policy.mode, touching = policy.touching
         policy = SmoothMotionPolicy(mode: mode)
+        policy.yieldsToTouch = environment.yieldsToTouch
+        policy.touching = touching
         sampler.reset()
         lastArrival = nil
         if environment.lowPowerBypass {
@@ -173,6 +177,15 @@ final class SmoothMotionController: @unchecked Sendable {
 
     func note(_ hint: SmoothMotionHint, at now: TimeInterval) {
         lock.lock(); policy.note(hint, at: now); lock.unlock()
+    }
+
+    /// Whether any finger is on the session surface. Main thread.
+    static func noteTouching(_ touching: Bool) {
+        active?.setTouching(touching)
+    }
+
+    func setTouching(_ touching: Bool) {
+        lock.lock(); policy.touching = touching; lock.unlock()
     }
 
     /// Start of each video view draw, before WebRTC's renderer draws: hands over the paced

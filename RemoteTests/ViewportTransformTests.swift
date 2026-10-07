@@ -695,6 +695,26 @@ final class ViewportCaptureGeometryTests: XCTestCase {
         XCTAssertFalse(zoomedOut.requestsWholeDisplay, "still under half on screen")
     }
 
+    func testOnlyABaselineFillCropIsMarkedForPanWidening() throws {
+        let display = CGSize(width: 1920, height: 1243)
+        var portrait = ViewportTransform(sourceSize: display, canvasSize: CGSize(width: 402, height: 874), mode: .fill,
+                                         safeInsets: ViewportInsets(top: 62, bottom: 34))
+        XCTAssertFalse(try XCTUnwrap(portrait.captureRequest(displayScale: 3)).baselineFill, "the key is off")
+        portrait.baselineFillCrop = true
+        XCTAssertTrue(try XCTUnwrap(portrait.captureRequest(displayScale: 3)).baselineFill)
+        portrait.pan(by: CGSize(width: -300, height: 0))
+        XCTAssertTrue(try XCTUnwrap(portrait.captureRequest(displayScale: 3)).baselineFill, "a pan keeps the baseline")
+        let request = try XCTUnwrap(portrait.captureRequest(displayScale: 3))
+        XCTAssertEqual(request.widened(by: 2, capped: true).baselineFill, true)
+        var zoomed = portrait
+        zoomed.setZoom(1.5, anchoredAt: CGPoint(x: 201, y: 437))
+        XCTAssertFalse(try XCTUnwrap(zoomed.captureRequest(displayScale: 3)).baselineFill, "a zoomed crop is today's crop")
+        var fit = ViewportTransform(sourceSize: display, canvasSize: CGSize(width: 402, height: 874), mode: .fit,
+                                    safeInsets: ViewportInsets(top: 62, bottom: 34))
+        fit.baselineFillCrop = true
+        XCTAssertFalse(try XCTUnwrap(fit.captureRequest(displayScale: 3)).baselineFill, "the whole display")
+    }
+
     func testZoomedFillAsksForExactlyTheVisiblePartAtTheScreensPixels() throws {
         for device in devices {
             for display in displays {

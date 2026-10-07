@@ -3710,6 +3710,9 @@ let now = ProcessInfo.processInfo.systemUptime
                 if let probe = self.pointerLocator.poll(at: now, available: probing) {
                     _ = self.connection.sendControl(RemoteAction(action: "heartbeat", epoch: self.geometryEpoch, pointerProbe: probe))
                 }
+                if LinkKeepAwakeSwitch.isOn, UIApplication.shared.applicationState == .active {
+                    self.connection.sendLinkKeepAwake(at: now)
+                }
             }
         }
         self.pointerTimer = pointerTimer
@@ -3989,6 +3992,14 @@ struct CropSummary: Equatable {
     private var factorText: String { String(format: "%.1f", factor) }
     var caption: String { "crop \(outputWidth)×\(outputHeight) · \(factorText)×" }
     var spoken: String { "picture cropped to \(outputWidth) by \(outputHeight), \(factorText) times" }
+}
+
+/// Wi-Fi keep-awake (`defaults write <phone bundle id> PocketDeskLinkKeepAwake -bool YES`, then relaunch the
+/// app): while the app is in the foreground, a tiny packet every 50 ms on the pointer channel between touches
+/// (`RemoteCoordinator.sendLinkKeepAwake`), so the radio's power save does not add round-trip spikes.
+enum LinkKeepAwakeSwitch {
+    static let defaultsKey = "PocketDeskLinkKeepAwake"
+    static let isOn = UserDefaults.standard.bool(forKey: defaultsKey)
 }
 
 /// Route, round trip and received picture for the dock caption, and the negotiated codec level

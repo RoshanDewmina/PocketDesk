@@ -331,6 +331,69 @@ final class ViewportCaptureTests: XCTestCase {
         XCTAssertEqual(send(&reporter, coverage: crop, at: 5)?.rect, rotated.rect, "a single layout change crops once")
     }
 
+    /// PocketDeskBaselineFillCrop on an iPhone 17 in portrait Fill: 572x1243 of a 1920x1243 pt display at
+    /// 2.11 px per point, which the Mac crops with an 8 % margin (46 pt a side).
+    private func portraitFill(_ x: CGFloat, baselineFill: Bool = true) -> ViewportCaptureRequest {
+        ViewportCaptureRequest(rect: CGRect(x: x, y: 0, width: 572, height: 1243), pixelWidth: 1206, pixelHeight: 2622,
+                               zoom: 2.1086, displaySize: CGSize(width: 1920, height: 1243), baselineFill: baselineFill)
+    }
+
+    func testABaselineFillPanPastTheCropAsksForTwiceTheVisibleWidthUntilItRests() throws {
+        let fillDisplay = CGSize(width: 1920, height: 1243)
+        var reporter = ViewportReporter()
+        reporter.widensFillPans = true
+        reporter.update(portraitFill(674), at: 1)
+        XCTAssertTrue(reporter.commit(settled: true, coverage: CGRect(origin: .zero, size: fillDisplay),
+                                      forDisplay: fillDisplay, at: 1))
+        XCTAssertEqual(reporter.region(forDisplay: fillDisplay)?.width, 572, "a settled view asks for what it shows")
+        let crop = CGRect(x: 628, y: 0, width: 664, height: 1243)
+        reporter.update(portraitFill(700), at: 2)
+        XCTAssertEqual(reporter.nextSend(settled: false, coverage: crop, at: 2), .at(2 + ViewportReporter.quietInterval))
+        reporter.update(portraitFill(760), at: 2.05)
+        XCTAssertEqual(reporter.nextSend(settled: false, coverage: crop, at: 2.05), .now, "the void would show")
+        XCTAssertTrue(reporter.commit(settled: false, coverage: crop, forDisplay: fillDisplay, at: 2.05))
+        let widened = try XCTUnwrap(reporter.region(forDisplay: fillDisplay))
+        XCTAssertEqual(widened.rect, CGRect(x: 474, y: 0, width: 1144, height: 1243), "286 pt of lead on each side")
+        XCTAssertEqual(widened.zoom, 2.1086)
+        XCTAssertNoThrow(try widened.validate())
+        XCTAssertLessThan(widened.width * widened.height, Double(ViewportCaptureRequest.widenedCoverageLimit) * 1920 * 1243,
+                          "never close enough to the whole display for the Mac to switch to it")
+        for (step, x) in [800, 900, 1000].enumerated() {
+            let now = 2.1 + Double(step) * 0.05
+            reporter.update(portraitFill(CGFloat(x)), at: now)
+            XCTAssertEqual(reporter.nextSend(settled: false, coverage: crop, at: now), .at(now + ViewportReporter.quietInterval),
+                           "the pan stays inside the widened crop the Mac is about to stream")
+        }
+        XCTAssertEqual(reporter.nextSend(settled: false, coverage: crop, at: 2.5), .now)
+        XCTAssertTrue(reporter.commit(settled: false, coverage: crop, forDisplay: fillDisplay, at: 2.5))
+        XCTAssertEqual(reporter.region(forDisplay: fillDisplay)?.rect, portraitFill(1000).rect,
+                       "a rest before the Mac echoes the widened crop asks for what is shown, not another widened crop")
+        reporter.update(portraitFill(1300), at: 2.65)
+        XCTAssertEqual(reporter.nextSend(settled: false, coverage: widened.rect, at: 2.65), .now)
+        XCTAssertTrue(reporter.commit(settled: false, coverage: widened.rect, forDisplay: fillDisplay, at: 2.65))
+        XCTAssertEqual(reporter.region(forDisplay: fillDisplay)?.rect, CGRect(x: 776, y: 0, width: 1144, height: 1243),
+                       "at the display's edge the widened crop stays on the display")
+        XCTAssertTrue(reporter.commit(settled: true, coverage: widened.rect, forDisplay: fillDisplay, at: 2.75))
+        XCTAssertEqual(reporter.region(forDisplay: fillDisplay)?.rect, portraitFill(1300).rect,
+                       "the settle asks for exactly what is shown")
+    }
+
+    func testFillPanWideningIsOffWithoutTheSwitchAndForZoomedCrops() throws {
+        let fillDisplay = CGSize(width: 1920, height: 1243)
+        let crop = CGRect(x: 628, y: 0, width: 664, height: 1243)
+        for (widens, baselineFill) in [(false, true), (true, false)] {
+            var reporter = ViewportReporter()
+            reporter.widensFillPans = widens
+            reporter.update(portraitFill(674, baselineFill: baselineFill), at: 1)
+            XCTAssertTrue(reporter.commit(settled: true, coverage: crop, forDisplay: fillDisplay, at: 1))
+            reporter.update(portraitFill(760, baselineFill: baselineFill), at: 2)
+            XCTAssertTrue(reporter.commit(settled: false, coverage: crop, forDisplay: fillDisplay, at: 2))
+            XCTAssertEqual(reporter.region(forDisplay: fillDisplay)?.rect, portraitFill(760).rect,
+                           "switch \(widens), baseline Fill \(baselineFill): exactly what is shown, as today")
+        }
+        XCTAssertFalse(ViewportReporter().widensFillPans, "off unless the baseline-Fill crop is on")
+    }
+
     /// Continuous pinch/pan with a delayed crop echo: one escape request, then one settle.
     /// Use the real reporter and heartbeat region rather than counting raw touch callbacks.
     func testPinchPanReplayEmitsAtMostOneEscapeAndOneSettledRegion() throws {

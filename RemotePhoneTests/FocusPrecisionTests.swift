@@ -121,6 +121,49 @@ final class FocusPrecisionTests: XCTestCase {
         XCTAssertEqual(loupe.span * view.scale * LoupeGeometry.magnification, LoupeGeometry.diameter, accuracy: 0.001)
     }
 
+    /// PocketDeskHoldShowsLoupe: the press goes where the loupe aims, then the loupe gets out of the drag's way.
+    @MainActor
+    func testARestingLoupePutsThePointerOnItsTargetBeforeThePressAndCloses() throws {
+        let view = loupeViewport()
+        let controller = PrecisionTapController()
+        var pointed: [CGPoint] = [], clicks = 0, refuse = false
+        func handle(_ phase: PrecisionPhase, _ finger: CGPoint) -> Bool {
+            controller.handle(phase, finger: finger, viewport: view, canControl: true,
+                              pointTo: { pointed.append($0); return !refuse }, click: { clicks += 1; return true })
+        }
+        XCTAssertFalse(handle(.pressed, CGPoint(x: 200, y: 400)), "nothing to press without a loupe")
+        XCTAssertTrue(handle(.began, CGPoint(x: 200, y: 400)))
+        XCTAssertTrue(handle(.moved, CGPoint(x: 220, y: 380)))
+        let target = try XCTUnwrap(view.sourcePoint(fromView: CGPoint(x: 210, y: 390)))
+
+        refuse = true
+        XCTAssertFalse(handle(.pressed, CGPoint(x: 220, y: 380)), "the Mac pointer could not move: no press")
+        XCTAssertNotNil(controller.tap, "the loupe stays for another try or a lift")
+        refuse = false
+        XCTAssertTrue(handle(.pressed, CGPoint(x: 220, y: 380)))
+        XCTAssertEqual(pointed.last, target)
+        XCTAssertEqual(controller.tap?.target, CGPoint(x: 210, y: 390), "the engine reads the target, then closes the loupe")
+        XCTAssertTrue(handle(.cancelled, CGPoint(x: 220, y: 380)))
+        XCTAssertNil(controller.tap)
+        XCTAssertFalse(handle(.ended, CGPoint(x: 260, y: 380)), "a pressed loupe never clicks on the lift")
+        XCTAssertEqual(clicks, 0)
+
+        XCTAssertTrue(handle(.began, CGPoint(x: 200, y: 400)))
+        XCTAssertTrue(handle(.pressed, CGPoint(x: 200, y: 400)))
+        XCTAssertTrue(handle(.ended, CGPoint(x: 200, y: 400)), "a Mac that refused the drag still gets the click")
+        XCTAssertEqual(clicks, 1)
+
+        XCTAssertTrue(handle(.began, CGPoint(x: 200, y: 400)))
+        let count = pointed.count
+        XCTAssertTrue(handle(.moved, CGPoint(x: 200, y: 400 + PrecisionTap.cancelTravel + 1)))
+        XCTAssertFalse(handle(.pressed, CGPoint(x: 200, y: 400 + PrecisionTap.cancelTravel + 1)),
+                       "a loupe set to cancel never presses")
+        XCTAssertEqual(pointed.count, count)
+        XCTAssertNotNil(controller.tap)
+        XCTAssertTrue(handle(.cancelled, CGPoint(x: 200, y: 400)))
+        XCTAssertNil(controller.tap)
+    }
+
     func testSlidingAwayOrOffTheCanvasCancels() throws {
         let view = loupeViewport()
         var tap = try XCTUnwrap(PrecisionTap(finger: CGPoint(x: 200, y: 400), in: view))
