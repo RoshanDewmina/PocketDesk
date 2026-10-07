@@ -629,6 +629,10 @@ struct NativeSessionView: View {
                                     && !primingMicrophone && scenePhase == .active,
                                   remapShortcuts: remapShortcuts,
                                   onCommand: handle,
+                                  onFingerScroll: model.localScroll.enabled && !couch
+                                    ? { delta, phase in
+                                        model.localScroll.scrolled(delta, phase: phase, pointer: model.pointerOverlay.render?.point)
+                                    } : nil,
                                   onPointerMotionEnded: { model.pointerLocator.stopFollowing() },
                                   onHardwareKey: { key, modifiers in noteSessionPillActivity(); return model.hardwareKey(key, modifiers: modifiers) },
                                   onHardwareModifiers: { noteSessionPillActivity(); model.hardwareModifiers = $0 },
@@ -863,6 +867,7 @@ struct NativeSessionView: View {
                                        },
                                        videoFeedback: connection.media?.videoFeedback,
                                        frameTiming: connection.media?.frameTimingReceiver?.log,
+                                       localScroll: model.localScroll.enabled ? model.localScroll : nil,
                                        onFrame: model.frameReceived)
                         .frame(width: picture.width, height: picture.height)
                         .offset(x: picture.minX, y: picture.minY)

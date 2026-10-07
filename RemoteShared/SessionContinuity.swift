@@ -23,6 +23,10 @@ enum SessionFeature {
     /// (`StreamTuning.keysOnDemand`); an H.264 session keeps it. Never advertised by the host. Travels as
     /// `Handshake.keysOnDemand`, outside the eight-feature and four-option bounds older Macs decode.
     static let keysOnDemand = "video.keys.ondemand.1"
+    /// Phone request only: this phone slides its own picture under a finger scroll
+    /// (`LocalScrollSwitch`), so the Mac reports `scrollRegion` on `capture` status. Never advertised by
+    /// the host. Travels as `Handshake.localScroll`, outside the bounds older Macs decode.
+    static let localScroll = "scroll.region.1"
     static let pencilInput = "input.pencil.1"
     static let clipboardText = "clipboard.text.1"
     static let clipboardSync = "clipboard.sync.1"

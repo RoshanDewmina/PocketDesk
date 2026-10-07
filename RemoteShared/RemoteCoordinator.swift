@@ -1299,6 +1299,7 @@ final class RemoteCoordinator: ObservableObject {
                             enrollmentHandshake.shortcutChips = nil
                             enrollmentHandshake.phoneLoadWindows = nil
                             enrollmentHandshake.keysOnDemand = nil
+                            enrollmentHandshake.localScroll = nil
                             let commit = try PairEnrollment.commitment(invitation: scannedEnrollment, requestID: request,
                                 reveal: ephemeral.reveal, handshake: enrollmentHandshake, phoneName: name)
                             let enrollment = PairEnrollment.Request(commitment: commit, handshake: enrollmentHandshake, phoneName: name)
