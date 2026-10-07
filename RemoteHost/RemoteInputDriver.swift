@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import ScreenCaptureKit
 
 struct RemoteInputOutcome: Equatable {
@@ -107,6 +108,28 @@ struct RemoteInputEventSink {
         return defaults.object(forKey: deltaFieldsKey) == nil || defaults.bool(forKey: deltaFieldsKey)
     }()
 
+    /// Host user default; absent means on. A key chord posted with ⌃ or ⌘ in its flags (a workspace
+    /// swipe, App windows, Open app) leaves that modifier in the private source's state, and every
+    /// later event created from the source without explicit flags inherited it: taps became
+    /// ⌃-clicks that open context menus, and sent text became ⌘-shortcuts.
+    /// `defaults write com.roshan.PocketDesk.RemoteHost input.explicitFlags -bool NO` restores inheriting.
+    static let explicitFlagsKey = "input.explicitFlags"
+    static let explicitFlagsEnabled: Bool = {
+        let defaults = UserDefaults.standard
+        return defaults.object(forKey: explicitFlagsKey) == nil || defaults.bool(forKey: explicitFlagsKey)
+    }()
+
+    static func applyFlags(_ flags: CGEventFlags, to event: CGEvent, explicit: Bool = explicitFlagsEnabled) {
+        if explicit { event.flags = event.flags.intersection(.maskNonCoalesced).union(flags) }
+        else if !flags.isEmpty { event.flags = flags }
+    }
+
+    static let inputLog = Logger(subsystem: "com.roshan.PocketDesk", category: "input-flags")
+
+    static func sourceFlagsState() -> CGEventFlags {
+        CGEventSource.flagsState(RemoteInputEventSource.shared?.sourceStateID ?? .combinedSessionState)
+    }
+
     var pointerLocation: () -> CGPoint
     var mouseSequence: ([MouseEvent]) -> Bool
     var scroll: (CGPoint, Double, Double) -> Bool
@@ -127,7 +150,11 @@ struct RemoteInputEventSink {
             event.setIntegerValueField(.mouseEventDeltaX, value: Int64(description.delta.width.rounded()))
             event.setIntegerValueField(.mouseEventDeltaY, value: Int64(description.delta.height.rounded()))
         }
-        if !description.flags.isEmpty { event.flags = description.flags }
+        let created = event.flags
+        applyFlags(description.flags, to: event)
+        if [.leftMouseDown, .rightMouseDown, .otherMouseDown].contains(description.type), StreamDebug.enabled {
+            inputLog.notice("PDINPUT mouseDown type=\(description.type.rawValue, privacy: .public) created=0x\(String(created.rawValue, radix: 16), privacy: .public) posted=0x\(String(event.flags.rawValue, radix: 16), privacy: .public) source=0x\(String(sourceFlagsState().rawValue, radix: 16), privacy: .public) combined=0x\(String(CGEventSource.flagsState(.combinedSessionState).rawValue, radix: 16), privacy: .public)")
+        }
         if let pen = description.pencil {
             event.setIntegerValueField(.mouseEventSubtype, value: Int64(CGEventMouseSubtype.tabletPoint.rawValue))
             event.setDoubleValueField(.mouseEventPressure, value: pen.pressure)
@@ -176,6 +203,19 @@ struct RemoteInputEventSink {
         return [down, up]
     }
 
+    static func makeTextEvents(_ characters: [UniChar], explicitFlags: Bool = explicitFlagsEnabled) -> [CGEvent]? {
+        guard let down = CGEvent(keyboardEventSource: RemoteInputEventSource.shared, virtualKey: 0, keyDown: true),
+              let up = CGEvent(keyboardEventSource: RemoteInputEventSource.shared, virtualKey: 0, keyDown: false) else { return nil }
+        for event in [down, up] {
+            characters.withUnsafeBufferPointer {
+                event.keyboardSetUnicodeString(stringLength: characters.count, unicodeString: $0.baseAddress)
+            }
+            applyFlags([], to: event, explicit: explicitFlags)
+            RemoteInputTag.mark(event)
+        }
+        return [down, up]
+    }
+
     static let live = RemoteInputEventSink(
         pointerLocation: { CGEvent(source: nil)?.location ?? .zero },
         mouseSequence: { descriptions in
@@ -208,21 +248,16 @@ struct RemoteInputEventSink {
             return true
         },
         text: { characters in
-            guard let down = CGEvent(keyboardEventSource: RemoteInputEventSource.shared, virtualKey: 0, keyDown: true),
-                  let up = CGEvent(keyboardEventSource: RemoteInputEventSource.shared, virtualKey: 0, keyDown: false) else { return false }
-            for event in [down, up] {
-                characters.withUnsafeBufferPointer {
-                    event.keyboardSetUnicodeString(stringLength: characters.count, unicodeString: $0.baseAddress)
-                }
-                RemoteInputTag.mark(event)
-            }
-            down.post(tap: .cghidEventTap)
-            up.post(tap: .cghidEventTap)
+            guard let events = makeTextEvents(characters) else { return false }
+            for event in events { event.post(tap: .cghidEventTap) }
             return true
         },
         key: { key, flags in
             guard let events = makeKeyEvents(key: key, flags: flags) else { return false }
             for event in events { event.post(tap: .cghidEventTap) }
+            if StreamDebug.enabled {
+                inputLog.notice("PDINPUT key code=\(key, privacy: .public) flags=0x\(String(flags.rawValue, radix: 16), privacy: .public) sourceAfter=0x\(String(sourceFlagsState().rawValue, radix: 16), privacy: .public)")
+            }
             return true
         }
     )
