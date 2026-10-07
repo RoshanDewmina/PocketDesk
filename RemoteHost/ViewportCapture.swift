@@ -363,6 +363,36 @@ enum DisplayedPixelsPolicy {
         guard now >= due else { return Decision(edge: hold.edge, hold: hold, deadline: due) }
         return Decision(edge: target, hold: target.map { Hold(edge: $0) }, deadline: nil)
     }
+
+    struct Layout: Equatable {
+        var output: CapturePixelDimensions
+        var region: CaptureRegion
+        var decision: Decision
+    }
+
+    /// One configuration update: the whole output at the decided edge (`wholeAt`; uncapped, `budget`) and the
+    /// region for the viewport, which is never a crop while viewport capture is off. A pending edge is taken
+    /// at once when the update reconfigures anyway, rather than paying a second stall at its deadline.
+    static func layout(viewport: ViewportRegion?, display: DisplayGeometry, tuning: StreamTuning,
+                       budget: CapturePixelDimensions, sizeFraction: Double?, previous: CaptureRegion?,
+                       applied: CaptureRegion, inputsChanged: Bool, held: Hold?, now: TimeInterval,
+                       wholeAt: (Int) -> CapturePixelDimensions?) -> Layout {
+        let cropBudget = RemoteCaptureConfiguration.scaled(budget, by: sizeFraction)
+        func place(_ edge: Int?) -> (CapturePixelDimensions, CaptureRegion) {
+            let output = RemoteCaptureConfiguration.scaled(edge.flatMap(wholeAt) ?? budget, by: sizeFraction)
+            return (output, ViewportCapturePolicy.region(for: viewport, display: display, output: output, budget: cropBudget,
+                                                         tuning: tuning, previous: previous,
+                                                         cropEngaged: !applied.isWholeDisplay))
+        }
+        let target = targetLongEdge(viewport: viewport, display: display, tuning: tuning)
+        var decision = resolve(target: target, held: held, now: now)
+        var (output, region) = place(decision.edge)
+        if decision.deadline != nil, inputsChanged || !applied.isWholeDisplay || !region.isWholeDisplay {
+            decision = Decision(edge: target, hold: target.map { Hold(edge: $0) }, deadline: nil)
+            (output, region) = place(target)
+        }
+        return Layout(output: output, region: region, decision: decision)
+    }
 }
 
 /// Which capture region a captured frame is tagged with (`VideoFrameTag.region`) while an

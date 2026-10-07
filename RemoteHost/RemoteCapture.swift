@@ -1179,30 +1179,19 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             completeConfigurationUpdate(succeeded: false)
             return
         }
-        // Crops are sized from the uncapped budget, so only the whole display's output follows the edge.
-        let cropBudget = RemoteCaptureConfiguration.scaled(budget, by: inputs.sizeFraction)
-        func layout(_ edge: Int?) -> (output: CapturePixelDimensions, region: CaptureRegion) {
-            let whole = edge.flatMap {
-                RemoteCaptureConfiguration.outputSize(
-                    contentSize: geometry.size, pointPixelScale: geometry.pointPixelScale, quality: inputs.quality,
-                    budget: peer?.nativeCaptureBudget, fps: targetFPS, clientLongEdge: inputs.clientLongEdge,
-                    tuning: tuning, displayedLongEdge: $0)
-            } ?? budget
-            let output = RemoteCaptureConfiguration.scaled(whole, by: inputs.sizeFraction)
-            return (output, ViewportCapturePolicy.region(for: viewport, display: geometry, output: output, budget: cropBudget,
-                                                         tuning: tuning, previous: previous,
-                                                         cropEngaged: !appliedRegion.isWholeDisplay))
+        let layout = DisplayedPixelsPolicy.layout(
+            viewport: viewport, display: geometry, tuning: tuning, budget: budget, sizeFraction: inputs.sizeFraction,
+            previous: previous, applied: appliedRegion, inputsChanged: inputs != applied, held: displayedHold,
+            now: CACurrentMediaTime()
+        ) { edge in
+            RemoteCaptureConfiguration.outputSize(
+                contentSize: geometry.size, pointPixelScale: geometry.pointPixelScale, quality: inputs.quality,
+                budget: peer?.nativeCaptureBudget, fps: targetFPS, clientLongEdge: inputs.clientLongEdge,
+                tuning: tuning, displayedLongEdge: edge)
         }
-        let target = DisplayedPixelsPolicy.targetLongEdge(viewport: viewport, display: geometry, tuning: tuning)
-        var displayed = DisplayedPixelsPolicy.resolve(target: target, held: displayedHold, now: CACurrentMediaTime())
-        var (output, region) = layout(displayed.edge)
-        if displayed.deadline != nil, inputs != applied || !appliedRegion.isWholeDisplay || !region.isWholeDisplay {
-            // This update reconfigures anyway: take the pending edge now rather than pay a second stall later.
-            displayed = DisplayedPixelsPolicy.Decision(edge: target, hold: target.map { .init(edge: $0) }, deadline: nil)
-            (output, region) = layout(target)
-        }
-        displayedHold = displayed.hold
-        scheduleDisplayedDwell(at: displayed.deadline)
+        let output = layout.output, region = layout.region
+        displayedHold = layout.decision.hold
+        scheduleDisplayedDwell(at: layout.decision.deadline)
         let geometryChanges = ViewportCapturePolicy.needsReconfiguration(from: appliedRegion, to: region)
         guard inputs != applied || geometryChanges else {
             publish(region)

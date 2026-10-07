@@ -71,9 +71,9 @@ struct StreamTuning: Equatable {
     /// Cap the capture long edge to the client's advertised screen pixels (reduction only).
     var capToClientPixels = true
     /// Displayed-pixels cap: limit the whole-display output to the pixels the Mac picture occupies on the
-    /// phone (`DisplayedPixelsPolicy`). Applies only to a whole-display session whose phone reports its
-    /// viewport (viewport capture on, not view-only); window-scoped capture keeps the mode/client cap. Off
-    /// until a device A/B.
+    /// phone (`DisplayedPixelsPolicy`). Needs a whole-display session whose phone reports its viewport (not
+    /// view-only); with viewport capture off the viewport only sizes the whole display. Window-scoped capture
+    /// keeps the mode/client cap. Off until a device A/B.
     var displayedPixelsCap = false
     /// Headroom multiplier on the displayed-pixels cap (0.5…1.5).
     var displayedPixelsScale = 1.0
@@ -82,6 +82,9 @@ struct StreamTuning: Equatable {
     var outputLongEdgeOverride: Int?
     /// G4: crop the capture to the phone's reported viewport (`SessionFeature.viewportCapture`).
     var viewportCapture = true
+    /// The host asks for and applies the phone's viewport: to crop, or only to size the whole display for
+    /// the displayed-pixels cap while cropping stays off (it never crops without `viewportCapture`).
+    var acceptsViewport: Bool { viewportCapture || displayedPixelsCap }
     /// G12: let the ladder step the rate and size down under load and report the busy state.
     var ladder = true
     /// X17: compute the send-path cap (`SenderQueueGovernor`) every window and report it; needs `ladder`.

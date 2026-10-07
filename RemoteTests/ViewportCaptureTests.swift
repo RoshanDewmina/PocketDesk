@@ -1331,4 +1331,89 @@ extension ViewportCaptureTests {
             if before.isWholeDisplay { XCTAssertTrue(after.isWholeDisplay) } else { XCTAssertEqual(after, before, "zoom \(zoom)") }
         }
     }
+
+    /// The session's update step over a sequence of heartbeats, as `performConfigurationUpdate` runs it.
+    private struct Replay {
+        var tuning: StreamTuning
+        var display: DisplayGeometry
+        var budget: CapturePixelDimensions
+        var applied: CaptureRegion
+        var held: Displayed.Hold?
+
+        mutating func update(_ viewport: ViewportRegion?, at now: TimeInterval) -> Displayed.Layout {
+            let display = display, tuning = tuning
+            let layout = Displayed.layout(
+                viewport: viewport, display: display, tuning: tuning, budget: budget, sizeFraction: nil, previous: applied,
+                applied: applied, inputsChanged: false, held: held, now: now
+            ) { edge in
+                RemoteCaptureConfiguration.outputSize(contentSize: display.size, pointPixelScale: display.pointPixelScale,
+                                                      quality: .sharp, budget: .level(52), fps: 60, clientLongEdge: 2622,
+                                                      tuning: tuning, displayedLongEdge: edge)
+            }
+            held = layout.decision.hold
+            applied = layout.region
+            return layout
+        }
+    }
+
+    private func replay(cap: Bool, crop: Bool) throws -> Replay {
+        var tuning = StreamTuning.tuned
+        tuning.displayedPixelsCap = cap
+        tuning.viewportCapture = crop
+        let budget = try composed(moreSpace, displayed: nil, tuning: tuning)
+        return Replay(tuning: tuning, display: moreSpace, budget: budget,
+                      applied: Policy.wholeDisplay(moreSpace, output: budget), held: nil)
+    }
+
+    func testTheHostAcceptsViewportsForCroppingOrForTheCapAlone() {
+        for (crop, cap, accepts) in [(true, false, true), (true, true, true), (false, true, true), (false, false, false)] {
+            var tuning = StreamTuning.tuned
+            tuning.viewportCapture = crop
+            tuning.displayedPixelsCap = cap
+            XCTAssertEqual(tuning.acceptsViewport, accepts, "crop \(crop), cap \(cap)")
+        }
+        XCTAssertTrue(StreamTuning.tuned.acceptsViewport, "today's default")
+        XCTAssertFalse(StreamTuning.legacy.acceptsViewport)
+    }
+
+    func testCapWithCroppingOffSizesTheWholeDisplayWithTheBandAndDwellAndNeverCrops() throws {
+        var session = try replay(cap: true, crop: false)
+        let portrait = iPhone17Fit(portrait: true, on: moreSpace)
+        let landscape = iPhone17Fit(portrait: false, on: moreSpace)
+        func check(_ layout: Displayed.Layout, _ output: CapturePixelDimensions, deadline: TimeInterval?,
+                   _ label: String) {
+            XCTAssertEqual(layout.region, Policy.wholeDisplay(moreSpace, output: output), label)
+            XCTAssertEqual(layout.region.epoch, 0, "never a crop: \(label)")
+            XCTAssertEqual(layout.output, output, label)
+            XCTAssertEqual(layout.decision.deadline, deadline, label)
+        }
+        check(session.update(portrait, at: 0), size(1216, 786), deadline: nil, "first viewport")
+        var wobble = portrait
+        wobble.zoom = 0.66
+        check(session.update(wobble, at: 0.5), size(1216, 786), deadline: nil, "inside the band")
+        check(session.update(landscape, at: 1), size(1216, 786), deadline: 1.25, "rotation waits the grow dwell")
+        check(session.update(landscape, at: 1.25), size(1872, 1210), deadline: nil, "then grows")
+        check(session.update(portrait, at: 2), size(1872, 1210), deadline: 3, "a shrink waits a second")
+        check(session.update(portrait, at: 3), size(1216, 786), deadline: nil, "then shrinks")
+
+        for zoom in [1.5, 2, 3] {
+            var zoomed = try replay(cap: true, crop: false)
+            _ = zoomed.update(portrait, at: 0)
+            let viewport = iPhone17(zoom: zoom, portrait: true, on: moreSpace)
+            check(zoomed.update(viewport, at: 10), size(1216, 786), deadline: 10.25, "zoom \(zoom) is a grow, not a crop")
+            check(zoomed.update(viewport, at: 10.25), size(2560, 1656), deadline: nil, "zoom \(zoom) at the mode cap")
+            var cropping = try replay(cap: true, crop: true)
+            XCTAssertFalse(cropping.update(viewport, at: 0).region.isWholeDisplay, "with cropping on, zoom \(zoom) crops")
+        }
+    }
+
+    func testCapAndCroppingBothOffIsTodaysWholeDisplay() throws {
+        var session = try replay(cap: false, crop: false)
+        for (index, viewport) in [nil, iPhone17Fit(portrait: true, on: moreSpace), iPhone17Fit(portrait: false, on: moreSpace),
+                                  iPhone17(zoom: 3, portrait: true, on: moreSpace)].enumerated() {
+            let layout = session.update(viewport, at: Double(index))
+            XCTAssertEqual(layout.region, Policy.wholeDisplay(moreSpace, output: size(2560, 1656)))
+            XCTAssertEqual(layout.decision, Displayed.Decision(edge: nil, hold: nil, deadline: nil))
+        }
+    }
 }
