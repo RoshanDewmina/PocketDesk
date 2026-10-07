@@ -431,6 +431,7 @@ final class ComparisonEnrollmentCoordinatorTests: XCTestCase {
         XCTAssertNil(actualRequest.handshake.first60)
         XCTAssertNil(actualRequest.handshake.shortcutChips, "Opt-in must stay outside the legacy crypto transcript")
         XCTAssertNil(actualRequest.handshake.phoneLoadWindows, "Window opt-in must also stay outside the typed legacy transcript")
+        XCTAssertNil(actualRequest.handshake.keysOnDemand, "Keys-on-demand opt-in must also stay outside the typed legacy transcript")
         let legacy = try PairEnrollment.decode(LegacyRequest.self, body: requestMessage.body)
         let request = try PairEnrollment.decode(PairEnrollment.Request.self, body: PairEnrollment.encoded(legacy))
         XCTAssertEqual(try PairEnrollment.encoded(request), try PairEnrollment.encoded(actualRequest),

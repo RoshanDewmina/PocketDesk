@@ -262,6 +262,7 @@
 		2E5E2E3280A01D660D336760 /* SharedCaptureScope.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF68CF461262875104D5944 /* SharedCaptureScope.swift */; };
 		2ED5C552A1A437F8E3A0BE62 /* CouchHandshakeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E1ED1C120D1E717C19D2AE /* CouchHandshakeTests.swift */; };
 		2EE695EEA18D665C39BDC2F6 /* PresentationLeasePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 322D0D3C871D003EF9D9BF47 /* PresentationLeasePolicy.swift */; };
+		2F1D6353FC90C134167D0B97 /* KeysOnDemandTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EADC313AFA178CCEFE9E588E /* KeysOnDemandTests.swift */; };
 		2F3363724CEA1E409B7E83CA /* PocketDeskStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E3A80162075BC6B8C142A82 /* PocketDeskStyle.swift */; };
 		2FB152B39AFB769CA7F30D1E /* InputAppliedReceipt.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59D798E9C0A6C6150AE6E096 /* InputAppliedReceipt.swift */; };
 		2FD84B2A762BE0B13198E930 /* MacGlanceLineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4360A09BFAC23D6938E6A24D /* MacGlanceLineTests.swift */; };
@@ -789,6 +790,7 @@
 		88FBC680CF8C08B9D3DA78B8 /* NetworkPathWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1BE4EC5D37AD339CC4073ED /* NetworkPathWatcher.swift */; };
 		890832638ED9E892E72ED894 /* ClipboardTransfer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F73AE673E6754C476D3A34C5 /* ClipboardTransfer.swift */; };
 		890E9A014BDE9DB1EB518E88 /* MiniMapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC9405BBE17BCA377B41C425 /* MiniMapTests.swift */; };
+		891F74806B589095AC981570 /* LadderKeyNeutralTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD7C30337D8B44BEF84978FE /* LadderKeyNeutralTests.swift */; };
 		89A5E9E6EF998BE2C43847E5 /* MacShareBlocker.swift in Sources */ = {isa = PBXBuildFile; fileRef = D676C8D55890E8FEEBB02300 /* MacShareBlocker.swift */; };
 		89CE0172A0B32E7DBCFE2551 /* CouchProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D9FEB3672F5FB2B7EA2BE8B /* CouchProtocolTests.swift */; };
 		89E1086C5F9AFEBCF4CE3D0F /* StreamStatistics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C40ABFFA6F1CBB2F7E05DC6 /* StreamStatistics.swift */; };
@@ -2152,6 +2154,7 @@
 		E89A8230D126890477466F31 /* SessionDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDiagnosticsTests.swift; sourceTree = "<group>"; };
 		E9C5456BB0D9A926EA202AFF /* NetworkLinkHint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkLinkHint.swift; sourceTree = "<group>"; };
 		EA0E61DD08EDC0D61237D2A3 /* VirtualDisplayPortraitPrototype.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualDisplayPortraitPrototype.swift; sourceTree = "<group>"; };
+		EADC313AFA178CCEFE9E588E /* KeysOnDemandTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeysOnDemandTests.swift; sourceTree = "<group>"; };
 		EC6A9187447D35A31D5552D5 /* LocalOwnerAdmissionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalOwnerAdmissionTests.swift; sourceTree = "<group>"; };
 		EC94BB45B8A9E3D97A3B64EC /* HostTerminationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostTerminationTests.swift; sourceTree = "<group>"; };
 		EDD5C7245EC30D8F80ADD89A /* WorkspacePersonalizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspacePersonalizationTests.swift; sourceTree = "<group>"; };
@@ -2199,6 +2202,7 @@
 		FCA89716D8FBEE561AFFC6C4 /* SmoothMotionSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmoothMotionSettings.swift; sourceTree = "<group>"; };
 		FCF5D30AA69E197242845680 /* GuestGrant.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestGrant.swift; sourceTree = "<group>"; };
 		FD40D734BD76517695211C26 /* HostWatchdogState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostWatchdogState.swift; sourceTree = "<group>"; };
+		FD7C30337D8B44BEF84978FE /* LadderKeyNeutralTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LadderKeyNeutralTests.swift; sourceTree = "<group>"; };
 		FD83CA867E19075DF4FE9554 /* com.roshan.PocketDesk.RemoteHost.watchdog.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = com.roshan.PocketDesk.RemoteHost.watchdog.plist; sourceTree = "<group>"; };
 		FDC0851676A8BEEE0215FFB3 /* DiagnosticReportRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticReportRows.swift; sourceTree = "<group>"; };
 		FDD6964174499507ADADB58E /* AwayModeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AwayModeController.swift; sourceTree = "<group>"; };
@@ -2716,6 +2720,8 @@
 				B0170A2D76EFEED481C56663 /* HostTextFocusTests.swift */,
 				CE05626824F09900BE1D7984 /* InputAppliedReceiptTests.swift */,
 				2044754D0E2628BC338380B0 /* InputCausalityTests.swift */,
+				EADC313AFA178CCEFE9E588E /* KeysOnDemandTests.swift */,
+				FD7C30337D8B44BEF84978FE /* LadderKeyNeutralTests.swift */,
 				974AF3B4503C231C4C9DEC57 /* LadderPolicyTests.swift */,
 				F931634EC6B1E63E5ACE4D95 /* LANWakeTests.swift */,
 				D5591B56762CE04D5AC9EEF5 /* LegibilityChartTests.swift */,
@@ -4781,8 +4787,10 @@
 				D26D8A112E355ED81FBC26CB /* InputAppliedReceiptTests.swift in Sources */,
 				62C0E3D3CBD3BFCD877B9859 /* InputCausality.swift in Sources */,
 				2166F1EEFBF4E768F24A144A /* InputCausalityTests.swift in Sources */,
+				2F1D6353FC90C134167D0B97 /* KeysOnDemandTests.swift in Sources */,
 				A361B478D847DCBD77175169 /* LANMagicPacketSender.swift in Sources */,
 				30B528340E598CB1486298B1 /* LANWakeTests.swift in Sources */,
+				891F74806B589095AC981570 /* LadderKeyNeutralTests.swift in Sources */,
 				32328683D12B280CE3F0EE7D /* LadderPolicy.swift in Sources */,
 				343DC1E8E911FAF8041D4E9D /* LadderPolicyTests.swift in Sources */,
 				006A8061FB0C8D061C4CCC71 /* LegalNoticesView.swift in Sources */,

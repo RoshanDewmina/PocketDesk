@@ -42,12 +42,13 @@ final class PocketDeskVideoEncoderFactory: NSObject, RTCVideoEncoderFactory {
     private let videoFeedback: VideoFeedbackContext?
     private let preferLTR: Bool
     private let textClarity: TextClarityContext?
+    private let keysOnDemand: Bool
     private let level52Capability: Bool?
-    init(hevc: Bool = false, hevc444: Bool = false, onHEVC444Failure: (() -> Void)? = nil, counters: StreamCounters? = nil, frameTiming: HostFrameTimingLog? = nil, onHEVCFailure: (() -> Void)? = nil, videoFeedback: VideoFeedbackContext? = nil, preferLTR: Bool = false, textClarity: TextClarityContext? = nil, capabilitySnapshot: NativeVideoCapabilitySnapshot? = nil) {
+    init(hevc: Bool = false, hevc444: Bool = false, onHEVC444Failure: (() -> Void)? = nil, counters: StreamCounters? = nil, frameTiming: HostFrameTimingLog? = nil, onHEVCFailure: (() -> Void)? = nil, videoFeedback: VideoFeedbackContext? = nil, preferLTR: Bool = false, textClarity: TextClarityContext? = nil, keysOnDemand: Bool = false, capabilitySnapshot: NativeVideoCapabilitySnapshot? = nil) {
         if let capabilitySnapshot { level52Capability = capabilitySnapshot.supportsLevel52 }
         else if NativeVideoCapabilitySnapshot.enabled { level52Capability = NativeCodecCapability.supportsLevel52 }
         else { level52Capability = nil }
-        self.hevc444 = hevc444; self.onHEVC444Failure = onHEVC444Failure; self.textClarity = textClarity
+        self.hevc444 = hevc444; self.onHEVC444Failure = onHEVC444Failure; self.textClarity = textClarity; self.keysOnDemand = keysOnDemand
         self.preferLTR = preferLTR; self.videoFeedback = videoFeedback; self.onHEVCFailure = onHEVCFailure; self.hevc = hevc; self.counters = counters; self.frameTiming = frameTiming
         super.init()
     }
@@ -60,12 +61,12 @@ final class PocketDeskVideoEncoderFactory: NSObject, RTCVideoEncoderFactory {
     func createEncoder(_ info: RTCVideoCodecInfo) -> (any RTCVideoEncoder)? {
         if info.name == "H265" {
             guard let configuration = OwnedHEVCConfiguration(parameters: info.parameters), configuration.fullColor444 ? hevc444 : hevc else { return nil }
-            return ResilientVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming, onFailure: configuration.fullColor444 ? onHEVC444Failure : onHEVCFailure, videoFeedback: videoFeedback, textClarity: textClarity)
+            return ResilientVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming, onFailure: configuration.fullColor444 ? onHEVC444Failure : onHEVCFailure, videoFeedback: videoFeedback, textClarity: textClarity, keysOnDemand: keysOnDemand)
         }
         if info.name == kRTCVideoCodecH264Name {
             #if os(macOS)
             if !VideoEncoderCompatibility.isOn, let configuration = OwnedVTConfiguration(parameters: info.parameters) {
-                return ResilientVTEncoder(configuration: configuration, codecInfo: info, counters: counters, frameTiming: frameTiming, videoFeedback: videoFeedback, textClarity: textClarity)
+                return ResilientVTEncoder(configuration: configuration, codecInfo: info, counters: counters, frameTiming: frameTiming, videoFeedback: videoFeedback, textClarity: textClarity, keysOnDemand: keysOnDemand)
             }
             #endif
             return StreamTuning.current.encoderRestart ? DesktopH264Encoder(codecInfo: info, counters: counters, frameTiming: frameTiming) : RTCVideoEncoderH264(codecInfo: info)

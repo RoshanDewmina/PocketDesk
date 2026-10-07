@@ -101,6 +101,20 @@ struct StreamTuning: Equatable {
     /// only requested key frames (start, PLI/FIR, restart); its own 150-500 KB key frames every few seconds
     /// on a still screen collapsed the bandwidth estimate. On restores VideoToolbox's own placement.
     var encoderPeriodicKeyFrames = false
+    /// Keys on demand (ENCODER-OPTIMIZATIONS row 1): with a phone that asked for
+    /// `SessionFeature.keysOnDemand`, the owned encoder sets no key frame duration limit, so the only key
+    /// frames are the requested ones (start, PLI/FIR, restart, size step). Each 10 s safety key costs the
+    /// receiver a 216–309 ms gap behind the screenshare pacer. Off until a device A/B; a phone that does
+    /// not ask keeps the 10 s key whatever this says.
+    var keysOnDemand = false
+    /// Key-neutral ladder (row 2): a statistics window with a key frame is not pacer-wait or low-estimate
+    /// evidence and does not reset the climb clock, and one firing sample resets the clock only when the
+    /// next sample fires too. Off until a device A/B.
+    var ladderKeyNeutral = false
+    /// Row 3: libwebrtc's own degradation at 60 fps and below. Off hands the rate to the app's ladder
+    /// alone (`maintainFramerateAndResolution`, as `highRefreshNoAdaptation` does above 60), so the
+    /// overuse detector cannot cut the frame rate behind the ladder's back. On is today's behaviour.
+    var webRTCAdaptationAt60 = true
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
         encoderCeilingKbps.map { $0 * 1000 } ?? quality.maximumBitrateBps
@@ -163,13 +177,17 @@ struct StreamTuning: Equatable {
     static let encoderPrioritizeSpeedKey = "PocketDeskEncoderPrioritizeSpeed"
     static let hevcLowLatencyKey = "PocketDeskHEVCLowLatency"
     static let encoderPeriodicKeyFramesKey = "PocketDeskEncoderPeriodicKeyFrames"
+    static let keysOnDemandKey = "PocketDeskKeysOnDemand"
+    static let ladderKeyNeutralKey = "PocketDeskLadderKeyNeutral"
+    static let webRTCAdaptationAt60Key = "PocketDeskWebRTCAdaptationAt60"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
                                  highRefreshCaptureKey, targetFPSKey, highRefreshNoAdaptationKey, capToClientPixelsKey,
                                  viewportCaptureKey, ladderKey, encoderMaxInFlightKey, idleVideoRefreshKey, lanHeadroomKey,
                                  mergePointerMovesKey, frameTimingKey, senderQueueGovernorKey, senderQueueGovernorApplyKey, encoderMaximumQPKey, hevcKey,
-                                 encoderPrioritizeSpeedKey, hevcLowLatencyKey, encoderPeriodicKeyFramesKey, encoderPipeliningKey]
+                                 encoderPrioritizeSpeedKey, hevcLowLatencyKey, encoderPeriodicKeyFramesKey, encoderPipeliningKey,
+                                 keysOnDemandKey, ladderKeyNeutralKey, webRTCAdaptationAt60Key]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -272,6 +290,15 @@ struct StreamTuning: Equatable {
         if defaults.object(forKey: encoderPeriodicKeyFramesKey) != nil {
             tuning.encoderPeriodicKeyFrames = defaults.bool(forKey: encoderPeriodicKeyFramesKey)
         }
+        if defaults.object(forKey: keysOnDemandKey) != nil {
+            tuning.keysOnDemand = defaults.bool(forKey: keysOnDemandKey)
+        }
+        if defaults.object(forKey: ladderKeyNeutralKey) != nil {
+            tuning.ladderKeyNeutral = defaults.bool(forKey: ladderKeyNeutralKey)
+        }
+        if defaults.object(forKey: webRTCAdaptationAt60Key) != nil {
+            tuning.webRTCAdaptationAt60 = defaults.bool(forKey: webRTCAdaptationAt60Key)
+        }
         return tuning
     }
 
@@ -324,6 +351,9 @@ struct StreamTuning: Equatable {
         if encoderPrioritizeSpeed { parts.append("encode speed priority") }
         if hevcLowLatency { parts.append("HEVC low-latency") }
         if encoderPeriodicKeyFrames { parts.append("periodic keys") }
+        if keysOnDemand { parts.append("keys on demand") }
+        if ladderKeyNeutral { parts.append("key-neutral ladder") }
+        if !webRTCAdaptationAt60 { parts.append("no webrtc adaptation at 60") }
         if ladder { parts.append("governor " + (!senderQueueGovernor ? "off" : senderQueueGovernorApply ? "apply" : "shadow")) }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }

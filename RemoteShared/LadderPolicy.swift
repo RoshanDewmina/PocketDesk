@@ -36,8 +36,14 @@ enum LadderTrigger: CaseIterable {
 
     var isNetwork: Bool { reason == .network }
 
+    /// `StreamTuning.ladderKeyNeutral`: the pacer wait and the estimate of a window with a key frame are
+    /// that frame's cost (a 500 KB HEVC key drains for 200-300 ms at the screenshare pacing factor of 1.0),
+    /// not the link's. A limited encoder still reports `bandwidth` through libwebrtc.
+    var isKeyFrameCost: Bool { self == .pacerDelay || self == .lowEstimate }
+
     func fires(_ inputs: LadderInputs, at rung: LadderState, falseLoadRules: Bool = LadderFalseLoadSwitch.isOn,
-               lanTrustRules: Bool = LadderLANTrustSwitch.isOn, encoderPipelining: Bool = false) -> Bool {
+               lanTrustRules: Bool = LadderLANTrustSwitch.isOn, encoderPipelining: Bool = false,
+               keyNeutral: Bool = false) -> Bool {
         let fps = LadderPolicy.rungFPS(rung)
         let interval = LadderPolicy.frameIntervalMs(rung)
         let pipelined = encoderPipelining && inputs.encodeAtCapShare != nil && fps <= 60
@@ -45,6 +51,7 @@ enum LadderTrigger: CaseIterable {
         // it collapses to the sent rate of a still screen (1 Oct 2026, .4: 25,000 -> 3,720 -> 2,395 kbps
         // at rtt 6-8 ms, loss 0, sent 1 Mbps), and the next key frame's pacer wait then stepped the size.
         if lanTrustRules, isNetwork, inputs.lanTrusted { return false }
+        if keyNeutral, isKeyFrameCost, LadderPolicy.hasKeyFrame(inputs) { return false }
         switch self {
         case .hostThermal:
             return (LadderPolicy.thermalLevel(inputs.hostThermalState) ?? 0) >= LadderPolicy.seriousThermalLevel
@@ -132,9 +139,10 @@ enum LadderTrigger: CaseIterable {
 
     static func firing(_ inputs: LadderInputs, at rung: LadderState,
                        falseLoadRules: Bool = LadderFalseLoadSwitch.isOn,
-                       lanTrustRules: Bool = LadderLANTrustSwitch.isOn, encoderPipelining: Bool = false) -> [LadderTrigger] {
+                       lanTrustRules: Bool = LadderLANTrustSwitch.isOn, encoderPipelining: Bool = false,
+                       keyNeutral: Bool = false) -> [LadderTrigger] {
         allCases.filter { $0.fires(inputs, at: rung, falseLoadRules: falseLoadRules, lanTrustRules: lanTrustRules,
-                                 encoderPipelining: encoderPipelining) }
+                                 encoderPipelining: encoderPipelining, keyNeutral: keyNeutral) }
     }
 }
 
@@ -214,6 +222,10 @@ struct LANTrustTracker: Equatable {
 /// - A target change restarts at the top of the new ladder.
 /// - On a trusted LAN (`LANTrustPolicy`) the network triggers are not evidence: the estimate collapses
 ///   on a still screen while the link itself is fine.
+/// - Key-neutral (`StreamTuning.ladderKeyNeutral`, off by default): a window with a key frame is not
+///   pacer-wait or low-estimate evidence and does not hold the climb for its pacer wait, and a sample
+///   that fires once resets the climb clock only when the next sample fires too (two in a row already
+///   step down). Off, every firing sample resets the clock, so a key frame every 10 s can pin a 10 s climb.
 struct LadderPolicy: LadderEngine {
     static let downSamples = 2
     static let upAfter: TimeInterval = 10
@@ -245,11 +257,14 @@ struct LadderPolicy: LadderEngine {
     private var thermalMoveAt: TimeInterval?
     private var backoffReason: LadderReason?
     private var warmingSince: TimeInterval?
+    private var firedLastSample = false
     /// `LadderFalseLoadSwitch` (read once per process; tests turn it off per policy).
     var falseLoadRules = LadderFalseLoadSwitch.isOn
     /// `LadderLANTrustSwitch`, likewise.
     var lanTrustRules = LadderLANTrustSwitch.isOn
     var encoderPipelining = StreamTuning.current.encoderPipelining
+    /// `StreamTuning.ladderKeyNeutral`, likewise.
+    var keyNeutralRules = StreamTuning.current.ladderKeyNeutral
 
     init(targetFPS: Int) {
         self.targetFPS = targetFPS
@@ -274,9 +289,9 @@ struct LadderPolicy: LadderEngine {
     mutating func evaluate(_ inputs: LadderInputs, at time: TimeInterval) -> LadderState? {
         let previous = state
         if inputs.targetFPS != targetFPS {
-            let rules = (falseLoadRules, lanTrustRules, encoderPipelining)
+            let rules = (falseLoadRules, lanTrustRules, encoderPipelining, keyNeutralRules)
             self = LadderPolicy(targetFPS: inputs.targetFPS)
-            (falseLoadRules, lanTrustRules, encoderPipelining) = rules
+            (falseLoadRules, lanTrustRules, encoderPipelining, keyNeutralRules) = rules
             calmSince = time
         }
         step(inputs, at: time)
@@ -302,7 +317,7 @@ struct LadderPolicy: LadderEngine {
         if lastClimbAt != nil, !Self.isStill(inputs) { movingSinceClimb += 1 }
         let warming = warmingUp(inputs, at: time)
         let raw = LadderTrigger.firing(inputs, at: state, falseLoadRules: falseLoadRules, lanTrustRules: lanTrustRules,
-                                      encoderPipelining: encoderPipelining)
+                                      encoderPipelining: encoderPipelining, keyNeutral: keyNeutralRules)
         let firing = raw.filter { !warming || $0.isThermal || $0.isImmediate }
         let thermal = firing.first { $0.isThermal }
         let phoneLoad = firing.first { $0.isPhoneWindow }
@@ -354,9 +369,15 @@ struct LadderPolicy: LadderEngine {
             } ?? false
             : !falseLoadRules || state.rung == 0
             || inputs.encodeLatencyP90Ms.map { $0 < Self.frameIntervalMs(rungs[state.rung - 1]) } ?? true
-        guard firing.isEmpty, !phonePressurePending, !warming, fitsAbove,
-              Self.isClean(inputs, at: state, falseLoadRules: falseLoadRules, encoderPipelining: pipelined) else {
-            calmSince = time
+        let clean = Self.isClean(inputs, at: state, falseLoadRules: falseLoadRules, encoderPipelining: pipelined,
+                                 keyNeutral: keyNeutralRules)
+        let firedBefore = firedLastSample
+        firedLastSample = !firing.isEmpty
+        guard firing.isEmpty, !phonePressurePending, !warming, fitsAbove, clean else {
+            // Key-neutral: a lone firing sample keeps the clock; the second in a row resets it (or steps).
+            let loneFiring = keyNeutralRules && !firing.isEmpty && !firedBefore
+                && !phonePressurePending && !warming && fitsAbove && clean
+            if !loneFiring { calmSince = time }
             return
         }
         let top = lowPower ? lowPowerRung : 0
@@ -411,12 +432,18 @@ struct LadderPolicy: LadderEngine {
     /// one-second bucket jitter (28/29 frames at a 30 fps rung) from restarting recovery forever.
     /// An encoder without a latency trace (nil) does not block the climb.
     static func isClean(_ inputs: LadderInputs, at rung: LadderState,
-                        falseLoadRules: Bool = LadderFalseLoadSwitch.isOn, encoderPipelining: Bool = false) -> Bool {
+                        falseLoadRules: Bool = LadderFalseLoadSwitch.isOn, encoderPipelining: Bool = false,
+                        keyNeutral: Bool = false) -> Bool {
         guard keepsUp(inputs, at: rung, falseLoadRules: falseLoadRules) else { return false }
         let budget = frameIntervalMs(rung) * (encoderPipelining ? 2 : 1)
         if let latency = inputs.encodeLatencyP90Ms, latency >= budget { return false }
-        if isStill(inputs), (inputs.pacerDelayMs ?? 0) > 50 { return false }
+        if isStill(inputs), (inputs.pacerDelayMs ?? 0) > 50, !(keyNeutral && hasKeyFrame(inputs)) { return false }
         return true
+    }
+
+    /// The window carried at least one key frame (session start, size move, restart, PLI, or the 10 s key).
+    static func hasKeyFrame(_ inputs: LadderInputs) -> Bool {
+        (inputs.keyFrames ?? 0) >= 1
     }
 
     static func keepsUp(_ inputs: LadderInputs, at rung: LadderState, falseLoadRules: Bool) -> Bool {

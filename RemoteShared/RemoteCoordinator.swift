@@ -1298,6 +1298,7 @@ final class RemoteCoordinator: ObservableObject {
                             enrollmentHandshake.first60 = nil
                             enrollmentHandshake.shortcutChips = nil
                             enrollmentHandshake.phoneLoadWindows = nil
+                            enrollmentHandshake.keysOnDemand = nil
                             let commit = try PairEnrollment.commitment(invitation: scannedEnrollment, requestID: request,
                                 reveal: ephemeral.reveal, handshake: enrollmentHandshake, phoneName: name)
                             let enrollment = PairEnrollment.Request(commitment: commit, handshake: enrollmentHandshake, phoneName: name)
@@ -1828,7 +1829,8 @@ final class RemoteCoordinator: ObservableObject {
             return
         }
         let peer = PeerMedia(isHost: isHost, servers: servers, forceRelay: relayOnly, localLink: localLink, fileChannel: true, videoLTR: isHost && peerFeatures.contains(SessionFeature.videoLTR),
-                             textClarity: isHost && peerFeatures.contains(SessionFeature.textClarity), capabilitySnapshot: capabilitySnapshot)
+                             textClarity: isHost && peerFeatures.contains(SessionFeature.textClarity),
+                             keysOnDemand: isHost && peerFeatures.contains(SessionFeature.keysOnDemand), capabilitySnapshot: capabilitySnapshot)
         media = peer
         if let engine = fileTransfer {
             let rich = richClipboardTransfer

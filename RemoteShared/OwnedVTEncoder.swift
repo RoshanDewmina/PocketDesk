@@ -184,18 +184,27 @@ struct OwnedEncoderOptions: Equatable {
     var realTime = true
     /// ExpectedFrameRate never below this, so VideoToolbox does not slow down for a lower capture rate.
     var minimumExpectedFPS = 0
-    init(prioritizeSpeed: Bool = false, hevcLowLatency: Bool = false, periodicKeyFrames: Bool = true, realTime: Bool = true, minimumExpectedFPS: Int = 0) {
+    /// With `periodicKeyFrames` off: no 10 s safety key either, because this phone asked for keys on
+    /// demand and the host switch allows it (`StreamTuning.keysOnDemand`).
+    var keysOnDemand = false
+    init(prioritizeSpeed: Bool = false, hevcLowLatency: Bool = false, periodicKeyFrames: Bool = true, realTime: Bool = true, minimumExpectedFPS: Int = 0,
+         keysOnDemand: Bool = false) {
         self.prioritizeSpeed = prioritizeSpeed; self.hevcLowLatency = hevcLowLatency; self.periodicKeyFrames = periodicKeyFrames
-        self.realTime = realTime; self.minimumExpectedFPS = minimumExpectedFPS
+        self.realTime = realTime; self.minimumExpectedFPS = minimumExpectedFPS; self.keysOnDemand = keysOnDemand
     }
-    init(_ tuning: StreamTuning) {
-        self.init(prioritizeSpeed: tuning.encoderPrioritizeSpeed, hevcLowLatency: tuning.hevcLowLatency, periodicKeyFrames: tuning.encoderPeriodicKeyFrames)
+    init(_ tuning: StreamTuning, phoneRequestsKeysOnDemand: Bool = false) {
+        self.init(prioritizeSpeed: tuning.encoderPrioritizeSpeed, hevcLowLatency: tuning.hevcLowLatency, periodicKeyFrames: tuning.encoderPeriodicKeyFrames,
+                  keysOnDemand: tuning.keysOnDemand && phoneRequestsKeysOnDemand)
     }
     /// Far beyond any session; VideoToolbox treats 0 as "encoder decides", not "never". The duration
     /// keeps one key frame every 10 s as the safety net for a phone that cannot ask (an older build
     /// whose decoder swallowed asynchronous errors; current phones request one within 500 ms).
     static let requestedKeysOnlyInterval = 1_000_000
     static let requestedKeysOnlyDurationSeconds = 10.0
+    /// `kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration`'s documented default: no limit. The frame
+    /// interval above stays, as 0 there would hand placement back to the encoder.
+    static let keysOnDemandDurationSeconds = 0.0
+    var keyFrameIntervalDurationSeconds: Double { keysOnDemand ? Self.keysOnDemandDurationSeconds : Self.requestedKeysOnlyDurationSeconds }
 }
 
 /// Public VideoToolbox encoder, with a per-peer callback and the newest-frame-wins bound.
@@ -357,7 +366,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
             ? VTSessionSetProperty(created, key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, value: kCFBooleanTrue) == noErr : nil
         storedRequestedKeysOnly = sessionOptions.periodicKeyFrames ? nil
             : VTSessionSetProperty(created, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: OwnedEncoderOptions.requestedKeysOnlyInterval as CFNumber) == noErr
-                && VTSessionSetProperty(created, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: OwnedEncoderOptions.requestedKeysOnlyDurationSeconds as CFNumber) == noErr
+                && VTSessionSetProperty(created, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: sessionOptions.keyFrameIntervalDurationSeconds as CFNumber) == noErr
         // Asked for only when the phone requested it and the still ceiling is tighter than the session's own.
         textClarityArmed = textClarity?.enabled == true && !textClarityRejected && storedMaximumQPApplied
             && TextClarityPolicy.stillFrameQP(hevc: configuration.codecType == kCMVideoCodecType_HEVC, sessionBound: maximumQP) < maximumQP
@@ -396,7 +405,10 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         var parts: [String] = []
         if lowLatencyRefused { parts.append("HEVC low-latency refused") }
         if let storedSpeedPriority { parts.append(storedSpeedPriority ? "speed priority" : "speed priority rejected") }
-        if let storedRequestedKeysOnly { parts.append(storedRequestedKeysOnly ? "requested keys only" : "key interval rejected") }
+        if let storedRequestedKeysOnly {
+            parts.append(storedRequestedKeysOnly ? "requested keys only" : "key interval rejected")
+            if storedRequestedKeysOnly, sessionOptions.keysOnDemand { parts.append("keys on demand") }
+        }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
     static func supportedProperties(_ session: VTCompressionSession) -> [String: Any]? {
@@ -760,15 +772,17 @@ final class ResilientVTEncoder: NSObject, RTCVideoEncoder {
     private var deliveryEpoch: UUID?
     private var usingOwned = false
     init(configuration: OwnedVTConfiguration, codecInfo: RTCVideoCodecInfo,
-         counters: StreamCounters?, frameTiming: HostFrameTimingLog?, videoFeedback: VideoFeedbackContext? = nil, textClarity: TextClarityContext? = nil) {
-        owned = OwnedVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming, videoFeedback: videoFeedback, textClarity: textClarity)
+         counters: StreamCounters?, frameTiming: HostFrameTimingLog?, videoFeedback: VideoFeedbackContext? = nil, textClarity: TextClarityContext? = nil, keysOnDemand: Bool = false) {
+        owned = OwnedVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming, videoFeedback: videoFeedback, textClarity: textClarity,
+                               options: { OwnedEncoderOptions(StreamTuning.current, phoneRequestsKeysOnDemand: keysOnDemand) })
         fallback = DesktopH264Encoder(codecInfo: codecInfo, counters: counters, frameTiming: frameTiming)
         maximumKbps = configuration.maximumKbps
         delivery = VideoEncoderCallbackDelivery(counters: counters)
         super.init(); queue.setSpecific(key: key, value: 1)
     }
-    init(configuration: OwnedHEVCConfiguration, counters: StreamCounters?, frameTiming: HostFrameTimingLog?, onFailure: (() -> Void)? = nil, videoFeedback: VideoFeedbackContext? = nil, textClarity: TextClarityContext? = nil) {
-        let encoder = OwnedVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming, videoFeedback: videoFeedback, textClarity: textClarity)
+    init(configuration: OwnedHEVCConfiguration, counters: StreamCounters?, frameTiming: HostFrameTimingLog?, onFailure: (() -> Void)? = nil, videoFeedback: VideoFeedbackContext? = nil, textClarity: TextClarityContext? = nil, keysOnDemand: Bool = false) {
+        let encoder = OwnedVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming, videoFeedback: videoFeedback, textClarity: textClarity,
+                                     options: { OwnedEncoderOptions(StreamTuning.current, phoneRequestsKeysOnDemand: keysOnDemand) })
         owned = encoder
         fallback = nil // Never label H.264 bytes as H.265. Rollback requires a new negotiation.
         maximumKbps = configuration.maximumKbps

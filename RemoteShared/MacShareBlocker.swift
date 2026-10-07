@@ -35,6 +35,9 @@ enum MacShareBlocker: String, Codable, Equatable {
         /// Opt-in requests outside the eight-name feature bound. Older Macs ignore the key, and too
         /// many options are dropped on their own without touching `features`.
         var options: [String]? = nil
+        /// `SessionFeature.keysOnDemand`, as its own opt-in: `features` and `options` are both at the
+        /// bound older Macs decode (a fifth option drops every option on an installed Mac).
+        var keysOnDemand: Bool? = nil
         static let maximumOptions = 4
         /// Only known opt-ins; an option can never stand in for a feature such as causal input.
         static let knownOptions: Set<String> = [SessionFeature.textClarity, SessionFeature.clipboardSync, SessionFeature.phoneAudio, SessionFeature.deliberateEnd]
@@ -48,9 +51,13 @@ enum MacShareBlocker: String, Codable, Equatable {
                 + (!defaults.bool(forKey: "phoneAudioRequestDisabled") ? [SessionFeature.phoneAudio] : [])
                 + (DeliberateSessionEnd.isEnabled(defaults) ? [SessionFeature.deliberateEnd] : [])
             return Handshake(features: phone.features + (optional.contains(SessionFeature.videoRefinement) ? [SessionFeature.videoRefinement] : []),
-                             mode: mode, first60: First60.isEnabled(defaults) ? true : nil, shortcutChips: ShortcutChips.isEnabled(defaults) ? true : nil, phoneLoadWindows: true, options: options.isEmpty ? nil : options)
+                             mode: mode, first60: First60.isEnabled(defaults) ? true : nil, shortcutChips: ShortcutChips.isEnabled(defaults) ? true : nil, phoneLoadWindows: true, options: options.isEmpty ? nil : options,
+                             keysOnDemand: KeysOnDemandRequest.isEnabled(defaults) ? true : nil)
         }
-        var requested: Set<String> { Set(features + (options ?? []) + (shortcutChips == true ? [SessionFeature.shortcutChips] : [])) }
+        var requested: Set<String> {
+            Set(features + (options ?? []) + (shortcutChips == true ? [SessionFeature.shortcutChips] : [])
+                + (keysOnDemand == true ? [SessionFeature.keysOnDemand] : []))
+        }
 
         static func supportsPhoneLoadWindows(in body: Data?) -> Bool {
             guard let body, body.count <= 1024,
@@ -80,7 +87,8 @@ enum MacShareBlocker: String, Codable, Equatable {
                   let decoded = try? JSONDecoder().decode(Handshake.self, from: body),
                   decoded.features.count <= 8 else { return [] }
             let options = (decoded.options?.count ?? 0) <= maximumOptions ? (decoded.options ?? []).filter(knownOptions.contains) : []
-            return Set((decoded.features + options + (decoded.shortcutChips == true ? [SessionFeature.shortcutChips] : [])).filter { (1...32).contains($0.utf8.count) })
+            return Set((decoded.features + options + (decoded.shortcutChips == true ? [SessionFeature.shortcutChips] : [])
+                        + (decoded.keysOnDemand == true ? [SessionFeature.keysOnDemand] : [])).filter { (1...32).contains($0.utf8.count) })
         }
     }
 

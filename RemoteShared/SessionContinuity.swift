@@ -18,6 +18,11 @@ enum SessionFeature {
     static let exactVideoTiming = "video.timing.1"
     /// Phone request only: a still-picture QP floor on the Mac's owned encoder. Never advertised by the host.
     static let textClarity = "video.clarity.1"
+    /// Phone request only: this phone asks for a key frame itself when a decode fails (`OwnedHEVCDecoder`
+    /// recovery, libwebrtc PLI for H.264), so the Mac's owned encoder may drop its 10 s safety key
+    /// (`StreamTuning.keysOnDemand`). Never advertised by the host. Travels as `Handshake.keysOnDemand`,
+    /// outside the eight-feature and four-option bounds older Macs decode.
+    static let keysOnDemand = "video.keys.ondemand.1"
     static let pencilInput = "input.pencil.1"
     static let clipboardText = "clipboard.text.1"
     static let clipboardSync = "clipboard.sync.1"
@@ -61,6 +66,16 @@ enum SessionFeature {
                        absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder,
                        momentumScroll, auxiliaryButtons, secureFocus, fileTransfer, focusGeometry, macVitals]
     static let host = [lowDataPolicy, phoneAudio, clipboardSync, causalInput, liveViewOnly, captureScope, inputReceipt, pencilInput, videoLTR, videoRefinement, exactVideoTiming, hostMomentum] + legacyHost
+}
+
+/// Phone kill switch for asking the Mac for keys on demand (launch argument
+/// `-PocketDeskKeysOnDemandRequest NO`). On by default, so the Mac's `PocketDeskKeysOnDemand` alone
+/// decides whether the 10 s key goes; off, the phone never asks and every Mac keeps it.
+enum KeysOnDemandRequest {
+    static let defaultsKey = "PocketDeskKeysOnDemandRequest"
+    static func isEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: defaultsKey) == nil || defaults.bool(forKey: defaultsKey)
+    }
 }
 
 /// The first-minute flow is negotiated outside the capped feature list.

@@ -190,6 +190,8 @@ struct LadderInputs: Equatable {
     var encodeAtCapShare: Double? = nil
     /// Direct policy callers supply independent samples; the host monitor always overrides this.
     var phoneSampleState: PhoneLoadSampleState = .fresh
+    /// Key frames encoded in the window (`StreamStatsReport.keyFrames`). nil on an older report.
+    var keyFrames: Int? = nil
 
     var frameIntervalMs: Double { 1000 / Double(max(1, targetFPS)) }
 }

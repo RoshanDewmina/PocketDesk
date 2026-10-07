@@ -39,7 +39,7 @@ final class ScreenRecordingApprovalPhoneTests: XCTestCase {
         XCTAssertLessThanOrEqual(optIn.features.count, 8, "Refinement stays inside the eight-name bound")
         XCTAssertEqual(optIn.options, ["video.clarity.1", SessionFeature.deliberateEnd])
         XCTAssertEqual(optIn.shortcutChips, true, "The combined test opts in without using another feature-list slot")
-        XCTAssertEqual(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(optIn)), expected.union(["video.refine.1", "video.clarity.1", SessionFeature.deliberateEnd, SessionFeature.shortcutChips]))
+        XCTAssertEqual(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(optIn)), expected.union(["video.refine.1", "video.clarity.1", SessionFeature.deliberateEnd, SessionFeature.shortcutChips, SessionFeature.keysOnDemand]))
         XCTAssertEqual(MacShareBlocker.Handshake.phoneRequest(StillTextPreferences.requestedFeatures(sharpen: false, textClarity: false, fullColor: false), defaults: noClipboard).options, [SessionFeature.deliberateEnd])
         noClipboard.set(true, forKey: DeliberateSessionEnd.disabledDefaultsKey)
         XCTAssertEqual(MacShareBlocker.Handshake.phoneRequest([], defaults: noClipboard).first60, true,
@@ -48,8 +48,9 @@ final class ScreenRecordingApprovalPhoneTests: XCTestCase {
         noClipboard.set(false, forKey: ShortcutChips.defaultsKey)
         var withoutOptionalFeatures = modern
         withoutOptionalFeatures.phoneLoadWindows = true
+        withoutOptionalFeatures.keysOnDemand = true
         XCTAssertEqual(MacShareBlocker.Handshake.phoneRequest([], defaults: noClipboard), withoutOptionalFeatures,
-                       "Default phone load windows remain independently negotiated without consuming a feature-list slot")
+                       "Default phone load windows and keys on demand remain independently negotiated without consuming a feature-list slot")
         let withClipboard = MacShareBlocker.Handshake.phoneRequest([], defaults: UserDefaults(suiteName: "TrustPackPhoneTests.\(UUID().uuidString)")!)
         XCTAssertEqual(withClipboard.options, [SessionFeature.clipboardSync, SessionFeature.phoneAudio, SessionFeature.deliberateEnd], "Default options remain outside the eight-name feature bound")
         XCTAssertEqual(withClipboard.features, modern.features)

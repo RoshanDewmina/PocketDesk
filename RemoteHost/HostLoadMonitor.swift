@@ -108,6 +108,7 @@ struct HostLoadSample: Equatable {
     var sourceFPS: Double? = nil
     var lanTrusted = false
     var encodeAtCapShare: Double? = nil
+    var keyFrames: Int? = nil
 }
 
 extension HostLoadSample {
@@ -125,6 +126,7 @@ extension HostLoadSample {
                   encoderSessionAgeS: report.encoderSessionAgeS, sourceFPS: report.sourceFPS,
                   lanTrusted: report.lanTrusted ?? false)
         encodeAtCapShare = report.encodeAtCapShare
+        keyFrames = report.keyFrames
     }
 }
 
@@ -245,7 +247,7 @@ struct HostLoadMonitor {
                      phoneThermalState: sample.phoneLoad?.thermalState.map(String.init),
                      phoneLowPowerMode: sample.phoneLoad?.lowPowerMode, sentFPS: sample.sentFPS,
                      encoderSessionAgeS: sample.encoderSessionAgeS, sourceFPS: sample.sourceFPS,
-                     lanTrusted: sample.lanTrusted, encodeAtCapShare: sample.encodeAtCapShare)
+                     lanTrusted: sample.lanTrusted, encodeAtCapShare: sample.encodeAtCapShare, keyFrames: sample.keyFrames)
     }
 
     /// The new rung to apply and the new busy state to send, each nil when unchanged.

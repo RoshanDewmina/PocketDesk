@@ -151,7 +151,8 @@ enum TransportPriorityPolicy {
 /// The video sender's rate settings (G5). `maxFramerate` follows the session rate, lowered by the
 /// ladder's rung; above 60 fps `highRefreshNoAdaptation` turns WebRTC's own degradation off
 /// (`maintainFramerateAndResolution`, the header's successor to `disabled`) so the app's ladder
-/// decides. At up to 60 fps, Performance favours frame rate; Quality keeps the tuning preference.
+/// decides, and `webRTCAdaptationAt60 == false` does the same at 60 fps and below. Otherwise at up to
+/// 60 fps, Performance favours frame rate; Quality keeps the tuning preference.
 struct SenderRateParameters: Equatable {
     var maxFramerate: Int
     var degradationPreference: RTCDegradationPreference?
@@ -159,7 +160,7 @@ struct SenderRateParameters: Equatable {
     static func make(targetFPS: Int, tuning: StreamTuning, ladderFPS: Int? = nil,
                      quality: StreamQuality = .sharp, legacyPictureSettings: Bool = false) -> SenderRateParameters {
         let target = max(1, targetFPS)
-        let noAdaptation = target > CaptureRatePolicy.standardFPS && tuning.highRefreshNoAdaptation
+        let noAdaptation = target > CaptureRatePolicy.standardFPS ? tuning.highRefreshNoAdaptation : !tuning.webRTCAdaptationAt60
         let preference: RTCDegradationPreference? = target <= CaptureRatePolicy.standardFPS
             && !legacyPictureSettings && tuning.qualityBitrates
             && PictureMode(quality: quality).prioritizesFrameRate ? .maintainFramerate : tuning.degradationPreference
@@ -681,12 +682,15 @@ final class PeerMedia: NSObject {
 
     private(set) var fullColorCaptureEnabled = false
     let textClarity: TextClarityContext
+    /// The phone asked for `SessionFeature.keysOnDemand`; the encoder honours it only with `StreamTuning.keysOnDemand`.
+    let keysOnDemandRequested: Bool
     func captureContentChanged() { textClarity.contentChanged() }
     init(isHost: Bool, servers: [ICEServerConfiguration], forceRelay: Bool = false, nativeDesktopCodecs: Bool = true,
          localLink: ProvenLocalLink? = nil, fileChannel: Bool = false, hevc: Bool? = nil, hevc444: Bool? = nil, videoLTR: Bool = false,
-         textClarity: Bool = false, capabilitySnapshot: NativeVideoCapabilitySnapshot? = nil) {
+         textClarity: Bool = false, keysOnDemand: Bool = false, capabilitySnapshot: NativeVideoCapabilitySnapshot? = nil) {
         self.isHost = isHost
         self.textClarity = TextClarityContext(enabled: isHost && nativeDesktopCodecs && textClarity)
+        keysOnDemandRequested = isHost && nativeDesktopCodecs && keysOnDemand
         acceptsFileChannel = fileChannel
         self.forceRelay = forceRelay
         self.localLink = localLink
@@ -750,7 +754,7 @@ final class PeerMedia: NSObject {
         }
         onFirstPictureHEVCFailure = useHEVC ? codecFailure : nil
         onFirstPictureHEVC444Failure = useFullColor ? fullColorFailure : nil
-        let ownedEncoderFactory = PocketDeskVideoEncoderFactory(hevc: useHEVC, hevc444: useFullColor, onHEVC444Failure: fullColorFailure, counters: counters, frameTiming: frameTimingLog, onHEVCFailure: codecFailure, videoFeedback: videoFeedback, preferLTR: videoLTR, textClarity: self.textClarity, capabilitySnapshot: capabilities)
+        let ownedEncoderFactory = PocketDeskVideoEncoderFactory(hevc: useHEVC, hevc444: useFullColor, onHEVC444Failure: fullColorFailure, counters: counters, frameTiming: frameTimingLog, onHEVCFailure: codecFailure, videoFeedback: videoFeedback, preferLTR: videoLTR, textClarity: self.textClarity, keysOnDemand: keysOnDemandRequested, capabilitySnapshot: capabilities)
         let ownedDecoderFactory = PocketDeskVideoDecoderFactory(hevc: useHEVC, hevc444: useFullColor, onHEVC444Failure: fullColorFailure, frameTiming: frameTimingReceiver?.log, onHEVCFailure: codecFailure, videoFeedback: videoFeedback, capabilitySnapshot: capabilities)
         var configuredFactory: RTCPeerConnectionFactory?
         #if os(macOS)
