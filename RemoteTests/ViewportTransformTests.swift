@@ -32,6 +32,34 @@ final class ViewportTransformTests: XCTestCase {
         }
     }
 
+    func testStagedFocusBookmarkIsIndependentUntilAcceptedAndSurvivesFailedReturn() throws {
+        var before = ViewportTransform(sourceSize: CGSize(width: 1920, height: 1080),
+                                       canvasSize: CGSize(width: 844, height: 390), mode: .fill, zoom: 1.3)
+        before.pan(by: CGSize(width: 30, height: -20))
+        var live = ViewportFocusReturn()
+        var staged = live
+        let target = try XCTUnwrap(staged.destination(from: before, anchoredAt: CGPoint(x: 350, y: 195)))
+        XCTAssertFalse(live.canRestore, "Discarded preflight/coverage plans cannot publish a return bookmark")
+        XCTAssertTrue(staged.canRestore)
+        var abandoned = staged
+        var changed = target
+        changed.resize(sourceSize: target.sourceSize, canvasSize: CGSize(width: 390, height: 844))
+        XCTAssertNil(abandoned.restoreDestination(for: changed))
+        XCTAssertTrue(staged.canRestore, "Invalidating an abandoned copy cannot alter the accepted candidate")
+        live = staged
+        let partial = try XCTUnwrap(before.interpolated(to: target, progress: 0.4))
+        let restored = try XCTUnwrap(live.restoreDestination(for: partial))
+        XCTAssertEqual(restored.mode, before.mode)
+        XCTAssertEqual(restored.zoom, before.zoom)
+        XCTAssertEqual(restored.offset, before.offset)
+        var failedReturn = live
+        XCTAssertNotNil(failedReturn.restoreDestination(for: partial))
+        failedReturn.clear()
+        XCTAssertTrue(live.canRestore, "A discarded return plan cannot consume the live bookmark")
+        live.clear()
+        XCTAssertFalse(live.canRestore)
+    }
+
     func testSmartZoomFocusRejectsLetterboxAndBoundsCornersAndMaximumZoom() throws {
         let view = ViewportTransform(sourceSize: CGSize(width: 1920, height: 1080),
             canvasSize: CGSize(width: 390, height: 844), mode: .fit)

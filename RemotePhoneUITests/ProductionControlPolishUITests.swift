@@ -60,7 +60,13 @@ final class ProductionControlPolishUITests: XCTestCase {
             XCTAssertFalse(app.buttons["remote.keyboard.open"].exists,
                            "Couch retains its own Keyboard tile instead of the picture edge control")
             for id in ["remote.couch.keys", "remote.couch.clip", "remote.couch.controls"] {
-                assertTarget(app.buttons[id].firstMatch, in: app, name: id)
+                let target = app.buttons[id].firstMatch
+                let scroll = element("remote.couch.tiles.scroll", app)
+                for _ in 0..<8 where !app.windows.firstMatch.frame.contains(target.frame) {
+                    XCTAssertTrue(scroll.exists, "Large Couch tiles must have a bounded scroll route")
+                    scroll.swipeUp()
+                }
+                assertTarget(target, in: app, name: id)
             }
             XCTAssertEqual(app.buttons["remote.couch.controls"].label, "More")
             app.buttons["remote.couch.controls"].tap()
@@ -242,6 +248,7 @@ final class ProductionControlPolishUITests: XCTestCase {
         let text = "café — 東京🙂\nsecond line"
         draft.typeText(text)
         XCTAssertEqual(draft.value as? String, text)
+        record("Actual keyboard before app-only idle voice assertions", app)
         assertIdleVoiceAbsent(app)
         for orientation in [UIDeviceOrientation.portrait, .landscapeLeft, .portrait] {
             rotate(app, to: orientation)
@@ -298,16 +305,19 @@ final class ProductionControlPolishUITests: XCTestCase {
         assertTarget(settings, in: app, name: "More Settings")
         settings.tap()
         let page = element("remote.controls.page", app)
-        let row = app.buttons["remote.settings.picture"].firstMatch
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            page.exists && row.exists && row.isHittable
-        }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+        XCTAssertTrue(page.waitForExistence(timeout: 5), "The real Settings Form must open")
+        record("Actual Settings before bounded row reveal", app)
+        let row = page.buttons["remote.settings.picture"].firstMatch
+        // Enlarged text and the Magnifier/conditional rows can put Picture below the fold.
+        for _ in 0..<16 where !(row.exists && row.isHittable && app.windows.firstMatch.frame.contains(row.frame)) {
+            nudgeUp(app)
+        }
+        assertTarget(row, in: app, name: "Actual Settings Picture row")
         // This real row exists only when Settings received session: true. Observe it without
         // opening LANWakeView or sending a wake request; no negotiated permission is required.
         let sessionRow = page.buttons["Wake another Mac on this LAN"].firstMatch
-        for _ in 0..<8 where !(sessionRow.exists && sessionRow.isHittable) {
-            page.swipeUp()
+        for _ in 0..<16 where !(sessionRow.exists && sessionRow.isHittable && app.windows.firstMatch.frame.contains(sessionRow.frame)) {
+            nudgeUp(app)
         }
         assertTarget(sessionRow, in: app, name: "Session-only Wake another Mac row")
         record("Actual Settings session-only row without activation", app)
@@ -322,7 +332,20 @@ final class ProductionControlPolishUITests: XCTestCase {
     @MainActor
     private func assertIdleVoiceAbsent(_ app: XCUIApplication) {
         XCTAssertFalse(app.buttons["Voice input"].exists, "No dedicated idle voice entry; system keyboard mic is unaffected")
-        XCTAssertFalse(app.buttons["Dictate"].exists)
+        // Apple's English keyboard exposes its mic beside (not beneath) Keyboard in the AX tree.
+        // The actual native attachment identifies that system control as `dictation`.
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@",
+                                                       "Dictate", "dictation")).count, 0,
+                       "No app-owned idle Dictate entry; the system keyboard mic is unaffected")
+    }
+
+    /// A fling can carry a tall accessibility-size row past the window between checks.
+    @MainActor
+    private func nudgeUp(_ app: XCUIApplication) {
+        let window = app.windows.firstMatch
+        let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+        let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.1)
     }
 
     @MainActor

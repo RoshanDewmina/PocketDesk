@@ -818,6 +818,7 @@ struct NativeSessionView: View {
                     .padding(.vertical, 12)
             }
             .scrollIndicators(.hidden)
+            .accessibilityIdentifier("remote.couch.tiles.scroll")
         }
         .frame(width: Self.couchColumnWidth - 12)
         .farsidePlate(30, fill: Farside.Palette.panel.opacity(0.97), stroke: Farside.Palette.line2)
@@ -2317,6 +2318,8 @@ struct NativeSessionView: View {
                     Label("Settings", systemImage: "gearshape")
                         .font(.body.weight(.medium))
                         .foregroundStyle(Farside.Palette.bone)
+                        .frame(minWidth: 48, minHeight: 48)
+                        .contentShape(.rect)
                 }
                 .accessibilityShowsLargeContentViewer()
                 .accessibilityIdentifier("remote.controls.settings")
@@ -2639,7 +2642,7 @@ struct NativeSessionView: View {
                         Text(moreTileTitle).font(.headline).accessibilityAddTraits(.isHeader)
                         Spacer(minLength: 8)
                         Button { showOverlaySettings = true } label: { Image(systemName: "gearshape") }
-                            .buttonStyle(FarsideRoundButtonStyle(diameter: 44))
+                            .buttonStyle(FarsideRoundButtonStyle(diameter: 48))
                             .accessibilityLabel("Settings")
                             .accessibilityIdentifier("remote.controls.settings")
                         controlsDoneButton
@@ -2685,10 +2688,12 @@ struct NativeSessionView: View {
                 macKeys(compact: true)
                     .frame(maxWidth: .infinity)
                 VStack(spacing: 6) {
-                    Button { showOverlaySettings = true } label: { Image(systemName: "gearshape") }
-                        .buttonStyle(FarsideRoundButtonStyle(diameter: PhoneCommandAccessibility.target(40, enabled: PhoneCommandAccessibility.targetsEnabled)))
-                        .frame(minWidth: PhoneCommandAccessibility.target(40, enabled: PhoneCommandAccessibility.targetsEnabled),
-                               minHeight: commandTargetHeight)
+                    Button { showOverlaySettings = true } label: {
+                        Image(systemName: "gearshape")
+                            .frame(minWidth: 48, minHeight: 48)
+                            .contentShape(.rect)
+                    }
+                        .buttonStyle(FarsideRoundButtonStyle(diameter: 48))
                         .contentShape(.rect)
                         .accessibilityLabel("Settings")
                         .accessibilityIdentifier("remote.controls.settings")
@@ -3666,9 +3671,11 @@ struct NativeSessionView: View {
     private func toggleSmartZoom(at anchor: CGPoint) -> Bool {
         guard smartZoomMayStart, viewport.sourcePoint(fromView: anchor) != nil else { return false }
         cancelSmartZoom(clearBookmark: false)
-        let returning = focusReturn.canRestore
-        guard let target = focusReturn.destination(from: viewport, anchoredAt: anchor) else { return false }
-        return startSmartZoom(to: target, returning: returning)
+        // Preflight/coverage waits must not publish a Back bookmark before a pose is applied.
+        var stagedReturn = focusReturn
+        let returning = stagedReturn.restoreDestination(for: viewport) != nil
+        guard let target = stagedReturn.destination(from: viewport, anchoredAt: anchor) else { return false }
+        return startSmartZoom(to: target, returning: returning, stagedReturn: stagedReturn)
     }
 
     private func restoreSmartZoom() {
@@ -3696,7 +3703,7 @@ struct NativeSessionView: View {
     }
 
     @discardableResult
-    private func startSmartZoom(to target: ViewportTransform, returning: Bool) -> Bool {
+    private func startSmartZoom(to target: ViewportTransform, returning: Bool, stagedReturn: ViewportFocusReturn? = nil) -> Bool {
         guard smartZoomMayStart,
               let token = model.beginSmartZoomTransition(interactionBlocked: smartZoomInteractionBlocked) else { return false }
         cancelTaskView(); focusedWindowGeometry = nil
@@ -3743,10 +3750,14 @@ struct NativeSessionView: View {
                 let t = reduceMotion ? 1 : min(1, (ProcessInfo.processInfo.systemUptime - start) / 0.36)
                 let eased = t * t * (3 - 2 * t)
                 guard let sampled = from.interpolated(to: target, progress: CGFloat(eased)) else {
-                    focusReturn.clear(); return
+                    if acceptedPose { focusReturn.clear() }
+                    return
                 }
                 var transaction = Transaction(animation: nil); transaction.disablesAnimations = true
-                withTransaction(transaction) { viewport = sampled }
+                withTransaction(transaction) {
+                    viewport = sampled
+                    if !acceptedPose, !returning, let stagedReturn { focusReturn = stagedReturn }
+                }
                 smartZoomAcceptedToken = token
                 acceptedPose = true
                 if t >= 1 { break }
