@@ -115,6 +115,10 @@ struct StreamTuning: Equatable {
     /// alone (`maintainFramerateAndResolution`, as `highRefreshNoAdaptation` does above 60), so the
     /// overuse detector cannot cut the frame rate behind the ladder's back. On is today's behaviour.
     var webRTCAdaptationAt60 = true
+    /// Idea 2 (LATENCY-PLAN §2.2): for a phone that asked (`SessionFeature.backdrop`), a second 640 px,
+    /// 4 fps whole-display capture sent as snapshots on the `backdrop.1` channel. Off: no second capture
+    /// and no channel.
+    var backdropTrack = false
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
         encoderCeilingKbps.map { $0 * 1000 } ?? quality.maximumBitrateBps
@@ -180,6 +184,7 @@ struct StreamTuning: Equatable {
     static let keysOnDemandKey = "PocketDeskKeysOnDemand"
     static let ladderKeyNeutralKey = "PocketDeskLadderKeyNeutral"
     static let webRTCAdaptationAt60Key = "PocketDeskWebRTCAdaptationAt60"
+    static let backdropTrackKey = "PocketDeskBackdropTrack"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
@@ -187,7 +192,7 @@ struct StreamTuning: Equatable {
                                  viewportCaptureKey, ladderKey, encoderMaxInFlightKey, idleVideoRefreshKey, lanHeadroomKey,
                                  mergePointerMovesKey, frameTimingKey, senderQueueGovernorKey, senderQueueGovernorApplyKey, encoderMaximumQPKey, hevcKey,
                                  encoderPrioritizeSpeedKey, hevcLowLatencyKey, encoderPeriodicKeyFramesKey, encoderPipeliningKey,
-                                 keysOnDemandKey, ladderKeyNeutralKey, webRTCAdaptationAt60Key]
+                                 keysOnDemandKey, ladderKeyNeutralKey, webRTCAdaptationAt60Key, backdropTrackKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -299,6 +304,9 @@ struct StreamTuning: Equatable {
         if defaults.object(forKey: webRTCAdaptationAt60Key) != nil {
             tuning.webRTCAdaptationAt60 = defaults.bool(forKey: webRTCAdaptationAt60Key)
         }
+        if defaults.object(forKey: backdropTrackKey) != nil {
+            tuning.backdropTrack = defaults.bool(forKey: backdropTrackKey)
+        }
         return tuning
     }
 
@@ -354,6 +362,7 @@ struct StreamTuning: Equatable {
         if keysOnDemand { parts.append("keys on demand") }
         if ladderKeyNeutral { parts.append("key-neutral ladder") }
         if !webRTCAdaptationAt60 { parts.append("no webrtc adaptation at 60") }
+        if backdropTrack { parts.append("backdrop track") }
         if ladder { parts.append("governor " + (!senderQueueGovernor ? "off" : senderQueueGovernorApply ? "apply" : "shadow")) }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }

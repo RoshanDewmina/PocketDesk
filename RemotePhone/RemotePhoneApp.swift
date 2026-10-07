@@ -818,6 +818,7 @@ final class PhoneRemoteModel: ObservableObject {
         presentationHost = host
     }
     private func retireContentPresentation() {
+        connection.backdrop.image = nil
         shortcutWorkspace.retire()
         windowWorkspace.retire()
         diagnostics.cancel()

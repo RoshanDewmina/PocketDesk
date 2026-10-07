@@ -27,6 +27,9 @@ final class RemoteCoordinator: ObservableObject {
     /// Why the signaling connection last dropped, for diagnostics.
     private(set) var signalingLossReason: String?
     @Published var remoteVideo: RTCVideoTrack?
+    /// Phone: the newest soft whole-display snapshot (idea 2), only when this session negotiated it.
+    /// Its own object, so a snapshot redraws the backdrop alone, not every view observing the session.
+    let backdrop = BackdropStore()
     @Published var hasRelay = false
     @Published var diagnostics = "Route not measured"
     /// Stage counters from the most recent local-link proof; no keys, nonces or addresses.
@@ -1203,7 +1206,7 @@ final class RemoteCoordinator: ObservableObject {
         pendingLocalEndpoint = nil
         registrationStability?.cancel(); registrationStability = nil
         media?.close(); media = nil
-        remoteVideo = nil; connected = false; awaitingApproval = false; hostRegistered = false
+        remoteVideo = nil; backdrop.image = nil; connected = false; awaitingApproval = false; hostRegistered = false
         diagnostics = "Route not measured"
         sentControl = 0; receivedControl = 0
         moveCoalescer.discard(); moveFlush?.cancel(); moveFlush = nil
@@ -1299,6 +1302,7 @@ final class RemoteCoordinator: ObservableObject {
                             enrollmentHandshake.shortcutChips = nil
                             enrollmentHandshake.phoneLoadWindows = nil
                             enrollmentHandshake.keysOnDemand = nil
+                            enrollmentHandshake.backdrop = nil
                             let commit = try PairEnrollment.commitment(invitation: scannedEnrollment, requestID: request,
                                 reveal: ephemeral.reveal, handshake: enrollmentHandshake, phoneName: name)
                             let enrollment = PairEnrollment.Request(commitment: commit, handshake: enrollmentHandshake, phoneName: name)
@@ -1830,7 +1834,9 @@ final class RemoteCoordinator: ObservableObject {
         }
         let peer = PeerMedia(isHost: isHost, servers: servers, forceRelay: relayOnly, localLink: localLink, fileChannel: true, videoLTR: isHost && peerFeatures.contains(SessionFeature.videoLTR),
                              textClarity: isHost && peerFeatures.contains(SessionFeature.textClarity),
-                             keysOnDemand: isHost && peerFeatures.contains(SessionFeature.keysOnDemand), capabilitySnapshot: capabilitySnapshot)
+                             keysOnDemand: isHost && peerFeatures.contains(SessionFeature.keysOnDemand),
+                             backdrop: BackdropCapturePolicy.negotiated(isHost: isHost, peerFeatures: peerFeatures, requested: requestedFeatures),
+                             capabilitySnapshot: capabilitySnapshot)
         media = peer
         if let engine = fileTransfer {
             let rich = richClipboardTransfer
@@ -1855,6 +1861,9 @@ final class RemoteCoordinator: ObservableObject {
             if self.remoteVideo !== track { self.onPresentationInvalidated?(); self.presentationTrackID = UUID() }
             self.remoteVideo = track
         } } }
+        peer.backdropLink?.onImage = { [weak self, weak peer] image in
+            MainActor.assumeIsolated { if let self, let peer, self.media === peer { self.backdrop.image = image } }
+        }
         peer.onPointerMessage = { [weak self, weak peer] data in
             MainActor.assumeIsolated {
                 guard let self, let peer, self.media === peer else { return }

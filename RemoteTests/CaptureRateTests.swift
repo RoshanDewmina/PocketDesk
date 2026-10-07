@@ -266,7 +266,7 @@ final class CaptureRateTuningTests: XCTestCase {
         XCTAssertEqual(Set(StreamTuning.experimentKeys).count, StreamTuning.experimentKeys.count, "every experiment key is listed once")
         let newKeys = [StreamTuning.highRefreshCaptureKey, StreamTuning.targetFPSKey,
                        StreamTuning.highRefreshNoAdaptationKey, StreamTuning.capToClientPixelsKey,
-                       StreamTuning.viewportCaptureKey, StreamTuning.ladderKey]
+                       StreamTuning.viewportCaptureKey, StreamTuning.ladderKey, StreamTuning.backdropTrackKey]
         for key in newKeys { XCTAssertTrue(StreamTuning.experimentKeys.contains(key), key) }
 
         defaults.set(true, forKey: StreamTuning.legacyDefaultsKey)
