@@ -97,7 +97,10 @@ final class PhysicalLifecycleSmokeTests: XCTestCase {
         XCTAssertTrue(picture.waitForExistence(timeout: 5))
         picture.tap()
         let start = app.buttons["Start Picture in Picture"].firstMatch
-        for _ in 0..<6 where !start.isHittable { app.swipeUp() }
+        // Swipe the settings page, not the screen centre, which can be the Mac picture in Control mode.
+        let page = app.descendants(matching: .any)["remote.controls.page"].firstMatch
+        XCTAssertTrue(page.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !start.isHittable { page.swipeUp() }
         XCTAssertTrue(start.waitForExistence(timeout: 5))
         XCTAssertTrue(start.isEnabled, "Actual stream must offer admitted PiP")
         start.tap()
