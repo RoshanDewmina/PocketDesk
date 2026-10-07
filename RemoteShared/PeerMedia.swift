@@ -103,11 +103,17 @@ enum LocalMediaRoute {
     static func matches(_ link: ProvenLocalLink, localType: String?, remoteType: String?,
                         localAddress: String?, remoteAddress: String?, adapterType: String?,
                         networkType: String? = nil, vpn: Bool? = nil) -> Bool {
+        isPhysicalHostPair(localType: localType, remoteType: remoteType, adapterType: adapterType,
+                           networkType: networkType, vpn: vpn) &&
+            localAddress == link.localAddress && remoteAddress == link.peerAddress
+    }
+
+    static func isPhysicalHostPair(localType: String?, remoteType: String?, adapterType: String?,
+                                   networkType: String? = nil, vpn: Bool? = nil) -> Bool {
         let allowed: Set<String> = ["wifi", "ethernet", "unknown"]
         let labels = [adapterType, networkType].compactMap { $0 }
         return !labels.isEmpty && labels.allSatisfy(allowed.contains) && vpn != true &&
-            localType == "host" && remoteType == "host" &&
-            localAddress == link.localAddress && remoteAddress == link.peerAddress
+            localType == "host" && remoteType == "host"
     }
 
     /// The proof covers one IPv4 address pair, but WebRTC also gathers IPv6 and other interfaces and
@@ -606,14 +612,39 @@ final class PeerMedia: NSObject {
     /// The media path is the proven one-hop local link and is still selected.
     var provenLocalLinkActive: Bool { localLink != nil && localGateOpen() }
 
-    /// Host, remote route (`StreamTuning.remoteRouteLANProof`): a one-hop proof that passed beside the
-    /// stream. It restricts nothing and is never `provenLocalLinkActive`; it is LAN evidence only for
-    /// the samples whose selected pair is exactly the proven address pair (`LocalMediaRoute.matches`).
-    private(set) var remoteRouteLANLink: ProvenLocalLink?
+    /// Host, remote route (`StreamTuning.remoteRouteLANProof`): one-hop proofs that passed beside the
+    /// stream (the first IPv4 one, then any of the selected pair). They restrict nothing and are never
+    /// `provenLocalLinkActive`; they are LAN evidence only for the samples whose selected pair is exactly
+    /// a proven address pair (`LocalMediaRoute.matches`).
+    private(set) var remoteRouteLANLinks: [ProvenLocalLink] = []
     private(set) var remoteRouteLANPairSelected = false
-    func setRemoteRouteLANProof(_ link: ProvenLocalLink?) {
-        remoteRouteLANLink = link
-        if link == nil { remoteRouteLANPairSelected = false }
+    /// Host: a selected host pair no passed proof covers (on a dual-stack LAN, WebRTC prefers IPv6),
+    /// as canonical addresses, once per distinct pair, so the coordinator can prove that exact pair.
+    var onRemoteRouteLANUnprovenPair: ((_ local: String, _ remote: String) -> Void)?
+    private var lastUnprovenPair: String?
+    func setRemoteRouteLANProof(_ links: [ProvenLocalLink]) {
+        remoteRouteLANLinks = links
+        if links.isEmpty { remoteRouteLANPairSelected = false; lastUnprovenPair = nil }
+    }
+
+    /// One selected-pair sample against the remote-route proofs.
+    func followRemoteRouteLANPair(localType: String?, remoteType: String?, localAddress: String?, remoteAddress: String?,
+                                  adapterType: String?, networkType: String?, vpn: Bool?) {
+        guard !remoteRouteLANLinks.isEmpty else { remoteRouteLANPairSelected = false; return }
+        let local = localAddress.flatMap(LocalProbeAddress.canonical), remote = remoteAddress.flatMap(LocalProbeAddress.canonical)
+        remoteRouteLANPairSelected = remoteRouteLANLinks.contains {
+            LocalMediaRoute.matches($0, localType: localType, remoteType: remoteType, localAddress: local,
+                                    remoteAddress: remote, adapterType: adapterType, networkType: networkType, vpn: vpn)
+        }
+        guard !remoteRouteLANPairSelected, let local, let remote,
+              LocalProbeAddress.family(local) == LocalProbeAddress.family(remote),
+              LocalMediaRoute.isPhysicalHostPair(localType: localType, remoteType: remoteType, adapterType: adapterType,
+                                                 networkType: networkType, vpn: vpn) else { return }
+        let pair = "\(local) \(remote)"
+        guard pair != lastUnprovenPair else { return }
+        lastUnprovenPair = pair
+        SessionLog.log.info("remote route: selected host pair (\(LocalProbeAddress.family(local) == AF_INET6 ? "IPv6" : "IPv4", privacy: .public)) is not a proven pair")
+        onRemoteRouteLANUnprovenPair?(local, remote)
     }
     private var lanEvidenceActive: Bool { provenLocalLinkActive || remoteRouteLANPairSelected }
 
@@ -1181,7 +1212,7 @@ final class PeerMedia: NSObject {
                                        rttMs: stats.rtcpRttMs ?? stats.rttMs, roundTripFresh: fresh,
                                        pacerDelayMs: stats.pacerDelayMs)
         stats.lanTrusted = trusted
-        if remoteRouteLANLink != nil { stats.remoteRouteLANPair = remoteRouteLANPairSelected }
+        if !remoteRouteLANLinks.isEmpty { stats.remoteRouteLANPair = remoteRouteLANPairSelected }
         guard tuning.qualityBitrates, remoteDescriptionReady else { return }
         defer { followEncodingFloor(trusted: trusted) }
         guard var floor = EncodingMinBitrateFloor.estimateFloorBps(
@@ -1485,10 +1516,8 @@ final class PeerMedia: NSObject {
                         self.onState?("failed"); return
                     }
                 }
-                self.remoteRouteLANPairSelected = self.remoteRouteLANLink.map {
-                    LocalMediaRoute.matches($0, localType: localType, remoteType: remoteType, localAddress: localAddress,
-                                            remoteAddress: remoteAddress, adapterType: adapterType, networkType: networkType, vpn: vpn)
-                } ?? false
+                self.followRemoteRouteLANPair(localType: localType, remoteType: remoteType, localAddress: localAddress,
+                                              remoteAddress: remoteAddress, adapterType: adapterType, networkType: networkType, vpn: vpn)
                 let route = MediaRoute.classify(selected: pair != nil, local: localType, remote: remoteType)
                 self.lastRoute = route
                 self.followRepairRoute()

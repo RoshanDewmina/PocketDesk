@@ -29,6 +29,13 @@ final class RemoteRouteLANProofTests: XCTestCase {
         try JSONEncoder().encode(LocalProbeEndpoint(address: "192.0.2.20", port: 45000))
     }
 
+    final class PairBuilds: @unchecked Sendable {
+        private let lock = NSLock()
+        private var bound: [String] = []
+        func begin(_ address: String) { lock.lock(); bound.append(address); lock.unlock() }
+        var addresses: [String] { lock.lock(); defer { lock.unlock() }; return bound }
+    }
+
     final class BuildCounter: @unchecked Sendable {
         private let lock = NSLock()
         private var value = 0
@@ -72,11 +79,11 @@ final class RemoteRouteLANProofTests: XCTestCase {
     func testAPassedProofIsNeverAProvenLocalLinkNorAPriorityChange() {
         let peer = PeerMedia(isHost: true, servers: [])
         defer { peer.close() }
-        peer.setRemoteRouteLANProof(ProvenLocalLink(localAddress: "192.168.1.10", peerAddress: "192.168.1.20"))
+        peer.setRemoteRouteLANProof([ProvenLocalLink(localAddress: "192.168.1.10", peerAddress: "192.168.1.20")])
         XCTAssertFalse(peer.provenLocalLinkActive, "couch admission and the presentation lease never see it")
         XCTAssertFalse(peer.remoteRouteLANPairSelected, "evidence waits for a sample whose selected pair is the proven one")
         XCTAssertEqual(peer.transportPriority.summary, "DSCP off · priority medium")
-        peer.setRemoteRouteLANProof(nil)
+        peer.setRemoteRouteLANProof([])
         XCTAssertFalse(peer.remoteRouteLANPairSelected)
     }
 
@@ -93,6 +100,81 @@ final class RemoteRouteLANProofTests: XCTestCase {
         XCTAssertFalse(matches("192.168.1.10", "192.168.1.20", vpn: true))
     }
 
+    // MARK: The selected pair (device test, 7 Oct 17:06)
+
+    /// Both flags on, iPhone and Mac on one Wi-Fi: the IPv4 proof passed on en0 at 17:06:10.852, then all
+    /// 75 samples read host/host adapter=unknown network=unknown, Direct/lan, remoteRouteLANPair false.
+    /// The network is dual-stack (one /64) and WebRTC ranks an IPv6 host candidate above IPv4, so the
+    /// stream's pair was IPv6 and never the proven IPv4 pair. Documentation addresses stand in for it.
+    private let proven1706 = ProvenLocalLink(localAddress: "10.0.0.92", peerAddress: "10.0.0.40")
+    private let macIPv6 = "2001:db8:fe00:853d:14f2:818f:835e:c2e2"
+    private let phoneIPv6 = "2001:db8:fe00:853d:a5eb:39d8:abab:7d53"
+
+    func testThe1706PairWasAnUnprovenIPv6PairAndProvingThatPairMakesItCount() {
+        let peer = PeerMedia(isHost: true, servers: [])
+        defer { peer.close() }
+        var asked: [[String]] = []
+        peer.onRemoteRouteLANUnprovenPair = { asked.append([$0, $1]) }
+        func sample(_ local: String, _ remote: String) -> Bool {
+            peer.followRemoteRouteLANPair(localType: "host", remoteType: "host", localAddress: local, remoteAddress: remote,
+                                          adapterType: "unknown", networkType: "unknown", vpn: false)
+            return peer.remoteRouteLANPairSelected
+        }
+        peer.setRemoteRouteLANProof([proven1706])
+        XCTAssertFalse(sample(macIPv6, phoneIPv6), "17:06: the IPv4 proof never covers the IPv6 pair the stream selected")
+        XCTAssertFalse(sample(macIPv6, phoneIPv6))
+        XCTAssertEqual(asked, [[macIPv6, phoneIPv6]], "asked once to prove that exact pair")
+        XCTAssertTrue(sample("10.0.0.92", "10.0.0.40"), "the proven IPv4 pair still counts")
+        peer.setRemoteRouteLANProof([proven1706, ProvenLocalLink(localAddress: macIPv6, peerAddress: phoneIPv6)])
+        XCTAssertTrue(sample(macIPv6, phoneIPv6), "once the selected pair is itself proven, its samples are LAN evidence")
+        XCTAssertTrue(sample(macIPv6.uppercased(), "2001:0db8:fe00:853d:a5eb:39d8:abab:7d53"), "one spelling per address")
+        XCTAssertFalse(sample(macIPv6, "2001:db8:fe00:853d::fa07"), "another IPv6 neighbour is not the proven peer")
+        XCTAssertEqual(asked.last, [macIPv6, "2001:db8:fe00:853d::fa07"])
+        peer.setRemoteRouteLANProof([])
+        XCTAssertFalse(sample(macIPv6, phoneIPv6), "the evidence ends with the proofs")
+    }
+
+    func testOnlyAPhysicalHostPairOfOneFamilyAsksForItsOwnProof() {
+        let peer = PeerMedia(isHost: true, servers: [])
+        defer { peer.close() }
+        var asked = 0
+        peer.onRemoteRouteLANUnprovenPair = { _, _ in asked += 1 }
+        func sample(_ local: String = "2001:db8::92", _ remote: String = "2001:db8::40", types: (String, String) = ("host", "host"),
+                    network: String = "unknown", vpn: Bool = false) {
+            peer.followRemoteRouteLANPair(localType: types.0, remoteType: types.1, localAddress: local, remoteAddress: remote,
+                                          adapterType: "unknown", networkType: network, vpn: vpn)
+        }
+        sample()
+        XCTAssertEqual(asked, 0, "nothing before the first proof passed")
+        peer.setRemoteRouteLANProof([proven1706])
+        sample(types: ("relay", "host")); sample(types: ("srflx", "prflx"))
+        sample("fd7a:115c:a1e0::1", "fd7a:115c:a1e0::2", network: "vpn"); sample(vpn: true)
+        sample("10.0.0.92", "2001:db8::40"); sample("fe80::1", "fe80::2")
+        XCTAssertEqual(asked, 0, "relay, reflexive, VPN, mixed-family and link-local pairs are never proven")
+        sample()
+        XCTAssertEqual(asked, 1)
+        XCTAssertFalse(peer.remoteRouteLANPairSelected)
+    }
+
+    func testAddressesCompareInOneSpellingAndThePairFieldIsOptionalOnTheWire() throws {
+        XCTAssertEqual(LocalProbeAddress.canonical("2001:0DB8:0:0::1"), "2001:db8::1")
+        XCTAssertEqual(LocalProbeAddress.canonical("10.0.0.92"), "10.0.0.92")
+        XCTAssertEqual(LocalProbeAddress.family("2001:db8::1"), AF_INET6)
+        XCTAssertNil(LocalProbeAddress.canonical("fe80::1"), "link-local needs a scope; it is never bound or probed")
+        XCTAssertNil(LocalProbeAddress.canonical("fe80::1%en0"))
+        XCTAssertNil(LocalProbeAddress.canonical("relay.example"))
+        for refused in ["::", "::1", "ff02::1", "::ffff:10.0.0.40"] { XCTAssertNil(LocalProbeAddress.family(refused), refused) }
+        XCTAssertTrue(LocalProbeSubnet.contains("2001:db8:fe00:853d::40", network: "2001:db8:fe00:853d::92", prefixLength: 64))
+        XCTAssertFalse(LocalProbeSubnet.contains("2001:db8:fe00:853e::40", network: "2001:db8:fe00:853d::92", prefixLength: 64))
+        XCTAssertFalse(LocalProbeSubnet.contains("10.0.0.40", network: "2001:db8:fe00:853d::92", prefixLength: 64))
+        XCTAssertFalse(LocalProbeSubnet.contains("2001:db8::40", network: "2001:db8::92", prefixLength: 0))
+        let plain = try JSONEncoder().encode(LocalProbeEndpoint(address: "10.0.0.92", port: 45000))
+        XCTAssertFalse(String(decoding: plain, as: UTF8.self).contains("peerAddress"), "the first proof's endpoint is unchanged")
+        let pair = try JSONEncoder().encode(LocalProbeEndpoint(address: macIPv6, port: 45000, peerAddress: phoneIPv6))
+        XCTAssertEqual(try JSONDecoder().decode(LocalProbeEndpoint.self, from: pair).peerAddress, phoneIPv6)
+        XCTAssertNil(try JSONDecoder().decode(LocalProbeEndpoint.self, from: plain).peerAddress)
+    }
+
     // MARK: The Mac, against a scripted phone
 
     @MainActor private struct MacRig {
@@ -101,6 +183,8 @@ final class RemoteRouteLANProofTests: XCTestCase {
         let cipher: SignalCipher
         let request: String
         let session: String
+        let room: String
+        let key: Data
 
         func seal(_ kind: String, sequence: UInt64, body: Data? = nil) throws -> RelayMessage {
             RelayMessage(type: "signal", payload: try cipher.seal(ProtectedMessage(kind: kind, request: request,
@@ -133,7 +217,8 @@ final class RemoteRouteLANProofTests: XCTestCase {
         signaling.deliver(RelayMessage(type: "signal", payload: try cipher.seal(ProtectedMessage(kind: "request",
             request: request, session: "", sequence: 0, body: try JSONEncoder().encode(handshake)), sender: "client")))
         let challenge = try cipher.open(try XCTUnwrap(signaling.sent.last?.payload), sender: "host")
-        let rig = MacRig(host: host, signaling: signaling, cipher: cipher, request: request, session: challenge.session)
+        let rig = MacRig(host: host, signaling: signaling, cipher: cipher, request: request, session: challenge.session,
+                         room: pair.invitation.room, key: pair.invitation.key)
         signaling.deliver(try rig.seal("proof", sequence: 0))
         signaling.deliver(try rig.seal("acceptedAck", sequence: 1))
         return rig
@@ -183,12 +268,132 @@ final class RemoteRouteLANProofTests: XCTestCase {
         defer { rig.host.stop() }
         rig.host.applyRemoteRouteLANProofForTesting(link)
         try await waitFor("media starts") { rig.host.media != nil }
-        XCTAssertEqual(rig.host.media?.remoteRouteLANLink?.peerAddress, "192.168.1.20", "a pass before media is handed over")
+        XCTAssertEqual(rig.host.media?.remoteRouteLANLinks.map(\.peerAddress), ["192.168.1.20"], "a pass before media is handed over")
         XCTAssertFalse(rig.host.provenLocalLinkActive, "never the authority-bearing proven link")
         rig.host.endRemoteRouteLANProofForTesting()
-        XCTAssertNil(rig.host.media?.remoteRouteLANLink)
+        XCTAssertEqual(rig.host.media?.remoteRouteLANLinks.isEmpty, true)
         rig.host.applyRemoteRouteLANProofForTesting(link)
-        XCTAssertNotNil(rig.host.media?.remoteRouteLANLink, "a pass after media reaches the live peer")
+        XCTAssertEqual(rig.host.media?.remoteRouteLANLinks.count, 1, "a pass after media reaches the live peer")
+        XCTAssertNil(rig.host.lastSessionFailure)
+    }
+
+    func testTheMacProvesTheSelectedPairOnlyAfterItsFirstProofAndAtMostTwice() async throws {
+        let rig = try macRig(bothOn, offer: true, builds: BuildCounter())
+        defer { rig.host.stop() }
+        let pairs = PairBuilds()
+        rig.host.remoteRouteLANPairProofBuilder = { _, _, _, _, local in pairs.begin(local); return nil }
+        rig.host.remoteRouteLANPeerIsOnLink = { _ in true }
+        try await waitFor("media starts") { rig.host.media != nil }
+        let media = try XCTUnwrap(rig.host.media)
+        func sample(_ remote: String) {
+            media.followRemoteRouteLANPair(localType: "host", remoteType: "host", localAddress: macIPv6, remoteAddress: remote,
+                                           adapterType: "unknown", networkType: "unknown", vpn: false)
+        }
+        sample(phoneIPv6)
+        XCTAssertEqual(rig.host.remoteRouteLANPairAttemptsForTesting, 0, "nothing before the first proof passed")
+        rig.host.applyRemoteRouteLANProofForTesting(proven1706)
+        sample(phoneIPv6)
+        try await waitFor("the pair's proof is built on the Mac's own address in it") { pairs.addresses == [macIPv6] }
+        try await waitFor("an unbuildable proof ends only that attempt") { rig.host.remoteRouteLANPairForTesting == nil }
+        sample(phoneIPv6)
+        sample("2001:db8:fe00:853d::fa07")
+        try await waitFor("a different pair is a second attempt") { pairs.addresses.count == 2 }
+        try await waitFor("which ends too") { rig.host.remoteRouteLANPairForTesting == nil }
+        sample("2001:db8:fe00:853d::fa08")
+        XCTAssertEqual(rig.host.remoteRouteLANPairAttemptsForTesting, 2, "at most two per session")
+        XCTAssertNil(rig.host.remoteRouteLANPairForTesting)
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(pairs.addresses.count, 2)
+        XCTAssertEqual(rig.host.remoteRouteLANLinksForTesting.count, 1, "the first proof's evidence stands")
+        XCTAssertNil(rig.host.lastSessionFailure)
+        XCTAssertNotNil(rig.host.media)
+    }
+
+    func testTheMacIgnoresAPairAnswerItDidNotAskFor() async throws {
+        let rig = try macRig(bothOn, offer: true, builds: BuildCounter())
+        defer { rig.host.stop() }
+        try await waitFor("media starts") { rig.host.media != nil }
+        let answer = try JSONEncoder().encode(LocalProbeEndpoint(address: phoneIPv6, port: 45000, peerAddress: macIPv6))
+        rig.signaling.deliver(try rig.seal("localEndpoint", sequence: 2, body: answer))
+        XCTAssertNotNil(rig.host.media, "an unasked pair answer is stale, never a fault")
+        XCTAssertNil(rig.host.lastSessionFailure)
+        XCTAssertTrue(rig.host.isRunning)
+    }
+
+    /// The whole Mac side with real sockets: a stand-in phone proof answers on a second address of this
+    /// Mac (route probe bypassed, as in the test below). The request names the phone's address, the
+    /// matching answer is accepted, the pass makes that exact pair count, and the pair's end ends it.
+    func testAProvenSelectedPairCountsUntilItsOwnProofEnds() async throws {
+        let addresses = Set(MacNetworkLink.interfaceAddresses().filter { $0.name.hasPrefix("en") }
+            .compactMap { LocalProbeAddress.canonical(MacNetworkLink.normalized($0.address)) }
+            .filter { LocalProbeAddress.family($0) == AF_INET6 }).sorted()
+        guard addresses.count >= 2 else { throw XCTSkip("needs two IPv6 addresses on a physical interface") }
+        let mac = addresses[0], phone = addresses[1]
+        let rig = try macRig(bothOn, offer: true, builds: BuildCounter())
+        defer { rig.host.stop() }
+        rig.host.remoteRouteLANPeerIsOnLink = { _ in true }
+        rig.host.remoteRouteLANPairProofBuilder = { room, epoch, session, key, local in
+            let proof = LocalLinkProof.make(room: room, epoch: epoch, session: session, pairingKey: key, boundTo: local)
+            proof?.bypassRouteProbeForTesting = true
+            return proof
+        }
+        try await waitFor("media starts") { rig.host.media != nil }
+        let media = try XCTUnwrap(rig.host.media)
+        func sample() -> Bool {
+            media.followRemoteRouteLANPair(localType: "host", remoteType: "host", localAddress: mac, remoteAddress: phone,
+                                           adapterType: "unknown", networkType: "unknown", vpn: false)
+            return media.remoteRouteLANPairSelected
+        }
+        rig.host.applyRemoteRouteLANProofForTesting(proven1706)
+        XCTAssertFalse(sample())
+        try await waitFor("the Mac sent its pair request", seconds: 5) { rig.kindsSent.filter { $0 == "localEndpoint" }.count == 1 }
+        let sent = try XCTUnwrap(rig.signaling.sent.compactMap { $0.payload.flatMap { try? rig.cipher.open($0, sender: "host") } }
+            .last { $0.kind == "localEndpoint" })
+        let request = try JSONDecoder().decode(LocalProbeEndpoint.self, from: try XCTUnwrap(sent.body))
+        XCTAssertEqual(request.address, mac)
+        XCTAssertEqual(request.peerAddress, phone, "the phone is told which of its addresses the stream uses")
+        let epoch = String(repeating: "c", count: 32), room = rig.room, session = rig.session, key = rig.key
+        let built = await Task.detached {
+            LocalLinkProof.make(room: room, epoch: epoch, session: session, pairingKey: key, boundTo: phone)
+        }.value
+        let stand = try XCTUnwrap(built)
+        defer { stand.close() }
+        stand.bypassRouteProbeForTesting = true
+        stand.setPeer(LocalProbeEndpoint(address: request.address, port: request.port))
+        let answer = LocalProbeEndpoint(address: phone, port: stand.endpoint.port, peerAddress: mac)
+        rig.signaling.deliver(try rig.seal("localEndpoint", sequence: 2, body: try JSONEncoder().encode(answer)))
+        try await waitFor("the selected pair passed", seconds: 6) { rig.host.remoteRouteLANLinksForTesting.count == 2 }
+        XCTAssertTrue(sample(), "the stream's own pair is now LAN evidence")
+        XCTAssertFalse(rig.host.provenLocalLinkActive)
+        rig.host.remoteRouteLANPairProofForTesting?.invalidateForTesting("test-path-change")
+        try await waitFor("a path change under a proven pair ends all evidence") { rig.host.remoteRouteLANLinksForTesting.isEmpty }
+        XCTAssertFalse(sample())
+        XCTAssertNil(rig.host.lastSessionFailure)
+        XCTAssertNotNil(rig.host.media)
+    }
+
+    func testAPairAttemptThatFailsBeforePassingKeepsTheFirstProofsEvidence() async throws {
+        let addresses = Set(MacNetworkLink.interfaceAddresses().filter { $0.name.hasPrefix("en") }
+            .compactMap { LocalProbeAddress.canonical(MacNetworkLink.normalized($0.address)) }
+            .filter { LocalProbeAddress.family($0) == AF_INET6 }).sorted()
+        guard let mac = addresses.first else { throw XCTSkip("needs an IPv6 address on a physical interface") }
+        let rig = try macRig(bothOn, offer: true, builds: BuildCounter())
+        defer { rig.host.stop() }
+        rig.host.remoteRouteLANPeerIsOnLink = { _ in true }
+        rig.host.remoteRouteLANPairProofBuilder = { room, epoch, session, key, local in
+            let proof = LocalLinkProof.make(room: room, epoch: epoch, session: session, pairingKey: key, boundTo: local)
+            proof?.bypassRouteProbeForTesting = true
+            return proof
+        }
+        try await waitFor("media starts") { rig.host.media != nil }
+        rig.host.applyRemoteRouteLANProofForTesting(proven1706)
+        rig.host.media?.followRemoteRouteLANPair(localType: "host", remoteType: "host", localAddress: mac, remoteAddress: phoneIPv6,
+                                                 adapterType: "unknown", networkType: "unknown", vpn: false)
+        try await waitFor("the pair proof is running", seconds: 5) { rig.host.remoteRouteLANPairProofForTesting != nil }
+        rig.host.remoteRouteLANPairProofForTesting?.invalidateForTesting("test-route-failed")
+        try await waitFor("only the attempt ended") { rig.host.remoteRouteLANPairForTesting == nil }
+        XCTAssertEqual(rig.host.remoteRouteLANLinksForTesting.count, 1, "the IPv4 evidence stands")
+        XCTAssertEqual(rig.host.media?.remoteRouteLANLinks.count, 1)
         XCTAssertNil(rig.host.lastSessionFailure)
     }
 
@@ -266,6 +471,33 @@ final class RemoteRouteLANProofTests: XCTestCase {
         XCTAssertFalse(LocalProbeSubnet.contains("192.168.1.20", network: "192.168.1.10", mask: "0.0.0.0"))
     }
 
+    func testThePhoneProvesARequestedPairOnlyAfterItsFirstAttemptAndOnItsOwnLAN() async throws {
+        let builds = BuildCounter(), pairs = PairBuilds()
+        let (phone, signaling, cipher, request, session) = try acceptedPhone(bothOn, access: "remote", builds: builds)
+        defer { phone.stop() }
+        phone.remoteRouteLANPairProofBuilder = { _, _, _, _, local in pairs.begin(local); return nil }
+        func deliver(_ endpoint: LocalProbeEndpoint, _ sequence: UInt64) throws {
+            signaling.deliver(RelayMessage(type: "signal", payload: try cipher.seal(ProtectedMessage(kind: "localEndpoint",
+                request: request.request, session: session, sequence: sequence, body: try JSONEncoder().encode(endpoint)), sender: "host")))
+        }
+        let pairRequest = LocalProbeEndpoint(address: macIPv6, port: 45001, peerAddress: phoneIPv6.uppercased())
+        try deliver(pairRequest, 2)
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertTrue(pairs.addresses.isEmpty, "no pair proof before this session's first attempt")
+        XCTAssertTrue(phone.isRunning, "an early pair request is stale, not a fault")
+        try deliver(LocalProbeEndpoint(address: "192.0.2.20", port: 45000), 3)
+        try await waitFor("the first proof was attempted") { builds.count == 1 }
+        try deliver(pairRequest, 4)
+        try await waitFor("the phone binds its own address in the Mac's selected pair") { pairs.addresses == [phoneIPv6] }
+        try await waitFor("an unbuildable proof ends only that attempt") { phone.remoteRouteLANPairForTesting == nil }
+        phone.remoteRouteLANPeerIsOnLink = { _ in false }
+        try deliver(LocalProbeEndpoint(address: "2001:db8:ffff::92", port: 45002, peerAddress: phoneIPv6), 5)
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(pairs.addresses.count, 1, "a Mac address outside this phone's own prefixes is never probed")
+        XCTAssertTrue(phone.isRunning)
+        XCTAssertNil(phone.lastSessionFailure)
+    }
+
     // MARK: Both ends, real sockets
 
     @MainActor private final class RemoteRouteBridge {
@@ -336,5 +568,42 @@ final class RemoteRouteLANProofTests: XCTestCase {
         XCTAssertFalse(host.provenLocalLinkActive)
         XCTAssertNotNil(host.media)
         XCTAssertTrue(phone.isRunning)
+    }
+
+    /// Two of this Mac's own IPv6 addresses on its one physical interface stand in for the two ends: real
+    /// sockets, hop limit, arrival interface, source address and port, HMAC and nonce. A socket bound to
+    /// that interface reports it as the arrival interface even here; only the route probe is bypassed,
+    /// because the path to this machine's own address is loopback (it reads `no-physical`).
+    func testAnIPv6ProofPassesBetweenTheExactBoundAddresses() async throws {
+        final class Proven: @unchecked Sendable { var links: [ProvenLocalLink] = [] }
+        let addresses = Set(MacNetworkLink.interfaceAddresses().filter { $0.name.hasPrefix("en") }
+            .compactMap { LocalProbeAddress.canonical(MacNetworkLink.normalized($0.address)) }
+            .filter { LocalProbeAddress.family($0) == AF_INET6 }).sorted()
+        guard addresses.count >= 2 else { throw XCTSkip("needs two IPv6 addresses on a physical interface") }
+        let room = try SecureRandom.token(), session = try SecureRandom.token(), epoch = String(repeating: "e", count: 32)
+        let key = Data(repeating: 7, count: 32)
+        let (first, second, foreign) = await Task.detached {
+            (LocalLinkProof.make(room: room, epoch: epoch, session: session, pairingKey: key, boundTo: addresses[0]),
+             LocalLinkProof.make(room: room, epoch: epoch, session: session, pairingKey: key, boundTo: addresses[1]),
+             LocalLinkProof.make(room: room, epoch: epoch, session: session, pairingKey: key, boundTo: "2001:db8::1"))
+        }.value
+        guard let first, let second else {
+            first?.close(); second?.close()
+            throw XCTSkip("no single physical path here")
+        }
+        defer { first.close(); second.close() }
+        XCTAssertEqual(first.endpoint.address, addresses[0])
+        XCTAssertNil(foreign, "an address this Mac does not have is never bound")
+        let proven = Proven()
+        first.bypassRouteProbeForTesting = true
+        second.bypassRouteProbeForTesting = true
+        first.onProven = { proven.links.append($0) }
+        second.onProven = { proven.links.append($0) }
+        first.setPeer(second.endpoint)
+        second.setPeer(first.endpoint)
+        try await waitFor("both ends proved the exact pair", seconds: 6) { proven.links.count == 2 }
+        print("IPv6 pair proof on this machine: \(proven.links.count == 2 ? "passed" : first.stageSummary())")
+        XCTAssertTrue(proven.links.contains { $0.localAddress == addresses[0] && $0.peerAddress == addresses[1] })
+        XCTAssertTrue(proven.links.contains { $0.localAddress == addresses[1] && $0.peerAddress == addresses[0] })
     }
 }

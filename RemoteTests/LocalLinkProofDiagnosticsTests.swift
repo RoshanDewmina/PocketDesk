@@ -102,6 +102,67 @@ final class LocalLinkProofDiagnosticsTests: XCTestCase {
         XCTAssertEqual(parsed.index, if_nametoindex("lo0"))
     }
 
+    /// Layout captured from recvmsg on macOS 27 for a hop-limit-1 IPv6 datagram received on en0 (index 11):
+    /// IPV6_PKTINFO (destination address, here a documentation address, and interface index), then IPV6_HOPLIMIT.
+    private let capturedEn0IPv6Control: [UInt8] = [
+        0x20, 0x00, 0x00, 0x00, 0x29, 0x00, 0x00, 0x00, 0x2e, 0x00, 0x00, 0x00,
+        0x20, 0x01, 0x0d, 0xb8, 0xfe, 0x00, 0x85, 0x3d, 0x14, 0xf2, 0x81, 0x8f, 0x83, 0x5e, 0xc2, 0xe2,
+        0x0b, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x00, 0x00, 0x29, 0x00, 0x00, 0x00, 0x2f, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+    ]
+
+    func testControlParserReadsIPv6HopLimitAndArrivalInterface() {
+        let parsed = capturedEn0IPv6Control.withUnsafeBytes { LocalProbeControl.parse($0, length: 48) }
+        XCTAssertEqual(parsed.ttl, 1)
+        XCTAssertEqual(parsed.index, 11)
+        let truncated = capturedEn0IPv6Control.withUnsafeBytes { LocalProbeControl.parse($0, length: 40) }
+        XCTAssertEqual(truncated.index, 11)
+        XCTAssertNil(truncated.ttl)
+    }
+
+    /// End-to-end against the kernel: the RFC 3542 option values deliver hop limit and interface for IPv6.
+    func testKernelIPv6AncillaryDataParsesAsOneHop() throws {
+        let fd = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)
+        guard fd >= 0 else { throw XCTSkip("IPv6 socket unavailable") }
+        defer { Darwin.close(fd) }
+        var one: Int32 = 1
+        XCTAssertEqual(setsockopt(fd, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &one, 4), 0)
+        XCTAssertEqual(setsockopt(fd, IPPROTO_IPV6, LocalProbeControl.ipv6ReceiveHopLimit, &one, 4), 0)
+        XCTAssertEqual(setsockopt(fd, IPPROTO_IPV6, LocalProbeControl.ipv6ReceivePacketInfo, &one, 4), 0)
+        var address = sockaddr_in6()
+        address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        address.sin6_family = sa_family_t(AF_INET6)
+        address.sin6_addr = in6addr_loopback
+        let length = socklen_t(MemoryLayout<sockaddr_in6>.size)
+        let bound = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, length) } }
+        guard bound == 0 else { throw XCTSkip("no IPv6 loopback") }
+        var size = length
+        _ = withUnsafeMutablePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.getsockname(fd, $0, &size) } }
+        var timeout = timeval(tv_sec: 2, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        let payload = Array("probe".utf8)
+        let sent = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.sendto(fd, payload, payload.count, 0, $0, length) }
+        }
+        XCTAssertEqual(sent, payload.count)
+        var body = [UInt8](repeating: 0, count: 64)
+        var control = [UInt8](repeating: 0, count: 256)
+        let parsed: (ttl: Int32?, index: UInt32?) = body.withUnsafeMutableBytes { bodyBytes in
+            control.withUnsafeMutableBytes { controlBytes in
+                var vector = iovec(iov_base: bodyBytes.baseAddress, iov_len: bodyBytes.count)
+                return withUnsafeMutablePointer(to: &vector) { vectorPointer in
+                    var header = msghdr(msg_name: nil, msg_namelen: 0, msg_iov: vectorPointer, msg_iovlen: 1,
+                                        msg_control: controlBytes.baseAddress,
+                                        msg_controllen: socklen_t(controlBytes.count), msg_flags: 0)
+                    guard Darwin.recvmsg(fd, &header, 0) > 0 else { return (nil, nil) }
+                    return LocalProbeControl.parse(UnsafeRawBufferPointer(controlBytes), length: Int(header.msg_controllen))
+                }
+            }
+        }
+        XCTAssertEqual(parsed.ttl, 1)
+        XCTAssertEqual(parsed.index, if_nametoindex("lo0"))
+    }
+
     // MARK: Path classification
 
     private let en0 = LocalPathInterface(name: "en0", index: 11, type: .wifi)
