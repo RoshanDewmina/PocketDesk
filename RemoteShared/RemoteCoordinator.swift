@@ -218,6 +218,22 @@ final class RemoteCoordinator: ObservableObject {
     private var localProofTimeout: Task<Void, Never>?
     private let localProofTimeoutNanoseconds: UInt64
     private let localProofBuilder: @Sendable (String, String, String, Data) -> LocalLinkProof?
+    /// Remote-route LAN proof (`StreamTuning.remoteRouteLANProof` on the Mac, `RemoteRouteLANProofRequest`
+    /// on the phone), snapshots at creation. Separate from `localLinkProof`: it never gates, restricts or
+    /// fails the session, and its pass is never `provenLocalLinkActive`.
+    private let remoteRouteLANProofEnabled: Bool
+    private let remoteRouteLANProofRequestEnabled: Bool
+    /// Host: this session's phone offered to answer. Phone: this session's request offered it.
+    private var remoteRouteLANProofOffered = false
+    private var remoteRouteLANProofAttempted = false
+    private var remoteRouteLANProof: LocalLinkProof?
+    private var remoteRouteLANProofPreparation: Task<Void, Never>?
+    private var remoteRouteLANProofTimeout: Task<Void, Never>?
+    private var remoteRouteLANPeerEndpoint: LocalProbeEndpoint?
+    /// Host: the passed proof while it holds; `createMedia` hands it to a peer created after the pass.
+    private var remoteRouteLANLink: ProvenLocalLink?
+    /// The remote-route proof's peer must be inside one of this device's own Wi-Fi/Ethernet subnets.
+    var remoteRouteLANPeerIsOnLink: (String) -> Bool = LocalProbeSubnet.isOnLink
     /// Host: why the most recent phone session attempt ended without stopping sharing.
     @Published private(set) var lastSessionFailure: String?
     /// Media signals that arrive after this side's proof started but before it finished; the faster
@@ -346,6 +362,9 @@ final class RemoteCoordinator: ObservableObject {
         self.advertisesRenewal = advertisesRenewal
         self.handshakeTimeoutNanoseconds = handshakeTimeoutNanoseconds
         self.transientTimeoutRecoveryEnabled = !defaults.bool(forKey: Self.transientTimeoutRecoveryDisabledKey)
+        self.remoteRouteLANProofEnabled = isHost && (defaults === UserDefaults.standard ? StreamTuning.current
+                                                     : StreamTuning.resolve(defaults: defaults)).remoteRouteLANProof
+        self.remoteRouteLANProofRequestEnabled = !isHost && RemoteRouteLANProofRequest.isEnabled(defaults)
         self.retryLimit = max(0, retryLimit)
         self.retryBaseNanoseconds = retryBaseNanoseconds
         self.sessionLossRetryLimit = sessionLossRetryLimit.map { max(0, $0) }
@@ -1201,6 +1220,8 @@ final class RemoteCoordinator: ObservableObject {
         localLinkProof?.close(); localLinkProof = nil
         pendingMediaSignals.removeAll()
         pendingLocalEndpoint = nil
+        endRemoteRouteLANProof()
+        remoteRouteLANProofOffered = false; remoteRouteLANProofAttempted = false; remoteRouteLANPeerEndpoint = nil
         registrationStability?.cancel(); registrationStability = nil
         media?.close(); media = nil
         remoteVideo = nil; connected = false; awaitingApproval = false; hostRegistered = false
@@ -1284,8 +1305,10 @@ final class RemoteCoordinator: ObservableObject {
                     }
                     if !isHost {
                         resetSession(); request = try SecureRandom.token()
-                        let handshake = MacShareBlocker.Handshake.phoneRequest(StillTextPreferences.requestedFeatures(),
+                        var handshake = MacShareBlocker.Handshake.phoneRequest(StillTextPreferences.requestedFeatures(),
                                                                                mode: sessionModeRequest == .couch ? SessionMode.couch.rawValue : nil)
+                        if remoteRouteLANProofRequestEnabled, sessionModeRequest != .couch, remoteRouteLANEpoch != nil { handshake.lanProof = true }
+                        remoteRouteLANProofOffered = handshake.lanProof == true
                         requestedFeatures = handshake.requested
                         first60Negotiated = handshake.first60 == true
                         phoneLoadWindowsRequested = handshake.phoneLoadWindows == true
@@ -1299,6 +1322,8 @@ final class RemoteCoordinator: ObservableObject {
                             enrollmentHandshake.shortcutChips = nil
                             enrollmentHandshake.phoneLoadWindows = nil
                             enrollmentHandshake.keysOnDemand = nil
+                            enrollmentHandshake.lanProof = nil
+                            remoteRouteLANProofOffered = false
                             let commit = try PairEnrollment.commitment(invitation: scannedEnrollment, requestID: request,
                                 reveal: ephemeral.reveal, handshake: enrollmentHandshake, phoneName: name)
                             let enrollment = PairEnrollment.Request(commitment: commit, handshake: enrollmentHandshake, phoneName: name)
@@ -1387,6 +1412,7 @@ final class RemoteCoordinator: ObservableObject {
             first60Negotiated = First60.isEnabled() && first60SetupStatus != nil && MacShareBlocker.Handshake.supportsFirst60(in: message.body)
             peerRequestedMode = MacShareBlocker.Handshake.requestedMode(in: message.body)
             first60Negotiated = first60Negotiated && peerRequestedMode == .picture
+            remoteRouteLANProofOffered = remoteRouteLANProofEnabled && MacShareBlocker.Handshake.supportsRemoteRouteLANProof(in: message.body)
             send(kind: "challenge", handshake: true); setTimeout(); return
         }
         if !isHost, message.kind == "challenge" {
@@ -1425,6 +1451,8 @@ final class RemoteCoordinator: ObservableObject {
         guard guardState != nil else { throw RemoteError.stale }
         try guardState?.accept(message)
         switch message.kind {
+        case "localEndpoint" where localRouteEpoch == nil:
+            try receiveRemoteRouteLANEndpoint(message.body)
         case "localEndpoint":
             guard localRouteEpoch != nil, let body = message.body else { throw RemoteError.invalidMessage }
             let endpoint = try JSONDecoder().decode(LocalProbeEndpoint.self, from: body)
@@ -1705,6 +1733,90 @@ final class RemoteCoordinator: ObservableObject {
             return
         }
         finishMedia(localLink: nil)
+        if isHost, remoteRouteLANProofOffered { beginRemoteRouteLANProof(peer: nil) }
+    }
+
+    /// The server's epoch while it authorizes a remote route; the remote-route proof binds to it.
+    private var remoteRouteLANEpoch: String? {
+        guard !localOnly, routeAuthorized, routePolicy?.access == .remote else { return nil }
+        return routePolicy?.epoch
+    }
+
+    /// A peer endpoint on a remote route. The Mac sends its endpoint first and only to a phone that
+    /// offered; the phone answers with its own. Anything else breaks the protocol, as before.
+    /// The Mac's own attempt may already have ended; a late answer to it is ignored, not a fault.
+    private func receiveRemoteRouteLANEndpoint(_ body: Data?) throws {
+        guard remoteRouteLANProofOffered, remoteRouteLANEpoch != nil, media != nil || mediaCapabilityPreparationID != nil,
+              let body else { throw RemoteError.invalidMessage }
+        guard remoteRouteLANPeerEndpoint == nil else { throw RemoteError.stale }
+        guard isHost == remoteRouteLANProofAttempted else { throw RemoteError.invalidMessage }
+        let endpoint = try JSONDecoder().decode(LocalProbeEndpoint.self, from: body)
+        remoteRouteLANPeerEndpoint = endpoint
+        guard remoteRouteLANPeerIsOnLink(endpoint.address) else {
+            LocalLinkProof.log.info("remote route: peer is not on this device's LAN; no probe")
+            endRemoteRouteLANProof(); return
+        }
+        if isHost { remoteRouteLANProof?.setPeer(endpoint) } else { beginRemoteRouteLANProof(peer: endpoint) }
+    }
+
+    /// Runs beside the stream: a failure, a timeout or a later path change only ends the proof (and, on
+    /// the Mac, the LAN evidence), never the session. Same proof, so the same one-hop guarantees.
+    private func beginRemoteRouteLANProof(peer: LocalProbeEndpoint?) {
+        guard !remoteRouteLANProofAttempted, let epoch = remoteRouteLANEpoch, let room = invitation?.room,
+              let key = invitation?.key, !session.isEmpty else { return }
+        remoteRouteLANProofAttempted = true
+        let session = self.session, isHost = self.isHost, buildProof = localProofBuilder
+        remoteRouteLANProofPreparation = Task { [weak self] in
+            // TN3179: a backgrounded attempt is denied silently. The stream does not wait for it.
+            if !isHost, !LocalNetworkAccess.appIsActive { return }
+            let proof = await Task.detached(priority: .utility) { buildProof(room, epoch, session, key) }.value
+            guard let self, !Task.isCancelled, !self.stopped, self.session == session,
+                  self.remoteRouteLANEpoch == epoch, self.remoteRouteLANProof == nil else { proof?.close(); return }
+            self.remoteRouteLANProofPreparation = nil
+            guard let proof else {
+                LocalLinkProof.log.info("remote route: not started, no single directly attached Wi-Fi or Ethernet path")
+                return
+            }
+            self.remoteRouteLANProof = proof
+            proof.onInvalidated = { [weak self, weak proof] in
+                guard let self, let proof, self.remoteRouteLANProof === proof else { return }
+                LocalLinkProof.log.error("remote route: LAN evidence ended")
+                self.endRemoteRouteLANProof()
+            }
+            proof.onLocalNetworkDenied = { [weak self, weak proof] in
+                // As on a local route: with the alert still up, iOS denies first and retries after Allow.
+                guard let self, let proof, self.remoteRouteLANProof === proof, LocalNetworkAccess.appIsActive else { return }
+                self.endRemoteRouteLANProof()
+            }
+            proof.onProven = { [weak self, weak proof] link in
+                guard let self, let proof, self.remoteRouteLANProof === proof, self.remoteRouteLANEpoch == epoch else { return }
+                self.applyRemoteRouteLANProof(link)
+            }
+            self.remoteRouteLANProofTimeout = Task { [weak self, weak proof] in
+                try? await Task.sleep(nanoseconds: self?.localProofTimeoutNanoseconds ?? 8_000_000_000)
+                guard !Task.isCancelled, let self, let proof, self.remoteRouteLANProof === proof else { return }
+                LocalLinkProof.log.error("remote route: not proven within the bound: \(proof.stageSummary(), privacy: .public)")
+                self.endRemoteRouteLANProof()
+            }
+            if let peer { proof.setPeer(peer) }
+            guard let data = try? JSONEncoder().encode(proof.endpoint) else { self.endRemoteRouteLANProof(); return }
+            self.send(kind: "localEndpoint", body: data)
+        }
+    }
+
+    private func applyRemoteRouteLANProof(_ link: ProvenLocalLink) {
+        remoteRouteLANProofTimeout?.cancel(); remoteRouteLANProofTimeout = nil
+        LocalLinkProof.log.info("remote route: one-hop link proven beside the stream")
+        guard isHost else { return }
+        remoteRouteLANLink = link
+        media?.setRemoteRouteLANProof(link)
+    }
+
+    private func endRemoteRouteLANProof() {
+        remoteRouteLANProofTimeout?.cancel(); remoteRouteLANProofTimeout = nil
+        remoteRouteLANProofPreparation?.cancel(); remoteRouteLANProofPreparation = nil
+        remoteRouteLANProof?.close(); remoteRouteLANProof = nil
+        if remoteRouteLANLink != nil { remoteRouteLANLink = nil; media?.setRemoteRouteLANProof(nil) }
     }
 
     private func beginLocalProof(room: String, epoch: String) {
@@ -1832,6 +1944,7 @@ final class RemoteCoordinator: ObservableObject {
                              textClarity: isHost && peerFeatures.contains(SessionFeature.textClarity),
                              keysOnDemand: isHost && peerFeatures.contains(SessionFeature.keysOnDemand), capabilitySnapshot: capabilitySnapshot)
         media = peer
+        if let remoteRouteLANLink { peer.setRemoteRouteLANProof(remoteRouteLANLink) }
         if let engine = fileTransfer {
             let rich = richClipboardTransfer
             peer.onFileMessage = { [weak engine, weak rich] data in
@@ -2123,6 +2236,12 @@ final class RemoteCoordinator: ObservableObject {
     var iceServersForTesting: [ICEServerConfiguration] { servers }
     var renewalPlanForTesting: RenewalPlan? { renewalPlan }
     var localLinkProofForTesting: LocalLinkProof? { localLinkProof }
+    var remoteRouteLANProofOfferedForTesting: Bool { remoteRouteLANProofOffered }
+    var remoteRouteLANProofAttemptedForTesting: Bool { remoteRouteLANProofAttempted }
+    var remoteRouteLANProofForTesting: LocalLinkProof? { remoteRouteLANProof }
+    /// Stands in for a passed proof (and for its end) so tests reach the evidence without a second device.
+    func applyRemoteRouteLANProofForTesting(_ link: ProvenLocalLink) { applyRemoteRouteLANProof(link) }
+    func endRemoteRouteLANProofForTesting() { endRemoteRouteLANProof() }
     var isStoppedForTesting: Bool { stopped }
     #endif
 }

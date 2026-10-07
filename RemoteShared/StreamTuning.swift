@@ -115,6 +115,11 @@ struct StreamTuning: Equatable {
     /// alone (`maintainFramerateAndResolution`, as `highRefreshNoAdaptation` does above 60), so the
     /// overuse detector cannot cut the frame rate behind the ladder's back. On is today's behaviour.
     var webRTCAdaptationAt60 = true
+    /// Host: on a remote (Anywhere) route, run the one-hop local link proof alongside the stream with a
+    /// phone that offers it (`RemoteRouteLANProofRequest`). A pass grants no authority and changes no
+    /// route; it only lets `LANTrustTracker` judge a selected pair that is exactly the proven one.
+    /// Off until a device A/B: every remote-route session stays unproven, as today.
+    var remoteRouteLANProof = false
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
         encoderCeilingKbps.map { $0 * 1000 } ?? quality.maximumBitrateBps
@@ -180,6 +185,7 @@ struct StreamTuning: Equatable {
     static let keysOnDemandKey = "PocketDeskKeysOnDemand"
     static let ladderKeyNeutralKey = "PocketDeskLadderKeyNeutral"
     static let webRTCAdaptationAt60Key = "PocketDeskWebRTCAdaptationAt60"
+    static let remoteRouteLANProofKey = "PocketDeskRemoteRouteLANProof"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
@@ -187,7 +193,7 @@ struct StreamTuning: Equatable {
                                  viewportCaptureKey, ladderKey, encoderMaxInFlightKey, idleVideoRefreshKey, lanHeadroomKey,
                                  mergePointerMovesKey, frameTimingKey, senderQueueGovernorKey, senderQueueGovernorApplyKey, encoderMaximumQPKey, hevcKey,
                                  encoderPrioritizeSpeedKey, hevcLowLatencyKey, encoderPeriodicKeyFramesKey, encoderPipeliningKey,
-                                 keysOnDemandKey, ladderKeyNeutralKey, webRTCAdaptationAt60Key]
+                                 keysOnDemandKey, ladderKeyNeutralKey, webRTCAdaptationAt60Key, remoteRouteLANProofKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -299,6 +305,7 @@ struct StreamTuning: Equatable {
         if defaults.object(forKey: webRTCAdaptationAt60Key) != nil {
             tuning.webRTCAdaptationAt60 = defaults.bool(forKey: webRTCAdaptationAt60Key)
         }
+        tuning.remoteRouteLANProof = defaults.bool(forKey: remoteRouteLANProofKey)
         return tuning
     }
 
@@ -354,6 +361,7 @@ struct StreamTuning: Equatable {
         if keysOnDemand { parts.append("keys on demand") }
         if ladderKeyNeutral { parts.append("key-neutral ladder") }
         if !webRTCAdaptationAt60 { parts.append("no webrtc adaptation at 60") }
+        if remoteRouteLANProof { parts.append("remote-route LAN proof") }
         if ladder { parts.append("governor " + (!senderQueueGovernor ? "off" : senderQueueGovernorApply ? "apply" : "shadow")) }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }

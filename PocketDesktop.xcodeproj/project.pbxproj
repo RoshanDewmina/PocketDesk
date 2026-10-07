@@ -947,6 +947,7 @@
 		A4E98218861277635F6C8C00 /* StreamLadder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07376E3C40243FD1FB65D2BC /* StreamLadder.swift */; };
 		A4F474132556B90CC151998D /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 70D0BDB088E4177304BCAE8D /* Sparkle */; };
 		A53E26EDCACCC5550C9EE98F /* HostUISnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F3CA9843FDDB78974EEAD51 /* HostUISnapshotTests.swift */; };
+		A53F28E8566CE1D6FFD388D8 /* RemoteRouteLANProofTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 636B8D95D625922F1770E698 /* RemoteRouteLANProofTests.swift */; };
 		A555BEA31E858A264A8C96BA /* CouchModeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5C3DF657E0DB2E457E3F0E9 /* CouchModeUITests.swift */; };
 		A57A1DD289CFB4652C7CCDD2 /* SignalingKeepalive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63BD565389B3DA4F2A9D2122 /* SignalingKeepalive.swift */; };
 		A5ACFF63814AE8173203273A /* ScrollMomentum.swift in Sources */ = {isa = PBXBuildFile; fileRef = C16AA219E1CCB031BA940799 /* ScrollMomentum.swift */; };
@@ -1794,6 +1795,7 @@
 		61685D397567FB54BA7A7F79 /* TabletInputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabletInputTests.swift; sourceTree = "<group>"; };
 		623D4E7C80996C8F073FB4B0 /* DirectTouchMappingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectTouchMappingTests.swift; sourceTree = "<group>"; };
 		6260AE7D364B38797238AE24 /* OwnerLocalCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OwnerLocalCoordinatorTests.swift; sourceTree = "<group>"; };
+		636B8D95D625922F1770E698 /* RemoteRouteLANProofTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteRouteLANProofTests.swift; sourceTree = "<group>"; };
 		63BD565389B3DA4F2A9D2122 /* SignalingKeepalive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignalingKeepalive.swift; sourceTree = "<group>"; };
 		641018F06FE5E45EF98441DE /* ViewportCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewportCapture.swift; sourceTree = "<group>"; };
 		64170C92E15F0454CD399D89 /* PhoneIdleTimerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneIdleTimerTests.swift; sourceTree = "<group>"; };
@@ -2761,6 +2763,7 @@
 				CFB1279D99CCABF6FA1730C7 /* PrecisionTapEngineTests.swift */,
 				C20DEAFF126EDB5CF5CAB164 /* PrivacyCurtainTests.swift */,
 				F6C9A973D1FE3BD9F3FB4D16 /* QuickWinTuningTests.swift */,
+				636B8D95D625922F1770E698 /* RemoteRouteLANProofTests.swift */,
 				5081394DD6F2BBDCE88C63ED /* RichClipboardTests.swift */,
 				79EB73E1E886FA5A57E8D89E /* ScriptedSessionSupport.swift */,
 				61439D711D81DE84D4388236 /* SecurityTests.swift */,
@@ -4879,6 +4882,7 @@
 				A417255BD2C0E3CFA42F2E9A /* RemoteCoordinator.swift in Sources */,
 				30C0A1E23D89935E9502F8E0 /* RemoteInputDriver.swift in Sources */,
 				902BC6490AE695C317B199FB /* RemoteInputEvents.swift in Sources */,
+				A53F28E8566CE1D6FFD388D8 /* RemoteRouteLANProofTests.swift in Sources */,
 				2CB958D0F65923E3DCF9B48F /* ResumeTiming.swift in Sources */,
 				7761C51B7CB610276C66B8E4 /* RichClipboardEndpoint.swift in Sources */,
 				0F7AD8C9846130FFAB40867D /* RichClipboardPNG.swift in Sources */,
