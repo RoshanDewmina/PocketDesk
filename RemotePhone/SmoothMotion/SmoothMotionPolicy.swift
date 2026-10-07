@@ -99,6 +99,14 @@ struct SmoothMotionDisplayCadence {
     }
 }
 
+/// Auto yields to a finger on the screen (`defaults write com.roshan.PocketDesk.Remote
+/// PocketDeskSmoothMotionYieldsToTouch -bool YES`, then relaunch the phone app). Off: Auto engages on
+/// scroll and drag hints while the finger is still down, as before.
+enum SmoothMotionYieldsToTouchSwitch {
+    static let defaultsKey = "PocketDeskSmoothMotionYieldsToTouch"
+    static let isOn = UserDefaults.standard.bool(forKey: defaultsKey)
+}
+
 enum InterpolationLPMBypassSwitch {
     static let defaultsKey = "PocketDeskInterpolationLPMBypass"
     /// Process-start A/B. NO restores maximum/request-based eligibility and ignores LPM.
@@ -138,6 +146,11 @@ struct SmoothMotionPolicy: Equatable {
 
     var mode: SmoothMotionMode
     var block: SmoothMotionBlock?
+    /// A finger is on the session surface (`SmoothMotionController.noteTouching`).
+    var touching = false
+    /// Auto stays off while `touching` (`SmoothMotionYieldsToTouchSwitch`), so a finger-driven scroll or drag
+    /// never waits the extra display tick; it engages again for what moves after the lift, such as a coast.
+    var yieldsToTouch = SmoothMotionYieldsToTouchSwitch.isOn
     private(set) var state: State = .idle("starting")
     private var lastMotion = -TimeInterval.infinity
     private var motionKind = "motion"
@@ -188,6 +201,7 @@ struct SmoothMotionPolicy: Equatable {
         // The first frame after a still period is shown as it is: the one before it is stale.
         if now - lastFrame > Self.staticAfter || lastFrame - frameBefore > Self.staticAfter { return .idle("static") }
         if mode == .always { return .engaged("always") }
+        if yieldsToTouch && touching { return .idle("touch") }
         if now - lastTyping < Self.typingQuiet { return .idle("typing") }
         if now - lastTap < Self.tapQuiet { return .idle("tap") }
         if now - lastMotion <= Self.motionHold { return .engaged(motionKind) }

@@ -473,6 +473,8 @@ struct ViewportCaptureRequest: Equatable {
     var zoom: Double
     /// The display the rect was measured on; a request for any other display is never sent.
     var displaySize: CGSize
+    /// A baseline Fill's own rect (`PocketDeskBaselineFillCrop`), which a pan can widen (`ViewportReporter`).
+    var baselineFill = false
 
     func region(epoch: UInt64) -> ViewportRegion {
         ViewportRegion(epoch: epoch, x: Double(rect.minX), y: Double(rect.minY), width: Double(rect.width),
@@ -500,7 +502,7 @@ struct ViewportCaptureRequest: Equatable {
         let y = min(max(rect.midY - height / 2, 0), display.maxY - height)
         return ViewportCaptureRequest(rect: CGRect(x: x, y: y, width: width, height: height),
                                       pixelWidth: pixelWidth, pixelHeight: pixelHeight, zoom: zoom,
-                                      displaySize: displaySize)
+                                      displaySize: displaySize, baselineFill: baselineFill)
     }
 }
 
@@ -583,7 +585,8 @@ extension ViewportTransform {
     func captureRequest(displayScale: CGFloat) -> ViewportCaptureRequest? {
         guard displayScale.isFinite, displayScale > 0, scale > 0 else { return nil }
         let display = Self.wholeDisplayRect(for: sourceSize)
-        let rect = requestsWholeDisplay ? display : Self.captureQuantized(visibleSourceRect, within: display)
+        let whole = requestsWholeDisplay
+        let rect = whole ? display : Self.captureQuantized(visibleSourceRect, within: display)
         guard rect.width > 0, rect.height > 0 else { return nil }
         let pixelsPerPoint = scale * displayScale
         let range = ViewportRegion.zoomRange
@@ -591,7 +594,7 @@ extension ViewportTransform {
         let pixelZoom = min(max(rounded, range.lowerBound), range.upperBound)
         return ViewportCaptureRequest(rect: rect, pixelWidth: Self.capturePixels(rect.width * pixelsPerPoint),
                                       pixelHeight: Self.capturePixels(rect.height * pixelsPerPoint),
-                                      zoom: pixelZoom, displaySize: sourceSize)
+                                      zoom: pixelZoom, displaySize: sourceSize, baselineFill: !whole && zoom <= 1)
     }
 
     private static func captureQuantized(_ rect: CGRect, within display: CGRect) -> CGRect {
@@ -625,7 +628,16 @@ enum WidenCapSwitch {
 /// -bool YES`, then relaunch the app). Off by default until the device check of pans at that zoom.
 enum BaselineFillCropSwitch {
     static let defaultsKey = "PocketDeskBaselineFillCrop"
-    static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? false
+    // `bool(forKey:)` also reads a `-PocketDeskBaselineFillCrop YES` launch argument, which is a string.
+    static let isOn = UserDefaults.standard.bool(forKey: defaultsKey)
+}
+
+/// Kill switch for widening a baseline-Fill crop while a pan outruns it (`defaults write <phone bundle id>
+/// PocketDeskFillCropPanMargin -bool NO`, then relaunch the app); read only while the baseline-Fill crop is on.
+enum FillCropPanMarginSwitch {
+    static let defaultsKey = "PocketDeskFillCropPanMargin"
+    static let isOn = BaselineFillCropSwitch.isOn
+        && (UserDefaults.standard.object(forKey: defaultsKey) == nil || UserDefaults.standard.bool(forKey: defaultsKey))
 }
 
 /// Ephemeral framing only: no pixels, authority or host content. Geometry changes discard return.

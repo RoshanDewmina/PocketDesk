@@ -119,6 +119,45 @@ final class PhoneDisplayTickInputPumpTests: XCTestCase {
         XCTAssertEqual(requested.minimum, 60)
     }
 
+    func testInputPump120FlagDrainsPictureMovesAtThePanelMaximum() throws {
+        for (screen, optimized, flag, expected) in [(120, true, true, Float(120)), (60, true, true, 60),
+                                                     (120, true, false, 60), (120, false, true, nil)] as [(Int, Bool, Bool, Float?)] {
+            var config = configuration()
+            config.maximumFramesPerSecond = { screen }
+            config.userDefaults.set(optimized, forKey: PhoneDisplayTickInputPump.optimizationDefaultsKey)
+            if flag { config.userDefaults.set(true, forKey: PhoneDisplayTickInputPump.maximumCadenceDefaultsKey) }
+            var ranges: [CAFrameRateRange?] = []
+            var links: [FakePhoneDisplayTickLink] = []
+            config.displayLinkFactory = { range, tick in
+                ranges.append(range)
+                let link = FakePhoneDisplayTickLink(onTick: tick)
+                links.append(link)
+                return link
+            }
+            let pump = PhoneDisplayTickInputPump(configuration: config)
+            var batches: [[Double]] = []
+            pump.send = { batches.append($0.map(\.x)); return true }
+            let context = "screen \(screen) optimized \(optimized) flag \(flag)"
+            XCTAssertTrue(pump.offer(RemoteAction(action: "move", x: 1)), context)
+            XCTAssertTrue(pump.offer(RemoteAction(action: "move", x: 2)), context)
+            XCTAssertEqual(ranges.count, 1, context)
+            XCTAssertEqual(ranges[0]?.preferred, expected, context)
+            if optimized { XCTAssertEqual(ranges[0]?.maximum, Float(screen), context) }
+            links[0].fire()
+            XCTAssertEqual(batches, [[1], [2]], "the leading move leaves at once, the rest on the tick: \(context)")
+        }
+        // The launch argument `-PocketDeskInputPump120 YES` arrives as a string.
+        var config = configuration()
+        config.maximumFramesPerSecond = { 120 }
+        config.userDefaults.set("YES", forKey: PhoneDisplayTickInputPump.maximumCadenceDefaultsKey)
+        var range: CAFrameRateRange?
+        config.displayLinkFactory = { requested, tick in range = requested; return FakePhoneDisplayTickLink(onTick: tick) }
+        let pump = PhoneDisplayTickInputPump(configuration: config)
+        pump.send = { _ in true }
+        XCTAssertTrue(pump.offer(RemoteAction(action: "move", x: 1)))
+        XCTAssertEqual(try XCTUnwrap(range).preferred, 120)
+    }
+
     func testBuiltPhoneEnablesDisplayLinkFrameRateHints() {
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CADisableMinimumFrameDurationOnPhone") as? Bool, true)
     }

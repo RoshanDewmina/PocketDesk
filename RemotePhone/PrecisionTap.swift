@@ -105,9 +105,15 @@ final class PrecisionTapController: ObservableObject {
     private var lastSent: CGPoint?
 
     func handle(_ phase: PrecisionPhase, finger: CGPoint, viewport: ViewportTransform, model: PhoneRemoteModel) -> Bool {
+        handle(phase, finger: finger, viewport: viewport, canControl: model.canControl,
+               pointTo: { model.pointTo($0) }, click: { model.gesture(.click(count: 1)) })
+    }
+
+    func handle(_ phase: PrecisionPhase, finger: CGPoint, viewport: ViewportTransform, canControl: Bool,
+                pointTo: (CGPoint) -> Bool, click: () -> Bool) -> Bool {
         switch phase {
         case .began:
-            guard model.canControl, let started = PrecisionTap(finger: finger, in: viewport) else { return false }
+            guard canControl, let started = PrecisionTap(finger: finger, in: viewport) else { return false }
             tap = started
             lastSent = nil
             sequence &+= 1
@@ -118,16 +124,25 @@ final class PrecisionTapController: ObservableObject {
             guard var current = tap else { return false }
             current.move(to: finger, in: viewport)
             tap = current
-            if let source = current.sourceTarget(in: viewport), source != lastSent, model.pointTo(source) {
+            if let source = current.sourceTarget(in: viewport), source != lastSent, pointTo(source) {
                 lastSent = source
             }
+            return true
+        case .pressed:
+            // The engine presses where the pointer is once this returns true, so the pointer must be on the
+            // target first. The loupe stays until the press is accepted (`cancelled`), so a refused drag still clicks.
+            guard var current = tap else { return false }
+            current.move(to: finger, in: viewport)
+            tap = current
+            guard let source = current.sourceTarget(in: viewport), pointTo(source) else { return false }
+            lastSent = source
             return true
         case .ended:
             guard var current = tap else { return false }
             current.move(to: finger, in: viewport)
             tap = nil
-            guard let source = current.sourceTarget(in: viewport), model.pointTo(source) else { return false }
-            return model.gesture(.click(count: 1))
+            guard let source = current.sourceTarget(in: viewport), pointTo(source) else { return false }
+            return click()
         case .cancelled:
             tap = nil
             return true

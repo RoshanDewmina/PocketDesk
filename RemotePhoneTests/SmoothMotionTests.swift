@@ -97,6 +97,31 @@ final class SmoothMotionPolicyTests: XCTestCase {
         XCTAssertTrue(policy.evaluate(at: 0.016))
     }
 
+    func testAutoYieldsToAFingerOnTheScreenOnlyWithTheSwitch() {
+        var policy = SmoothMotionPolicy(mode: .auto)
+        XCTAssertFalse(policy.yieldsToTouch, "off by default")
+        policy.touching = true
+        policy.note(.scroll, at: 1)
+        stream(&policy, from: 0.95, to: 1.01)
+        XCTAssertTrue(policy.evaluate(at: 1.01), "today: a finger-driven scroll engages")
+
+        policy.yieldsToTouch = true
+        XCTAssertFalse(policy.evaluate(at: 1.01))
+        XCTAssertEqual(policy.state, .idle("touch"))
+        policy.touching = false
+        policy.note(.scroll, at: 1.02)
+        stream(&policy, from: 1.026, to: 1.03)
+        XCTAssertTrue(policy.evaluate(at: 1.03), "the coast after the lift engages")
+        XCTAssertEqual(policy.state, .engaged("scroll"))
+
+        policy.mode = .always
+        policy.touching = true
+        XCTAssertTrue(policy.evaluate(at: 1.03), "Always is the person's explicit choice")
+        policy.mode = .off
+        XCTAssertEqual(policy.evaluate(at: 1.03), false)
+        XCTAssertEqual(policy.state, .idle("off"))
+    }
+
     func testOutgoingActionsMapToHints() {
         XCTAssertEqual(SmoothMotionHint.classify(action: "scroll", dragging: false), .scroll)
         XCTAssertEqual(SmoothMotionHint.classify(action: "move", dragging: true), .windowDrag)
@@ -212,7 +237,8 @@ final class SmoothMotionPipelineTests: XCTestCase {
 
     private func makeController(mode: SmoothMotionMode, supported: Bool = true, limits: InterpolationLimits = .documented,
                                 fitOversize: Bool = false, midpointDeadline: Bool = true,
-                                colorTags: Bool = true, lowPowerBypass: Bool = false, warmCadence: Bool = true) {
+                                colorTags: Bool = true, lowPowerBypass: Bool = false, warmCadence: Bool = true,
+                                yieldsToTouch: Bool = false) {
         let environment = SmoothMotionController.Environment(
             makeEngine: { [unowned self] in supported ? engine : nil },
             supported: supported,
@@ -225,7 +251,8 @@ final class SmoothMotionPipelineTests: XCTestCase {
             midpointDeadline: midpointDeadline,
             colorTags: colorTags,
             lowPower: { [unowned self] in lowPower },
-            lowPowerBypass: lowPowerBypass)
+            lowPowerBypass: lowPowerBypass,
+            yieldsToTouch: yieldsToTouch)
         controller = SmoothMotionController(mode: mode, environment: environment)
         delivered = []
         controller.deliver = { [unowned self] in delivered.append($0) }
@@ -394,6 +421,28 @@ final class SmoothMotionPipelineTests: XCTestCase {
         for index in 0..<4 { send(try Self.frame(width: 64, height: 48, luma: UInt8(index * 60)), at: 1 + Double(index) * 0.0167) }
         XCTAssertTrue(engine.started.isEmpty)
         XCTAssertEqual(delivered.count, 4)
+    }
+
+    func testAFingerOnTheScreenShowsFramesDirectlyAndTheLiftEngagesAgain() throws {
+        makeController(mode: .auto, yieldsToTouch: true)
+        controller.setTouching(true)
+        controller.note(.scroll, at: 0)
+        for index in 0..<4 { send(try Self.frame(width: 64, height: 48, luma: UInt8(index * 40)), at: Double(index) * 0.0167) }
+        XCTAssertTrue(engine.pairs.isEmpty, "no frame waits a tick while the finger scrolls")
+        XCTAssertEqual(delivered.count, 4)
+        XCTAssertEqual(controller.diagnostics.snapshot().state, "touch")
+
+        controller.setTouching(false)
+        controller.note(.scroll, at: 0.07)
+        send(try Self.frame(width: 64, height: 48, luma: 200), at: 0.07)
+        send(try Self.frame(width: 64, height: 48, luma: 210), at: 0.087)
+        XCTAssertEqual(engine.pairs, [FakeInterpolationEngine.Pair(previous: 200, current: 210)], "the coast is smoothed")
+
+        controller.setTouching(true)
+        controller.resetSession()
+        controller.note(.scroll, at: 1)
+        for index in 0..<3 { send(try Self.frame(width: 64, height: 48, luma: UInt8(index * 50)), at: 1 + Double(index) * 0.0167) }
+        XCTAssertEqual(engine.pairs.count, 1, "a new stream keeps the finger that is still down")
     }
 
     func testLowPowerBypassNeverStartsEngineAndFlushesPendingMidpoint() throws {

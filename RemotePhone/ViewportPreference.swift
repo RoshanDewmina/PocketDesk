@@ -33,9 +33,18 @@ enum ViewportPreference {
 /// gesture settles or rests for `quietInterval`; a change it no longer covers leaves at most every
 /// `minimumInterval`. While a pinch out keeps going and the view no longer fits in the crop at all, it
 /// asks for twice the visible area, so the crop changes about once per halving, not every 100 ms.
+///
+/// A baseline-Fill crop (`PocketDeskBaselineFillCrop`) is a third of a portrait screen's desktop with only
+/// the Mac's 8 % margin around it, so any brisk pan used to outrun it and show the void until the next crop.
+/// While a pan carries it past the stream, it asks for twice the visible size around it instead
+/// (`FillCropPanMarginSwitch`): in portrait on a 1920 pt wide display, about one crop per 290 pt of travel
+/// instead of one per 46 pt, at the cost of one more crop change, back to the visible rect, when the pan
+/// rests or ends.
 struct ViewportReporter {
     static let minimumInterval: TimeInterval = 0.1
     static let quietInterval: TimeInterval = 0.3
+    static let fillPanWidening: CGFloat = 2
+    var widensFillPans = FillCropPanMarginSwitch.isOn
 
     enum Send: Equatable {
         case none
@@ -99,6 +108,12 @@ struct ViewportReporter {
 
     private func outgoing(settled: Bool, coverage: CGRect?, at now: TimeInterval) -> ViewportCaptureRequest? {
         guard let request else { return nil }
+        // A rest inside a widened crop the Mac has not echoed yet asks for exactly what is shown.
+        if widensFillPans, request.baselineFill, !settled, let sent, let coverage, !Self.covers(coverage, request.rect),
+           sent.displaySize != request.displaySize || !Self.covers(sent.rect, request.rect) {
+            // Always capped: a widened Fill crop at or near the whole display would flip the Mac to whole and back.
+            return request.widened(by: Self.fillPanWidening, capped: true)
+        }
         // Only a continuing pinch out: a pan or a one-off layout change gets exactly what it shows.
         guard !settled, sent != nil, now < changedAt + Self.quietInterval,
               changedAt - previousChangeAt < Self.quietInterval, let coverage,

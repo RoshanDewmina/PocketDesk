@@ -201,6 +201,56 @@ final class InputCoordinatorTests: XCTestCase {
         try host.receiveInputFixtureForTesting(key)
         XCTAssertEqual(semantics.map(\.key), ["c"])
     }
+    /// PocketDeskLinkKeepAwake: the phone's trickle on the pointer channel, and the Mac's handling of it,
+    /// which is the code every Mac with that channel has run since it was added.
+    func testLinkKeepAwakeIsATinyPointerPacketEveryMacDropsUnread() throws {
+        let (host, phone) = rig()
+        defer { host.stop(); phone.stop() }
+        var upstream: [ControlPacket] = [], downstream: [ControlPacket] = []
+        host.inputPacketSenderForTesting = { downstream.append($0); return true }
+        phone.inputPacketSenderForTesting = { upstream.append($0); return true }
+        XCTAssertFalse(phone.sendLinkKeepAwake(), "no pointer channel before causal input")
+        phone.requestCausalInput(epoch: 7)
+        try host.receiveInputFixtureForTesting(upstream.removeFirst())
+        try phone.receiveInputFixtureForTesting(downstream.removeFirst())
+        XCTAssertFalse(host.sendLinkKeepAwake(), "the phone's radio only")
+
+        XCTAssertTrue(phone.sendLinkKeepAwake())
+        let packet = try XCTUnwrap(upstream.popLast())
+        XCTAssertEqual(packet.version, 0)
+        XCTAssertNil(packet.input)
+        let data = try JSONEncoder().encode(packet)
+        let live = try JSONEncoder().encode(RemoteCoordinator.linkKeepAwakePacket(session: try SecureRandom.token()))
+        XCTAssertLessThan(live.count, 200, "about 190 bytes with a real 64-character session")
+        var contexts: [InputCausalEnvelope] = []
+        host.onCausalInput = { context, _ in contexts.append(context) }
+        host.receivePointerFixtureForTesting(data)
+        XCTAssertNil(host.lastSessionFailure, "dropped without ending the session")
+        XCTAssertTrue(host.connected)
+        XCTAssertTrue(contexts.isEmpty)
+        XCTAssertTrue(downstream.isEmpty, "nothing answers it")
+
+        upstream.removeAll()
+        XCTAssertTrue(phone.sendInputMoves([RemoteAction(action: "move", x: 1, epoch: 7)]))
+        let now = ProcessInfo.processInfo.systemUptime
+        let motion = try XCTUnwrap(upstream.last)
+        XCTAssertFalse(phone.sendLinkKeepAwake(at: now + RemoteCoordinator.keepAwakeMotionQuiet),
+                       "unacknowledged motion keeps the Mac's one-packet pointer mailbox")
+        try host.receiveInputFixtureForTesting(motion)
+        host.acknowledgeCausalInput(try XCTUnwrap(contexts.last), applied: 1)
+        try phone.receiveInputFixtureForTesting(downstream.removeLast())
+        upstream.removeAll()
+        XCTAssertFalse(phone.sendLinkKeepAwake(at: now), "motion a moment ago keeps the radio awake by itself")
+        XCTAssertTrue(upstream.isEmpty)
+        XCTAssertTrue(phone.sendLinkKeepAwake(at: now + RemoteCoordinator.keepAwakeMotionQuiet))
+
+        // The same handler ends the session on a version-1 packet without a checkpoint: version 0 is what keeps it quiet.
+        var current = packet
+        current.version = 1
+        host.receivePointerFixtureForTesting(try JSONEncoder().encode(current))
+        XCTAssertNotNil(host.lastSessionFailure)
+    }
+
     func testHighRateMotionWaitsOneReliableCheckpointAndKeepsSemanticOrderAcrossAckStalls() throws {
         for hz in [120, 240] {
             for delay in [0.3, 1.0] {

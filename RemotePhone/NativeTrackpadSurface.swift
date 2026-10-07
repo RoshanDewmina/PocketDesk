@@ -10,6 +10,7 @@ struct NativeTrackpadSurface: UIViewRepresentable {
     /// Couch relative pointer samples; Picture retains its existing gesture delivery.
     var coalescedFingerMotion: Bool = false
     var precision: PrecisionTapTrigger = .off
+    var precisionTarget: () -> CGPoint? = { nil }
     var revision: UInt64
     var sensitivity: CGFloat
     var pointerScale: CGFloat
@@ -51,6 +52,7 @@ struct NativeTrackpadSurface: UIViewRepresentable {
         view.pencil.configure(enabled: view.pencilInputEnabled, revision: revision)
         view.pencil.send = onPencil
         view.engine.onCommand = onCommand
+        view.engine.precisionTarget = precisionTarget
         view.engine.onPointerMotionEnded = onPointerMotionEnded
         view.engine.momentumEnabled = momentumScroll
         view.engine.hostMomentumEnabled = hostMomentum
@@ -421,7 +423,7 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
         if let event { keyboard.updateModifiers(event.modifierFlags) }
         for touch in touches where touch.type == .pencil && pencilInputEnabled {
             guard pencilTouch == nil else { continue }
-            contacts.removeAll(); engine.update([], at: touch.timestamp, cancelled: true); pointer.cancel()
+            contacts.removeAll(); noteTouching(); engine.update([], at: touch.timestamp, cancelled: true); pointer.cancel()
             let values = pencilValues(touch)
             if pencil.begin(at: touch.location(in: self), pressure: values.pressure, tiltX: values.x, tiltY: values.y) {
                 pencilTouch = ObjectIdentifier(touch)
@@ -439,6 +441,7 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
             contacts[key] = Contact(id: nextID, point: touch.location(in: self))
             nextID &+= 1
         }
+        noteTouching()
         publish(at: timestamp(touches))
         if (!contacts.isEmpty || pointer.isPressed) && holdTimer == nil {
             holdTimer = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { [weak self] _ in
@@ -504,6 +507,7 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
         let time = timestamp(touches)
         publish(at: time)
         for touch in touches { contacts.removeValue(forKey: ObjectIdentifier(touch)) }
+        noteTouching()
         publish(at: time)
         stopTimerIfIdle()
     }
@@ -515,8 +519,13 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
             pointer.cancel()
         }
         contacts.removeAll()
+        noteTouching()
         engine.update([], at: timestamp(touches), cancelled: true)
         stopTimerIfIdle()
+    }
+
+    private func noteTouching() {
+        if SmoothMotionYieldsToTouchSwitch.isOn { SmoothMotionController.noteTouching(!contacts.isEmpty) }
     }
 
     override func accessibilityActivate() -> Bool {
@@ -551,6 +560,7 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
     @objc private func interruptInput() {
         pencil.cancel(); pencilTouch = nil
         contacts.removeAll()
+        noteTouching()
         pointerButtons.removeAll()
         engine.update([], at: ProcessInfo.processInfo.systemUptime, cancelled: true)
         pointer.cancel()
