@@ -104,6 +104,73 @@ final class CaptureRatePolicyTests: XCTestCase {
         XCTAssertEqual(cap(.balanced, 120, 1280, off), 1600)
     }
 
+    func testDisplayedEdgeOnlyReducesTheCapAndTheFloorOverrideWinsOverEveryReduction() {
+        func cap(_ quality: StreamQuality, _ client: Int?, displayed: Int?, _ tuning: StreamTuning = .tuned) -> Int {
+            CaptureRatePolicy.maximumDimension(quality: quality, fps: 60, clientLongEdge: client, tuning: tuning,
+                                               displayedLongEdge: displayed)
+        }
+        XCTAssertEqual(cap(.sharp, 2622, displayed: nil), 2560, "no displayed edge is today's cap")
+        XCTAssertEqual(cap(.sharp, 2622, displayed: 1216), 1216)
+        XCTAssertEqual(cap(.sharp, 2622, displayed: 1872), 1872)
+        XCTAssertEqual(cap(.sharp, 2622, displayed: 3840), 2560, "never raised above the mode cap")
+        XCTAssertEqual(cap(.balanced, 2622, displayed: 2304), 1920)
+        XCTAssertEqual(cap(.sharp, 1600, displayed: 1872), 1600, "the client edge still applies")
+        XCTAssertEqual(cap(.sharp, 639, displayed: nil), 2560, "the 640 client floor is untouched")
+        XCTAssertEqual(cap(.sharp, 639, displayed: 1216), 1216)
+        var noClient = StreamTuning.tuned
+        noClient.capToClientPixels = false
+        XCTAssertEqual(cap(.sharp, 1600, displayed: 1216, noClient), 1216)
+
+        var floor = StreamTuning.tuned
+        floor.outputLongEdgeOverride = 1206
+        XCTAssertEqual(cap(.sharp, 2622, displayed: 1872, floor), 1206, "the override wins over the displayed edge")
+        XCTAssertEqual(cap(.sharp, 1000, displayed: nil, floor), 1206, "and over the client edge")
+        floor.outputLongEdgeOverride = 604
+        XCTAssertEqual(cap(.sharp, 2622, displayed: nil, floor), 604, "below the 640 client floor on purpose")
+        floor.outputLongEdgeOverride = 3000
+        XCTAssertEqual(cap(.sharp, 2622, displayed: 1216, floor), 2560, "still under the mode cap")
+        XCTAssertEqual(cap(.balanced, 2622, displayed: nil, floor), 1920)
+    }
+
+    func testDisplayedPixelsAndOutputEdgeKeysResolveClampAndAppearInTheSummary() throws {
+        let suite = "DisplayedPixelsTuningTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let tuned = StreamTuning.resolve(defaults: defaults)
+        XCTAssertFalse(tuned.displayedPixelsCap, "off until the device A/B")
+        XCTAssertEqual(tuned.displayedPixelsScale, 1)
+        XCTAssertNil(tuned.outputLongEdgeOverride)
+        XCTAssertEqual(tuned, .tuned)
+        for part in ["displayed cap", "displayed ×", "output edge"] {
+            XCTAssertFalse(tuned.summary.contains(part), tuned.summary)
+        }
+
+        defaults.set(true, forKey: StreamTuning.displayedPixelsCapKey)
+        defaults.set(0.85, forKey: StreamTuning.displayedPixelsScaleKey)
+        defaults.set(1206, forKey: StreamTuning.outputLongEdgeKey)
+        let switched = StreamTuning.resolve(defaults: defaults)
+        XCTAssertTrue(switched.displayedPixelsCap)
+        XCTAssertEqual(switched.displayedPixelsScale, 0.85)
+        XCTAssertEqual(switched.outputLongEdgeOverride, 1206)
+        for part in ["displayed cap", "displayed ×0.85", "output edge 1206"] {
+            XCTAssertTrue(switched.summary.contains(part), switched.summary)
+        }
+        XCTAssertEqual(switched.fieldTrials, StreamTuning.tuned.fieldTrials)
+
+        for (scale, expected) in [(0.5, 0.5), (1.5, 1.5), (0.49, 1.0), (1.51, 1.0), (Double.nan, 1.0)] {
+            defaults.set(scale, forKey: StreamTuning.displayedPixelsScaleKey)
+            XCTAssertEqual(StreamTuning.resolve(defaults: defaults).displayedPixelsScale, expected, "\(scale)")
+        }
+        for (edge, expected) in [(256, 256), (4096, 4096), (604, 604), (255, nil), (4097, nil), (0, nil)] as [(Int, Int?)] {
+            defaults.set(edge, forKey: StreamTuning.outputLongEdgeKey)
+            XCTAssertEqual(StreamTuning.resolve(defaults: defaults).outputLongEdgeOverride, expected, "\(edge)")
+        }
+
+        defaults.set(true, forKey: StreamTuning.legacyDefaultsKey)
+        XCTAssertEqual(StreamTuning.resolve(defaults: defaults), .legacy, "the legacy switch wins")
+    }
+
     func testLevel52FitDependsOnTheRate() {
         // 2560×1440 is 160×90 = 14,400 macroblocks; × 144 = 2,073,600, exactly the level-5.2 limit.
         XCTAssertTrue(H264LevelPolicy.fits(width: 2560, height: 1440, fps: 60))
@@ -266,7 +333,9 @@ final class CaptureRateTuningTests: XCTestCase {
         XCTAssertEqual(Set(StreamTuning.experimentKeys).count, StreamTuning.experimentKeys.count, "every experiment key is listed once")
         let newKeys = [StreamTuning.highRefreshCaptureKey, StreamTuning.targetFPSKey,
                        StreamTuning.highRefreshNoAdaptationKey, StreamTuning.capToClientPixelsKey,
-                       StreamTuning.viewportCaptureKey, StreamTuning.ladderKey]
+                       StreamTuning.viewportCaptureKey, StreamTuning.ladderKey,
+                       StreamTuning.displayedPixelsCapKey, StreamTuning.displayedPixelsScaleKey,
+                       StreamTuning.outputLongEdgeKey]
         for key in newKeys { XCTAssertTrue(StreamTuning.experimentKeys.contains(key), key) }
 
         defaults.set(true, forKey: StreamTuning.legacyDefaultsKey)

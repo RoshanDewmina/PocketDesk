@@ -81,24 +81,28 @@ enum ViewportCapturePolicy {
                       outputWidth: output.width, outputHeight: output.height)
     }
 
-    /// `output` is the whole-display output at the current rung; `previous` the region applied now, or
-    /// nil when the output changed (quality, client pixels, restart) and the held size must not carry over.
+    /// `output` is the whole-display output at the current rung; `budget` the crop's pixel budget, the
+    /// whole-display output before the displayed-pixels cap (default `output`), so a crop is sized exactly
+    /// as without the cap; `previous` the region applied now, or nil when the output changed (quality,
+    /// client pixels, displayed edge, restart) and the held size must not carry over.
     static func region(for viewport: ViewportRegion?, display: DisplayGeometry, output: CapturePixelDimensions,
-                       tuning: StreamTuning, previous: CaptureRegion?,
+                       budget: CapturePixelDimensions? = nil, tuning: StreamTuning, previous: CaptureRegion?,
                        phoneNative: Bool = CropPhoneNativeSwitch.isOn,
                        nearNative: Bool = CropNearNativeSwitch.isOn,
                        keepBand: Bool = CropKeepBandSwitch.isOn,
                        cropEngaged: Bool? = nil) -> CaptureRegion {
         let whole = wholeDisplay(display, output: output)
+        let budget = budget ?? output
         // Epoch 0 means the whole display on the wire, so a crop can never carry it.
         guard tuning.viewportCapture, let viewport, viewport.epoch != 0, viewport.zoom > 1,
               (try? viewport.validate()) != nil, display.isValid,
-              output.width >= macroblock, output.height >= macroblock else { return whole }
+              output.width >= macroblock, output.height >= macroblock,
+              budget.width >= macroblock, budget.height >= macroblock else { return whole }
         let visible = viewport.rect.intersection(display.bounds)
         guard !visible.isNull, visible.width > 0, visible.height > 0 else { return whole }
         let found = phoneNative
-            ? phoneNativeCrop(around: visible, display: display, zoom: viewport.zoom, budget: output)
-            : crop(around: visible, display: display, aspect: Double(output.width) / Double(output.height))
+            ? phoneNativeCrop(around: visible, display: display, zoom: viewport.zoom, budget: budget)
+            : crop(around: visible, display: display, aspect: Double(budget.width) / Double(budget.height))
         guard let crop = found else { return whole }
         let scale = display.pointPixelScale
         var rect = CGRect(x: Double(crop.x) / scale, y: Double(crop.y) / scale,
@@ -115,11 +119,11 @@ enum ViewportCapturePolicy {
             }
         }
         let size = phoneNative
-            ? phoneNativeOutputSize(source: source, zoom: viewport.zoom, display: display, budget: output, held: held)
-            : outputSize(source: source, whole: output, held: held)
+            ? phoneNativeOutputSize(source: source, zoom: viewport.zoom, display: display, budget: budget, held: held)
+            : outputSize(source: source, whole: budget, held: held)
         if nearNative, phoneNative, rect.width > 0, display.size.width > 0 {
             // Judged on the phone-native target, not a held size that may lag it by up to 10 %.
-            let target = phoneNativeOutputSize(source: source, zoom: viewport.zoom, display: display, budget: output, held: nil)
+            let target = phoneNativeOutputSize(source: source, zoom: viewport.zoom, display: display, budget: budget, held: nil)
             let gain = (Double(target.width) / rect.width) / (Double(output.width) / display.size.width)
             // `cropEngaged` carries the state across a quality or rung change, when `previous` is nil.
             let engaged = cropEngaged ?? (previous.map { !$0.isWholeDisplay } ?? false)
@@ -289,6 +293,72 @@ enum ViewportCapturePolicy {
     private static func placed(center: Double, length: Int, limit: Double) -> Int {
         let start = min(max(0, center - Double(length) / 2), limit - Double(length))
         return Int(start.rounded(.down)) & ~1
+    }
+}
+
+/// Idea 1 (LATENCY-PLAN §4, `StreamTuning.displayedPixelsCap`): the whole-display long edge that gives one
+/// stream pixel per phone pixel the Mac picture occupies (× `displayedPixelsScale`), from the phone's
+/// `viewport.zoom` (device pixels per Mac point, already reflecting orientation, insets and user zoom).
+/// Every change of the whole output costs a ScreenCaptureKit reconfiguration (100-460 ms stall), a new
+/// encoder and a key frame, so a new edge applies only once it leaves the `shrinkBelow`...`growFrom` band of
+/// the held one and stays out for `shrinkDwell` (smaller) or `growDwell` (larger). The phone's whole-display
+/// rect is the display's own shape in either orientation, so a rotation is not told apart from a keyboard:
+/// portrait → landscape is a grow, the reverse a shrink.
+enum DisplayedPixelsPolicy {
+    static let shrinkDwell: TimeInterval = 1.0
+    static let growDwell: TimeInterval = 0.25
+    static let minimumEdge = 256
+
+    /// Nil when the cap is off or the phone sent no usable viewport (an older phone): today's output.
+    static func targetLongEdge(viewport: ViewportRegion?, display: DisplayGeometry, tuning: StreamTuning) -> Int? {
+        guard tuning.displayedPixelsCap, let viewport, (try? viewport.validate()) != nil, display.isValid else { return nil }
+        let points = Double(max(display.size.width, display.size.height))
+        let pixelsPerPoint = min(viewport.zoom, display.pointPixelScale)
+        let edge = points * pixelsPerPoint * tuning.displayedPixelsScale
+        guard edge.isFinite, edge > 0 else { return nil }
+        let block = ViewportCapturePolicy.macroblock
+        let aligned = (Int((edge - 1e-6).rounded(.up)) + block - 1) / block * block
+        return min(max(aligned, minimumEdge), Int(max(display.pixelWidth, display.pixelHeight)))
+    }
+
+    /// The edge a new session starts at from the last viewport, under the same check `RemoteCapture.start`
+    /// applies before replaying it; a window-scoped session never takes viewports.
+    static func initialEdge(viewport: ViewportRegion?, windowScoped: Bool, display: DisplayGeometry,
+                            tuning: StreamTuning) -> Int? {
+        guard !windowScoped, let viewport, ViewportCapturePolicy.isValid(viewport, for: display) else { return nil }
+        return targetLongEdge(viewport: viewport, display: display, tuning: tuning)
+    }
+
+    struct Hold: Equatable {
+        var edge: Int
+        /// When the target first left the band in its current direction; nil while inside it.
+        var leftBandAt: TimeInterval?
+        var leftBandGrowing = false
+    }
+
+    struct Decision: Equatable {
+        /// The edge to apply now; nil is no displayed cap.
+        var edge: Int?
+        var hold: Hold?
+        /// When a pending change becomes due; nil when nothing is pending.
+        var deadline: TimeInterval?
+    }
+
+    static func resolve(target: Int?, held: Hold?, now: TimeInterval) -> Decision {
+        guard let target else { return Decision(edge: nil, hold: nil, deadline: nil) }
+        guard var hold = held, hold.edge > 0 else { return Decision(edge: target, hold: Hold(edge: target), deadline: nil) }
+        let ratio = Double(target) / Double(hold.edge)
+        guard ratio < ViewportCapturePolicy.shrinkBelow || ratio >= ViewportCapturePolicy.growFrom else {
+            return Decision(edge: hold.edge, hold: Hold(edge: hold.edge), deadline: nil)
+        }
+        let growing = ratio > 1
+        if hold.leftBandAt == nil || hold.leftBandGrowing != growing {
+            hold.leftBandAt = now
+            hold.leftBandGrowing = growing
+        }
+        let due = (hold.leftBandAt ?? now) + (growing ? growDwell : shrinkDwell)
+        guard now >= due else { return Decision(edge: hold.edge, hold: hold, deadline: due) }
+        return Decision(edge: target, hold: Hold(edge: target), deadline: nil)
     }
 }
 

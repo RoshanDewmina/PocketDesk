@@ -512,7 +512,7 @@ final class RemoteCapture {
         let next: RemoteCaptureSession
         do {
             next = try RemoteCaptureSession(resolved: resolved, lease: lease, peer: peer, quality: initialQuality,
-                clientLongEdge: initialClientLongEdge, guestFrame: onGuestFrame,
+                clientLongEdge: initialClientLongEdge, initialViewport: requestedViewport, guestFrame: onGuestFrame,
                 guestSourceFence: scopedGuestFence, producerToken: producerToken)
         } catch { reservation.release(producerToken); throw error }
         reservation.retain(next, token: producerToken)
@@ -783,13 +783,13 @@ enum RemoteCaptureConfiguration {
         CaptureRatePolicy.minimumFrameInterval(for: tuning, targetFPS: targetFPS, displayRefreshHz: displayRefreshHz)
     }
 
-    /// The whole-display output: the mode's (or the client's) long-edge cap at this rate, then the
-    /// receiver's H.264 level.
+    /// The whole-display output: the mode's (or the client's, or the displayed-pixels) long-edge cap at
+    /// this rate, then the receiver's H.264 level.
     static func outputSize(contentSize: CGSize, pointPixelScale: Double, quality: StreamQuality,
                            budget: H264FrameBudget?, fps: Int, clientLongEdge: Int?,
-                           tuning: StreamTuning) -> CapturePixelDimensions? {
+                           tuning: StreamTuning, displayedLongEdge: Int? = nil) -> CapturePixelDimensions? {
         let maximum = CaptureRatePolicy.maximumDimension(quality: quality, fps: fps, clientLongEdge: clientLongEdge,
-                                                         tuning: tuning)
+                                                         tuning: tuning, displayedLongEdge: displayedLongEdge)
         guard let dimensions = CapturePixelDimensions.fitted(
             contentSize: contentSize, pointPixelScale: pointPixelScale, quality: quality, fps: fps,
             maximumDimension: maximum
@@ -1010,6 +1010,11 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     private var lastBufferRegion: CaptureRegion?
     private var gate = ConfigurationUpdateGate()
     private var trailingUpdate: DispatchSourceTimer?
+    /// Displayed-pixels cap (`DisplayedPixelsPolicy`): the held edge, the edge the last update used, and the
+    /// dwell that applies a pending change without waiting for another viewport. Confined to `queue`.
+    private var displayedHold: DisplayedPixelsPolicy.Hold?
+    private var displayedEdge: Int?
+    private var displayedDwell: DispatchWorkItem?
     private var waiters: [(Bool) -> Void] = []
     private var inFlightWaiters: [(Bool) -> Void] = []
 
@@ -1031,7 +1036,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     let initialRegion: CaptureRegion
 
     init(resolved: HostResolvedCaptureScope, lease: CaptureScopeLease, peer: PeerMedia, quality: StreamQuality, clientLongEdge: Int?,
-         guestFrame: ((CVPixelBuffer, TimeInterval) -> Void)? = nil, guestSourceFence: (() -> Void)? = nil, producerToken: UUID) throws {
+         initialViewport: ViewportRegion? = nil, guestFrame: ((CVPixelBuffer, TimeInterval) -> Void)? = nil, guestSourceFence: (() -> Void)? = nil, producerToken: UUID) throws {
         self.producerToken = producerToken
         #if DEBUG
         suppressFirstPictureForCheck = CaptureStartupPhysicalCheck.consume()
@@ -1048,9 +1053,14 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         let refresh = DisplayRefresh.rateHz(for: display.displayID)
         let fps = CaptureRatePolicy.targetFPS(displayRefreshHz: refresh, tuning: tuning)
         let geometry = DisplayGeometry(size: filter.contentRect.size, pointPixelScale: Double(filter.pointPixelScale))
+        // Only the displayed edge is seeded: the viewport itself still arrives through `requestViewport`,
+        // which derives any crop and, for the whole display at this edge, reconfigures nothing.
+        let seededEdge = DisplayedPixelsPolicy.initialEdge(viewport: initialViewport, windowScoped: resolved.target != nil,
+                                                           display: geometry, tuning: tuning)
         guard let output = RemoteCaptureConfiguration.outputSize(
             contentSize: geometry.size, pointPixelScale: geometry.pointPixelScale, quality: quality,
-            budget: peer.nativeCaptureBudget, fps: fps, clientLongEdge: clientLongEdge, tuning: tuning
+            budget: peer.nativeCaptureBudget, fps: fps, clientLongEdge: clientLongEdge, tuning: tuning,
+            displayedLongEdge: seededEdge
         ) else {
             throw CaptureSizingError.invalidSource
         }
@@ -1071,6 +1081,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         applied = inputs
         initialRegion = ViewportCapturePolicy.wholeDisplay(geometry, output: output)
         appliedRegion = initialRegion
+        displayedEdge = seededEdge
+        displayedHold = seededEdge.map { DisplayedPixelsPolicy.Hold(edge: $0) }
         targetFPS = fps
         displayRefreshHz = refresh
         let scale = Double(filter.pointPixelScale)
@@ -1158,20 +1170,31 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         let inputs = requested
         inFlightWaiters = waiters
         waiters = []
+        let edge = resolveDisplayedEdge()
+        if edge != displayedEdge {
+            displayedEdge = edge
+            heldOutputInvalid = true
+        }
         let previous = heldOutputInvalid ? nil : appliedRegion
         heldOutputInvalid = false
         // The pixel budget stays the session rate's: a slower rung must not grow the picture.
-        guard let whole = RemoteCaptureConfiguration.outputSize(
+        guard let budget = RemoteCaptureConfiguration.outputSize(
             contentSize: geometry.size, pointPixelScale: geometry.pointPixelScale, quality: inputs.quality,
             budget: peer?.nativeCaptureBudget, fps: targetFPS, clientLongEdge: inputs.clientLongEdge, tuning: tuning
+        ), let whole = edge == nil ? budget : RemoteCaptureConfiguration.outputSize(
+            contentSize: geometry.size, pointPixelScale: geometry.pointPixelScale, quality: inputs.quality,
+            budget: peer?.nativeCaptureBudget, fps: targetFPS, clientLongEdge: inputs.clientLongEdge, tuning: tuning,
+            displayedLongEdge: edge
         ) else {
             requested = applied
             completeConfigurationUpdate(succeeded: false)
             return
         }
         let output = RemoteCaptureConfiguration.scaled(whole, by: inputs.sizeFraction)
-        let region = ViewportCapturePolicy.region(for: viewport, display: geometry, output: output, tuning: tuning,
-                                                  previous: previous, cropEngaged: !appliedRegion.isWholeDisplay)
+        let cropBudget = RemoteCaptureConfiguration.scaled(budget, by: inputs.sizeFraction)
+        let region = ViewportCapturePolicy.region(for: viewport, display: geometry, output: output, budget: cropBudget,
+                                                  tuning: tuning, previous: previous,
+                                                  cropEngaged: !appliedRegion.isWholeDisplay)
         let geometryChanges = ViewportCapturePolicy.needsReconfiguration(from: appliedRegion, to: region)
         guard inputs != applied || geometryChanges else {
             publish(region)
@@ -1227,6 +1250,28 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
                 completeConfigurationUpdate(succeeded: error == nil)
             }
         }
+    }
+
+    /// The displayed edge for this update, (re)arming the dwell for a change still inside it.
+    private func resolveDisplayedEdge() -> Int? {
+        let now = CACurrentMediaTime()
+        let decision = DisplayedPixelsPolicy.resolve(
+            target: DisplayedPixelsPolicy.targetLongEdge(viewport: viewport, display: geometry, tuning: tuning),
+            held: displayedHold, now: now)
+        displayedHold = decision.hold
+        displayedDwell?.cancel()
+        displayedDwell = nil
+        if let deadline = decision.deadline {
+            let dwell = DispatchWorkItem { [weak self] in
+                guard let self, !self.stopping else { return }
+                self.displayedDwell = nil
+                self.handle(self.gate.request(at: CACurrentMediaTime(), immediate: true))
+            }
+            displayedDwell = dwell
+            // A millisecond past the deadline, so the re-resolve on this clock finds the change due.
+            queue.asyncAfter(deadline: .now() + max(0, deadline - now) + 0.001, execute: dwell)
+        }
+        return decision.edge
     }
 
     private func completeConfigurationUpdate(succeeded: Bool) {
@@ -1311,6 +1356,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
                 timer = nil
                 trailingUpdate?.cancel()
                 trailingUpdate = nil
+                displayedDwell?.cancel()
+                displayedDwell = nil
                 lastBuffer = nil
                 peer = nil
                 onFailure = nil
