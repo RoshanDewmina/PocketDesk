@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Removes anything identifying from free text before it can reach a diagnostics bundle:
 /// addresses, URLs and host names, long tokens, e-mail addresses and home-folder names.
@@ -42,11 +43,18 @@ final class HostEventLog {
     }
 
     static let capacity = 60
+    nonisolated private static let log = Logger(subsystem: "com.roshan.PocketDesk", category: "events")
+    /// Entries are already sanitized, so they are public: otherwise `log show` prints <private>.
+    nonisolated static func unifiedLog(_ kind: Kind, _ message: String) {
+        log.notice("\(kind.rawValue, privacy: .public): \(message, privacy: .public)")
+    }
     private(set) var entries: [Entry] = []
     private let now: () -> Date
+    private let mirror: (Kind, String) -> Void
 
-    init(now: @escaping () -> Date = Date.init) {
+    init(now: @escaping () -> Date = Date.init, mirror: @escaping (Kind, String) -> Void = { HostEventLog.unifiedLog($0, $1) }) {
         self.now = now
+        self.mirror = mirror
     }
 
     func record(_ kind: Kind, _ message: String) {
@@ -55,6 +63,7 @@ final class HostEventLog {
            now().timeIntervalSince(last.at) < 5 { return }
         entries.append(Entry(at: now(), kind: kind, message: clean))
         if entries.count > Self.capacity { entries.removeFirst(entries.count - Self.capacity) }
+        mirror(kind, clean)
     }
 }
 

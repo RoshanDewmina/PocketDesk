@@ -309,4 +309,138 @@ final class HostReadinessTests: XCTestCase {
         }
         XCTAssertEqual(HostStatus.resolve(.init(screenRecording: .granted, hasPairedPhone: true, displayStatus: .checking)), .starting)
     }
+
+    func testAutoStartBlockersNameEachFalseInputAndAgreeWithTheGate() {
+        for mask in 0..<(1 << 8) {
+            func bit(_ index: Int) -> Bool { mask & (1 << index) != 0 }
+            var gate = HostAutoStartGate()
+            if bit(7) { gate.suspend() }
+            let started = gate.shouldStart(wantsSharing: !bit(0), sharingActive: bit(1), otherAccessRunning: bit(2),
+                                           screenRecordingGranted: !bit(3), displayReady: !bit(4),
+                                           hasPairedPhone: !bit(5), serviceConfigured: !bit(6))
+            let blockers = gate.blockers(removalPending: false, captureApprovalPending: false, wantsSharing: !bit(0),
+                                         sharingActive: bit(1), otherAccessRunning: bit(2), screenRecordingGranted: !bit(3),
+                                         displayReady: !bit(4), hasPairedPhone: !bit(5), serviceConfigured: !bit(6))
+            XCTAssertEqual(blockers.isEmpty, started, "mask \(mask)")
+            let order: [(Int, HostAutoStartBlocker)] = [(0, .sharingOff), (7, .suppressed), (1, .sharingActive),
+                                                        (2, .otherAccessRunning), (3, .screenRecording), (4, .displayNotReady),
+                                                        (5, .noPairedPhone), (6, .serviceNotConfigured)]
+            let expected = order.filter { bit($0.0) }.map(\.1)
+            XCTAssertEqual(blockers, expected, "mask \(mask)")
+        }
+        let gate = HostAutoStartGate()
+        XCTAssertEqual(gate.blockers(removalPending: true, captureApprovalPending: true, wantsSharing: true, sharingActive: false,
+                                     otherAccessRunning: false, screenRecordingGranted: true, displayReady: true,
+                                     hasPairedPhone: true, serviceConfigured: true),
+                       [.removalPending, .captureApprovalPending], "the checks reconcileSharing makes before the gate are named too")
+    }
+
+    func testReadinessLogSaysEachReasonAtMostOncePerMinute() {
+        var limiter = HostReadinessLogLimiter()
+        XCTAssertTrue(limiter.admit("not starting displayNotReady", now: 100))
+        XCTAssertFalse(limiter.admit("not starting displayNotReady", now: 101), "the 1 Hz poll must not flood the log")
+        XCTAssertFalse(limiter.admit("not starting displayNotReady", now: 159.9))
+        XCTAssertTrue(limiter.admit("not starting sharingOff", now: 101), "a different reason is its own line")
+        XCTAssertTrue(limiter.admit("not starting displayNotReady", now: 160))
+        XCTAssertTrue(limiter.admit("not starting displayNotReady", now: 5), "a clock that went backwards never silences a reason")
+    }
+
+    func testUnlockDisplayRefreshIsOffByDefault() throws {
+        let suite = "HostDisplayRecovery-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertFalse(HostDisplayRecovery.resolveEnabled(defaults: defaults))
+        defaults.set(true, forKey: "PocketDeskUnlockDisplayRefresh")
+        XCTAssertTrue(HostDisplayRecovery.resolveEnabled(defaults: defaults))
+        for status: HostDisplayRefreshStatus in [.notChecked, .checking, .ready, .unavailable, .permissionDenied, .failed] {
+            XCTAssertFalse(HostDisplayRecovery.reloadsDisplays(enabled: false, displayStatus: status, locked: false,
+                                                                catalogRefreshAllowed: true), "off keeps today's recovery")
+        }
+    }
+
+    /// 7 Oct 2026: installed at 10:13 while locked with the display off. ScreenCaptureKit listed windows but
+    /// no display, and nothing re-read the list at the 10:41 unlock, so the host idled until a click.
+    func testInstalledWhileLockedThenUnlockedStartsByItselfOnlyWithTheFlag() {
+        for flag in [false, true] {
+            let run = AutoStartRun(locked: HostScreenLock.isLocked(["CGSSessionScreenIsLocked": true]), launchDisplays: [],
+                                   flag: flag)
+            XCTAssertFalse(run.startedAtLaunch, "a locked Mac never starts sharing")
+            XCTAssertEqual(run.statusAfterUnlock, flag ? .starting : .unavailable)
+            if flag {
+                XCTAssertTrue(run.startedAfterUnlock, "unlock re-reads the display list and starts")
+                XCTAssertEqual(run.blockersAfterUnlock, [])
+            } else {
+                XCTAssertFalse(run.startedAfterUnlock, "today: the empty list from launch is never re-read")
+                XCTAssertEqual(run.blockersAfterUnlock, [.displayNotReady])
+            }
+        }
+        XCTAssertFalse(HostDisplayRecovery.reloadsDisplays(enabled: true, displayStatus: .unavailable, locked: true,
+                                                           catalogRefreshAllowed: true),
+                       "the display waking at the lock screen waits for the unlock")
+    }
+
+    func testUnlockedInstallStartsAtOnceWithoutAnExtraDisplayRead() {
+        for flag in [false, true] {
+            let run = AutoStartRun(locked: HostScreenLock.isLocked(["CGSSessionScreenIsLocked": false]), launchDisplays: [1],
+                                   flag: flag)
+            XCTAssertTrue(run.startedAtLaunch)
+            XCTAssertFalse(run.reloadedAfterUnlock, "a later wake reuses a ready list, with or without the flag")
+            XCTAssertTrue(run.startedAfterUnlock)
+        }
+    }
+
+    func testDisplayRefreshOnRecoveryStaysOutOfLiveSessionsAndPermissionBackOff() {
+        XCTAssertFalse(HostDisplayRecovery.reloadsDisplays(enabled: true, displayStatus: .unavailable, locked: false,
+                                                           catalogRefreshAllowed: false))
+        XCTAssertFalse(HostDisplayRecovery.reloadsDisplays(enabled: true, displayStatus: .permissionDenied, locked: false,
+                                                           screenRecordingGranted: false, catalogRefreshAllowed: true))
+        XCTAssertFalse(HostDisplayRecovery.reloadsDisplays(enabled: true, displayStatus: .failed, locked: false,
+                                                           captureApprovalPending: true, catalogRefreshAllowed: true),
+                       "capture approval keeps its own 5 to 60 s back-off")
+        XCTAssertTrue(HostDisplayRecovery.reloadsDisplays(enabled: true, displayStatus: .failed, locked: false,
+                                                          catalogRefreshAllowed: true))
+    }
+}
+
+/// The host's launch → (lock) → unlock-or-wake path, composed from the pure seams `RemoteHostModel` calls.
+/// `RemoteHostModel` itself is not in this target; its wiring of these seams is checked on the device.
+private struct AutoStartRun {
+    var startedAtLaunch = false
+    var startedAfterUnlock = false
+    var reloadedAfterUnlock = false
+    var blockersAfterUnlock: [HostAutoStartBlocker] = []
+    var statusAfterUnlock: HostStatus = .starting
+
+    init(locked: Bool, launchDisplays: [Int], flag: Bool, displaysAfterUnlock: [Int] = [1]) {
+        var gate = HostAutoStartGate()
+        var screenLocked = false
+        if locked, case .tearDown(.locked) = HostSleepPolicy.response(to: .screenLocked) {
+            screenLocked = true
+            gate.suspend()
+        }
+        var status = HostPermissionRefreshResult<Int>.resolve(screenRecordingGranted: true, accessibilityGranted: true,
+                                                              displayEnumeration: .success(launchDisplays)).displayStatus
+        func blockers() -> [HostAutoStartBlocker] {
+            gate.blockers(removalPending: false, captureApprovalPending: false, wantsSharing: true, sharingActive: false,
+                          otherAccessRunning: false, screenRecordingGranted: true, displayReady: status == .ready,
+                          hasPairedPhone: true, serviceConfigured: true)
+        }
+        startedAtLaunch = blockers().isEmpty
+
+        let recovery: HostSleepPolicy.Event = screenLocked ? .screenUnlocked : .systemDidWake
+        if HostSleepPolicy.response(to: recovery) == .recover {
+            screenLocked = false
+            gate.clear()
+        }
+        reloadedAfterUnlock = HostDisplayRecovery.reloadsDisplays(enabled: flag, displayStatus: status, locked: screenLocked,
+                                                                  catalogRefreshAllowed: true)
+        if reloadedAfterUnlock {
+            status = HostPermissionRefreshResult<Int>.resolve(screenRecordingGranted: true, accessibilityGranted: true,
+                                                              displayEnumeration: .success(displaysAfterUnlock)).displayStatus
+        }
+        blockersAfterUnlock = blockers()
+        startedAfterUnlock = blockersAfterUnlock.isEmpty
+        statusAfterUnlock = HostStatus.resolve(.init(screenRecording: .granted, hasPairedPhone: true,
+                                                     unavailable: gate.suppressed, displayStatus: status))
+    }
 }

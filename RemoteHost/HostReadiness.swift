@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 enum HostSetupStep: Int, CaseIterable, Comparable {
     case screenRecording
@@ -226,6 +227,68 @@ struct HostAutoStartGate: Equatable {
     ) -> Bool {
         wantsSharing && !suppressed && !sharingActive && !otherAccessRunning &&
             screenRecordingGranted && displayReady && hasPairedPhone && serviceConfigured
+    }
+
+    /// Every input that keeps `reconcileSharing` from starting, in the order it checks them.
+    func blockers(
+        removalPending: Bool,
+        captureApprovalPending: Bool,
+        wantsSharing: Bool,
+        sharingActive: Bool,
+        otherAccessRunning: Bool,
+        screenRecordingGranted: Bool,
+        displayReady: Bool,
+        hasPairedPhone: Bool,
+        serviceConfigured: Bool
+    ) -> [HostAutoStartBlocker] {
+        let checks: [(Bool, HostAutoStartBlocker)] = [
+            (removalPending, .removalPending), (captureApprovalPending, .captureApprovalPending),
+            (!wantsSharing, .sharingOff), (suppressed, .suppressed), (sharingActive, .sharingActive),
+            (otherAccessRunning, .otherAccessRunning), (!screenRecordingGranted, .screenRecording),
+            (!displayReady, .displayNotReady), (!hasPairedPhone, .noPairedPhone), (!serviceConfigured, .serviceNotConfigured)
+        ]
+        return checks.filter(\.0).map(\.1)
+    }
+}
+
+enum HostAutoStartBlocker: String, CaseIterable {
+    case removalPending, captureApprovalPending, sharingOff, suppressed, sharingActive, otherAccessRunning
+    case screenRecording, displayNotReady, noPairedPhone, serviceNotConfigured, selectedDisplayMissing
+}
+
+enum HostReadinessLog {
+    static let log = Logger(subsystem: "com.roshan.PocketDesk", category: "readiness")
+}
+
+/// One unified-log line per distinct reason per minute, however often `reconcileSharing` runs.
+struct HostReadinessLogLimiter {
+    static let interval: TimeInterval = 60
+    private var lastLogged: [String: TimeInterval] = [:]
+
+    mutating func admit(_ reason: String, now: TimeInterval) -> Bool {
+        if let last = lastLogged[reason], now >= last, now - last < Self.interval { return false }
+        lastLogged[reason] = now
+        return true
+    }
+}
+
+/// A display list read while the Mac is locked or its display is off can come back empty, and
+/// nothing else re-reads it when the Mac becomes usable again: so, behind the flag, unlock, wake
+/// and display wake re-read a list that is not ready instead of only re-checking the gate.
+enum HostDisplayRecovery {
+    static let processStartEnabled = resolveEnabled()
+
+    static func resolveEnabled(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: StreamTuning.unlockDisplayRefreshKey)
+    }
+
+    /// Without Screen Recording, or while macOS waits for capture approval, re-reading would bypass
+    /// those paths' own back-off; they reload displays themselves once the grant or approval comes.
+    static func reloadsDisplays(enabled: Bool, displayStatus: HostDisplayRefreshStatus, locked: Bool,
+                                screenRecordingGranted: Bool = true, captureApprovalPending: Bool = false,
+                                catalogRefreshAllowed: Bool) -> Bool {
+        enabled && !locked && displayStatus != .ready && screenRecordingGranted && !captureApprovalPending
+            && catalogRefreshAllowed
     }
 }
 

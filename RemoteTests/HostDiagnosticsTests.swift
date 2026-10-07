@@ -42,6 +42,16 @@ final class HostDiagnosticsReportTests: XCTestCase {
         XCTAssertEqual(log.entries.last?.message, "Session 99")
     }
 
+    func testEventLogMirrorsEachKeptEntrySanitizedToTheUnifiedLog() {
+        var mirrored: [String] = []
+        let log = HostEventLog(now: { Date(timeIntervalSince1970: 1_000) }, mirror: { mirrored.append("\($0.rawValue): \($1)") })
+        log.record(.availability, "Sharing paused: locked")
+        log.record(.availability, "Sharing paused: locked")
+        log.record(.error, "Failed at 10.0.0.2")
+        XCTAssertEqual(mirrored, ["availability: Sharing paused: locked", "error: Failed at [ip]"],
+                       "a collapsed repeat is not mirrored, and nothing unsanitized reaches the unified log")
+    }
+
     func testReportCoversSupportFactsAndNothingPrivate() {
         let now = Date(timeIntervalSince1970: 2_000_000)
         var snapshot = HostDiagnosticsSnapshot()

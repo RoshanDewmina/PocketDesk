@@ -118,6 +118,7 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var curtainState: PrivacyCurtainState = .off
     @Published private(set) var crashLoopStopped = false
     @Published private var autoStart = HostAutoStartGate()
+    private var readinessLogLimiter = HostReadinessLogLimiter()
     let events = HostEventLog()
     /// Agent alerts (beta): a hook on this Mac says an agent needs a person, and this tells the phone.
     let agentAlerts = HostAgentAlerts()
@@ -826,6 +827,7 @@ final class RemoteHostModel: ObservableObject {
         }
         permissionTimer?.tolerance = 0.2
         if screenRecordingPermission.isGranted { loadDisplays() } else { reconcileSharing() }
+        logReadiness("launch")
         #if DEBUG
         HostE2E.active?.attach(self)
         #endif
@@ -1314,7 +1316,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func reconcileSharing() {
-        guard removalAllowsSharing else { return }
+        guard removalAllowsSharing else { logReadiness("not starting"); return }
         if first60SetupPending && connection.isRunning && listeningWithoutSharing {
             if displayRefreshStatus == .failed || displayRefreshStatus == .unavailable {
                 stop(); detail = "Couldn’t find a display to share. Try again on this Mac."
@@ -1344,7 +1346,7 @@ final class RemoteHostModel: ObservableObject {
             connection.start()
             return
         }
-        guard !captureApproval.isPending else { return }
+        guard !captureApproval.isPending else { logReadiness("not starting"); return }
         guard autoStart.shouldStart(
             wantsSharing: wantsSharing,
             sharingActive: active,
@@ -1353,8 +1355,48 @@ final class RemoteHostModel: ObservableObject {
             displayReady: displayRefreshStatus == .ready,
             hasPairedPhone: hasPairedPhone,
             serviceConfigured: serviceAddress != nil
-        ), let display = validatedSelectedDisplay() else { return }
+        ) else { logReadiness("not starting"); return }
+        guard let display = validatedSelectedDisplay() else {
+            logReadiness("not starting", also: [.selectedDisplayMissing]); return
+        }
         start(display: display)
+    }
+
+    /// Names every auto-start input that is false, so an idle host explains itself in the unified log.
+    private func logReadiness(_ context: String, also extra: [HostAutoStartBlocker] = []) {
+        let blockers = autoStart.blockers(
+            removalPending: serverRemovalPending,
+            captureApprovalPending: captureApproval.isPending,
+            wantsSharing: wantsSharing,
+            sharingActive: active,
+            otherAccessRunning: browserSession.controller.running,
+            screenRecordingGranted: screenRecordingPermission.isGranted,
+            displayReady: displayRefreshStatus == .ready,
+            hasPairedPhone: hasPairedPhone,
+            serviceConfigured: serviceAddress != nil
+        ) + extra
+        if blockers == [.sharingActive] { return }
+        let reasons = blockers.map(\.rawValue).joined(separator: ",")
+        let display = String(describing: displayRefreshStatus)
+        let key = "\(context) \(reasons) \(display) \(screenLocked) \(listeningWithoutSharing)"
+        guard readinessLogLimiter.admit(key, now: ProcessInfo.processInfo.systemUptime) else { return }
+        HostReadinessLog.log.notice("""
+            \(context, privacy: .public): blockers=[\(reasons, privacy: .public)] display=\(display, privacy: .public) \
+            locked=\(self.screenLocked, privacy: .public) listening=\(self.listeningWithoutSharing, privacy: .public) \
+            unlockDisplayRefresh=\(HostDisplayRecovery.processStartEnabled, privacy: .public)
+            """)
+    }
+
+    private var recoveryReloadsDisplays: Bool {
+        HostDisplayRecovery.reloadsDisplays(
+            enabled: HostDisplayRecovery.processStartEnabled,
+            displayStatus: displayRefreshStatus,
+            locked: screenLocked,
+            screenRecordingGranted: screenRecordingPermission.isGranted,
+            captureApprovalPending: captureApproval.isPending,
+            catalogRefreshAllowed: sessionState != .couch && CouchCatalogRefresh.allowed(
+                active: active, session: sessionState, browserRunning: browserSession.controller.running)
+        )
     }
 
     func selectDisplay(_ id: CGDirectDisplayID) {
@@ -4084,7 +4126,12 @@ final class RemoteHostModel: ObservableObject {
             autoStart.clear()
             detail = nil
             unavailableReason = nil
-            reconcileSharing()
+            let reload = recoveryReloadsDisplays
+            HostReadinessLog.log.notice("""
+                recover (\(String(describing: event), privacy: .public)): display=\(String(describing: self.displayRefreshStatus), privacy: .public) \
+                reloadDisplays=\(reload, privacy: .public)
+                """)
+            if reload { loadDisplays() } else { reconcileSharing() }
         case .displayAsleep:
             displayAsleep = true
             guard active, connection.connected else { return }
@@ -4093,6 +4140,10 @@ final class RemoteHostModel: ObservableObject {
         case .displayAwake:
             displayAsleep = false
             if connection.connected { sendCaptureHealth(sessionHealthy) }
+            if recoveryReloadsDisplays {
+                HostReadinessLog.log.notice("display awake: display=\(String(describing: self.displayRefreshStatus), privacy: .public) reloadDisplays=true")
+                loadDisplays()
+            }
         }
         away.refresh()
         reconcileCurtain()

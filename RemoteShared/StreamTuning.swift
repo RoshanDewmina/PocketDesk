@@ -180,6 +180,8 @@ struct StreamTuning: Equatable {
     static let keysOnDemandKey = "PocketDeskKeysOnDemand"
     static let ladderKeyNeutralKey = "PocketDeskLadderKeyNeutral"
     static let webRTCAdaptationAt60Key = "PocketDeskWebRTCAdaptationAt60"
+    /// Host readiness, not streaming: read by `HostDisplayRecovery`; listed here for the cleanup step only.
+    static let unlockDisplayRefreshKey = "PocketDeskUnlockDisplayRefresh"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
@@ -187,7 +189,7 @@ struct StreamTuning: Equatable {
                                  viewportCaptureKey, ladderKey, encoderMaxInFlightKey, idleVideoRefreshKey, lanHeadroomKey,
                                  mergePointerMovesKey, frameTimingKey, senderQueueGovernorKey, senderQueueGovernorApplyKey, encoderMaximumQPKey, hevcKey,
                                  encoderPrioritizeSpeedKey, hevcLowLatencyKey, encoderPeriodicKeyFramesKey, encoderPipeliningKey,
-                                 keysOnDemandKey, ladderKeyNeutralKey, webRTCAdaptationAt60Key]
+                                 keysOnDemandKey, ladderKeyNeutralKey, webRTCAdaptationAt60Key, unlockDisplayRefreshKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
