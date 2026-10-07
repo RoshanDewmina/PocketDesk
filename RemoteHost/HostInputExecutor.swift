@@ -135,6 +135,7 @@ final class HostInputExecutor: @unchecked Sendable {
             lease.record(action: admitted.action.action, accepted: outcome.accepted, at: now)
             if outcome.holdEvent == .ended { lease.cancel() }
             coastIfStarted(routeAuthority)
+            paceIfHeld(routeAuthority)
         }
         return Receipt(outcome: outcome, generation: ticket, point: driver.lastPoint,
                        externalHold: driver.externalHoldID, enabled: driver.enabled,
@@ -148,7 +149,7 @@ final class HostInputExecutor: @unchecked Sendable {
     private var queued = 0
     private var queuedBytes = 0
     private var pendingHolds: [String: Int] = [:]
-    private func invalidateLocked() { generation &+= 1; pendingHolds.removeAll() }
+    private func invalidateLocked() { generation &+= 1; pendingHolds.removeAll(); driver.discardPacedScroll() }
     private func reserveHold(_ action: RemoteAction, ticket: UInt64) {
         if ticket == generation, action.action == "dragDown", let hold = action.interaction?.hold {
             pendingHolds[hold, default: 0] += 1
@@ -211,13 +212,54 @@ final class HostInputExecutor: @unchecked Sendable {
         if !routed { driver.abandonHostMomentum() }
         if !running { stopCoast() }
     }
-    deinit { coastTimer?.cancel() }
+    deinit { coastTimer?.cancel(); pacerTimer?.cancel() }
     private func stopCoast() {
         coastTimer?.cancel()
         coastTimer = nil
         coastRoute = nil
     }
     var isCoasting: Bool { withAuthority { driver.isCoasting } }
+
+    /// Scroll smoothing (`StreamTuning.scrollSmoothing`): a timer on the posting queue releases scroll the
+    /// driver's `ScrollPacer` holds, through the route authority of the post that queued it, under the same
+    /// revocation as the coast. A new generation drops what is held (`invalidateLocked`).
+    private var pacerTimer: DispatchSourceTimer?
+    private var pacerGeneration: UInt64 = 0
+    private var pacerRoute: ((@escaping () -> RemoteInputOutcome) -> RemoteInputOutcome)?
+    private func paceIfHeld(_ routeAuthority: @escaping (@escaping () -> RemoteInputOutcome) -> RemoteInputOutcome) {
+        guard driver.hasPacedScroll else { return }
+        pacerGeneration = generation
+        pacerRoute = routeAuthority
+        guard pacerTimer == nil else { return }
+        let interval = ScrollPacer<Void>.spacing
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .microseconds(500))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.withAuthority { self.stepPacer() }
+        }
+        pacerTimer = timer
+        timer.resume()
+    }
+    private func stepPacer() {
+        guard let route = pacerRoute else { stopPacer(); return }
+        let now = clock()
+        let revoked = generation != pacerGeneration || !driver.enabled || lease.isExpired(at: now)
+        var routed = false
+        let held = route { [self] in
+            routed = true
+            if revoked { driver.discardPacedScroll(); return RemoteInputOutcome() }
+            return RemoteInputOutcome(accepted: driver.stepPacedScroll(now: now))
+        }.accepted
+        if !routed { driver.discardPacedScroll() }
+        if !held { stopPacer() }
+    }
+    private func stopPacer() {
+        pacerTimer?.cancel()
+        pacerTimer = nil
+        pacerRoute = nil
+    }
+    var hasPacedScroll: Bool { withAuthority { driver.hasPacedScroll } }
 
     init(driver: RemoteInputDriver = RemoteInputDriver(),
          queue: DispatchQueue = DispatchQueue(label: "farside.input.post", qos: .userInteractive),
@@ -281,6 +323,7 @@ final class HostInputExecutor: @unchecked Sendable {
                     lease.record(action: action.action, accepted: outcome.accepted, at: now)
                     if outcome.holdEvent == .ended { lease.cancel() }
                     coastIfStarted(routeAuthority)
+                    paceIfHeld(routeAuthority)
                 }
                 return Receipt(outcome: outcome, generation: ticket, point: driver.lastPoint,
                                externalHold: driver.externalHoldID, enabled: driver.enabled,
@@ -299,6 +342,7 @@ final class HostInputExecutor: @unchecked Sendable {
             lease.record(action: action.action, accepted: outcome.accepted, at: now)
             if outcome.holdEvent == .ended { lease.cancel() }
             coastIfStarted { $0() }
+            paceIfHeld { $0() }
             return outcome
         }
     }

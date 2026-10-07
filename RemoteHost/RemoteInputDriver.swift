@@ -318,15 +318,26 @@ final class RemoteInputDriver {
     var eventDeltas = RemoteInputEventSink.deltaFieldsEnabled
     private var coast = ScrollMomentum()
     var isCoasting: Bool { coast.isRunning }
+    /// `StreamTuning.scrollSmoothing`: gesture scroll deltas pass through `ScrollPacer`, stepped by the executor.
+    let scrollSmoothing: Bool
+    /// `StreamTuning.scrollTargetsStream`: a scroll begins under a cursor on the streamed display.
+    let scrollTargetsStream: Bool
+    private struct PacedScroll { var point: CGPoint; var dx: Double; var dy: Double; var flags: CGEventFlags; var phase = "changed" }
+    private var scrollPacer = ScrollPacer<PacedScroll>()
+    var hasPacedScroll: Bool { !scrollPacer.isEmpty }
     private let eventSink: RemoteInputEventSink
     private var activePencil: PencilFrame?
     private let isTrusted: () -> Bool
 
     init(
         eventSink: RemoteInputEventSink = .live,
+        scrollSmoothing: Bool = false,
+        scrollTargetsStream: Bool = false,
         isTrusted: @escaping () -> Bool = { CGPreflightPostEventAccess() }
     ) {
         self.eventSink = eventSink
+        self.scrollSmoothing = scrollSmoothing
+        self.scrollTargetsStream = scrollTargetsStream
         self.isTrusted = isTrusted
     }
 
@@ -387,6 +398,7 @@ final class RemoteInputDriver {
             else if pen.phase != .began { guard held, activePencil?.stream == pen.stream else { return RemoteInputOutcome() } }
         }
         if activePencil != nil && ["move", "moveTo", "dragUp"].contains(input.action) && input.pencil == nil { return RemoteInputOutcome() }
+        if !scrollPacer.isEmpty, !continuesPacedScroll(input, upgraded: upgraded) { flushPacedScroll(now: now) }
         if input.action != "holdRenew", !Self.isMomentum(input) { endMomentum() }
         if input.action == "release" {
             let hadHold = held
@@ -627,7 +639,14 @@ final class RemoteInputDriver {
             }
             let point = eventPoint(in: bounds)
             lastPoint = point
-            outcome.accepted = postScroll(point, dx, dy, phase: upgraded ? input.interaction?.phase : nil, flags: eventFlags)
+            let phase = upgraded ? input.interaction?.phase : nil
+            if scrollTargetsStream, phase == nil || phase == "began" { placeCursor(at: point, in: bounds, flags: flags, now: now) }
+            // Accepted while held: a new generation or revoked control may still drop it, like any queued post.
+            if scrollSmoothing, let phase, phase == "changed" || (!scrollPacer.isEmpty && (phase == "ended" || phase == "cancelled")) {
+                outcome.accepted = postPaced(scrollPacer.offer(PacedScroll(point: point, dx: dx, dy: dy, flags: eventFlags, phase: phase), at: now))
+            } else {
+                outcome.accepted = postScroll(point, dx, dy, phase: phase, flags: eventFlags)
+            }
             if outcome.accepted {
                 if let acceptedGestureFlags {
                     scrollFlags = acceptedGestureFlags
@@ -701,6 +720,7 @@ final class RemoteInputDriver {
         externalHoldID = nil
         retiredHolds.removeAll()
         retiredHoldOrder.removeAll()
+        scrollPacer.discard()
         activeScroll = nil
         retiredScrolls.removeAll()
         retiredScrollOrder.removeAll()
@@ -708,6 +728,60 @@ final class RemoteInputDriver {
         scrollFlags = []
         scrollFlagsStream = nil
         momentumFlags = []
+    }
+
+    /// Posts the paced scroll that is due. Returns false once nothing is held, so the caller's timer can stop.
+    @discardableResult
+    func stepPacedScroll(now: TimeInterval) -> Bool {
+        guard !scrollPacer.isEmpty else { return false }
+        guard enabled, isTrusted() else { scrollPacer.discard(); return false }
+        _ = postPaced(scrollPacer.release(at: now))
+        return !scrollPacer.isEmpty
+    }
+
+    /// Held scroll is stale once its generation, route or authority is gone.
+    func discardPacedScroll() { scrollPacer.discard() }
+
+    private func flushPacedScroll(now: TimeInterval) {
+        guard enabled, isTrusted() else { scrollPacer.discard(); return }
+        _ = postPaced(scrollPacer.flush(at: now))
+    }
+
+    /// The same stream's later changes, and its end, queue behind what is held; anything else posts it first.
+    private func continuesPacedScroll(_ input: RemoteAction, upgraded: Bool) -> Bool {
+        upgraded && input.action == "scroll" && ["changed", "ended", "cancelled"].contains(input.interaction?.phase ?? "")
+            && input.interaction?.stream != nil && input.interaction?.stream == activeScroll
+    }
+
+    /// Releases due at the same instant post as one event when they share a target and modifiers.
+    private func postPaced(_ due: [PacedScroll]) -> Bool {
+        var merged: [PacedScroll] = []
+        for scroll in due {
+            if let last = merged.last, last.phase == "changed", scroll.phase == "changed",
+               last.point == scroll.point, last.flags == scroll.flags {
+                merged[merged.count - 1].dx += scroll.dx; merged[merged.count - 1].dy += scroll.dy
+            } else { merged.append(scroll) }
+        }
+        for scroll in merged {
+            guard postScroll(scroll.point, scroll.dx, scroll.dy, phase: scroll.phase, flags: scroll.flags) else {
+                scrollPacer.discard()
+                return false
+            }
+        }
+        return true
+    }
+
+    /// macOS delivers a scroll under the real cursor whatever location the event carries, so a cursor left on
+    /// another display (an external monitor above the built-in one) would take the phone's scroll there.
+    private func placeCursor(at point: CGPoint, in bounds: CGRect, flags: CGEventFlags, now: TimeInterval) {
+        guard !held else { return }
+        let cursor = eventSink.pointerLocation()
+        let onStream = clamped(cursor, to: bounds)
+        guard hypot(onStream.x - cursor.x, onStream.y - cursor.y) > Self.pointerChainTolerance else { return }
+        let event = RemoteInputEventSink.MouseEvent(type: .mouseMoved, point: point, button: .left,
+            count: eventDeltas ? 0 : 1, flags: flags,
+            delta: eventDeltas ? CGSize(width: point.x - cursor.x, height: point.y - cursor.y) : .zero)
+        if eventSink.mouseSequence([event]) { notePosted(point, at: now) }
     }
 
     /// Ends a momentum the phone stopped sending, from the host's periodic timer.

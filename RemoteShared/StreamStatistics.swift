@@ -141,6 +141,12 @@ struct StreamCounterSnapshot {
     var displayLinkIntervalSamples: Int?
     var leadingMotionLatencyP95Ms: Double?
     var leadingMotionLatencySamples: Int?
+    /// Phone: time between consecutive finger-scroll messages of one stream (one per touch callback), and
+    /// the scroll each carried in Mac points. Shows the touch cadence a real or synthesized swipe produces.
+    var scrollSendIntervalP50Ms: Double?
+    var scrollSendIntervalMaxMs: Double?
+    var scrollSendSamples: Int?
+    var scrollStepP50: Double?
     var displayLinkIntervalP50Ms: Double?
     var displayLinkAt120Share: Double?
 
@@ -479,6 +485,12 @@ struct StreamStatsReport: Codable, Equatable {
     var displayLinkIntervalSamples: Int?
     var leadingMotionLatencyP95Ms: Double?
     var leadingMotionLatencySamples: Int?
+    /// Phone: time between consecutive finger-scroll messages of one stream (one per touch callback), and
+    /// the scroll each carried in Mac points. Shows the touch cadence a real or synthesized swipe produces.
+    var scrollSendIntervalP50Ms: Double?
+    var scrollSendIntervalMaxMs: Double?
+    var scrollSendSamples: Int?
+    var scrollStepP50: Double?
     var displayLinkIntervalP50Ms: Double?
     var displayLinkAt120Share: Double?
     var host: HostStreamSummary?
@@ -755,6 +767,10 @@ struct StreamStatsReport: Codable, Equatable {
                 displayLinkIntervalSamples = counters.displayLinkIntervalSamples
                 leadingMotionLatencyP95Ms = Self.round(counters.leadingMotionLatencyP95Ms)
                 leadingMotionLatencySamples = counters.leadingMotionLatencySamples
+                scrollSendIntervalP50Ms = Self.round(counters.scrollSendIntervalP50Ms)
+                scrollSendIntervalMaxMs = Self.round(counters.scrollSendIntervalMaxMs)
+                scrollSendSamples = counters.scrollSendSamples
+                scrollStepP50 = Self.round(counters.scrollStepP50)
                 displayLinkIntervalP50Ms = Self.round(counters.displayLinkIntervalP50Ms)
                 displayLinkAt120Share = counters.displayLinkAt120Share
                 if counters.presentedFrames > 0 || counters.supersededFrames > 0 {
@@ -1243,6 +1259,8 @@ enum SenderQueueEstimate {
 enum PhoneRenderTimingMetric: CaseIterable, Hashable, Sendable {
     case decodeVT, ownershipDelay, deliveryDelay, decodedToPresented, deliveryToPresented
     case drawableAcquire, rendererFenceWait, displayLinkInterval, leadingMotionLatency
+    /// Not durations: finger-scroll cadence (ms) and per-message scroll (Mac points), phone-local.
+    case scrollSendInterval, scrollStep
 }
 
 /// Thread-safe counters fed from capture, WebRTC and renderer threads.
@@ -1616,6 +1634,11 @@ final class StreamCounters: @unchecked Sendable {
         let leadingMotionLatency = phoneRenderWindows[.leadingMotionLatency, default: LatencyWindow()].drainPercentiles()
         result.leadingMotionLatencyP95Ms = leadingMotionLatency.p95
         result.leadingMotionLatencySamples = leadingMotionLatency.count > 0 ? leadingMotionLatency.count : nil
+        let scrollSendInterval = phoneRenderWindows[.scrollSendInterval, default: LatencyWindow()].drainPercentiles()
+        result.scrollSendIntervalP50Ms = scrollSendInterval.p50
+        result.scrollSendIntervalMaxMs = scrollSendInterval.max
+        result.scrollSendSamples = scrollSendInterval.count > 0 ? scrollSendInterval.count : nil
+        result.scrollStepP50 = phoneRenderWindows[.scrollStep, default: LatencyWindow()].drainPercentiles().p50
         result.displayLinkIntervalP50Ms = displayLinkInterval.p50
         result.displayLinkAt120Share = displayLinkIntervals > 0 ? Double(displayLinkAt120) / Double(displayLinkIntervals) : nil
         displayLinkAt120 = 0
