@@ -137,6 +137,11 @@ struct StreamTuning: Equatable {
     /// 4 fps whole-display capture sent as snapshots on the `backdrop.1` channel. Off: no second capture
     /// and no channel.
     var backdropTrack = false
+    /// Host: on a remote (Anywhere) route, run the one-hop local link proof alongside the stream with a
+    /// phone that offers it (`RemoteRouteLANProofRequest`). A pass grants no authority and changes no
+    /// route; it only lets `LANTrustTracker` judge a selected pair that is exactly the proven one.
+    /// Off until a device A/B: every remote-route session stays unproven, as today.
+    var remoteRouteLANProof = false
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
         encoderCeilingKbps.map { $0 * 1000 } ?? quality.maximumBitrateBps
@@ -213,6 +218,7 @@ struct StreamTuning: Equatable {
     static let backdropTrackKey = "PocketDeskBackdropTrack"
     /// Host readiness, not streaming: read by `HostDisplayRecovery`; listed here for the cleanup step only.
     static let unlockDisplayRefreshKey = "PocketDeskUnlockDisplayRefresh"
+    static let remoteRouteLANProofKey = "PocketDeskRemoteRouteLANProof"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
@@ -223,7 +229,7 @@ struct StreamTuning: Equatable {
                                  keysOnDemandKey, ladderKeyNeutralKey, webRTCAdaptationAt60Key,
                                  keysOnDemandH264Key, encoderMaxFrameDelayKey, captureQueueDepthKey, captureResolutionKey,
                                  encodingMinBitrateLANKey,
-                                 backdropTrackKey, unlockDisplayRefreshKey]
+                                 backdropTrackKey, unlockDisplayRefreshKey, remoteRouteLANProofKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -356,6 +362,7 @@ struct StreamTuning: Equatable {
         if defaults.object(forKey: backdropTrackKey) != nil {
             tuning.backdropTrack = defaults.bool(forKey: backdropTrackKey)
         }
+        tuning.remoteRouteLANProof = defaults.bool(forKey: remoteRouteLANProofKey)
         return tuning
     }
 
@@ -417,6 +424,7 @@ struct StreamTuning: Equatable {
         if captureResolution != .automatic { parts.append("capture resolution \(captureResolution.rawValue)") }
         if let encodingMinBitrateLANKbps { parts.append("LAN encoding floor \(encodingMinBitrateLANKbps)") }
         if backdropTrack { parts.append("backdrop track") }
+        if remoteRouteLANProof { parts.append("remote-route LAN proof") }
         if ladder { parts.append("governor " + (!senderQueueGovernor ? "off" : senderQueueGovernorApply ? "apply" : "shadow")) }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }

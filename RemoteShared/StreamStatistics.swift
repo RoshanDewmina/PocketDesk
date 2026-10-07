@@ -556,6 +556,9 @@ struct StreamStatsReport: Codable, Equatable {
     var lanCeilingApplied: Bool?
     /// `LANTrustTracker`'s verdict this second (host only); the ladder reads it from here.
     var lanTrusted: Bool?
+    /// Host, remote route: whether the selected pair is the remote-route proof's address pair; nil
+    /// when no such proof passed (`StreamTuning.remoteRouteLANProof` off, a local route, or no pass).
+    var remoteRouteLANPair: Bool?
     /// The `LANBitrateFloor` under the estimate this second, nil while the link is not trusted.
     var lanFloorKbps: Double?
     var senderQueueMs: Double?

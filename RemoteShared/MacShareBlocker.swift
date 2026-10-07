@@ -42,6 +42,9 @@ enum MacShareBlocker: String, Codable, Equatable {
         var localScroll: Bool? = nil
         /// `SessionFeature.backdrop`, its own opt-in for the same reason as `keysOnDemand`.
         var backdrop: Bool? = nil
+        /// `RemoteRouteLANProofRequest`: this phone answers a `localEndpoint` on a remote route. Older
+        /// Macs ignore the key; a Mac that reads it sends that endpoint only to a phone that set it.
+        var lanProof: Bool? = nil
         static let maximumOptions = 4
         /// Only known opt-ins; an option can never stand in for a feature such as causal input.
         static let knownOptions: Set<String> = [SessionFeature.textClarity, SessionFeature.clipboardSync, SessionFeature.phoneAudio, SessionFeature.deliberateEnd]
@@ -79,6 +82,13 @@ enum MacShareBlocker: String, Codable, Equatable {
                   let decoded = try? JSONDecoder().decode(Handshake.self, from: body),
                   decoded.features.count <= 8 else { return .picture }
             return decoded.mode.flatMap(SessionMode.init(rawValue:)) ?? .picture
+        }
+
+        static func supportsRemoteRouteLANProof(in body: Data?) -> Bool {
+            guard let body, body.count <= 1024,
+                  let decoded = try? JSONDecoder().decode(Handshake.self, from: body),
+                  decoded.features.count <= 8 else { return false }
+            return decoded.lanProof == true
         }
 
         static func supportsFirst60(in body: Data?) -> Bool {

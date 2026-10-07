@@ -606,6 +606,17 @@ final class PeerMedia: NSObject {
     /// The media path is the proven one-hop local link and is still selected.
     var provenLocalLinkActive: Bool { localLink != nil && localGateOpen() }
 
+    /// Host, remote route (`StreamTuning.remoteRouteLANProof`): a one-hop proof that passed beside the
+    /// stream. It restricts nothing and is never `provenLocalLinkActive`; it is LAN evidence only for
+    /// the samples whose selected pair is exactly the proven address pair (`LocalMediaRoute.matches`).
+    private(set) var remoteRouteLANLink: ProvenLocalLink?
+    private(set) var remoteRouteLANPairSelected = false
+    func setRemoteRouteLANProof(_ link: ProvenLocalLink?) {
+        remoteRouteLANLink = link
+        if link == nil { remoteRouteLANPairSelected = false }
+    }
+    private var lanEvidenceActive: Bool { provenLocalLinkActive || remoteRouteLANPairSelected }
+
     private func authorizeLocalPath() -> Bool {
         localRouteLock.lock(); defer { localRouteLock.unlock() }
         guard !localPathEverAuthorized || localPathAuthorized else { return false }
@@ -1166,10 +1177,11 @@ final class PeerMedia: NSObject {
         // Only an RTCP reading can be a repeat; a STUN fallback sample is always its own reading.
         let fresh = stats.rtcpRttMs == nil || stats.rtcpRttMeasurements.map { $0 != lastRoundTripMeasurements } ?? true
         if stats.rtcpRttMs != nil { lastRoundTripMeasurements = stats.rtcpRttMeasurements }
-        let trusted = lanTrust.observe(provenLocalLink: provenLocalLinkActive, lossPercent: stats.remoteLossPercent,
+        let trusted = lanTrust.observe(provenLocalLink: lanEvidenceActive, lossPercent: stats.remoteLossPercent,
                                        rttMs: stats.rtcpRttMs ?? stats.rttMs, roundTripFresh: fresh,
                                        pacerDelayMs: stats.pacerDelayMs)
         stats.lanTrusted = trusted
+        if remoteRouteLANLink != nil { stats.remoteRouteLANPair = remoteRouteLANPairSelected }
         guard tuning.qualityBitrates, remoteDescriptionReady else { return }
         defer { followEncodingFloor(trusted: trusted) }
         guard var floor = EncodingMinBitrateFloor.estimateFloorBps(
@@ -1473,6 +1485,10 @@ final class PeerMedia: NSObject {
                         self.onState?("failed"); return
                     }
                 }
+                self.remoteRouteLANPairSelected = self.remoteRouteLANLink.map {
+                    LocalMediaRoute.matches($0, localType: localType, remoteType: remoteType, localAddress: localAddress,
+                                            remoteAddress: remoteAddress, adapterType: adapterType, networkType: networkType, vpn: vpn)
+                } ?? false
                 let route = MediaRoute.classify(selected: pair != nil, local: localType, remote: remoteType)
                 self.lastRoute = route
                 self.followRepairRoute()

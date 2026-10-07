@@ -644,3 +644,36 @@ final class LocalLinkProof {
         return result
     }
 }
+
+/// Remote-route pre-filter: a peer address outside every `en*` IPv4 subnet of this device is on
+/// another network, so no probe is sent to whoever holds that private address here. The proof's own
+/// gates still decide; this only avoids probing (and a Local Network prompt) off the LAN.
+enum LocalProbeSubnet {
+    static func contains(_ address: String, network: String, mask: String) -> Bool {
+        var peer = in_addr(), base = in_addr(), netmask = in_addr()
+        guard inet_pton(AF_INET, address, &peer) == 1, inet_pton(AF_INET, network, &base) == 1,
+              inet_pton(AF_INET, mask, &netmask) == 1, netmask.s_addr != 0 else { return false }
+        return peer.s_addr & netmask.s_addr == base.s_addr & netmask.s_addr
+    }
+
+    static func isOnLink(_ address: String) -> Bool {
+        var head: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&head) == 0 else { return false }
+        defer { freeifaddrs(head) }
+        var current = head
+        while let node = current {
+            defer { current = node.pointee.ifa_next }
+            guard String(cString: node.pointee.ifa_name).hasPrefix("en"),
+                  let addr = node.pointee.ifa_addr, addr.pointee.sa_family == sa_family_t(AF_INET),
+                  let mask = node.pointee.ifa_netmask else { continue }
+            if let local = text(addr), let netmask = text(mask), contains(address, network: local, mask: netmask) { return true }
+        }
+        return false
+    }
+
+    private static func text(_ address: UnsafeMutablePointer<sockaddr>) -> String? {
+        var ip = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+        var value = UnsafeRawPointer(address).assumingMemoryBound(to: sockaddr_in.self).pointee.sin_addr
+        return inet_ntop(AF_INET, &value, &ip, socklen_t(ip.count)) != nil ? String(cString: ip) : nil
+    }
+}
