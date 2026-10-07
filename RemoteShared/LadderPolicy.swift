@@ -537,6 +537,32 @@ enum LANBitrateFloor {
     }
 }
 
+/// Latency item 5 (`StreamTuning.encodingMinBitrateLANKbps`): the video encoding's minimum bitrate while
+/// the link is trusted, at most half the picture mode's encoder ceiling (at the ceiling the estimate could
+/// never move and congestion control would be off). libwebrtc's congestion-window
+/// pushback drops frames before the encoder only while its target is above the encoder minimum, and
+/// GoogCC already floors the estimate at the allocated minimum; the explicit estimate floor is raised to
+/// it too so the two never disagree.
+enum EncodingMinBitrateFloor {
+    /// nil while untrusted or with the flag unset.
+    static func bps(kbps: Int?, trusted: Bool, ceilingBps: Int) -> Int? {
+        guard trusted, let kbps, kbps > 0, ceilingBps > 0 else { return nil }
+        return min(kbps * 1000, ceilingBps / 2)
+    }
+
+    /// What the sender's encoding carries: nothing in low-data mode, never above the applied ceiling.
+    static func senderMinimumBps(floorBps: Int?, ceilingBps: Int, lowData: Bool) -> Int? {
+        guard !lowData, let floorBps else { return nil }
+        return min(floorBps, ceilingBps / 2)
+    }
+
+    /// The estimate floor while trusted: the higher of the `LANBitrateFloor` and the encoding floor.
+    static func estimateFloorBps(lanFloorBps: Int?, encodingFloorBps: Int?) -> Int? {
+        guard let encodingFloorBps else { return lanFloorBps }
+        return max(lanFloorBps ?? 0, encodingFloorBps)
+    }
+}
+
 /// X17: a send-path cap layered over the G12 ladder. Once per statistics window it reads the pacer
 /// delay, the network queue estimate (`SenderQueueEstimate`) and the available outgoing rate, and caps
 /// the stream rate first, then size: 30 fps, 15 fps, then 15 fps at 0.75 and 0.5 of the picture. The

@@ -105,8 +105,26 @@ struct StreamTuning: Equatable {
     /// `SessionFeature.keysOnDemand`, the owned HEVC encoder sets no key frame duration limit, so the only
     /// key frames are the requested ones (start, PLI/FIR, restart, size step). Each 10 s safety key costs
     /// the receiver a 216–309 ms gap behind the screenshare pacer. Off until a device A/B; a phone that
-    /// does not ask, and any H.264 session (stock phone decoder), keeps the 10 s key whatever this says.
+    /// does not ask, and any H.264 session keeps the 10 s key whatever this says (`keysOnDemandH264`).
     var keysOnDemand = false
+    /// Latency item 7: keys on demand for owned H.264 sessions too, under the same phone capability. Recovery
+    /// relies on libwebrtc M153's stock path: `RTCVideoDecoderH264` returns an error on the decode after a
+    /// failed one and `VideoReceiveStream2` then requests a key (evidence in the latency impl notes). Off
+    /// until a device A/B.
+    var keysOnDemandH264 = false
+    /// Latency item 14: `MaxFrameDelayCount` on owned encoder sessions (1…8). VideoToolbox must emit frame
+    /// N-M before encoding frame N returns, so 1 makes each submission wait for the previous frame. Nil
+    /// leaves VideoToolbox's unlimited default.
+    var encoderMaxFrameDelay: Int?
+    /// Latency item 15: ScreenCaptureKit's queue depth at 60 fps and below (3…8); nil keeps 5.
+    var captureQueueDepth: Int?
+    /// Latency item 16: `SCStreamConfiguration.captureResolution`. `.nominal` reads one pixel per point, so
+    /// the host's sizes and crops use a scale of 1 instead of the display's backing scale.
+    var captureResolution: CaptureResolutionChoice = .automatic
+    /// Latency item 5: on a trusted LAN only, the video encoding's minimum bitrate (kbps, at most half the
+    /// encoder ceiling), which also floors the estimate. libwebrtc's congestion-window pushback drops frames only while its target is above
+    /// the encoder minimum. Nil leaves the minimum unset.
+    var encodingMinBitrateLANKbps: Int?
     /// Key-neutral ladder (row 2): a statistics window with a key frame is not pacer-wait or low-estimate
     /// evidence and does not reset the climb clock, and one firing sample resets the clock only when the
     /// next sample fires too. Off until a device A/B.
@@ -180,6 +198,14 @@ struct StreamTuning: Equatable {
     static let keysOnDemandKey = "PocketDeskKeysOnDemand"
     static let ladderKeyNeutralKey = "PocketDeskLadderKeyNeutral"
     static let webRTCAdaptationAt60Key = "PocketDeskWebRTCAdaptationAt60"
+    static let keysOnDemandH264Key = "PocketDeskKeysOnDemandH264"
+    static let encoderMaxFrameDelayKey = "PocketDeskEncoderMaxFrameDelay"
+    static let captureQueueDepthKey = "PocketDeskCaptureQueueDepth"
+    static let captureResolutionKey = "PocketDeskCaptureResolution"
+    static let encodingMinBitrateLANKey = "PocketDeskEncodingMinBitrateLAN"
+    static let encoderMaxFrameDelayRange = 1...8
+    static let captureQueueDepthRange = 3...8
+    static let encodingMinBitrateLANRange = 300...100_000
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
@@ -187,7 +213,9 @@ struct StreamTuning: Equatable {
                                  viewportCaptureKey, ladderKey, encoderMaxInFlightKey, idleVideoRefreshKey, lanHeadroomKey,
                                  mergePointerMovesKey, frameTimingKey, senderQueueGovernorKey, senderQueueGovernorApplyKey, encoderMaximumQPKey, hevcKey,
                                  encoderPrioritizeSpeedKey, hevcLowLatencyKey, encoderPeriodicKeyFramesKey, encoderPipeliningKey,
-                                 keysOnDemandKey, ladderKeyNeutralKey, webRTCAdaptationAt60Key]
+                                 keysOnDemandKey, ladderKeyNeutralKey, webRTCAdaptationAt60Key,
+                                 keysOnDemandH264Key, encoderMaxFrameDelayKey, captureQueueDepthKey, captureResolutionKey,
+                                 encodingMinBitrateLANKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -299,6 +327,24 @@ struct StreamTuning: Equatable {
         if defaults.object(forKey: webRTCAdaptationAt60Key) != nil {
             tuning.webRTCAdaptationAt60 = defaults.bool(forKey: webRTCAdaptationAt60Key)
         }
+        if defaults.object(forKey: keysOnDemandH264Key) != nil {
+            tuning.keysOnDemandH264 = defaults.bool(forKey: keysOnDemandH264Key)
+        }
+        if defaults.object(forKey: encoderMaxFrameDelayKey) != nil {
+            let count = defaults.integer(forKey: encoderMaxFrameDelayKey)
+            tuning.encoderMaxFrameDelay = encoderMaxFrameDelayRange.contains(count) ? count : nil
+        }
+        if defaults.object(forKey: captureQueueDepthKey) != nil {
+            let depth = defaults.integer(forKey: captureQueueDepthKey)
+            tuning.captureQueueDepth = captureQueueDepthRange.contains(depth) ? depth : nil
+        }
+        if let value = defaults.string(forKey: captureResolutionKey) {
+            tuning.captureResolution = CaptureResolutionChoice(rawValue: value.lowercased()) ?? .automatic
+        }
+        if defaults.object(forKey: encodingMinBitrateLANKey) != nil {
+            let kbps = defaults.integer(forKey: encodingMinBitrateLANKey)
+            tuning.encodingMinBitrateLANKbps = encodingMinBitrateLANRange.contains(kbps) ? kbps : nil
+        }
         return tuning
     }
 
@@ -354,6 +400,11 @@ struct StreamTuning: Equatable {
         if keysOnDemand { parts.append("keys on demand") }
         if ladderKeyNeutral { parts.append("key-neutral ladder") }
         if !webRTCAdaptationAt60 { parts.append("no webrtc adaptation at 60") }
+        if keysOnDemandH264 { parts.append("H.264 keys on demand") }
+        if let encoderMaxFrameDelay { parts.append("max frame delay \(encoderMaxFrameDelay)") }
+        if let captureQueueDepth { parts.append("capture queue \(captureQueueDepth)") }
+        if captureResolution != .automatic { parts.append("capture resolution \(captureResolution.rawValue)") }
+        if let encodingMinBitrateLANKbps { parts.append("LAN encoding floor \(encodingMinBitrateLANKbps)") }
         if ladder { parts.append("governor " + (!senderQueueGovernor ? "off" : senderQueueGovernorApply ? "apply" : "shadow")) }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }
@@ -390,6 +441,11 @@ struct StreamTuning: Equatable {
         #endif
         if !trials.isEmpty { RTCInitFieldTrialDictionary(trials) }
     }
+}
+
+/// `SCCaptureResolutionType` without ScreenCaptureKit, so the shared tuning compiles on the phone.
+enum CaptureResolutionChoice: String, Equatable {
+    case automatic, nominal, best
 }
 
 /// When to force the bandwidth estimate up to the picture mode's start rate on a direct route.

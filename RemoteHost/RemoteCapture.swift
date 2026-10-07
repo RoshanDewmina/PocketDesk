@@ -772,6 +772,26 @@ enum RemoteCaptureConfiguration {
     /// hold a surface, and Apple's capture sample uses five to keep a high frame rate without stalls.
     static let queueDepth = 5
 
+    /// Latency item 15: `StreamTuning.captureQueueDepth` replaces the depth at 60 fps and below only.
+    static func queueDepth(fps: Int, tuning: StreamTuning) -> Int {
+        guard fps <= CaptureRatePolicy.standardFPS, let depth = tuning.captureQueueDepth else { return CaptureRatePolicy.queueDepth(for: fps) }
+        return depth
+    }
+
+    /// Latency item 16: `.nominal` captures one pixel per point, so every size and crop is computed at
+    /// scale 1 (`sourceRect` and the phone's viewport stay in points); the other choices keep the backing scale.
+    static func geometry(contentSize: CGSize, filterScale: Double, tuning: StreamTuning) -> DisplayGeometry {
+        DisplayGeometry(size: contentSize, pointPixelScale: tuning.captureResolution == .nominal ? 1 : filterScale)
+    }
+
+    static func captureResolution(_ choice: CaptureResolutionChoice) -> SCCaptureResolutionType {
+        switch choice {
+        case .automatic: return .automatic
+        case .nominal: return .nominal
+        case .best: return .best
+        }
+    }
+
     /// A 1/60 floor by default; `.zero` asks ScreenCaptureKit for the display's own cadence (G1).
     static func minimumFrameInterval(for tuning: StreamTuning) -> CMTime {
         minimumFrameInterval(for: tuning, targetFPS: CaptureRatePolicy.standardFPS, displayRefreshHz: nil)
@@ -826,7 +846,8 @@ enum RemoteCaptureConfiguration {
         }
         configuration.minimumFrameInterval = minimumFrameInterval(for: tuning, targetFPS: fps,
                                                                   displayRefreshHz: displayRefreshHz)
-        configuration.queueDepth = CaptureRatePolicy.queueDepth(for: fps)
+        configuration.queueDepth = queueDepth(fps: fps, tuning: tuning)
+        if tuning.captureResolution != .automatic { configuration.captureResolution = captureResolution(tuning.captureResolution) }
         configuration.showsCursor = showsCursor
         configuration.capturesAudio = capturesAudio
         configuration.excludesCurrentProcessAudio = true
@@ -1047,7 +1068,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         let tuning = StreamTuning.current
         let refresh = DisplayRefresh.rateHz(for: display.displayID)
         let fps = CaptureRatePolicy.targetFPS(displayRefreshHz: refresh, tuning: tuning)
-        let geometry = DisplayGeometry(size: filter.contentRect.size, pointPixelScale: Double(filter.pointPixelScale))
+        let geometry = RemoteCaptureConfiguration.geometry(contentSize: filter.contentRect.size,
+                                                           filterScale: Double(filter.pointPixelScale), tuning: tuning)
         guard let output = RemoteCaptureConfiguration.outputSize(
             contentSize: geometry.size, pointPixelScale: geometry.pointPixelScale, quality: quality,
             budget: peer.nativeCaptureBudget, fps: fps, clientLongEdge: clientLongEdge, tuning: tuning

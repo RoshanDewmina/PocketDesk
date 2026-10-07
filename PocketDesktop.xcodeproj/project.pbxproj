@@ -693,6 +693,7 @@
 		787BE9A65A00AAF5B74AA9C6 /* PointerOverlayUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78393E114806ACFDD6DDF0BB /* PointerOverlayUITests.swift */; };
 		78A8BC48B3E0F53E4FDA4F3E /* BusyPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A3E2750D58B12A1C8B8D835 /* BusyPresentation.swift */; };
 		78B8A5A364FC79E9A79B864B /* DesktopPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B47A3584507A2F653CE0816 /* DesktopPreview.swift */; };
+		78BB3AF4C44F177594B8793C /* HostLatencyTweaksTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64E019FBE4E5A2A8A898003D /* HostLatencyTweaksTests.swift */; };
 		79406D5554D8F87478BAE926 /* BusyState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC1918C6B5ADA67679BD4464 /* BusyState.swift */; };
 		79D1EBB3D66D8D0B4F43F868 /* BigTextWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BDC2C4EE4782C8BD4389600 /* BigTextWindowTests.swift */; };
 		79FFB638D8D5F8A210AB3492 /* LocalMacDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 846E6DC5A2B05AC0648494B0 /* LocalMacDiscovery.swift */; };
@@ -1509,10 +1510,10 @@
 		2E49EEF7069398A9DE44D8A4 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = Contents/Library/LaunchAgents;
-			dstSubfolderSpec = 1;
+			dstPath = "agent-hooks";
+			dstSubfolderSpec = 7;
 			files = (
-				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
+				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1542,10 +1543,10 @@
 		7921CB30C5158D00B1977963 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = "agent-hooks";
-			dstSubfolderSpec = 7;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
 			files = (
-				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
+				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1800,6 +1801,7 @@
 		64383AFDC6694A5849AC3D64 /* FarsideWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = FarsideWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		643A13E08A654E915062CB1B /* SessionContinuity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionContinuity.swift; sourceTree = "<group>"; };
 		64CCF7A8CB59DF99A9139093 /* LocalLinkProof.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalLinkProof.swift; sourceTree = "<group>"; };
+		64E019FBE4E5A2A8A898003D /* HostLatencyTweaksTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostLatencyTweaksTests.swift; sourceTree = "<group>"; };
 		652B094C95978F6D605C1E82 /* LadderPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LadderPolicy.swift; sourceTree = "<group>"; };
 		65FCFB6FDB2ADF6C07B5468A /* CouchPhoneGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CouchPhoneGateTests.swift; sourceTree = "<group>"; };
 		6678AD136869AD8B3A4D6985 /* PhoneFileTransferTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneFileTransferTests.swift; sourceTree = "<group>"; };
@@ -2706,6 +2708,7 @@
 				FE560F9A45D07FA061AC64FB /* HostIdentityStoreTests.swift */,
 				72EC63082426A141B33AADA2 /* HostInputExecutorTests.swift */,
 				7BAE263EFD30201EEE4A3578 /* HostKeepAwakeTests.swift */,
+				64E019FBE4E5A2A8A898003D /* HostLatencyTweaksTests.swift */,
 				EFA249DD77BBAA809239D8E3 /* HostLifecycleTests.swift */,
 				D5FD5594EEA9E3D078CD1C76 /* HostLivePopoverTests.swift */,
 				8FE53ED98843F5A8A096B176 /* HostOnboardingTests.swift */,
@@ -4757,6 +4760,7 @@
 				96A553176C01BC12F4EBB6CE /* HostKeepAwake.swift in Sources */,
 				51572A558D1FAA93C70B8BCC /* HostKeepAwakeTests.swift in Sources */,
 				84B7534B84A399DFE2133861 /* HostLANWake.swift in Sources */,
+				78BB3AF4C44F177594B8793C /* HostLatencyTweaksTests.swift in Sources */,
 				A85E1959B638402A4CF9F1B3 /* HostLifecycleTests.swift in Sources */,
 				B029CB82CA2D97E37F78BBF9 /* HostLivePopoverTests.swift in Sources */,
 				5555C32EF85E0E5427C6FFBD /* HostLoadMonitor.swift in Sources */,

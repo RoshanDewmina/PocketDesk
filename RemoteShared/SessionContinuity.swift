@@ -20,7 +20,7 @@ enum SessionFeature {
     static let textClarity = "video.clarity.1"
     /// Phone request only: this phone's owned HEVC decoder asks for a key frame itself when a decode fails
     /// (`OwnedHEVCDecoder` recovery), so the Mac's owned HEVC encoder may drop its 10 s safety key
-    /// (`StreamTuning.keysOnDemand`); an H.264 session keeps it. Never advertised by the host. Travels as
+    /// (`StreamTuning.keysOnDemand`); an H.264 session keeps it unless `StreamTuning.keysOnDemandH264`. Never advertised by the host. Travels as
     /// `Handshake.keysOnDemand`, outside the eight-feature and four-option bounds older Macs decode.
     static let keysOnDemand = "video.keys.ondemand.1"
     static let pencilInput = "input.pencil.1"

@@ -3,21 +3,24 @@ set -euo pipefail
 cd "${0:A:h:h}"
 mode="${1:-run}"
 case "$mode" in run|--verify|--build) ;; *) print -u2 'Usage: build_and_run.sh [--verify|--build]'; exit 2;; esac
+# Opt-in optimised host for measurement (POCKETDESK_CONFIGURATION=Release); signing and install checks are unchanged.
+configuration="${POCKETDESK_CONFIGURATION:-Debug}"
+case "$configuration" in Debug|Release) ;; *) print -u2 'POCKETDESK_CONFIGURATION must be Debug or Release'; exit 2;; esac
 receipt="${POCKETDESK_RECEIPTS:-$PWD/outputs/host-run-$(date -u +%Y%m%dT%H%M%SZ)}"
 mkdir -p "$receipt"
 receipt="${receipt:A}"
 derived="${POCKETDESK_DERIVED_DATA:-$PWD/outputs/RemoteBuild}"
 derived="${derived:A}"
-built="$derived/Build/Products/Debug/PocketDeskRemoteHost.app"
+built="$derived/Build/Products/$configuration/PocketDeskRemoteHost.app"
 installed='/Applications/PocketDesk Host.app'
 executable='PocketDeskRemoteHost'
 bundle_id='com.roshan.PocketDesk.RemoteHost'
 
 # A failed build leaves the installed app running.
 xcodegen generate > "$receipt/project-generation.log" 2>&1
-xcodebuild -project PocketDesktop.xcodeproj -scheme PocketDeskRemoteHost -configuration Debug -derivedDataPath "$derived" build > "$receipt/host-build.log" 2>&1
+xcodebuild -project PocketDesktop.xcodeproj -scheme PocketDeskRemoteHost -configuration "$configuration" -derivedDataPath "$derived" build > "$receipt/host-build.log" 2>&1
 if [[ "$mode" == --build ]]; then
-  print "Mac build passed. Receipts: $receipt"
+  print "Mac $configuration build passed. Receipts: $receipt"
   exit 0
 fi
 
@@ -135,5 +138,5 @@ verify_bundle "$installed" > "$receipt/installed-signature.log" 2>&1 || restore_
 open "$installed" || restore_on_failure 1
 verify_launch "$installed" || { print -u2 'Installed app launch could not be verified.'; restore_on_failure 1; }
 install_pending=0
-print "Built and launched $installed. Receipts: $receipt"
+print "Built ($configuration) and launched $installed. Receipts: $receipt"
 print 'App launch does not prove screen-capture or control permission. Check readiness in the app.'
