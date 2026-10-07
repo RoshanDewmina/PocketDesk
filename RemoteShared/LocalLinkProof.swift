@@ -4,11 +4,53 @@ import Darwin
 import Network
 import os
 
-/// A one-hop, physical-interface UDP proof. IPv4 is the supported path; IPv6-only links fail closed.
+/// A one-hop, physical-interface UDP proof. IPv4 by default; a remote-route pair proof binds the exact
+/// address (IPv4 or IPv6) of the media pair it proves. IPv6-only links fail closed on a local route.
 /// The peer's endpoint is exchanged inside the already authenticated pairing cipher.
 struct LocalProbeEndpoint: Codable {
     let address: String
     let port: UInt16
+    /// Remote-route pair proof only: the receiver's own address in the selected media pair to prove.
+    var peerAddress: String? = nil
+}
+
+/// Literal unicast addresses a probe socket can bind: IPv4, or IPv6 without a scope (never link-local,
+/// loopback, unspecified, multicast or IPv4-mapped).
+enum LocalProbeAddress {
+    static func family(_ text: String) -> Int32? {
+        var bytes = [UInt8](repeating: 0, count: 16)
+        if inet_pton(AF_INET, text, &bytes) == 1 { return AF_INET }
+        guard inet_pton(AF_INET6, text, &bytes) == 1, !(bytes[0] == 0xfe && bytes[1] & 0xc0 == 0x80), bytes[0] != 0xff,
+              bytes[0..<10].contains(where: { $0 != 0 }) else { return nil }
+        return AF_INET6
+    }
+
+    /// One spelling per address, so addresses from WebRTC stats, `getifaddrs` and `recvmsg` compare equal.
+    static func canonical(_ text: String) -> String? {
+        guard let family = family(text) else { return nil }
+        var bytes = [UInt8](repeating: 0, count: 16)
+        var output = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+        guard inet_pton(family, text, &bytes) == 1, inet_ntop(family, bytes, &output, socklen_t(output.count)) != nil else { return nil }
+        return String(cString: output)
+    }
+
+    static func ipv6Socket(_ text: String, port: UInt16) -> sockaddr_in6? {
+        var address = sockaddr_in6()
+        address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        address.sin6_family = sa_family_t(AF_INET6)
+        address.sin6_port = port.bigEndian
+        guard family(text) == AF_INET6, inet_pton(AF_INET6, text, &address.sin6_addr) == 1 else { return nil }
+        return address
+    }
+
+    /// Canonical addresses of `family` on the named interface.
+    static func addresses(on name: String, family: Int32) -> [String] {
+        MacNetworkLink.interfaceAddresses().compactMap { entry in
+            guard entry.name == name, let value = canonical(MacNetworkLink.normalized(entry.address)),
+                  self.family(value) == family else { return nil }
+            return value
+        }
+    }
 }
 
 struct ProvenLocalLink {
@@ -68,9 +110,17 @@ struct LocalProbeRejectionError: Error, Equatable {
     let reason: LocalProbeRejection
 }
 
-/// Darwin ancillary data for IP_RECVTTL / IP_RECVIF. Darwin aligns control messages to 4 bytes
-/// (`__DARWIN_ALIGN32`) and delivers IP_RECVTTL as a single `u_char`, so a CMSG_LEN(1) payload is normal.
+/// Darwin ancillary data for IP_RECVTTL / IP_RECVIF, and for IPv6 hop limit / packet info. Darwin aligns
+/// control messages to 4 bytes (`__DARWIN_ALIGN32`) and delivers IP_RECVTTL as a single `u_char`, so a
+/// CMSG_LEN(1) payload is normal.
 enum LocalProbeControl {
+    /// RFC 3542 values. Darwin names them only under `__APPLE_USE_RFC_3542`, which Swift does not see;
+    /// without it the names mean the RFC 2292 options. Verified against the macOS 27 kernel.
+    static let ipv6ReceivePacketInfo: Int32 = 61
+    static let ipv6ReceiveHopLimit: Int32 = 37
+    static let ipv6PacketInfo: Int32 = 46
+    static let ipv6HopLimit: Int32 = 47
+
     private static func align(_ value: Int) -> Int { (value + 3) & ~3 }
 
     static func parse(_ control: UnsafeRawBufferPointer, length: Int) -> (ttl: Int32?, index: UInt32?) {
@@ -97,6 +147,12 @@ enum LocalProbeControl {
                 let family = control.load(fromByteOffset: dataOffset + 1, as: UInt8.self)
                 let rawIndex = control.loadUnaligned(fromByteOffset: dataOffset + 2, as: UInt16.self)
                 if family == UInt8(AF_LINK) { index = UInt32(rawIndex) }
+            }
+            if header.cmsg_level == IPPROTO_IPV6 && header.cmsg_type == ipv6HopLimit, dataLength >= 4 {
+                ttl = control.loadUnaligned(fromByteOffset: dataOffset, as: Int32.self)
+            }
+            if header.cmsg_level == IPPROTO_IPV6 && header.cmsg_type == ipv6PacketInfo, dataLength >= 20 {
+                index = control.loadUnaligned(fromByteOffset: dataOffset + 16, as: UInt32.self)
             }
             offset += align(size)
         }
@@ -233,6 +289,7 @@ final class LocalLinkProof {
     private var routeReady = false
     private var routePathSeen = false
     private var challengeStarted = false
+    private let family: Int32
     private let interfaceName: String
     private let interfaceIndex: UInt32
     private let localAddress: String
@@ -251,8 +308,11 @@ final class LocalLinkProof {
     let endpoint: LocalProbeEndpoint
 
     /// Must run away from the main actor: obtaining the first Network.framework path is bounded at 2 s.
-    static func make(room: String, epoch: String, session: String, pairingKey: Data) -> LocalLinkProof? {
-        guard let physical = firstPhysicalIPv4() else { return nil }
+    /// `boundTo` (a remote-route pair proof) must be an address of the single physical interface;
+    /// otherwise the proof binds that interface's IPv4 address.
+    static func make(room: String, epoch: String, session: String, pairingKey: Data,
+                     boundTo: String? = nil) -> LocalLinkProof? {
+        guard let physical = firstPhysicalIPv4(owning: boundTo) else { return nil }
         do {
             let proof = try LocalLinkProof(room: room, epoch: epoch, session: session,
                                            pairingKey: pairingKey, physical: physical)
@@ -277,35 +337,41 @@ final class LocalLinkProof {
         key = SymmetricKey(data: pairingKey)
         nonce = try SecureRandom.token()
         interfaceName = physical.name; interfaceIndex = physical.index; localAddress = physical.address
-        let socketFD = Darwin.socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+        guard let family = LocalProbeAddress.family(physical.address) else { throw RemoteError.invalidMessage }
+        self.family = family
+        let socketFD = Darwin.socket(family, SOCK_DGRAM, IPPROTO_UDP)
         guard socketFD >= 0 else { throw RemoteError.invalidMessage }
         fd = socketFD
         do {
-            var boundIndex = Int32(physical.index)
-            var one: Int32 = 1
-            guard setsockopt(fd, IPPROTO_IP, IP_BOUND_IF, &boundIndex, socklen_t(MemoryLayout.size(ofValue: boundIndex))) == 0,
-                  setsockopt(fd, IPPROTO_IP, IP_TTL, &one, socklen_t(MemoryLayout.size(ofValue: one))) == 0,
-                  setsockopt(fd, IPPROTO_IP, IP_RECVIF, &one, socklen_t(MemoryLayout.size(ofValue: one))) == 0,
-                  setsockopt(fd, IPPROTO_IP, IP_RECVTTL, &one, socklen_t(MemoryLayout.size(ofValue: one))) == 0 else {
-                throw RemoteError.invalidMessage
-            }
-            var address = sockaddr_in()
-            address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-            address.sin_family = sa_family_t(AF_INET)
-            address.sin_port = 0
-            guard inet_pton(AF_INET, physical.address, &address.sin_addr) == 1 else { throw RemoteError.invalidMessage }
-            let didBind = withUnsafePointer(to: &address) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    Darwin.bind(socketFD, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            if family == AF_INET6 {
+                endpoint = try Self.bindIPv6(socketFD, address: physical.address, index: physical.index)
+            } else {
+                var boundIndex = Int32(physical.index)
+                var one: Int32 = 1
+                guard setsockopt(fd, IPPROTO_IP, IP_BOUND_IF, &boundIndex, socklen_t(MemoryLayout.size(ofValue: boundIndex))) == 0,
+                      setsockopt(fd, IPPROTO_IP, IP_TTL, &one, socklen_t(MemoryLayout.size(ofValue: one))) == 0,
+                      setsockopt(fd, IPPROTO_IP, IP_RECVIF, &one, socklen_t(MemoryLayout.size(ofValue: one))) == 0,
+                      setsockopt(fd, IPPROTO_IP, IP_RECVTTL, &one, socklen_t(MemoryLayout.size(ofValue: one))) == 0 else {
+                    throw RemoteError.invalidMessage
                 }
+                var address = sockaddr_in()
+                address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+                address.sin_family = sa_family_t(AF_INET)
+                address.sin_port = 0
+                guard inet_pton(AF_INET, physical.address, &address.sin_addr) == 1 else { throw RemoteError.invalidMessage }
+                let didBind = withUnsafePointer(to: &address) {
+                    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                        Darwin.bind(socketFD, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                    }
+                }
+                guard didBind == 0 else { throw RemoteError.invalidMessage }
+                var size = socklen_t(MemoryLayout<sockaddr_in>.size)
+                let didName = withUnsafeMutablePointer(to: &address) {
+                    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.getsockname(socketFD, $0, &size) }
+                }
+                guard didName == 0 else { throw RemoteError.invalidMessage }
+                endpoint = LocalProbeEndpoint(address: physical.address, port: UInt16(bigEndian: address.sin_port))
             }
-            guard didBind == 0 else { throw RemoteError.invalidMessage }
-            var size = socklen_t(MemoryLayout<sockaddr_in>.size)
-            let didName = withUnsafeMutablePointer(to: &address) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.getsockname(socketFD, $0, &size) }
-            }
-            guard didName == 0 else { throw RemoteError.invalidMessage }
-            endpoint = LocalProbeEndpoint(address: physical.address, port: UInt16(bigEndian: address.sin_port))
         } catch {
             Darwin.close(socketFD)
             throw error
@@ -344,14 +410,19 @@ final class LocalLinkProof {
     func setPeer(_ endpoint: LocalProbeEndpoint) {
         queue.async { [weak self] in
             guard let self, !self.closed else { return }
-            guard self.peer == nil, endpoint.port > 0,
-                  endpoint.address != self.localAddress, Self.validIPv4(endpoint.address) else {
-                self.log.error("peer endpoint ignored: duplicate=\(self.peer != nil, privacy: .public) self=\(endpoint.address == self.localAddress, privacy: .public) ipv4=\(Self.validIPv4(endpoint.address), privacy: .public)")
+            let address = self.family == AF_INET6 ? LocalProbeAddress.canonical(endpoint.address) ?? endpoint.address : endpoint.address
+            let valid = LocalProbeAddress.family(address) == self.family
+            guard self.peer == nil, endpoint.port > 0, address != self.localAddress, valid else {
+                self.log.error("peer endpoint ignored: duplicate=\(self.peer != nil, privacy: .public) self=\(address == self.localAddress, privacy: .public) family=\(valid, privacy: .public)")
                 return
             }
+            let endpoint = LocalProbeEndpoint(address: address, port: endpoint.port)
             self.peer = endpoint
             self.stage.peerSet = true
             self.log.info("gate peer set")
+            #if DEBUG
+            if self.bypassRouteProbeForTesting { self.routeReady = true; self.routePathSeen = true; self.maybeChallenge(); return }
+            #endif
             guard let port = NWEndpoint.Port(rawValue: endpoint.port) else { self.invalidate("peer-port"); return }
             let connection = NWConnection(host: NWEndpoint.Host(endpoint.address), port: port, using: .udp)
             connection.stateUpdateHandler = { [weak self, weak connection] state in
@@ -410,6 +481,10 @@ final class LocalLinkProof {
     }
 
     #if DEBUG
+    /// Same-machine tests only: the route to this machine's own address is loopback, never physical.
+    /// Set before `setPeer`.
+    var bypassRouteProbeForTesting = false
+
     /// Drives the same invalidation a path change causes.
     func invalidateForTesting(_ reason: String) {
         queue.async { [weak self] in self?.invalidate(reason) }
@@ -449,10 +524,14 @@ final class LocalLinkProof {
     }
 
     private func classify(_ path: NWPath) -> LocalPathVerdict {
-        LocalPathClassifier.classify(satisfied: path.status == .satisfied, available: path.localInterfaces,
-                                     uses: { path.usesInterfaceType($0) },
-                                     expected: (interfaceName, interfaceIndex),
-                                     currentIPv4: Self.ipv4Address(on: interfaceName), expectedIPv4: localAddress)
+        // An IPv6 interface carries several addresses; the bound one must still be among them.
+        let current = family == AF_INET6
+            ? LocalProbeAddress.addresses(on: interfaceName, family: AF_INET6).first { $0 == localAddress }
+            : Self.ipv4Address(on: interfaceName)
+        return LocalPathClassifier.classify(satisfied: path.status == .satisfied, available: path.localInterfaces,
+                                            uses: { path.usesInterfaceType($0) },
+                                            expected: (interfaceName, interfaceIndex),
+                                            currentIPv4: current, expectedIPv4: localAddress)
     }
 
     private static func stateName(_ state: NWConnection.State) -> String {
@@ -499,16 +578,28 @@ final class LocalLinkProof {
     @discardableResult
     private func send(kind: String, nonce: String, to endpoint: LocalProbeEndpoint) -> Bool {
         guard !closed, let data = try? JSONEncoder().encode(signed(kind, nonce)), data.count <= 512 else { return false }
-        var address = sockaddr_in()
-        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = endpoint.port.bigEndian
-        guard inet_pton(AF_INET, endpoint.address, &address.sin_addr) == 1 else { return false }
-        let sent = data.withUnsafeBytes { bytes in
-            withUnsafePointer(to: &address) { pointer in
-                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    Darwin.sendto(fd, bytes.baseAddress, bytes.count, 0, $0,
-                                  socklen_t(MemoryLayout<sockaddr_in>.size))
+        let sent: Int
+        if family == AF_INET6 {
+            guard var address = LocalProbeAddress.ipv6Socket(endpoint.address, port: endpoint.port) else { return false }
+            sent = data.withUnsafeBytes { bytes in
+                withUnsafePointer(to: &address) { pointer in
+                    pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                        Darwin.sendto(fd, bytes.baseAddress, bytes.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in6>.size))
+                    }
+                }
+            }
+        } else {
+            var address = sockaddr_in()
+            address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            address.sin_family = sa_family_t(AF_INET)
+            address.sin_port = endpoint.port.bigEndian
+            guard inet_pton(AF_INET, endpoint.address, &address.sin_addr) == 1 else { return false }
+            sent = data.withUnsafeBytes { bytes in
+                withUnsafePointer(to: &address) { pointer in
+                    pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                        Darwin.sendto(fd, bytes.baseAddress, bytes.count, 0, $0,
+                                      socklen_t(MemoryLayout<sockaddr_in>.size))
+                    }
                 }
             }
         }
@@ -528,6 +619,7 @@ final class LocalLinkProof {
 
     private func receive() {
         guard !closed else { return }
+        if family == AF_INET6 { let (result, payload) = readIPv6(); accept(result, payload: payload); return }
         var payload = [UInt8](repeating: 0, count: 513)
         var ancillary = [UInt8](repeating: 0, count: 256)
         var source = sockaddr_in()
@@ -555,6 +647,41 @@ final class LocalLinkProof {
                 }
             }
         }
+        accept(result, payload: payload)
+    }
+
+    private func readIPv6() -> ((Int, Int32?, UInt32?, String?, UInt16?), [UInt8]) {
+        var payload = [UInt8](repeating: 0, count: 513)
+        var ancillary = [UInt8](repeating: 0, count: 256)
+        var source = sockaddr_in6()
+        let result: (Int, Int32?, UInt32?, String?, UInt16?) = payload.withUnsafeMutableBytes { body in
+            ancillary.withUnsafeMutableBytes { control in
+                withUnsafeMutablePointer(to: &source) { sourcePointer in
+                    var vector = iovec(iov_base: body.baseAddress, iov_len: body.count)
+                    return withUnsafeMutablePointer(to: &vector) { vectorPointer in
+                        var header = msghdr(msg_name: UnsafeMutableRawPointer(sourcePointer),
+                                            msg_namelen: socklen_t(MemoryLayout<sockaddr_in6>.size),
+                                            msg_iov: vectorPointer, msg_iovlen: 1,
+                                            msg_control: control.baseAddress,
+                                            msg_controllen: socklen_t(control.count), msg_flags: 0)
+                        let count = Darwin.recvmsg(fd, &header, 0)
+                        guard count > 0, count <= 512, header.msg_flags & MSG_CTRUNC == 0,
+                              sourcePointer.pointee.sin6_family == sa_family_t(AF_INET6) else { return (count, nil, nil, nil, nil) }
+                        let metadata = LocalProbeControl.parse(UnsafeRawBufferPointer(control), length: Int(header.msg_controllen))
+                        var ip = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+                        var address = sourcePointer.pointee.sin6_addr
+                        guard inet_ntop(AF_INET6, &address, &ip, socklen_t(ip.count)) != nil else {
+                            return (count, nil, nil, nil, nil)
+                        }
+                        return (count, metadata.ttl, metadata.index, String(cString: ip), UInt16(bigEndian: sourcePointer.pointee.sin6_port))
+                    }
+                }
+            }
+        }
+        return (result, payload)
+    }
+
+    private func accept(_ result: (Int, Int32?, UInt32?, String?, UInt16?), payload: [UInt8]) {
         guard result.0 > 0 else {
             log.error("recvmsg returned \(result.0, privacy: .public)")
             return
@@ -594,9 +721,27 @@ final class LocalLinkProof {
         }
     }
 
-    private static func validIPv4(_ text: String) -> Bool {
-        var value = in_addr()
-        return inet_pton(AF_INET, text, &value) == 1
+    /// Hop limit 1 out, hop limit and arrival interface reported in, bound to one physical interface.
+    private static func bindIPv6(_ fd: Int32, address text: String, index: UInt32) throws -> LocalProbeEndpoint {
+        var boundIndex = Int32(index), one: Int32 = 1
+        let size = socklen_t(MemoryLayout<Int32>.size)
+        guard setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &one, size) == 0,
+              setsockopt(fd, IPPROTO_IPV6, IPV6_BOUND_IF, &boundIndex, size) == 0,
+              setsockopt(fd, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &one, size) == 0,
+              setsockopt(fd, IPPROTO_IPV6, LocalProbeControl.ipv6ReceiveHopLimit, &one, size) == 0,
+              setsockopt(fd, IPPROTO_IPV6, LocalProbeControl.ipv6ReceivePacketInfo, &one, size) == 0,
+              var address = LocalProbeAddress.ipv6Socket(text, port: 0) else { throw RemoteError.invalidMessage }
+        let length = socklen_t(MemoryLayout<sockaddr_in6>.size)
+        let didBind = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, length) }
+        }
+        guard didBind == 0 else { throw RemoteError.invalidMessage }
+        var named = length
+        let didName = withUnsafeMutablePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.getsockname(fd, $0, &named) }
+        }
+        guard didName == 0 else { throw RemoteError.invalidMessage }
+        return LocalProbeEndpoint(address: text, port: UInt16(bigEndian: address.sin6_port))
     }
 
     private static func ipv4Address(on name: String) -> String? {
@@ -616,7 +761,7 @@ final class LocalLinkProof {
         return nil
     }
 
-    private static func firstPhysicalIPv4() -> (name: String, index: UInt32, address: String)? {
+    private static func firstPhysicalIPv4(owning wanted: String?) -> (name: String, index: UInt32, address: String)? {
         let monitor = NWPathMonitor()
         let semaphore = DispatchSemaphore(value: 0)
         let queue = DispatchQueue(label: "farside.local-link-path")
@@ -631,7 +776,14 @@ final class LocalLinkProof {
             guard verdict == .safe, let iface = LocalPathClassifier.physical(available).first else {
                 semaphore.signal(); return
             }
-            if let address = ipv4Address(on: iface.name) {
+            if let wanted {
+                if let address = LocalProbeAddress.canonical(wanted), let family = LocalProbeAddress.family(address),
+                   LocalProbeAddress.addresses(on: iface.name, family: family).contains(address) {
+                    result = (iface.name, UInt32(iface.index), address)
+                } else {
+                    log.error("pair address is not on \(iface.name, privacy: .public)")
+                }
+            } else if let address = ipv4Address(on: iface.name) {
                 result = (iface.name, UInt32(iface.index), address)
             } else {
                 log.error("no IPv4 address on \(iface.name, privacy: .public)")
@@ -645,9 +797,9 @@ final class LocalLinkProof {
     }
 }
 
-/// Remote-route pre-filter: a peer address outside every `en*` IPv4 subnet of this device is on
-/// another network, so no probe is sent to whoever holds that private address here. The proof's own
-/// gates still decide; this only avoids probing (and a Local Network prompt) off the LAN.
+/// Remote-route pre-filter: a peer address outside every `en*` subnet (IPv4) or prefix (IPv6) of this
+/// device is on another network, so no probe is sent to whoever holds that address here. The proof's
+/// own gates still decide; this only avoids probing (and a Local Network prompt) off the LAN.
 enum LocalProbeSubnet {
     static func contains(_ address: String, network: String, mask: String) -> Bool {
         var peer = in_addr(), base = in_addr(), netmask = in_addr()
@@ -656,19 +808,45 @@ enum LocalProbeSubnet {
         return peer.s_addr & netmask.s_addr == base.s_addr & netmask.s_addr
     }
 
+    static func contains(_ address: String, network: String, prefixLength: Int) -> Bool {
+        var peer = [UInt8](repeating: 0, count: 16), base = [UInt8](repeating: 0, count: 16)
+        guard (1...128).contains(prefixLength), LocalProbeAddress.family(address) == AF_INET6,
+              LocalProbeAddress.family(network) == AF_INET6,
+              inet_pton(AF_INET6, address, &peer) == 1, inet_pton(AF_INET6, network, &base) == 1 else { return false }
+        return (0..<prefixLength).allSatisfy { (peer[$0 / 8] ^ base[$0 / 8]) & (0x80 >> ($0 % 8)) == 0 }
+    }
+
     static func isOnLink(_ address: String) -> Bool {
         var head: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&head) == 0 else { return false }
         defer { freeifaddrs(head) }
+        let ipv6 = LocalProbeAddress.family(address) == AF_INET6
         var current = head
         while let node = current {
             defer { current = node.pointee.ifa_next }
             guard String(cString: node.pointee.ifa_name).hasPrefix("en"),
-                  let addr = node.pointee.ifa_addr, addr.pointee.sa_family == sa_family_t(AF_INET),
+                  let addr = node.pointee.ifa_addr, addr.pointee.sa_family == sa_family_t(ipv6 ? AF_INET6 : AF_INET),
                   let mask = node.pointee.ifa_netmask else { continue }
-            if let local = text(addr), let netmask = text(mask), contains(address, network: local, mask: netmask) { return true }
+            if ipv6 {
+                if let local = text6(addr), contains(address, network: local, prefixLength: prefixLength(mask)) { return true }
+            } else if let local = text(addr), let netmask = text(mask), contains(address, network: local, mask: netmask) { return true }
         }
         return false
+    }
+
+    private static func text6(_ address: UnsafeMutablePointer<sockaddr>) -> String? {
+        var ip = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+        var value = UnsafeRawPointer(address).assumingMemoryBound(to: sockaddr_in6.self).pointee.sin6_addr
+        return inet_ntop(AF_INET6, &value, &ip, socklen_t(ip.count)) != nil ? String(cString: ip) : nil
+    }
+
+    /// A netmask sockaddr may be shorter than `sockaddr_in6`; bytes past its length are zero.
+    private static func prefixLength(_ mask: UnsafeMutablePointer<sockaddr>) -> Int {
+        let start = MemoryLayout.offset(of: \sockaddr_in6.sin6_addr) ?? 8
+        let end = min(Int(mask.pointee.sa_len), start + 16)
+        guard end > start else { return 0 }
+        let bytes = UnsafeRawBufferPointer(start: UnsafeRawPointer(mask) + start, count: end - start)
+        return bytes.reduce(0) { $0 + $1.nonzeroBitCount }
     }
 
     private static func text(_ address: UnsafeMutablePointer<sockaddr>) -> String? {
