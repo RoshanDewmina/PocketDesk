@@ -1093,6 +1093,12 @@ extension ViewportCaptureTests {
         return tuning
     }
 
+    private var capOff: StreamTuning {
+        var tuning = StreamTuning.tuned
+        tuning.displayedPixelsCap = false
+        return tuning
+    }
+
     /// The whole-display output as the session composes it: mode and client cap, displayed edge, level fit.
     private func composed(_ display: DisplayGeometry, displayed: Int?, tuning: StreamTuning? = nil,
                           fps: Int = 60) throws -> CapturePixelDimensions {
@@ -1136,7 +1142,7 @@ extension ViewportCaptureTests {
         XCTAssertEqual(nativeFit.zoom, 0.9422, accuracy: 1e-9)
         XCTAssertEqual(Displayed.targetLongEdge(viewport: nativeFit, display: native, tuning: capOn), 1216)
 
-        XCTAssertNil(Displayed.targetLongEdge(viewport: portrait, display: moreSpace, tuning: .tuned), "flag off")
+        XCTAssertNil(Displayed.targetLongEdge(viewport: portrait, display: moreSpace, tuning: capOff), "flag off")
         XCTAssertNil(Displayed.targetLongEdge(viewport: nil, display: moreSpace, tuning: capOn), "an older phone")
         var invalid = portrait
         invalid.zoom = .nan
@@ -1236,7 +1242,7 @@ extension ViewportCaptureTests {
         XCTAssertEqual(decision.edge, edge)
 
         XCTAssertNil(Displayed.initialEdge(viewport: portrait, windowScoped: true, display: moreSpace, tuning: capOn))
-        XCTAssertNil(Displayed.initialEdge(viewport: portrait, windowScoped: false, display: moreSpace, tuning: .tuned))
+        XCTAssertNil(Displayed.initialEdge(viewport: portrait, windowScoped: false, display: moreSpace, tuning: capOff))
         XCTAssertNil(Displayed.initialEdge(viewport: nil, windowScoped: false, display: moreSpace, tuning: capOn))
         var elsewhere = portrait
         elsewhere.x = 3000
