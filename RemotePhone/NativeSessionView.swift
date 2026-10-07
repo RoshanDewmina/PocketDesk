@@ -932,6 +932,28 @@ struct NativeSessionView: View {
 
     @ViewBuilder private var topPills: some View {
         VStack(spacing: 8) {
+            AnyView(topPillsPrimary)
+            AnyView(topPillsStatus)
+            AnyView(topPillsHints)
+        }
+        .overlay(alignment: .top) {
+            if !regularSessionLayout && (!offlineLayoutCheck || LaunchOptions.has("--ui-arrival")) {
+                SessionRouteToast(macName: connection.invitation?.name ?? LaunchOptions.demoMacName ?? "Your Mac",
+                                  diagnostics: LaunchOptions.has("--ui-arrival") ? Self.previewDiagnostics : connection.diagnostics,
+                                  pictureReady: model.fresh || LaunchOptions.has("--ui-arrival"),
+                                  plain: bottomControls)
+            }
+        }
+        .background { ReconnectWatcher(connected: connection.connected, back: $reconnectBack) }
+        .animation(Farside.Motion.easeOut(), value: reconnectBack)
+        .padding(.top, regularSessionLayout ? 6 : 8)
+    }
+
+
+    // One VStack holding every pill nests deeply enough that resolving its type at runtime
+    // overflows the iPhone main-thread stack (the simulator's larger stack hides it).
+    // Erasing three groups keeps each resolved type shallow.
+    @ViewBuilder private var topPillsPrimary: some View {
             if connection.connected && model.awayState == .covered && !regularSessionLayout {
                 Text("Mac covered · requests a lock if touched")
                     .font(.footnote).foregroundStyle(Farside.Palette.bone)
@@ -980,6 +1002,9 @@ struct NativeSessionView: View {
                         .transition(.opacity)
                 }
             }
+    }
+
+    @ViewBuilder private var topPillsStatus: some View {
             if !model.privacyShield && !model.contentConcealed {
                 ConnectionQualityBanner(content: QualityBannerContent.make(connected: connection.connected,
                     verdict: model.qualityVerdict, stall: model.wifiStallTip,
@@ -1019,6 +1044,9 @@ struct NativeSessionView: View {
             #else
             FileTransferCapsule(files: model.files, inbox: model.sendToMac, hidesNotice: showControls)
             #endif
+    }
+
+    @ViewBuilder private var topPillsHints: some View {
             clipboardStatus
             if !regularSessionLayout { bigTextStatus }
             if !offlineLayoutCheck, !panMode, !keyboardOpen, !showControls,
@@ -1049,20 +1077,7 @@ struct NativeSessionView: View {
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }
-        }
-        .overlay(alignment: .top) {
-            if !regularSessionLayout && (!offlineLayoutCheck || LaunchOptions.has("--ui-arrival")) {
-                SessionRouteToast(macName: connection.invitation?.name ?? LaunchOptions.demoMacName ?? "Your Mac",
-                                  diagnostics: LaunchOptions.has("--ui-arrival") ? Self.previewDiagnostics : connection.diagnostics,
-                                  pictureReady: model.fresh || LaunchOptions.has("--ui-arrival"),
-                                  plain: bottomControls)
-            }
-        }
-        .background { ReconnectWatcher(connected: connection.connected, back: $reconnectBack) }
-        .animation(Farside.Motion.easeOut(), value: reconnectBack)
-        .padding(.top, regularSessionLayout ? 6 : 8)
     }
-
     private var regularSessionLayout: Bool { horizontalSizeClass == .regular && ipadSessionLayoutEnabled }
 
     private var sessionPillReconnecting: Bool {
