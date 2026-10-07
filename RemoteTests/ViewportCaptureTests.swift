@@ -1079,3 +1079,341 @@ final class ViewportCaptureTests: XCTestCase {
         XCTAssertEqual(unchanged, reference)
     }
 }
+
+// MARK: Displayed-pixels cap (LATENCY-PLAN §4)
+
+extension ViewportCaptureTests {
+    private typealias Displayed = DisplayedPixelsPolicy
+
+    private var capOn: StreamTuning {
+        var tuning = StreamTuning.tuned
+        tuning.displayedPixelsCap = true
+        return tuning
+    }
+
+    /// The whole-display output as the session composes it: mode and client cap, displayed edge, level fit.
+    private func composed(_ display: DisplayGeometry, displayed: Int?, tuning: StreamTuning? = nil,
+                          fps: Int = 60) throws -> CapturePixelDimensions {
+        try XCTUnwrap(RemoteCaptureConfiguration.outputSize(
+            contentSize: display.size, pointPixelScale: display.pointPixelScale, quality: .sharp,
+            budget: .level(52), fps: fps, clientLongEdge: 2622, tuning: tuning ?? capOn, displayedLongEdge: displayed))
+    }
+
+    /// `region` with the session's split budget, under the same switch values as the `region` helper.
+    private func cappedRegion(for viewport: ViewportRegion, display: DisplayGeometry, output: CapturePixelDimensions,
+                              budget: CapturePixelDimensions, tuning: StreamTuning, previous: CaptureRegion?,
+                              nearNative: Bool = false, cropEngaged: Bool? = nil) -> CaptureRegion {
+        Policy.region(for: viewport, display: display, output: output, budget: budget, tuning: tuning, previous: previous,
+                      phoneNative: true, nearNative: nearNative, keepBand: true, cropEngaged: cropEngaged)
+    }
+
+    func testDisplayedEdgeFollowsTheFitZoomOnMoreSpaceAndANativeMode() throws {
+        let portrait = iPhone17Fit(portrait: true, on: moreSpace)
+        let landscape = iPhone17Fit(portrait: false, on: moreSpace)
+        XCTAssertEqual(portrait.zoom, 0.6281, accuracy: 1e-9)
+        XCTAssertEqual(landscape.zoom, 0.9702, accuracy: 1e-9)
+        XCTAssertEqual(Displayed.targetLongEdge(viewport: portrait, display: moreSpace, tuning: capOn), 1216,
+                       "1920 pt × 0.628 = 1206, up to whole macroblocks")
+        XCTAssertEqual(Displayed.targetLongEdge(viewport: landscape, display: moreSpace, tuning: capOn), 1872)
+        var wire = portrait
+        (wire.pixelWidth, wire.pixelHeight) = (1206, 781)
+        XCTAssertEqual(Displayed.targetLongEdge(viewport: wire, display: moreSpace, tuning: capOn), 1216,
+                       "the phone sends the display rect × zoom, landscape-shaped in either orientation; only zoom counts")
+
+        let fill = iPhone17(zoom: 2.11, portrait: true, on: moreSpace)
+        XCTAssertEqual(Displayed.targetLongEdge(viewport: fill, display: moreSpace, tuning: capOn), 3840,
+                       "past 2 px per point the backing itself")
+        XCTAssertEqual(try composed(moreSpace, displayed: 3840), size(2560, 1656), "then the mode cap")
+
+        var headroom = capOn
+        headroom.displayedPixelsScale = 0.85
+        XCTAssertEqual(Displayed.targetLongEdge(viewport: portrait, display: moreSpace, tuning: headroom), 1040)
+
+        let native = DisplayGeometry(size: CGSize(width: 1280, height: 828), pointPixelScale: 2)
+        let nativeFit = iPhone17Fit(portrait: true, on: native)
+        XCTAssertEqual(nativeFit.zoom, 0.9422, accuracy: 1e-9)
+        XCTAssertEqual(Displayed.targetLongEdge(viewport: nativeFit, display: native, tuning: capOn), 1216)
+
+        XCTAssertNil(Displayed.targetLongEdge(viewport: portrait, display: moreSpace, tuning: .tuned), "flag off")
+        XCTAssertNil(Displayed.targetLongEdge(viewport: nil, display: moreSpace, tuning: capOn), "an older phone")
+        var invalid = portrait
+        invalid.zoom = .nan
+        XCTAssertNil(Displayed.targetLongEdge(viewport: invalid, display: moreSpace, tuning: capOn))
+        invalid = portrait
+        invalid.pixelWidth = 0
+        XCTAssertNil(Displayed.targetLongEdge(viewport: invalid, display: moreSpace, tuning: capOn))
+        XCTAssertNil(Displayed.targetLongEdge(viewport: portrait, display: DisplayGeometry(size: .zero, pointPixelScale: 2),
+                                              tuning: capOn))
+    }
+
+    func testComposedWholeOutputAtTheDisplayedEdgeIsWhatScreenCaptureKitIsAskedFor() throws {
+        XCTAssertEqual(try composed(moreSpace, displayed: nil), size(2560, 1656), "today")
+        XCTAssertEqual(try composed(moreSpace, displayed: 1216), size(1216, 786),
+                       "3840x2486 × 1216/3840: the height floors to even pixels, not macroblocks")
+        XCTAssertEqual(try composed(moreSpace, displayed: 1872), size(1872, 1210))
+        XCTAssertEqual(try composed(moreSpace, displayed: 1040), size(1040, 672))
+        XCTAssertEqual(try composed(moreSpace, displayed: 1216, fps: 120), size(1216, 786))
+        var floor = capOn
+        floor.outputLongEdgeOverride = 604
+        XCTAssertEqual(try composed(moreSpace, displayed: 1216, tuning: floor), size(604, 390), "the floor arm wins")
+        XCTAssertEqual(try composed(moreSpace, displayed: nil, tuning: floor), size(604, 390))
+
+        let portrait = iPhone17Fit(portrait: true, on: moreSpace)
+        let whole = try composed(moreSpace, displayed: 1216)
+        let region = cappedRegion(for: portrait, display: moreSpace, output: whole,
+                                   budget: try composed(moreSpace, displayed: nil), tuning: capOn, previous: nil)
+        XCTAssertEqual(region, CaptureRegion(epoch: 0, x: 0, y: 0, width: 1920, height: 1243,
+                                             outputWidth: 1216, outputHeight: 786))
+        XCTAssertEqual(try sharpness(region, portrait, on: moreSpace), 1216 / 1920 / 0.6281, accuracy: 1e-9,
+                       "about one stream pixel per displayed phone pixel instead of 2.1")
+    }
+
+    func testDisplayedEdgeHoldsInsideTheBandAndChangesOnlyAfterItsDwell() {
+        let held = Displayed.Hold(edge: 1216)
+        XCTAssertEqual(Displayed.resolve(target: nil, held: nil, now: 0), Displayed.Decision(edge: nil, hold: nil, deadline: nil),
+                       "cap off: today's output")
+        let lost = Displayed.resolve(target: nil, held: held, now: 0)
+        XCTAssertEqual(lost.edge, 1216, "a lost viewport is a grow, not an undamped jump")
+        XCTAssertEqual(lost.deadline, 0.25)
+        XCTAssertEqual(Displayed.resolve(target: nil, held: lost.hold, now: 0.25),
+                       Displayed.Decision(edge: nil, hold: nil, deadline: nil))
+        XCTAssertEqual(Displayed.resolve(target: 1216, held: lost.hold, now: 0.1),
+                       Displayed.Decision(edge: 1216, hold: held, deadline: nil), "the viewport is back within the dwell")
+        XCTAssertEqual(Displayed.resolve(target: 1216, held: nil, now: 0),
+                       Displayed.Decision(edge: 1216, hold: held, deadline: nil), "the first viewport applies at once")
+        for target in [1104, 1150, 1216, 1300, 1328] {
+            XCTAssertEqual(Displayed.resolve(target: target, held: held, now: 0),
+                           Displayed.Decision(edge: 1216, hold: held, deadline: nil), "\(target) is inside the band")
+        }
+
+        let grow = Displayed.resolve(target: 1872, held: held, now: 10)
+        XCTAssertEqual(grow.edge, 1216)
+        XCTAssertEqual(grow.deadline, 10.25)
+        let growing = Displayed.resolve(target: 1872, held: grow.hold, now: 10.2)
+        XCTAssertEqual(growing.edge, 1216, "still inside the grow dwell")
+        XCTAssertEqual(growing.deadline, 10.25, "measured from when the target first left the band")
+        XCTAssertEqual(Displayed.resolve(target: 1872, held: growing.hold, now: 10.25),
+                       Displayed.Decision(edge: 1872, hold: Displayed.Hold(edge: 1872), deadline: nil))
+
+        let shrink = Displayed.resolve(target: 1216, held: Displayed.Hold(edge: 1872), now: 20)
+        XCTAssertEqual(shrink.edge, 1872)
+        XCTAssertEqual(shrink.deadline, 21)
+        XCTAssertEqual(Displayed.resolve(target: 1216, held: shrink.hold, now: 20.99).edge, 1872)
+        XCTAssertEqual(Displayed.resolve(target: 1216, held: shrink.hold, now: 21).edge, 1216,
+                       "applied by the dwell's own update, with no further viewport")
+
+        let back = Displayed.resolve(target: 1216, held: grow.hold, now: 10.1)
+        XCTAssertEqual(back, Displayed.Decision(edge: 1216, hold: held, deadline: nil), "back inside the band: nothing pending")
+        XCTAssertEqual(Displayed.resolve(target: 1872, held: back.hold, now: 10.3).deadline, 10.55, "a new excursion restarts the dwell")
+
+        let reversed = Displayed.resolve(target: 1000, held: grow.hold, now: 10.1)
+        XCTAssertEqual(reversed.edge, 1216)
+        XCTAssertEqual(reversed.deadline, 11.1, "a reversal waits the shrink dwell from the reversal")
+    }
+
+    func testDwellRequestStartsAnUpdateWhenTheGateIsIdleAndQueuesBehindOneInFlight() {
+        var gate = ConfigurationUpdateGate()
+        XCTAssertEqual(gate.request(at: 1, immediate: true), .start, "idle gate: the dwell applies at once")
+        XCTAssertEqual(gate.request(at: 1.01, immediate: true), .none)
+        XCTAssertEqual(gate.finished(at: 1.2, immediate: true), .start, "in flight: applied when it finishes")
+    }
+
+    func testSessionStartSeedsTheDisplayedEdgeSoTheFirstViewportReconfiguresNothing() throws {
+        let portrait = iPhone17Fit(portrait: true, on: moreSpace)
+        let edge = try XCTUnwrap(Displayed.initialEdge(viewport: portrait, windowScoped: false, display: moreSpace,
+                                                       tuning: capOn))
+        XCTAssertEqual(edge, 1216)
+        let output = try composed(moreSpace, displayed: edge)
+        XCTAssertEqual(output, size(1216, 786), "the capped size on the first configuration")
+        let initial = Policy.wholeDisplay(moreSpace, output: output)
+        let first = cappedRegion(for: portrait, display: moreSpace, output: output,
+                                  budget: try composed(moreSpace, displayed: nil), tuning: capOn, previous: initial)
+        XCTAssertFalse(Policy.needsReconfiguration(from: initial, to: first), "the replayed viewport only publishes")
+        let decision = Displayed.resolve(target: Displayed.targetLongEdge(viewport: portrait, display: moreSpace, tuning: capOn),
+                                         held: Displayed.Hold(edge: edge), now: 0)
+        XCTAssertEqual(decision.edge, edge)
+
+        XCTAssertNil(Displayed.initialEdge(viewport: portrait, windowScoped: true, display: moreSpace, tuning: capOn))
+        XCTAssertNil(Displayed.initialEdge(viewport: portrait, windowScoped: false, display: moreSpace, tuning: .tuned))
+        XCTAssertNil(Displayed.initialEdge(viewport: nil, windowScoped: false, display: moreSpace, tuning: capOn))
+        var elsewhere = portrait
+        elsewhere.x = 3000
+        XCTAssertNil(Displayed.initialEdge(viewport: elsewhere, windowScoped: false, display: moreSpace, tuning: capOn),
+                     "a viewport off the new display falls back to the uncapped size")
+        XCTAssertEqual(try composed(moreSpace, displayed: nil), size(2560, 1656))
+    }
+
+    func testCropsAreSizedFromTheUncappedBudgetExactlyAsBefore() throws {
+        let budget = try composed(moreSpace, displayed: nil)
+        var crops = 0
+        for portrait in [false, true] {
+            for zoom in [1.05, 1.2, 1.3, 1.5, 2, 3] {
+                let viewport = iPhone17(zoom: zoom, portrait: portrait, on: moreSpace)
+                let edge = try XCTUnwrap(Displayed.targetLongEdge(viewport: viewport, display: moreSpace, tuning: capOn))
+                let capped = try composed(moreSpace, displayed: edge)
+                let label = "\(portrait ? "portrait" : "landscape") zoom \(zoom)"
+                let before = region(viewport, on: moreSpace, output: budget)
+                let after = cappedRegion(for: viewport, display: moreSpace, output: capped, budget: budget,
+                                          tuning: capOn, previous: nil)
+                guard !before.isWholeDisplay else {
+                    XCTAssertTrue(after.isWholeDisplay, label)
+                    XCTAssertEqual(after.outputWidth, capped.width, label)
+                    continue
+                }
+                XCTAssertEqual(after, before, "bit for bit: \(label)")
+                crops += 1
+                for held in [before, region(iPhone17(zoom: zoom * 1.04, portrait: portrait, on: moreSpace),
+                                            on: moreSpace, output: budget)] {
+                    XCTAssertEqual(cappedRegion(for: viewport, display: moreSpace, output: capped, budget: budget,
+                                                 tuning: capOn, previous: held),
+                                   region(viewport, on: moreSpace, output: budget, previous: held), "held: \(label)")
+                }
+            }
+        }
+        XCTAssertGreaterThanOrEqual(crops, 8, "the comparison covers real crops")
+    }
+
+    func testWithScrollFixesNoCropEngagesWhileTheCappedWholeIsAtDisplayedDensity() throws {
+        let budget = try composed(moreSpace, displayed: nil)
+        for zoom in [1.05, 1.2, 1.3] {
+            let viewport = iPhone17(zoom: zoom, portrait: true, on: moreSpace)
+            let edge = try XCTUnwrap(Displayed.targetLongEdge(viewport: viewport, display: moreSpace, tuning: capOn))
+            let capped = try composed(moreSpace, displayed: edge)
+            XCTAssertLessThan(capped.width, budget.width, "zoom \(zoom)")
+            for engaged in [false, true] {
+                let result = cappedRegion(for: viewport, display: moreSpace, output: capped, budget: budget, tuning: capOn,
+                                           previous: nil, nearNative: true, cropEngaged: engaged)
+                XCTAssertTrue(result.isWholeDisplay, "zoom \(zoom), engaged \(engaged)")
+                XCTAssertEqual(result.outputWidth, capped.width)
+            }
+        }
+        let zoomed = iPhone17(zoom: 2, portrait: true, on: moreSpace)
+        let edge = try XCTUnwrap(Displayed.targetLongEdge(viewport: zoomed, display: moreSpace, tuning: capOn))
+        let capped = try composed(moreSpace, displayed: edge)
+        XCTAssertEqual(capped, budget, "past the mode cap's density the cap changes nothing")
+        XCTAssertEqual(cappedRegion(for: zoomed, display: moreSpace, output: capped, budget: budget, tuning: capOn,
+                                     previous: nil, nearNative: true),
+                       region(zoomed, on: moreSpace, output: budget, nearNative: true))
+    }
+
+    func testAHeldEdgeFromBeforeAPinchNeitherEngagesNorDropsACrop() throws {
+        let budget = try composed(moreSpace, displayed: nil)
+        let fitEdge = try composed(moreSpace, displayed: 1216)
+        let pinched = iPhone17(zoom: 1.2, portrait: true, on: moreSpace)
+        for engaged in [false, true] {
+            let stale = cappedRegion(for: pinched, display: moreSpace, output: fitEdge, budget: budget, tuning: capOn,
+                                     previous: nil, nearNative: true, cropEngaged: engaged)
+            let today = region(pinched, on: moreSpace, output: budget, nearNative: true, cropEngaged: engaged)
+            XCTAssertEqual(stale.isWholeDisplay, today.isWholeDisplay, "the gain is judged on the budget, engaged \(engaged)")
+            XCTAssertTrue(stale.isWholeDisplay)
+        }
+
+        let zoomed = iPhone17(zoom: 1.5, portrait: true, on: moreSpace)
+        let crop = region(zoomed, on: moreSpace, output: budget)
+        XCTAssertFalse(crop.isWholeDisplay)
+        let wobble = iPhone17(zoom: 1.56, portrait: true, on: moreSpace)
+        for output in [fitEdge, try composed(moreSpace, displayed: 2304), budget] {
+            XCTAssertEqual(cappedRegion(for: wobble, display: moreSpace, output: output, budget: budget, tuning: capOn,
+                                        previous: crop),
+                           region(wobble, on: moreSpace, output: budget, previous: crop),
+                           "a new displayed edge keeps the held crop: \(output)")
+        }
+    }
+
+    func testTheWidenedCropRuleAlsoTakesItsAspectAndSizeFromTheBudget() throws {
+        let budget = try composed(moreSpace, displayed: nil)
+        for zoom in [1.3, 2, 3] {
+            let viewport = iPhone17(zoom: zoom, portrait: false, on: moreSpace)
+            let before = region(viewport, on: moreSpace, output: budget, phoneNative: false)
+            let after = Policy.region(for: viewport, display: moreSpace, output: try composed(moreSpace, displayed: 1216),
+                                      budget: budget, tuning: capOn, previous: nil, phoneNative: false,
+                                      nearNative: false, keepBand: true)
+            if before.isWholeDisplay { XCTAssertTrue(after.isWholeDisplay) } else { XCTAssertEqual(after, before, "zoom \(zoom)") }
+        }
+    }
+
+    /// The session's update step over a sequence of heartbeats, as `performConfigurationUpdate` runs it.
+    private struct Replay {
+        var tuning: StreamTuning
+        var display: DisplayGeometry
+        var budget: CapturePixelDimensions
+        var applied: CaptureRegion
+        var held: Displayed.Hold?
+
+        mutating func update(_ viewport: ViewportRegion?, at now: TimeInterval) -> Displayed.Layout {
+            let display = display, tuning = tuning
+            let layout = Displayed.layout(
+                viewport: viewport, display: display, tuning: tuning, budget: budget, sizeFraction: nil, previous: applied,
+                applied: applied, inputsChanged: false, held: held, now: now
+            ) { edge in
+                RemoteCaptureConfiguration.outputSize(contentSize: display.size, pointPixelScale: display.pointPixelScale,
+                                                      quality: .sharp, budget: .level(52), fps: 60, clientLongEdge: 2622,
+                                                      tuning: tuning, displayedLongEdge: edge)
+            }
+            held = layout.decision.hold
+            applied = layout.region
+            return layout
+        }
+    }
+
+    private func replay(cap: Bool, crop: Bool) throws -> Replay {
+        var tuning = StreamTuning.tuned
+        tuning.displayedPixelsCap = cap
+        tuning.viewportCapture = crop
+        let budget = try composed(moreSpace, displayed: nil, tuning: tuning)
+        return Replay(tuning: tuning, display: moreSpace, budget: budget,
+                      applied: Policy.wholeDisplay(moreSpace, output: budget), held: nil)
+    }
+
+    func testTheHostAcceptsViewportsForCroppingOrForTheCapAlone() {
+        for (crop, cap, accepts) in [(true, false, true), (true, true, true), (false, true, true), (false, false, false)] {
+            var tuning = StreamTuning.tuned
+            tuning.viewportCapture = crop
+            tuning.displayedPixelsCap = cap
+            XCTAssertEqual(tuning.acceptsViewport, accepts, "crop \(crop), cap \(cap)")
+        }
+        XCTAssertTrue(StreamTuning.tuned.acceptsViewport, "today's default")
+        XCTAssertFalse(StreamTuning.legacy.acceptsViewport)
+    }
+
+    func testCapWithCroppingOffSizesTheWholeDisplayWithTheBandAndDwellAndNeverCrops() throws {
+        var session = try replay(cap: true, crop: false)
+        let portrait = iPhone17Fit(portrait: true, on: moreSpace)
+        let landscape = iPhone17Fit(portrait: false, on: moreSpace)
+        func check(_ layout: Displayed.Layout, _ output: CapturePixelDimensions, deadline: TimeInterval?,
+                   _ label: String) {
+            XCTAssertEqual(layout.region, Policy.wholeDisplay(moreSpace, output: output), label)
+            XCTAssertEqual(layout.region.epoch, 0, "never a crop: \(label)")
+            XCTAssertEqual(layout.output, output, label)
+            XCTAssertEqual(layout.decision.deadline, deadline, label)
+        }
+        check(session.update(portrait, at: 0), size(1216, 786), deadline: nil, "first viewport")
+        var wobble = portrait
+        wobble.zoom = 0.66
+        check(session.update(wobble, at: 0.5), size(1216, 786), deadline: nil, "inside the band")
+        check(session.update(landscape, at: 1), size(1216, 786), deadline: 1.25, "rotation waits the grow dwell")
+        check(session.update(landscape, at: 1.25), size(1872, 1210), deadline: nil, "then grows")
+        check(session.update(portrait, at: 2), size(1872, 1210), deadline: 3, "a shrink waits a second")
+        check(session.update(portrait, at: 3), size(1216, 786), deadline: nil, "then shrinks")
+
+        for zoom in [1.5, 2, 3] {
+            var zoomed = try replay(cap: true, crop: false)
+            _ = zoomed.update(portrait, at: 0)
+            let viewport = iPhone17(zoom: zoom, portrait: true, on: moreSpace)
+            check(zoomed.update(viewport, at: 10), size(1216, 786), deadline: 10.25, "zoom \(zoom) is a grow, not a crop")
+            check(zoomed.update(viewport, at: 10.25), size(2560, 1656), deadline: nil, "zoom \(zoom) at the mode cap")
+            var cropping = try replay(cap: true, crop: true)
+            XCTAssertFalse(cropping.update(viewport, at: 0).region.isWholeDisplay, "with cropping on, zoom \(zoom) crops")
+        }
+    }
+
+    func testCapAndCroppingBothOffIsTodaysWholeDisplay() throws {
+        var session = try replay(cap: false, crop: false)
+        for (index, viewport) in [nil, iPhone17Fit(portrait: true, on: moreSpace), iPhone17Fit(portrait: false, on: moreSpace),
+                                  iPhone17(zoom: 3, portrait: true, on: moreSpace)].enumerated() {
+            let layout = session.update(viewport, at: Double(index))
+            XCTAssertEqual(layout.region, Policy.wholeDisplay(moreSpace, output: size(2560, 1656)))
+            XCTAssertEqual(layout.decision, Displayed.Decision(edge: nil, hold: nil, deadline: nil))
+        }
+    }
+}

@@ -70,8 +70,21 @@ struct StreamTuning: Equatable {
     var encoderPipelining = true
     /// Cap the capture long edge to the client's advertised screen pixels (reduction only).
     var capToClientPixels = true
+    /// Displayed-pixels cap: limit the whole-display output to the pixels the Mac picture occupies on the
+    /// phone (`DisplayedPixelsPolicy`). Needs a whole-display session whose phone reports its viewport (not
+    /// view-only); with viewport capture off the viewport only sizes the whole display. Window-scoped capture
+    /// keeps the mode/client cap. Off until a device A/B.
+    var displayedPixelsCap = false
+    /// Headroom multiplier on the displayed-pixels cap (0.5…1.5).
+    var displayedPixelsScale = 1.0
+    /// Resolution-floor test: the capture long edge (any scope), under the mode cap only; wins over the
+    /// client and displayed-pixels caps and ignores the 640 client floor. Unset by default.
+    var outputLongEdgeOverride: Int?
     /// G4: crop the capture to the phone's reported viewport (`SessionFeature.viewportCapture`).
     var viewportCapture = true
+    /// The host asks for and applies the phone's viewport: to crop, or only to size the whole display for
+    /// the displayed-pixels cap while cropping stays off (it never crops without `viewportCapture`).
+    var acceptsViewport: Bool { viewportCapture || displayedPixelsCap }
     /// G12: let the ladder step the rate and size down under load and report the busy state.
     var ladder = true
     /// X17: compute the send-path cap (`SenderQueueGovernor`) every window and report it; needs `ladder`.
@@ -189,6 +202,11 @@ struct StreamTuning: Equatable {
     static let targetFPSKey = "PocketDeskTargetFPS"
     static let highRefreshNoAdaptationKey = "PocketDeskHighRefreshNoAdaptation"
     static let capToClientPixelsKey = "PocketDeskCapToClientPixels"
+    static let displayedPixelsCapKey = "PocketDeskDisplayedPixelsCap"
+    static let displayedPixelsScaleKey = "PocketDeskDisplayedPixelsScale"
+    static let displayedPixelsScaleRange = 0.5...1.5
+    static let outputLongEdgeKey = "PocketDeskOutputLongEdge"
+    static let outputLongEdgeRange = 256...4096
     static let viewportCaptureKey = "PocketDeskViewportCapture"
     static let ladderKey = "PocketDeskLadder"
     static let senderQueueGovernorKey = "PocketDeskSenderQueueGovernor"
@@ -229,7 +247,8 @@ struct StreamTuning: Equatable {
                                  keysOnDemandKey, ladderKeyNeutralKey, webRTCAdaptationAt60Key,
                                  keysOnDemandH264Key, encoderMaxFrameDelayKey, captureQueueDepthKey, captureResolutionKey,
                                  encodingMinBitrateLANKey,
-                                 backdropTrackKey, unlockDisplayRefreshKey, remoteRouteLANProofKey]
+                                 backdropTrackKey, unlockDisplayRefreshKey, remoteRouteLANProofKey,
+                                 displayedPixelsCapKey, displayedPixelsScaleKey, outputLongEdgeKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -284,6 +303,17 @@ struct StreamTuning: Equatable {
         }
         if defaults.object(forKey: capToClientPixelsKey) != nil {
             tuning.capToClientPixels = defaults.bool(forKey: capToClientPixelsKey)
+        }
+        if defaults.object(forKey: displayedPixelsCapKey) != nil {
+            tuning.displayedPixelsCap = defaults.bool(forKey: displayedPixelsCapKey)
+        }
+        if defaults.object(forKey: displayedPixelsScaleKey) != nil {
+            let scale = defaults.double(forKey: displayedPixelsScaleKey)
+            if displayedPixelsScaleRange.contains(scale) { tuning.displayedPixelsScale = scale }
+        }
+        if defaults.object(forKey: outputLongEdgeKey) != nil {
+            let edge = defaults.integer(forKey: outputLongEdgeKey)
+            if outputLongEdgeRange.contains(edge) { tuning.outputLongEdgeOverride = edge }
         }
         if defaults.object(forKey: viewportCaptureKey) != nil {
             tuning.viewportCapture = defaults.bool(forKey: viewportCaptureKey)
@@ -403,6 +433,9 @@ struct StreamTuning: Equatable {
         if let targetFPSOverride { parts.append("target \(targetFPSOverride) fps") }
         if !highRefreshNoAdaptation { parts.append("webrtc adaptation at 120") }
         if !capToClientPixels { parts.append("no client cap") }
+        if displayedPixelsCap { parts.append("displayed cap") }
+        if displayedPixelsScale != 1 { parts.append("displayed ×\(String(format: "%g", displayedPixelsScale))") }
+        if let outputLongEdgeOverride { parts.append("output edge \(outputLongEdgeOverride)") }
         if !viewportCapture { parts.append("whole-display capture") }
         if !ladder { parts.append("no ladder") }
         if let encoderMaxInFlight { parts.append("max in-flight \(encoderMaxInFlight)") }

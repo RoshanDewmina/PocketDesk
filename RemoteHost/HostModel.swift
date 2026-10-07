@@ -3132,7 +3132,7 @@ final class RemoteHostModel: ObservableObject {
             if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, let pixels = action.screenPixels {
                 capture.setClientPixels(pixels)
             }
-            if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, !captureScopeViewOnly, StreamTuning.current.viewportCapture,
+            if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, !captureScopeViewOnly, StreamTuning.current.acceptsViewport,
                ViewportCapturePolicy.describesViewport(action) {
                 // A regular heartbeat without a viewport means the phone can no longer describe its
                 // visible area. Return to the whole display instead of retaining an old crop.
@@ -3715,7 +3715,7 @@ final class RemoteHostModel: ObservableObject {
             if $0 == SessionFeature.hostMomentum && !RemoteInputDriver.hostMomentumEnabled { return false }
             if $0 == SessionFeature.pencilInput && (!connection.allowsCausalInput || !connection.peerFeatures.contains(SessionFeature.pencilInput) || !connection.peerFeatures.contains(SessionFeature.causalInput)) { return false }
             if $0 == SessionFeature.causalInput && (!connection.allowsCausalInput || !connection.peerFeatures.contains(SessionFeature.causalInput)) { return false }
-            return ($0 != SessionFeature.viewportCapture || tuning.viewportCapture) && ($0 != SessionFeature.ladder || tuning.ladder)
+            return ($0 != SessionFeature.viewportCapture || tuning.acceptsViewport) && ($0 != SessionFeature.ladder || tuning.ladder)
         } + [SessionFeature.couch]
             + (DeliberateSessionEnd.isEnabled() && connection.peerFeatures.contains(SessionFeature.deliberateEnd)
                ? [SessionFeature.deliberateEnd] : [])

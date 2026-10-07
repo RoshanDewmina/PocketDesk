@@ -58,11 +58,16 @@ enum CaptureRatePolicy {
     }
 
     /// The capture long edge: the mode's cap at this rate, reduced to the client's own longest
-    /// screen edge when the client advertised it and the switch is on. Never raised above the cap.
-    static func maximumDimension(quality: StreamQuality, fps: Int, clientLongEdge: Int?, tuning: StreamTuning) -> Int {
+    /// screen edge when the client advertised it and the switch is on, and to the displayed-pixels edge
+    /// when given. Never raised above the cap. The floor-test override replaces both reductions and skips
+    /// the 640 client floor on purpose.
+    static func maximumDimension(quality: StreamQuality, fps: Int, clientLongEdge: Int?, tuning: StreamTuning,
+                                 displayedLongEdge: Int? = nil) -> Int {
         let cap = quality.maximumDimension(at: fps)
-        guard tuning.capToClientPixels, let clientLongEdge, clientLongEdge >= 640 else { return cap }
-        return min(cap, clientLongEdge)
+        if let edge = tuning.outputLongEdgeOverride { return min(cap, edge) }
+        let displayed = min(cap, displayedLongEdge ?? cap)
+        guard tuning.capToClientPixels, let clientLongEdge, clientLongEdge >= 640 else { return displayed }
+        return min(displayed, clientLongEdge)
     }
 }
 
