@@ -138,13 +138,14 @@ final class CaptureRatePolicyTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
 
         let tuned = StreamTuning.resolve(defaults: defaults)
-        XCTAssertFalse(tuned.displayedPixelsCap, "off until the device A/B")
-        XCTAssertEqual(tuned.displayedPixelsScale, 1)
+        XCTAssertTrue(tuned.displayedPixelsCap, "on by default after the 7 Oct device A/B")
+        XCTAssertEqual(tuned.displayedPixelsScale, 1.25)
         XCTAssertNil(tuned.outputLongEdgeOverride)
         XCTAssertEqual(tuned, .tuned)
-        for part in ["displayed cap", "displayed ×", "output edge"] {
-            XCTAssertFalse(tuned.summary.contains(part), tuned.summary)
-        }
+        XCTAssertTrue(tuned.summary.contains("displayed cap"), tuned.summary)
+        XCTAssertTrue(tuned.summary.contains("displayed ×1.25"), tuned.summary)
+        XCTAssertFalse(tuned.summary.contains("output edge"), tuned.summary)
+        XCTAssertFalse(StreamTuning.legacy.displayedPixelsCap)
 
         defaults.set(true, forKey: StreamTuning.displayedPixelsCapKey)
         defaults.set(0.85, forKey: StreamTuning.displayedPixelsScaleKey)

@@ -661,16 +661,13 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     """
 }
 
-/// Internal opt-in experiment, frozen once per registered renderer; no shipping default change.
+/// Drawable pool size, frozen once per registered renderer. Three by default since the 7 Oct 2026
+/// device A/B (drawable wait p99 14 → 0.1 ms, source-to-present p95 92 → 59 ms); 2 restores the old pool.
 enum OwnedVideoPacingExperiment {
     static let drawableCountKey = "farsidePhoneRendererDrawableCount"
     static let diagnosticsKey = "farsidePhoneRendererPacingDiagnostics"
     static func drawableCount(defaults: UserDefaults) -> Int {
-        #if DEBUG
-        return defaults.integer(forKey: drawableCountKey) == 3 ? 3 : 2
-        #else
-        return 2
-        #endif
+        defaults.integer(forKey: drawableCountKey) == 2 ? 2 : 3
     }
     static func diagnosticsEnabled(defaults: UserDefaults) -> Bool {
         #if DEBUG

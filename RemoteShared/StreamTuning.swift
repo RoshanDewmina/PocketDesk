@@ -73,7 +73,7 @@ struct StreamTuning: Equatable {
     /// Displayed-pixels cap: limit the whole-display output to the pixels the Mac picture occupies on the
     /// phone (`DisplayedPixelsPolicy`). Needs a whole-display session whose phone reports its viewport (not
     /// view-only); with viewport capture off the viewport only sizes the whole display. Window-scoped capture
-    /// keeps the mode/client cap. Off until a device A/B.
+    /// keeps the mode/client cap. On by default in `tuned` (7 Oct 2026 A/B); `PocketDeskDisplayedPixelsCap NO` turns it off.
     var displayedPixelsCap = false
     /// Headroom multiplier on the displayed-pixels cap (0.5…1.5).
     var displayedPixelsScale = 1.0
@@ -165,6 +165,10 @@ struct StreamTuning: Equatable {
                                   qualityBitrates: true, bandwidthHeadroom: 1, degradationPreference: .maintainResolution,
                                   encoderRestart: true, presentAtDisplayMaximum: true)
         tuning.encoderMaxInFlight = 2
+        // 7 Oct 2026 device A/B (iPhone 17, M4 Air, H.264): ≥50 fps 95–97 % of moving seconds at 1520
+        // against 43–60 % uncapped; 1520 matched full-size sharpness where 1216 softened small text.
+        tuning.displayedPixelsCap = true
+        tuning.displayedPixelsScale = 1.25
         return tuning
     }()
     static let legacy: StreamTuning = {

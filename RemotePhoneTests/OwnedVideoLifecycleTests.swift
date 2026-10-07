@@ -169,37 +169,28 @@ final class OwnedVideoLifecycleTests: XCTestCase {
 
 
     @MainActor
-    func testDrawablePoolExperimentDefaultsToTwoRejectsInvalidValuesAndIsFrozenPerRenderer() throws {
+    func testDrawablePoolDefaultsToThreeTwoRestoresTheOldPoolAndIsFrozenPerRenderer() throws {
         let name = "OwnedVideoDrawablePool." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
         let admission = VideoPresentationAdmission(identity: identity(), validUntil: ProcessInfo.processInfo.systemUptime + 100)
         let original = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission), defaults: defaults)
         defer { original.invalidate() }
-        XCTAssertEqual(original.drawablePoolCount, 2)
-        XCTAssertEqual((original.metal.layer as? CAMetalLayer)?.maximumDrawableCount, 2)
+        XCTAssertEqual(original.drawablePoolCount, 3)
+        XCTAssertEqual((original.metal.layer as? CAMetalLayer)?.maximumDrawableCount, 3)
         XCTAssertFalse(OwnedVideoPacingExperiment.diagnosticsEnabled(defaults: defaults))
         for invalid in [0, 1, 4, -1, 100] {
             defaults.set(invalid, forKey: OwnedVideoPacingExperiment.drawableCountKey)
-            XCTAssertEqual(OwnedVideoPacingExperiment.drawableCount(defaults: defaults), 2)
+            XCTAssertEqual(OwnedVideoPacingExperiment.drawableCount(defaults: defaults), 3)
         }
-        defaults.set(3, forKey: OwnedVideoPacingExperiment.drawableCountKey)
-        defaults.set(true, forKey: OwnedVideoPacingExperiment.diagnosticsKey)
-        let experiment = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission), defaults: defaults)
-        defer { experiment.invalidate() }
-        #if DEBUG
-        XCTAssertEqual(experiment.drawablePoolCount, 3)
-        XCTAssertEqual((experiment.metal.layer as? CAMetalLayer)?.maximumDrawableCount, 3)
-        XCTAssertTrue(OwnedVideoPacingExperiment.diagnosticsEnabled(defaults: defaults))
-        #else
-        XCTAssertEqual(experiment.drawablePoolCount, 2)
-        XCTAssertFalse(OwnedVideoPacingExperiment.diagnosticsEnabled(defaults: defaults))
-        #endif
-        XCTAssertEqual(original.drawablePoolCount, 2, "changing defaults cannot mutate an existing drawable pool")
+        defaults.set(2, forKey: OwnedVideoPacingExperiment.drawableCountKey)
+        let restored = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission), defaults: defaults)
+        defer { restored.invalidate() }
+        XCTAssertEqual(restored.drawablePoolCount, 2)
+        XCTAssertEqual((restored.metal.layer as? CAMetalLayer)?.maximumDrawableCount, 2)
+        XCTAssertEqual(original.drawablePoolCount, 3, "changing defaults cannot mutate an existing drawable pool")
         defaults.removeObject(forKey: OwnedVideoPacingExperiment.drawableCountKey)
-        defaults.removeObject(forKey: OwnedVideoPacingExperiment.diagnosticsKey)
-        XCTAssertEqual(OwnedVideoPacingExperiment.drawableCount(defaults: defaults), 2)
-        XCTAssertFalse(OwnedVideoPacingExperiment.diagnosticsEnabled(defaults: defaults))
+        XCTAssertEqual(OwnedVideoPacingExperiment.drawableCount(defaults: defaults), 3)
     }
 
     func testPacingWindowSeparatesWakeDrawsFromTicksAndBoundsAcquisitionEvidence() {
