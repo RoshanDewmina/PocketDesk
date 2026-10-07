@@ -211,6 +211,8 @@ struct StreamTuning: Equatable {
     static let captureQueueDepthRange = 3...8
     static let encodingMinBitrateLANRange = 300...100_000
     static let backdropTrackKey = "PocketDeskBackdropTrack"
+    /// Host readiness, not streaming: read by `HostDisplayRecovery`; listed here for the cleanup step only.
+    static let unlockDisplayRefreshKey = "PocketDeskUnlockDisplayRefresh"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
@@ -221,7 +223,7 @@ struct StreamTuning: Equatable {
                                  keysOnDemandKey, ladderKeyNeutralKey, webRTCAdaptationAt60Key,
                                  keysOnDemandH264Key, encoderMaxFrameDelayKey, captureQueueDepthKey, captureResolutionKey,
                                  encodingMinBitrateLANKey,
-                                 backdropTrackKey]
+                                 backdropTrackKey, unlockDisplayRefreshKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
