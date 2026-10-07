@@ -682,7 +682,8 @@ final class PeerMedia: NSObject {
 
     private(set) var fullColorCaptureEnabled = false
     let textClarity: TextClarityContext
-    /// The phone asked for `SessionFeature.keysOnDemand`; the encoder honours it only with `StreamTuning.keysOnDemand`.
+    /// The phone asked for `SessionFeature.keysOnDemand`; the encoder honours it only with `StreamTuning.keysOnDemand`
+    /// (HEVC) or `StreamTuning.keysOnDemandH264` (H.264).
     let keysOnDemandRequested: Bool
     func captureContentChanged() { textClarity.contentChanged() }
     init(isHost: Bool, servers: [ICEServerConfiguration], forceRelay: Bool = false, nativeDesktopCodecs: Bool = true,
@@ -1094,6 +1095,10 @@ final class PeerMedia: NSObject {
             encoding.networkPriority = transportPriority.networkPriority
             encoding.maxFramerate = NSNumber(value: rate.maxFramerate)
             encoding.maxBitrateBps = NSNumber(value: ceiling)
+            if tuning.encodingMinBitrateLANKbps != nil {
+                encoding.minBitrateBps = EncodingMinBitrateFloor.senderMinimumBps(floorBps: encodingFloorBps, ceilingBps: ceiling,
+                                                                                 lowData: lowDataPolicyActive).map { NSNumber(value: $0) }
+            }
         }
         if let preference = rate.degradationPreference {
             parameters.degradationPreference = NSNumber(value: preference.rawValue)
@@ -1141,6 +1146,8 @@ final class PeerMedia: NSObject {
     /// The `LANBitrateFloor` in force, nil while the link is not trusted. Every bitrate-settings call
     /// carries the floor and the ceiling together: libwebrtc keeps the last settings as a whole.
     private var lanFloorBps: Int?
+    /// Latency item 5: the encoding minimum in force, nil while the link is not trusted or the flag is unset.
+    private var encodingFloorBps: Int?
     private var lanTrust = LANTrustTracker()
     private var lastRoundTripMeasurements: Double?
 
@@ -1157,14 +1164,26 @@ final class PeerMedia: NSObject {
                                        rttMs: stats.rtcpRttMs ?? stats.rttMs, roundTripFresh: fresh,
                                        pacerDelayMs: stats.pacerDelayMs)
         stats.lanTrusted = trusted
-        guard tuning.qualityBitrates, remoteDescriptionReady,
-              var floor = LANBitrateFloor.bps(startBitrateBps: streamQuality.startBitrateBps(for: .lan)) else { return }
+        guard tuning.qualityBitrates, remoteDescriptionReady else { return }
+        defer { followEncodingFloor(trusted: trusted) }
+        guard var floor = EncodingMinBitrateFloor.estimateFloorBps(
+            lanFloorBps: LANBitrateFloor.bps(startBitrateBps: streamQuality.startBitrateBps(for: .lan)),
+            encodingFloorBps: EncodingMinBitrateFloor.bps(kbps: tuning.encodingMinBitrateLANKbps, trusted: !lowDataPolicyActive,
+                                                          ceilingBps: tuning.maximumBitrateBps(for: streamQuality))) else { return }
         if let maximum = appliedBweMaxBps { floor = min(floor, maximum) }
         let next = trusted ? floor : nil
         guard next != lanFloorBps else { return }
         _ = connection?.setBweMinBitrateBps(NSNumber(value: next ?? 0), currentBitrateBps: nil,
                                              maxBitrateBps: appliedBweMaxBps.map { NSNumber(value: $0) })
         lanFloorBps = next
+    }
+
+    private func followEncodingFloor(trusted: Bool) {
+        let next = EncodingMinBitrateFloor.bps(kbps: tuning.encodingMinBitrateLANKbps, trusted: trusted,
+                                               ceilingBps: tuning.maximumBitrateBps(for: streamQuality))
+        guard next != encodingFloorBps else { return }
+        encodingFloorBps = next
+        configureNativeSender()
     }
 
     /// G5: the capture session's target rate and display. Written on the main queue under
@@ -1276,6 +1295,12 @@ final class PeerMedia: NSObject {
     var appliedSenderMaxKbps: Double? {
         guard isHost, let sender = connection?.senders.first(where: { $0.track?.kind == "video" }) else { return nil }
         return sender.parameters.encodings.first?.maxBitrateBps.map { $0.doubleValue / 1000 }
+    }
+
+    /// Host: the encoding minimum actually applied to the video sender, in kbps.
+    var appliedSenderMinKbps: Double? {
+        guard isHost, let sender = connection?.senders.first(where: { $0.track?.kind == "video" }) else { return nil }
+        return sender.parameters.encodings.first?.minBitrateBps.map { $0.doubleValue / 1000 }
     }
 
     /// Host: the frame-rate cap actually applied to the video sender.
