@@ -1,24 +1,38 @@
 import Foundation
 
 /// Whether the selected ICE pair is very likely one hop on a private LAN, judged without the local-link
-/// proof: host candidates on both ends with private addresses of one family (RFC 1918, IPv4 link-local,
-/// IPv6 ULA or link-local), and only Wi-Fi, Ethernet or "unknown" labels on the Mac's side (as
-/// `LocalMediaRoute.matches`) with no `vpn` flag. Tailscale's 100.64/10 and fd7a:115c:a1e0::/48 are
-/// excluded because a tunnel can cross the internet. An mDNS name or anything that does not parse is not
-/// LAN. Unlike `LocalMediaRoute.matches`, a missing label passes: this grants no authority, only a short,
-/// guarded start rate (`FastStartLANPolicy`). Known gap: a VPN that hands out RFC 1918 or ULA addresses
-/// on an interface WebRTC labels "unknown" passes when its round trip is under 15 ms; the exposure is the
-/// policy's hold, at most `FastStartLANPolicy.holdSamples` samples, and its guard.
+/// proof: a physical host pair as `LocalMediaRoute.isPhysicalHostPair` judges it (only Wi-Fi, Ethernet or
+/// "unknown" labels on the Mac's side, at least one label, no `vpn` flag), with private addresses of one
+/// family on both ends (RFC 1918, IPv4 link-local, IPv6 ULA or link-local). Tailscale's 100.64/10 and
+/// fd7a:115c:a1e0::/48 are excluded because a tunnel can cross the internet. An mDNS name or anything that
+/// does not parse is not LAN. This grants no authority, only a short, guarded start rate
+/// (`FastStartLANPolicy`). Known gaps: a VPN that hands the Mac an RFC 1918 or ULA address on an interface
+/// WebRTC labels "unknown" passes, and the Mac cannot see the phone's adapter at all, so a phone on a VPN
+/// whose tunnel address is private passes too; both still need a round trip under 15 ms, and the exposure
+/// is the policy's hold, at most `FastStartLANPolicy.holdSamples` samples, behind its guard.
 enum LikelyLANPair {
     enum Family: Equatable { case v4, v6 }
 
     static func matches(localType: String?, remoteType: String?, localAddress: String?, remoteAddress: String?,
                         adapterType: String?, networkType: String?, vpn: Bool?) -> Bool {
-        let allowed: Set<String> = ["wifi", "ethernet", "unknown"]
-        guard localType == "host", remoteType == "host", vpn != true,
-              [adapterType, networkType].compactMap({ $0 }).allSatisfy(allowed.contains),
+        guard LocalMediaRoute.isPhysicalHostPair(localType: localType, remoteType: remoteType, adapterType: adapterType,
+                                                 networkType: networkType, vpn: vpn),
               let local = localAddress.flatMap(privateFamily), let remote = remoteAddress.flatMap(privateFamily) else { return false }
         return local == remote
+    }
+
+    /// The same judgement over a statistics report's selected pair and its local candidate.
+    static func matches(selectedIn entries: [StreamStatsEntry]) -> Bool {
+        let byID = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        guard let pair = entries.first(where: { $0.type == "transport" && $0.string("selectedCandidatePairId") != nil })?
+            .string("selectedCandidatePairId").flatMap({ byID[$0] }) else { return false }
+        let local = pair.string("localCandidateId").flatMap { byID[$0] }
+        let remote = pair.string("remoteCandidateId").flatMap { byID[$0] }
+        return matches(localType: local?.string("candidateType"), remoteType: remote?.string("candidateType"),
+                       localAddress: local?.string("address") ?? local?.string("ip"),
+                       remoteAddress: remote?.string("address") ?? remote?.string("ip"),
+                       adapterType: local?.string("networkAdapterType"), networkType: local?.string("networkType"),
+                       vpn: local?.bool("vpn"))
     }
 
     static func privateFamily(_ address: String) -> Family? {
@@ -55,7 +69,11 @@ enum LikelyLANPair {
 ///
 /// Guard: the minimum is dropped at the first sample whose pair is no longer a likely-LAN pair, or with
 /// loss, a round trip at the LAN exit limit, or a long pacer queue; otherwise after `holdSamples`. It
-/// starts at most once, and only while the ordinary seed has not fired yet.
+/// starts at most once, only while the ordinary seed has not fired yet, and only after the phone's first
+/// regular heartbeat has told the Mac whether Low Data applies (`lowDataKnown`): the phone's own entry
+/// hysteresis (one second) can still report it a little late, which `BweSettings` then corrects. That
+/// heartbeat lands after the first sample, so `PeerMedia` reads the selected pair once when it arrives.
+/// An ICE restart ends the hold at once (`cancel`): the new route has not been judged yet.
 struct FastStartLANPolicy: Equatable {
     enum Phase: String { case idle, hold, done, guarded = "guard" }
     enum Action: Equatable { case none, start, release }
@@ -69,12 +87,12 @@ struct FastStartLANPolicy: Equatable {
 
     var holding: Bool { phase == .hold }
 
-    mutating func observe(seedPending: Bool, likelyLANPair: Bool, route: SeedRoute?, lossPercent: Double?,
-                          rttMs: Double?, pacerDelayMs: Double?) -> Action {
+    mutating func observe(seedPending: Bool, lowDataKnown: Bool, likelyLANPair: Bool, route: SeedRoute?,
+                          lossPercent: Double?, rttMs: Double?, pacerDelayMs: Double?) -> Action {
         switch phase {
         case .idle:
             guard seedPending else { phase = .done; return .none }
-            guard likelyLANPair, route == .lan else { return .none }
+            guard lowDataKnown, likelyLANPair, route == .lan else { return .none }
             phase = .hold
             heldSamples = 0
             return .start
@@ -89,14 +107,28 @@ struct FastStartLANPolicy: Equatable {
             return .none
         }
     }
+
+    /// True when a hold was ended, so its minimum must be withdrawn.
+    mutating func cancel() -> Bool {
+        guard phase == .hold else { return false }
+        phase = .guarded
+        return true
+    }
 }
 
-/// The estimate minimum every bitrate-settings call carries. libwebrtc keeps the last settings as a whole
-/// and refuses a minimum above the maximum (or the start), so the floors are combined and clamped here.
-/// With no fast-start floor this is exactly the `LANBitrateFloor` clamped as before.
-enum BweMinimum {
-    static func bps(lanFloorBps: Int?, fastStartFloorBps: Int?, lowData: Bool, maximumBps: Int?, currentBps: Int? = nil) -> Int? {
-        guard let floor = [lanFloorBps, lowData ? nil : fastStartFloorBps].compactMap({ $0 }).max() else { return nil }
-        return [floor, maximumBps, currentBps].compactMap { $0 }.min()
+/// What every bitrate-settings call sends. libwebrtc keeps the last settings as a whole and refuses a
+/// minimum above the maximum or the start, so the floors are combined and clamped here. With no
+/// fast-start floor the minimum is exactly the `LANBitrateFloor` clamped as before.
+struct BweSettings: Equatable {
+    var minimumBps: Int?
+    var currentBps: Int?
+    var maximumBps: Int?
+
+    static func compose(lanFloorBps: Int?, fastStartFloorBps: Int?, lowData: Bool, maximumBps: Int?,
+                        currentBps: Int? = nil) -> BweSettings {
+        let current = currentBps.map { min($0, maximumBps ?? $0) }
+        let floor = [lanFloorBps, lowData ? nil : fastStartFloorBps].compactMap { $0 }.max()
+        return BweSettings(minimumBps: floor.map { min($0, maximumBps ?? $0, current ?? $0) }, currentBps: current,
+                           maximumBps: maximumBps)
     }
 }

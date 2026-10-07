@@ -925,6 +925,7 @@ final class PeerMedia: NSObject {
         restartPending = false
         restartGraceUntil = ProcessInfo.processInfo.systemUptime + Self.restartGrace
         iceRestarts += 1
+        cancelFastStartHold()
         // Candidates for the new generation can arrive before the answer is applied; hold them.
         remoteDescriptionReady = false
         connection.restartIce()
@@ -1041,6 +1042,7 @@ final class PeerMedia: NSObject {
             // Local proof is bound to the current ICE generation. A new offer needs a new proof.
             if localLink != nil { onState?("failed"); return }
             iceRestarts += 1
+            cancelFastStartHold()
             restartGraceUntil = ProcessInfo.processInfo.systemUptime + Self.restartGrace
         }
         // Candidates that follow a renegotiation must wait for its description, not race it.
@@ -1116,15 +1118,24 @@ final class PeerMedia: NSObject {
     }
     private let lowDataLock = NSLock()
     private var constrainedMedia = false
+    private var lowDataVerdictReceived = false
     var lowDataPolicyActive: Bool {
         lowDataLock.lock(); defer { lowDataLock.unlock() }; return constrainedMedia
+    }
+    /// Host: whether a regular phone heartbeat has stated Low Data yet; until then `constrainedMedia == false`
+    /// is a default, not a verdict.
+    private var lowDataPolicyKnown: Bool {
+        lowDataLock.lock(); defer { lowDataLock.unlock() }; return lowDataVerdictReceived
     }
     /// Main queue, both sides. The sender ceiling and bulk budget restore without changing quality.
     func applyLowDataPolicy(_ active: Bool) {
         lowDataLock.lock()
         let changed = constrainedMedia != active
+        let firstVerdict = !lowDataVerdictReceived
         constrainedMedia = active
+        lowDataVerdictReceived = true
         lowDataLock.unlock()
+        if firstVerdict { probeFastStart() }
         guard changed else { return }
         resourceBudget.observeLowData(active: active)
         if active {
@@ -1157,8 +1168,7 @@ final class PeerMedia: NSObject {
         appliedRate = rate
         if tuning.qualityBitrates {
             let maximum = bandwidthCeilingBps
-            _ = connection?.setBweMinBitrateBps(bweMinimumBps(maximum: maximum).map { NSNumber(value: $0) }, currentBitrateBps: nil,
-                                                 maxBitrateBps: NSNumber(value: maximum))
+            sendBweSettings(maximum: maximum)
             appliedBweMaxBps = maximum
         }
     }
@@ -1186,8 +1196,7 @@ final class PeerMedia: NSObject {
               !closed, remoteDescriptionReady else { return }
         let maximum = bandwidthCeilingBps
         guard maximum != appliedBweMaxBps else { return }
-        _ = connection?.setBweMinBitrateBps(bweMinimumBps(maximum: maximum).map { NSNumber(value: $0) }, currentBitrateBps: nil,
-                                             maxBitrateBps: NSNumber(value: maximum))
+        sendBweSettings(maximum: maximum)
         appliedBweMaxBps = maximum
     }
 
@@ -1199,9 +1208,13 @@ final class PeerMedia: NSObject {
     private var fastStart = FastStartLANPolicy()
     /// Host, `StreamTuning.fastStartLAN`: whether the selected pair is a `LikelyLANPair` this sample.
     private var likelyLANPairSelected = false
-    private func bweMinimumBps(maximum: Int?, current: Int? = nil) -> Int? {
-        BweMinimum.bps(lanFloorBps: lanFloorBps, fastStartFloorBps: fastStartFloorBps, lowData: lowDataPolicyActive,
-                       maximumBps: maximum, currentBps: current)
+    /// `clearingMinimum` sends 0 rather than no minimum when no floor is in force.
+    private func sendBweSettings(maximum: Int?, current: Int? = nil, clearingMinimum: Bool = false) {
+        let settings = BweSettings.compose(lanFloorBps: lanFloorBps, fastStartFloorBps: fastStartFloorBps,
+                                           lowData: lowDataPolicyActive, maximumBps: maximum, currentBps: current)
+        _ = connection?.setBweMinBitrateBps((settings.minimumBps ?? (clearingMinimum ? 0 : nil)).map { NSNumber(value: $0) },
+                                             currentBitrateBps: settings.currentBps.map { NSNumber(value: $0) },
+                                             maxBitrateBps: settings.maximumBps.map { NSNumber(value: $0) })
     }
     /// Latency item 5: the encoding minimum in force, nil while the link is not trusted or the flag is unset.
     private var encodingFloorBps: Int?
@@ -1232,8 +1245,7 @@ final class PeerMedia: NSObject {
         let next = trusted ? floor : nil
         guard next != lanFloorBps else { return }
         lanFloorBps = next
-        _ = connection?.setBweMinBitrateBps(NSNumber(value: bweMinimumBps(maximum: appliedBweMaxBps) ?? 0), currentBitrateBps: nil,
-                                             maxBitrateBps: appliedBweMaxBps.map { NSNumber(value: $0) })
+        sendBweSettings(maximum: appliedBweMaxBps, clearingMinimum: true)
     }
 
     private func followEncodingFloor(trusted: Bool) {
@@ -1344,16 +1356,14 @@ final class PeerMedia: NSObject {
         guard bandwidthSeed.observe(eligible: seedRoute != nil, estimateKbps: stats.availableOutgoingKbps,
                                     lossPercent: stats.remoteLossPercent, seedKbps: Double(seedBps) / 1000) else { return }
         let maximum = bandwidthCeilingBps
-        let seed = min(seedBps, maximum)
-        _ = connection?.setBweMinBitrateBps(bweMinimumBps(maximum: maximum, current: seed).map { NSNumber(value: $0) },
-                                             currentBitrateBps: NSNumber(value: seed), maxBitrateBps: NSNumber(value: maximum))
+        sendBweSettings(maximum: maximum, current: seedBps)
         appliedBweMaxBps = maximum
     }
 
     /// `FastStartLANPolicy`: true when this sample seeded, so the ordinary seed does not count it.
     private func followFastStart(_ stats: StreamStatsReport, detail: String?) -> Bool {
         let action = fastStart.observe(seedPending: bandwidthSeed.attempts == 0 && !lowDataPolicyActive,
-                                       likelyLANPair: likelyLANPairSelected,
+                                       lowDataKnown: lowDataPolicyKnown, likelyLANPair: likelyLANPairSelected,
                                        route: SeedRoute.classify(detail: detail, rttMs: stats.rttMs),
                                        lossPercent: stats.remoteLossPercent, rttMs: stats.rttMs, pacerDelayMs: stats.pacerDelayMs)
         switch action {
@@ -1364,17 +1374,40 @@ final class PeerMedia: NSObject {
             let seed = min(streamQuality.startBitrateBps(for: .lan), maximum)
             fastStartFloorBps = seed
             bandwidthSeed.markSeeded()
-            _ = connection?.setBweMinBitrateBps(bweMinimumBps(maximum: maximum, current: seed).map { NSNumber(value: $0) },
-                                                 currentBitrateBps: NSNumber(value: seed),
-                                                 maxBitrateBps: NSNumber(value: maximum))
+            sendBweSettings(maximum: maximum, current: seed)
             appliedBweMaxBps = maximum
             return true
         case .release:
             fastStartFloorBps = nil
-            _ = connection?.setBweMinBitrateBps(NSNumber(value: bweMinimumBps(maximum: appliedBweMaxBps) ?? 0), currentBitrateBps: nil,
-                                                 maxBitrateBps: appliedBweMaxBps.map { NSNumber(value: $0) })
+            sendBweSettings(maximum: appliedBweMaxBps, clearingMinimum: true)
             return false
         }
+    }
+
+    /// The first statistics sample lands before the phone's first heartbeat has stated Low Data, so the
+    /// fast start waits on it; one read of the selected pair when that verdict arrives lets it start then
+    /// rather than at the second sample. Nothing is published and no counter is drained.
+    private func probeFastStart() {
+        guard isHost, tuning.fastStartLAN, nativeDesktopCodecs, tuning.qualityBitrates, fastStart.phase == .idle,
+              !closed, remoteDescriptionReady, let connection else { return }
+        connection.statistics { [weak self] report in
+            DispatchQueue.main.async {
+                guard let self, !self.closed, self.fastStart.phase == .idle else { return }
+                let entries = report.statistics.values.map {
+                    StreamStatsEntry(id: $0.id, type: $0.type, values: $0.values, timestamp: $0.timestamp_us / 1_000_000)
+                }
+                let sample = StreamStatsSample(entries: entries)
+                self.likelyLANPairSelected = LikelyLANPair.matches(selectedIn: entries)
+                _ = self.followFastStart(StreamStatsReport(role: "host", previous: nil, current: sample, counters: nil),
+                                         detail: sample.routeDetail)
+            }
+        }
+    }
+
+    private func cancelFastStartHold() {
+        guard fastStart.cancel() else { return }
+        fastStartFloorBps = nil
+        sendBweSettings(maximum: appliedBweMaxBps, clearingMinimum: true)
     }
 
     /// Host: the encoder ceiling actually applied to the video sender, in kbps.

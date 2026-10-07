@@ -36,8 +36,6 @@ final class FastStartLANTests: XCTestCase {
         XCTAssertTrue(likely("169.254.3.4", "169.254.9.9"), "IPv4 link-local cannot cross a router")
         XCTAssertTrue(likely("fd12:3456::1", "fd12:3456::2"), "IPv6 ULA")
         XCTAssertTrue(likely("fe80::1", "fe80::2"), "IPv6 link-local")
-        XCTAssertTrue(likely("192.168.1.10", "192.168.1.20", adapter: nil, network: nil, vpn: nil),
-                      "a missing adapter label is not a veto")
 
         XCTAssertFalse(likely("172.15.0.1", "172.16.0.1"))
         XCTAssertFalse(likely("172.32.0.1", "172.16.0.1"))
@@ -53,15 +51,80 @@ final class FastStartLANTests: XCTestCase {
         XCTAssertFalse(likely("10.0.0.5", "10.0.0.6", adapter: "vpn"))
         XCTAssertFalse(likely("10.0.0.5", "10.0.0.6", network: "cellular"))
         XCTAssertFalse(likely("10.0.0.5", "10.0.0.6", adapter: "cellular4g"), "only Wi-Fi, Ethernet or unknown labels pass")
+        XCTAssertFalse(likely("10.0.0.5", "10.0.0.6", adapter: "unknown", network: "cellular5g"))
+        XCTAssertFalse(likely("10.0.0.5", "10.0.0.6", adapter: "wildcard"))
+        XCTAssertFalse(likely("192.168.1.10", "192.168.1.20", adapter: nil, network: nil, vpn: nil),
+                       "no label at all fails, as LocalMediaRoute")
+        for (adapter, network) in [("unknown", nil), ("wifi", "wifi"), ("ethernet", nil), ("cellular", nil), (nil, nil)] as [(String?, String?)] {
+            XCTAssertEqual(likely("192.168.1.10", "192.168.1.20", adapter: adapter, network: network),
+                           LocalMediaRoute.isPhysicalHostPair(localType: "host", remoteType: "host", adapterType: adapter,
+                                                              networkType: network, vpn: false), "\(adapter ?? "nil")/\(network ?? "nil")")
+        }
         XCTAssertTrue(likely("10.0.0.5", "10.0.0.6", adapter: "ethernet", network: "wifi"))
         XCTAssertFalse(likely("10.0.0.5", "10.0.0.6", vpn: true))
         XCTAssertFalse(likely("127.0.0.1", "127.0.0.1"))
     }
 
-    private func sample(_ policy: inout FastStartLANPolicy, pending: Bool = true, pair: Bool = true, rtt: Double? = 6,
-                        loss: Double? = 0, pacer: Double? = 0) -> FastStartLANPolicy.Action {
-        policy.observe(seedPending: pending, likelyLANPair: pair, route: SeedRoute.classify(detail: "lan", rttMs: rtt),
-                       lossPercent: loss, rttMs: rtt, pacerDelayMs: pacer)
+    private func report(localType: String = "host", local: String = "192.168.1.10", remote: String = "192.168.1.20",
+                        adapter: String = "unknown", network: String = "wifi", vpn: Bool = false, rtt: Double = 0.006) -> [StreamStatsEntry] {
+        [StreamStatsEntry(id: "T", type: "transport", values: ["selectedCandidatePairId": "P"]),
+         StreamStatsEntry(id: "P", type: "candidate-pair", values: ["localCandidateId": "L", "remoteCandidateId": "R",
+                                                                     "currentRoundTripTime": NSNumber(value: rtt)]),
+         StreamStatsEntry(id: "L", type: "local-candidate", values: ["candidateType": localType, "address": local,
+                                                                      "networkAdapterType": adapter, "networkType": network,
+                                                                      "vpn": NSNumber(value: vpn)]),
+         StreamStatsEntry(id: "R", type: "remote-candidate", values: ["candidateType": "host", "address": remote])]
+    }
+
+    func testTheEarlyReadJudgesTheSelectedPairFromAStatisticsReport() {
+        XCTAssertTrue(LikelyLANPair.matches(selectedIn: report()))
+        XCTAssertFalse(LikelyLANPair.matches(selectedIn: report(localType: "relay")))
+        XCTAssertFalse(LikelyLANPair.matches(selectedIn: report(local: "100.101.102.103", remote: "100.64.0.7")))
+        XCTAssertFalse(LikelyLANPair.matches(selectedIn: report(adapter: "cellular4g", network: "cellular")))
+        XCTAssertFalse(LikelyLANPair.matches(selectedIn: report(vpn: true)))
+        XCTAssertFalse(LikelyLANPair.matches(selectedIn: Array(report().dropFirst())), "no selected pair")
+        let sample = StreamStatsSample(entries: report())
+        let stats = StreamStatsReport(role: "host", previous: nil, current: sample, counters: nil)
+        XCTAssertEqual(SeedRoute.classify(detail: sample.routeDetail, rttMs: stats.rttMs), .lan,
+                       "the early read classifies the route from the same report")
+    }
+
+    /// `PeerMedia.seedBandwidthEstimate`'s order: the fast start first, the ordinary seed only when it did not start.
+    private func seedSample(_ fast: inout FastStartLANPolicy, _ seed: inout BandwidthSeedPolicy, lowDataKnown: Bool) -> (FastStartLANPolicy.Action, Bool) {
+        let action = sample(&fast, pending: seed.attempts == 0, lowDataKnown: lowDataKnown)
+        if action == .start { seed.markSeeded(); return (action, false) }
+        return (action, seed.observe(route: "Direct", estimateKbps: 300, lossPercent: 0, seedKbps: 10_000))
+    }
+
+    func testTheTwoSeedsNeverBothFire() {
+        var fast = FastStartLANPolicy(), seed = BandwidthSeedPolicy()
+        XCTAssertTrue(seedSample(&fast, &seed, lowDataKnown: false) == (.none, false), "Low Data unknown: the first sample waits")
+        XCTAssertTrue(seedSample(&fast, &seed, lowDataKnown: false) == (.none, true), "the ordinary seed fires on the second")
+        XCTAssertEqual(seedSample(&fast, &seed, lowDataKnown: true).0, .none)
+        XCTAssertEqual(fast.phase, .done, "the fast start never follows the ordinary seed")
+
+        var early = FastStartLANPolicy(), ordinary = BandwidthSeedPolicy()
+        XCTAssertTrue(seedSample(&early, &ordinary, lowDataKnown: false) == (.none, false))
+        XCTAssertTrue(seedSample(&early, &ordinary, lowDataKnown: true) == (.start, false), "the early read after the heartbeat")
+        for _ in 0..<6 { XCTAssertFalse(seedSample(&early, &ordinary, lowDataKnown: true).1, "the ordinary seed stays quiet") }
+        XCTAssertEqual(early.phase, .done)
+    }
+
+    func testAnICERestartEndsTheHold() {
+        var policy = FastStartLANPolicy()
+        XCTAssertFalse(policy.cancel(), "nothing to end while idle")
+        XCTAssertEqual(policy.phase, .idle)
+        XCTAssertEqual(sample(&policy), .start)
+        XCTAssertTrue(policy.cancel())
+        XCTAssertEqual(policy.phase, .guarded)
+        XCTAssertFalse(policy.cancel())
+        XCTAssertEqual(sample(&policy), .none, "never restarts")
+    }
+
+    private func sample(_ policy: inout FastStartLANPolicy, pending: Bool = true, lowDataKnown: Bool = true, pair: Bool = true,
+                        rtt: Double? = 6, loss: Double? = 0, pacer: Double? = 0) -> FastStartLANPolicy.Action {
+        policy.observe(seedPending: pending, lowDataKnown: lowDataKnown, likelyLANPair: pair,
+                       route: SeedRoute.classify(detail: "lan", rttMs: rtt), lossPercent: loss, rttMs: rtt, pacerDelayMs: pacer)
     }
 
     func testStartsOnTheFirstLikelyLANSampleAndReleasesAfterTheHold() {
@@ -80,6 +143,8 @@ final class FastStartLANTests: XCTestCase {
         XCTAssertEqual(sample(&policy, rtt: nil), .none, "no round trip yet")
         XCTAssertEqual(sample(&policy, rtt: 19), .none, "a host pair at 19 ms is not LAN")
         XCTAssertEqual(sample(&policy, pair: false), .none)
+        XCTAssertEqual(sample(&policy, lowDataKnown: false), .none, "no phone heartbeat has said whether Low Data applies")
+        XCTAssertEqual(policy.phase, .idle, "waiting for the heartbeat does not end the fast start")
         XCTAssertEqual(sample(&policy), .start)
 
         var late = FastStartLANPolicy()
@@ -92,7 +157,8 @@ final class FastStartLANTests: XCTestCase {
         for detail in ["relay", "p2p"] {
             var policy = FastStartLANPolicy()
             for _ in 0..<4 {
-                XCTAssertEqual(policy.observe(seedPending: true, likelyLANPair: true, route: SeedRoute.classify(detail: detail, rttMs: 5),
+                XCTAssertEqual(policy.observe(seedPending: true, lowDataKnown: true, likelyLANPair: true,
+                                              route: SeedRoute.classify(detail: detail, rttMs: 5),
                                               lossPercent: 0, rttMs: 5, pacerDelayMs: 0), .none, detail)
             }
         }
@@ -125,25 +191,67 @@ final class FastStartLANTests: XCTestCase {
         }
     }
 
-    func testTheMinimumNeverExceedsTheMaximumOrTheStartAndIsUnchangedWithoutAFastStartFloor() {
-        let seed = min(StreamQuality.sharp.startBitrateBps(for: .lan), 25_000_000)
-        let start = BweMinimum.bps(lanFloorBps: nil, fastStartFloorBps: seed, lowData: false, maximumBps: 25_000_000, currentBps: seed)
-        XCTAssertEqual(start, seed, "start: min == start <= max")
-        XCTAssertEqual(BweMinimum.bps(lanFloorBps: nil, fastStartFloorBps: seed, lowData: false, maximumBps: 25_000_000), seed, "hold")
-        XCTAssertEqual(BweMinimum.bps(lanFloorBps: nil, fastStartFloorBps: seed, lowData: false, maximumBps: 4_000_000), 4_000_000,
-                       "a ceiling that fell during the hold clamps the minimum")
-        XCTAssertNil(BweMinimum.bps(lanFloorBps: nil, fastStartFloorBps: seed, lowData: true, maximumBps: 1_000_000),
-                     "Low Data ends the fast-start floor")
-        XCTAssertNil(BweMinimum.bps(lanFloorBps: nil, fastStartFloorBps: nil, lowData: false, maximumBps: 25_000_000), "release")
-        XCTAssertEqual(BweMinimum.bps(lanFloorBps: 12_000_000, fastStartFloorBps: seed, lowData: false, maximumBps: 25_000_000), 12_000_000)
+    private func compose(lan: Int? = nil, fast: Int? = nil, lowData: Bool = false, maximum: Int?, current: Int? = nil) -> BweSettings {
+        BweSettings.compose(lanFloorBps: lan, fastStartFloorBps: fast, lowData: lowData, maximumBps: maximum, currentBps: current)
+    }
 
+    func testBweSettingsComposeKeepsMinimumAtMostCurrentAtMostMaximum() {
+        let seed = StreamQuality.sharp.startBitrateBps(for: .lan)
+        XCTAssertEqual(compose(fast: seed, maximum: 25_000_000, current: seed),
+                       BweSettings(minimumBps: seed, currentBps: seed, maximumBps: 25_000_000), "start")
+        XCTAssertEqual(compose(fast: seed, maximum: 25_000_000), BweSettings(minimumBps: seed, currentBps: nil, maximumBps: 25_000_000), "hold")
+        XCTAssertEqual(compose(fast: seed, maximum: 4_000_000), BweSettings(minimumBps: 4_000_000, currentBps: nil, maximumBps: 4_000_000),
+                       "a ceiling that fell during the hold clamps the minimum")
+        XCTAssertEqual(compose(fast: seed, maximum: 4_000_000, current: seed),
+                       BweSettings(minimumBps: 4_000_000, currentBps: 4_000_000, maximumBps: 4_000_000), "a start above the ceiling")
+        XCTAssertEqual(compose(fast: seed, lowData: true, maximum: 1_000_000), BweSettings(minimumBps: nil, currentBps: nil, maximumBps: 1_000_000),
+                       "Low Data ends the fast-start floor")
+        XCTAssertEqual(compose(maximum: 25_000_000), BweSettings(minimumBps: nil, currentBps: nil, maximumBps: 25_000_000), "release")
+        XCTAssertEqual(compose(lan: 12_000_000, fast: seed, maximum: 25_000_000).minimumBps, max(12_000_000, seed), "the higher floor")
+        XCTAssertEqual(compose(fast: seed, maximum: nil), BweSettings(minimumBps: seed, currentBps: nil, maximumBps: nil),
+                       "no ceiling applied yet: nothing to clamp to")
+
+        let floors: [Int?] = [nil, 3_000_000, seed, 30_000_000]
+        let maxima: [Int?] = [nil, 1_000_000, 6_000_000, 25_000_000]
+        for lan in floors {
+            for fast in floors {
+                for maximum in maxima {
+                    for current in [nil, 2_000_000, seed, 40_000_000] as [Int?] {
+                        for lowData in [false, true] {
+                            let settings = compose(lan: lan, fast: fast, lowData: lowData, maximum: maximum, current: current)
+                            let label = "\(String(describing: lan)) \(String(describing: fast)) \(String(describing: maximum)) \(String(describing: current)) \(lowData)"
+                            XCTAssertEqual(settings.maximumBps, maximum, label)
+                            if let minimum = settings.minimumBps {
+                                XCTAssertLessThanOrEqual(minimum, settings.currentBps ?? minimum, label)
+                                XCTAssertLessThanOrEqual(minimum, maximum ?? minimum, label)
+                            }
+                            if let current = settings.currentBps { XCTAssertLessThanOrEqual(current, maximum ?? current, label) }
+                            if fast == nil || lowData {
+                                XCTAssertEqual(settings, compose(lan: lan, maximum: maximum, current: current), "\(label): no fast-start floor")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Flag off, every bitrate-settings call sends what it sent before `BweSettings`.
+    func testBweSettingsComposeMatchesTheOldCallsWithoutAFastStartFloor() {
         for lan in [nil, 3_000_000, 10_000_000, 30_000_000] as [Int?] {
-            for maximum in [nil, 6_000_000, 25_000_000] as [Int?] {
-                XCTAssertEqual(BweMinimum.bps(lanFloorBps: lan, fastStartFloorBps: nil, lowData: false, maximumBps: maximum),
-                               lan.map { min($0, maximum ?? $0) }, "flag off: the LAN floor clamped as before")
-                let current = maximum.map { min(10_000_000, $0) } ?? 10_000_000
-                XCTAssertEqual(BweMinimum.bps(lanFloorBps: lan, fastStartFloorBps: nil, lowData: false, maximumBps: maximum, currentBps: current),
-                               lan.map { min($0, current) }, "flag off: the seed's floor clamped as before")
+            for maximum in [6_000_000, 25_000_000] {
+                XCTAssertEqual(compose(lan: lan, maximum: maximum), BweSettings(minimumBps: lan.map { min($0, maximum) }, currentBps: nil,
+                                                                               maximumBps: maximum), "ceiling calls")
+                for seedBps in [4_000_000, 10_000_000, 40_000_000] {
+                    let seed = min(seedBps, maximum)
+                    XCTAssertEqual(compose(lan: lan, maximum: maximum, current: seedBps),
+                                   BweSettings(minimumBps: lan.map { min($0, seed) }, currentBps: seed, maximumBps: maximum), "seed")
+                }
+            }
+            for applied in [nil, 6_000_000] as [Int?] {
+                let clamped = lan.map { min($0, applied ?? $0) }
+                XCTAssertEqual(compose(lan: clamped, maximum: applied), BweSettings(minimumBps: clamped, currentBps: nil, maximumBps: applied),
+                               "LAN floor call")
             }
         }
     }
