@@ -732,6 +732,7 @@
 		7AF11B0B90C8F81F98202E3F /* MacStatusService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C78743520FB98953CDC93D0 /* MacStatusService.swift */; };
 		7B0A36E74F89EF96BD3FCCB8 /* WakeTargetRegistrationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40484E164619DA5C75BD1223 /* WakeTargetRegistrationView.swift */; };
 		7B6D6919BB4E6D18906B65CE /* StreamTuningTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F922A9E174A6918F0B5BAB63 /* StreamTuningTests.swift */; };
+		7BDE821AF32CF101A46BBC6A /* PhysicalFeatureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3394C0552CD6B99B9751B98 /* PhysicalFeatureTests.swift */; };
 		7C1BC518FDA5CC341596B150 /* PhoneSystemAudioDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 486D352BCE76C418E1B02652 /* PhoneSystemAudioDevice.swift */; };
 		7C65FAAE089ADC3E65A4F7A2 /* NativeCodecCapability.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB7E6B1B2D48610494416341 /* NativeCodecCapability.swift */; };
 		7C6618C3EE9D815D3ED0117E /* MacVitalsNotices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F3994558043A0D771F0487E /* MacVitalsNotices.swift */; };
@@ -1556,10 +1557,10 @@
 		2E49EEF7069398A9DE44D8A4 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = Contents/Library/LaunchAgents;
-			dstSubfolderSpec = 1;
+			dstPath = "agent-hooks";
+			dstSubfolderSpec = 7;
 			files = (
-				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
+				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1589,10 +1590,10 @@
 		7921CB30C5158D00B1977963 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = "agent-hooks";
-			dstSubfolderSpec = 7;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
 			files = (
-				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
+				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2206,6 +2207,7 @@
 		E27D559B6D6C316CCE254452 /* BrowserFixtureHostApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserFixtureHostApp.swift; sourceTree = "<group>"; };
 		E2A0EC4065FDC4D856753C19 /* TabletInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabletInput.swift; sourceTree = "<group>"; };
 		E2FA5A0C3EACC47891FA7B2B /* PointerLocator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointerLocator.swift; sourceTree = "<group>"; };
+		E3394C0552CD6B99B9751B98 /* PhysicalFeatureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhysicalFeatureTests.swift; sourceTree = "<group>"; };
 		E36FFD3DA225862D411FE682 /* StreamTuning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamTuning.swift; sourceTree = "<group>"; };
 		E399F6A3DB9BCC147F0796C0 /* HostPointerTelemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostPointerTelemetry.swift; sourceTree = "<group>"; };
 		E400720F8E60A6C94CDCB82C /* HEVCDecodeWatchdog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HEVCDecodeWatchdog.swift; sourceTree = "<group>"; };
@@ -3178,6 +3180,7 @@
 		C0715BD1E5244B2989883739 /* RemotePhysicalUITests */ = {
 			isa = PBXGroup;
 			children = (
+				E3394C0552CD6B99B9751B98 /* PhysicalFeatureTests.swift */,
 				91A1C09F17DBD36994DD6AEE /* PhysicalFillRoundTests.swift */,
 				29D6356353621341CB416452 /* PhysicalLifecycleSmokeTests.swift */,
 				1C7F6B739C427023308B2FC8 /* PhysicalMacInputTestCase.swift */,
@@ -5433,6 +5436,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7BDE821AF32CF101A46BBC6A /* PhysicalFeatureTests.swift in Sources */,
 				0CE59FFA82CFDF09CE7F6C33 /* PhysicalFillRoundTests.swift in Sources */,
 				9D245C1CAD7D6B342D469C12 /* PhysicalLifecycleSmokeTests.swift in Sources */,
 				57286E4C87802FCBC6553379 /* PhysicalMacInputTestCase.swift in Sources */,

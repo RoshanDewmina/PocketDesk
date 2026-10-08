@@ -4,6 +4,7 @@
 #   script/physical/run.sh --dry-run        # pre-flight verdict only: builds, installs and sends nothing
 #   script/physical/run.sh                  # read-only tests (they send no input to the Mac)
 #   script/physical/run.sh --mac-input      # also the Mac-input tests (refused until the idle check is verified)
+#   script/physical/run.sh --features       # also the tests that need the Mac prepared by feature-tests/driver.py
 # Notes: ~/Documents/Codex/2026-10-07/latency-ideas/plan2/impl/claude-device-test-runner.md
 set -uo pipefail
 setopt NULL_GLOB EXTENDED_GLOB
@@ -19,7 +20,10 @@ PREFLIGHT_CLASS=PhysicalPreflightTests
 PREFLIGHT_TEST=testAutomationReady
 # Classes reviewed to send no input to the Mac. A class that is neither listed here nor a
 # PhysicalMacInputTestCase subclass is never run.
-READ_ONLY_CLASSES=(PhysicalLifecycleSmokeTests)
+READ_ONLY_CLASSES=(PhysicalLifecycleSmokeTests PhysicalFeatureTests)
+# Read-only classes that need the Mac prepared by feature-tests/driver.py and read its real clipboard or
+# screen; they run only with --features.
+FEATURE_CLASSES=(PhysicalMacFixtureFeatureTests)
 MIN_IDLE=120
 # HIDIdleTime may also count the host's own injected events (unverified; checking needs input on this Mac).
 # If it does, it cannot tell Roshan's hand from the test's, so live --mac-input runs stay refused until a
@@ -42,6 +46,7 @@ DERIVED="$HOME/Library/Developer/Xcode/DerivedData/FarsidePhysical"
 DEVICE_LIMIT=60
 PROBE_LIMIT=150
 READ_ONLY_LIMIT=480
+READ_ONLY_PER_TEST=150
 MAC_INPUT_LIMIT=360
 IDLE_WAIT_LIMIT=600
 BUILD_LIMIT=2700
@@ -63,6 +68,7 @@ if [[ -n ${FARSIDE_RUNNER_XCODEBUILD:-} ]]; then
   DEVICE_LIMIT=${FARSIDE_RUNNER_DEVICE_LIMIT:-$DEVICE_LIMIT}
   PROBE_LIMIT=${FARSIDE_RUNNER_PROBE_LIMIT:-$PROBE_LIMIT}
   READ_ONLY_LIMIT=${FARSIDE_RUNNER_READ_ONLY_LIMIT:-$READ_ONLY_LIMIT}
+  READ_ONLY_PER_TEST=${FARSIDE_RUNNER_READ_ONLY_PER_TEST:-0}
   MAC_INPUT_LIMIT=${FARSIDE_RUNNER_MAC_INPUT_LIMIT:-$MAC_INPUT_LIMIT}
   IDLE_WAIT_LIMIT=${FARSIDE_RUNNER_IDLE_WAIT_LIMIT:-$IDLE_WAIT_LIMIT}
   LOCK_POLL_INTERVAL=${FARSIDE_RUNNER_LOCK_POLL_INTERVAL:-$LOCK_POLL_INTERVAL}
@@ -90,6 +96,9 @@ Usage: script/physical/run.sh [options]
                        notes). When enabled: typed by a person at this Mac and confirmed on its keyboard;
                        each test runs alone, only after nobody has touched this Mac for 120 s, and is
                        stopped the moment the keyboard, mouse or trackpad is used.
+  --features           Also run the tests that need this Mac prepared by feature-tests/driver.py
+                       (FEATURE_CLASSES, and Mac-input tests that check for it). They read this Mac's
+                       real clipboard and screen, so a plain run leaves them out.
   --only ID            Run only Class or Class/testMethod (repeatable).
   --device NAME|UDID   The iPhone to use (default: the one paired iPhone with Developer Mode on).
   --skip-build         Reuse the build products in the derived-data folder.
@@ -102,6 +111,7 @@ EOF
 
 DRY_RUN=0
 MAC_INPUT=0
+FEATURES=0
 SKIP_BUILD=0
 DEVICE_ARG=""
 ONLY=()
@@ -110,6 +120,7 @@ while (( $# )); do
   case $1 in
     --dry-run) DRY_RUN=1; shift ;;
     --mac-input) MAC_INPUT=1; shift ;;
+    --features) FEATURES=1; shift ;;
     --skip-build) SKIP_BUILD=1; shift ;;
     --device) need_value $# $1; DEVICE_ARG=$2; shift 2 ;;
     --only) need_value $# $1; ONLY+=($2); shift 2 ;;
@@ -340,8 +351,8 @@ classify_tests() {
     [[ -n ${TESTS_OF[$cls]:-} && $cls != $PREFLIGHT_CLASS ]] || continue
     if [[ -n ${is_mac[$cls]:-} ]]; then
       MAC_INPUT_CLASSES+=($cls)
-      (( ${READ_ONLY_CLASSES[(Ie)$cls]} )) && log "WARNING: $cls is listed as read-only but subclasses $MAC_INPUT_BASE; treating it as Mac input"
-    elif (( ! ${READ_ONLY_CLASSES[(Ie)$cls]} )); then
+      (( ${READ_ONLY_CLASSES[(Ie)$cls]} || ${FEATURE_CLASSES[(Ie)$cls]} )) && log "WARNING: $cls is listed as read-only but subclasses $MAC_INPUT_BASE; treating it as Mac input"
+    elif (( ! ${READ_ONLY_CLASSES[(Ie)$cls]} && ! ${FEATURE_CLASSES[(Ie)$cls]} )); then
       UNCLASSIFIED+=($cls)
     fi
   done
@@ -355,12 +366,19 @@ classify_tests() {
         if [[ $item == */* ]]; then MAC_SELECTED+=($item); else for t in ${=TESTS_OF[$cls]}; do MAC_SELECTED+=($cls/$t); done; fi
       elif (( ${READ_ONLY_CLASSES[(Ie)$cls]} )) && [[ -n ${TESTS_OF[$cls]:-} ]]; then
         RO_SELECTED+=($item)
+      elif (( ${FEATURE_CLASSES[(Ie)$cls]} )) && [[ -n ${TESTS_OF[$cls]:-} ]]; then
+        (( FEATURES )) || finish 2 "REFUSED: $cls needs this Mac prepared by feature-tests/driver.py and reads its real clipboard. Prepare it, then add --features."
+        RO_SELECTED+=($item)
       else
         finish 2 "REFUSED: $cls is not a known physical test class. Classify it first: subclass $MAC_INPUT_BASE if any test clicks, types or pastes on the Mac; otherwise add it to READ_ONLY_CLASSES in script/physical/run.sh after checking that none does."
       fi
     done
   else
     for cls in $READ_ONLY_CLASSES; do [[ -n ${TESTS_OF[$cls]:-} ]] && RO_SELECTED+=($cls); done
+    for cls in $FEATURE_CLASSES; do
+      [[ -n ${TESTS_OF[$cls]:-} ]] || continue
+      if (( FEATURES )); then RO_SELECTED+=($cls); else log "Skipping $cls; it needs this Mac prepared by feature-tests/driver.py and runs only with --features"; fi
+    done
     for cls in $MAC_INPUT_CLASSES; do for t in ${=TESTS_OF[$cls]}; do MAC_SELECTED+=($cls/$t); done; done
   fi
   (( $#UNCLASSIFIED )) && log "WARNING: never run until classified (see READ_ONLY_CLASSES in this script): ${(j:, :)UNCLASSIFIED}"
@@ -502,6 +520,22 @@ counts() {
 
 # MARK: Phases
 
+phase_env() {
+  print -r -- TEST_RUNNER_FARSIDE_PHYSICAL_LIFECYCLE_SMOKE=1
+  (( FEATURES )) && print -r -- TEST_RUNNER_FARSIDE_PHYSICAL_FEATURES=1
+  return 0
+}
+
+# The read-only phase is one xcodebuild run, so its limit grows with the number of selected tests.
+read_only_limit() {
+  local n=0 item
+  for item in $RO_SELECTED; do
+    if [[ $item == */* ]]; then (( n += 1 )); else (( n += ${#${=TESTS_OF[$item]}} )); fi
+  done
+  local scaled=$(( n * READ_ONLY_PER_TEST ))
+  print $(( scaled > READ_ONLY_LIMIT ? scaled : READ_ONLY_LIMIT ))
+}
+
 confirm_mac_input() {
   [[ -t 0 && -t 1 ]] || finish 2 "REFUSED: --mac-input needs a person at this Mac's terminal; it never runs unattended or from a pipe."
   local minutes=$(( $#MAC_SELECTED * 4 )) answer="" idle
@@ -565,11 +599,12 @@ run_read_only() {
   (( $#RO_SELECTED )) || return 0
   local -a only=()
   for item in $RO_SELECTED; do only+=(-only-testing:$TARGET/$item); done
-  log "Read-only tests (no Mac input): ${(j:, :)RO_SELECTED}"
-  run_tests read-only $READ_ONLY_LIMIT phone_watch TEST_RUNNER_FARSIDE_PHYSICAL_LIFECYCLE_SMOKE=1 -- $only
+  local limit=$(read_only_limit)
+  log "Read-only tests (no Mac input): ${(j:, :)RO_SELECTED}; limit $limit s"
+  run_tests read-only $limit phone_watch ${(f)"$(phase_env)"} -- $only
   local rc=$?; stop_current
   (( rc == 125 )) && finish 3 "NOT READY: $STOP_REASON during the read-only tests. $(phone_instruction)"
-  (( rc == 124 )) && finish 5 "STOPPED: the read-only tests gave no result within $(( READ_ONLY_LIMIT / 60 )) minutes. See $LAST_LOG."
+  (( rc == 124 )) && finish 5 "STOPPED: the read-only tests gave no result within $(( limit / 60 )) minutes. See $LAST_LOG."
   record "read-only" $rc || FAILED=1
 }
 
@@ -601,7 +636,7 @@ run_mac_input() {
     log "Touching the keyboard, mouse or trackpad stops it immediately."
     log "=================================================================="
     run_tests "mac-input-$index-${item//\//-}" $MAC_INPUT_LIMIT mac_input_watch \
-      TEST_RUNNER_FARSIDE_PHYSICAL_LIFECYCLE_SMOKE=1 TEST_RUNNER_FARSIDE_PHYSICAL_MAC_INPUT=1 -- -only-testing:$TARGET/$item
+      ${(f)"$(phase_env)"} TEST_RUNNER_FARSIDE_PHYSICAL_MAC_INPUT=1 -- -only-testing:$TARGET/$item
     rc=$?
     if (( rc == 124 || rc == 125 )); then
       local kind=$STOP_KIND reason=$STOP_REASON
@@ -650,7 +685,7 @@ trap on_signal INT TERM HUP
 # MARK: Main
 
 FAILED=0
-log "Farside physical run $RUN_STAMP: $([[ $DRY_RUN == 1 ]] && print dry-run || print live) mac-input=$MAC_INPUT"
+log "Farside physical run $RUN_STAMP: $([[ $DRY_RUN == 1 ]] && print dry-run || print live) mac-input=$MAC_INPUT features=$FEATURES"
 for tool in /usr/bin/jq /usr/bin/plutil /usr/bin/lockf /usr/bin/pgrep; do
   [[ -x $tool ]] || finish 3 "NOT READY: missing tool $tool"
 done
@@ -670,7 +705,7 @@ if (( DRY_RUN )); then
   print -r -- "Mac:          unlocked; idle $idle (Mac-input tests wait for $MIN_IDLE s untouched)"
   print -r -- "iPhone:       $DEVICE_SUMMARY; lock state $LOCK_SUMMARY"
   print -r -- "Automation:   would run $PREFLIGHT_CLASS/$PREFLIGHT_TEST (presses Home, reads the Home Screen), limit $PROBE_LIMIT s"
-  print -r -- "Read-only:    ${${(j:, :)RO_SELECTED}:-none} (env FARSIDE_PHYSICAL_LIFECYCLE_SMOKE=1), limit $READ_ONLY_LIMIT s"
+  print -r -- "Read-only:    ${${(j:, :)RO_SELECTED}:-none} (env ${(j: :)${(@)${(f)"$(phase_env)"}#TEST_RUNNER_}}), limit $(read_only_limit) s"
   if (( MAC_INPUT && ! MAC_INPUT_LIVE )); then
     print -r -- "Mac input:    ${${(j:, :)MAC_SELECTED}:-none}; a live run refuses until the idle check is verified"
   elif (( MAC_INPUT )); then
