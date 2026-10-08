@@ -40,7 +40,10 @@ struct DisplayGeometry: Equatable {
 ///   pixel rate and the encoder's level, which counts area), and `maximumEdge`; never `output`'s width or
 ///   height, so a portrait or panoramic crop keeps its shape. A held size stays while the new size is
 ///   within `shrinkBelow`...`growFrom` of it on both sides and fits the budget, so it is never more than
-///   10 % under phone-native.
+///   10 % under phone-native. `StreamTuning.cropPixelScale` scales that phone-native output (the crop-gain
+///   judgement below stays at scale 1), and with `StreamTuning.cropHoldsOutput` a rect change at the same
+///   viewport zoom — a pan, the phone's pan widening, its return to rest — keeps the held output whatever the
+///   band says, so a pan only moves the source rect and never restarts the encoder (Fill view, 7 Oct 2026).
 ///
 /// Previous rule (switch off): the crop widened to the output's aspect, a crop that would cover
 /// `wholeDisplayCoverage` of the display or more is the whole display, and the output is the
@@ -81,12 +84,18 @@ enum ViewportCapturePolicy {
                       outputWidth: output.width, outputHeight: output.height)
     }
 
+    /// Same-zoom hold (`StreamTuning.cropHoldsOutput`): viewport zooms this close are one zoom, so a rect
+    /// change between them is a pan (or the phone's pan widening, or its return to rest), never a pinch.
+    static let sameZoomTolerance = 1e-3
+
     /// `output` is the whole-display output at the current rung; `budget` the crop's pixel budget, the
     /// whole-display output before the displayed-pixels cap (default `output`), so a crop is sized exactly
     /// as without the cap; `previous` the region applied now, or nil when the output changed (quality,
-    /// client pixels, displayed edge, restart) and the held size must not carry over.
+    /// client pixels, displayed edge, restart) and the held size must not carry over; `previousZoom` the
+    /// viewport zoom `previous` was made for (nil with it).
     static func region(for viewport: ViewportRegion?, display: DisplayGeometry, output: CapturePixelDimensions,
                        budget: CapturePixelDimensions? = nil, tuning: StreamTuning, previous: CaptureRegion?,
+                       previousZoom: Double? = nil,
                        phoneNative: Bool = CropPhoneNativeSwitch.isOn,
                        nearNative: Bool = CropNearNativeSwitch.isOn,
                        keepBand: Bool = CropKeepBandSwitch.isOn,
@@ -101,7 +110,8 @@ enum ViewportCapturePolicy {
         let visible = viewport.rect.intersection(display.bounds)
         guard !visible.isNull, visible.width > 0, visible.height > 0 else { return whole }
         let found = phoneNative
-            ? phoneNativeCrop(around: visible, display: display, zoom: viewport.zoom, budget: budget)
+            ? phoneNativeCrop(around: visible, display: display, zoom: viewport.zoom, budget: budget,
+                              pixelScale: tuning.cropPixelScale)
             : crop(around: visible, display: display, aspect: Double(budget.width) / Double(budget.height))
         guard let crop = found else { return whole }
         let scale = display.pointPixelScale
@@ -118,11 +128,26 @@ enum ViewportCapturePolicy {
                                                 height: Int((previous.rect.height * scale).rounded()))
             }
         }
-        let size = phoneNative
-            ? phoneNativeOutputSize(source: source, zoom: viewport.zoom, display: display, budget: budget, held: held)
-            : outputSize(source: source, whole: budget, held: held)
+        // A crop that grows at the same zoom (a pan's widening) keeps the output: the source rect moves and
+        // the picture is stretched into it until the phone rests, instead of a new encoder and a key frame per
+        // pan. A crop that shrinks back is sized again by the band, so a pinch-out's widened output never
+        // outlives the pinch.
+        let grows = previous.map { source.width >= Int((($0.rect.width * scale) - 1e-6).rounded(.up))
+            && source.height >= Int((($0.rect.height * scale) - 1e-6).rounded(.up)) } ?? false
+        let sameZoom = tuning.cropHoldsOutput && grows
+            && previousZoom.map { abs($0 - viewport.zoom) <= sameZoomTolerance } == true
+        let size: CapturePixelDimensions
+        if !phoneNative {
+            size = outputSize(source: source, whole: budget, held: held)
+        } else if sameZoom, let held, isHoldable(held, budget: budget) {
+            size = held
+        } else {
+            size = phoneNativeOutputSize(source: source, zoom: viewport.zoom, display: display, budget: budget,
+                                         held: held, pixelScale: tuning.cropPixelScale)
+        }
         if nearNative, phoneNative, rect.width > 0, display.size.width > 0 {
-            // Judged on the phone-native target, not a held size that may lag it by up to 10 %.
+            // Judged on the phone-native target, not a held size that may lag it by up to 10 %, and at full
+            // pixel scale, so `cropPixelScale` trades sharpness for rate without flipping the crop.
             let target = phoneNativeOutputSize(source: source, zoom: viewport.zoom, display: display, budget: budget, held: nil)
             // Against the uncapped budget: a displayed edge still held from before a pinch must not engage a crop.
             let gain = (Double(target.width) / rect.width) / (Double(budget.width) / display.size.width)
@@ -148,12 +173,12 @@ enum ViewportCapturePolicy {
 
     /// The phone-native rule's crop in display pixels (see the type), or nil for the whole display.
     static func phoneNativeCrop(around visible: CGRect, display: DisplayGeometry, zoom: Double,
-                                budget: CapturePixelDimensions) -> PixelRect? {
+                                budget: CapturePixelDimensions, pixelScale: Double = 1) -> PixelRect? {
         guard var crop = crop(around: visible, display: display, expansion: 1 + 2 * margin) else { return nil }
         let steps = 16
         var step = 0
         while step < steps, area(phoneNativeTarget(source: CapturePixelDimensions(width: crop.width, height: crop.height),
-                                                   zoom: zoom, display: display)) > area(budget) {
+                                                   zoom: zoom, display: display, pixelScale: pixelScale)) > area(budget) {
             step += 1
             let expansion = 1 + 2 * margin * Double(steps - step) / Double(steps)
             guard let smaller = self.crop(around: visible, display: display, expansion: expansion) else { break }
@@ -222,11 +247,11 @@ enum ViewportCapturePolicy {
         return ratio < shrinkBelow || ratio >= growFrom ? target : held
     }
 
-    /// One stream pixel per phone pixel across the crop, up to the crop's own pixels, in whole macroblocks
-    /// (a crop spanning the display's full edge can be up to 15 pixels short of one).
+    /// One stream pixel per phone pixel (× `pixelScale`) across the crop, up to the crop's own pixels, in
+    /// whole macroblocks (a crop spanning the display's full edge can be up to 15 pixels short of one).
     static func phoneNativeTarget(source: CapturePixelDimensions, zoom: Double,
-                                  display: DisplayGeometry) -> CapturePixelDimensions {
-        let fraction = min(1, zoom / display.pointPixelScale)
+                                  display: DisplayGeometry, pixelScale: Double = 1) -> CapturePixelDimensions {
+        let fraction = min(1, zoom / display.pointPixelScale) * pixelScale
         return CapturePixelDimensions(width: alignedUp(Double(source.width) * fraction),
                                       height: alignedUp(Double(source.height) * fraction))
     }
@@ -234,19 +259,23 @@ enum ViewportCapturePolicy {
     /// The phone-native rule's output (see the type); `held` is the previous crop's output.
     static func phoneNativeOutputSize(source: CapturePixelDimensions, zoom: Double, display: DisplayGeometry,
                                       budget: CapturePixelDimensions,
-                                      held: CapturePixelDimensions?) -> CapturePixelDimensions {
-        var target = phoneNativeTarget(source: source, zoom: zoom, display: display)
+                                      held: CapturePixelDimensions?, pixelScale: Double = 1) -> CapturePixelDimensions {
+        var target = phoneNativeTarget(source: source, zoom: zoom, display: display, pixelScale: pixelScale)
         if area(target) > area(budget) {
             target = shrunk(target, by: (Double(area(budget)) / Double(area(target))).squareRoot())
         }
         if max(target.width, target.height) > maximumEdge {
             target = shrunk(target, by: Double(maximumEdge) / Double(max(target.width, target.height)))
         }
-        guard let held, held.width >= macroblock, held.height >= macroblock,
-              held.width % macroblock == 0, held.height % macroblock == 0, area(held) <= area(budget),
-              max(held.width, held.height) <= maximumEdge else { return target }
+        guard let held, isHoldable(held, budget: budget) else { return target }
         let ratios = [Double(target.width) / Double(held.width), Double(target.height) / Double(held.height)]
         return ratios.allSatisfy({ $0 >= shrinkBelow && $0 < growFrom }) ? held : target
+    }
+
+    static func isHoldable(_ held: CapturePixelDimensions, budget: CapturePixelDimensions) -> Bool {
+        held.width >= macroblock && held.height >= macroblock
+            && held.width % macroblock == 0 && held.height % macroblock == 0
+            && area(held) <= area(budget) && max(held.width, held.height) <= maximumEdge
     }
 
     private static func area(_ size: CapturePixelDimensions) -> Int { size.width * size.height }
@@ -375,13 +404,14 @@ enum DisplayedPixelsPolicy {
     /// at once when the update reconfigures anyway, rather than paying a second stall at its deadline.
     static func layout(viewport: ViewportRegion?, display: DisplayGeometry, tuning: StreamTuning,
                        budget: CapturePixelDimensions, sizeFraction: Double?, previous: CaptureRegion?,
+                       previousZoom: Double? = nil,
                        applied: CaptureRegion, inputsChanged: Bool, held: Hold?, now: TimeInterval,
                        wholeAt: (Int) -> CapturePixelDimensions?) -> Layout {
         let cropBudget = RemoteCaptureConfiguration.scaled(budget, by: sizeFraction)
         func place(_ edge: Int?) -> (CapturePixelDimensions, CaptureRegion) {
             let output = RemoteCaptureConfiguration.scaled(edge.flatMap(wholeAt) ?? budget, by: sizeFraction)
             return (output, ViewportCapturePolicy.region(for: viewport, display: display, output: output, budget: cropBudget,
-                                                         tuning: tuning, previous: previous,
+                                                         tuning: tuning, previous: previous, previousZoom: previousZoom,
                                                          cropEngaged: !applied.isWholeDisplay))
         }
         let target = targetLongEdge(viewport: viewport, display: display, tuning: tuning)
@@ -427,6 +457,18 @@ enum CaptureFrameRegionPolicy {
             return lastSwitch.previous
         }
         return matches(applied) ? applied : nil
+    }
+
+    /// A frame `region` cannot tag because a same-size switch is in flight and it was shown after the
+    /// request (or carries no display time): the phone would place it by the status echo, still the old
+    /// rect, so `StreamTuning.cropDropsAmbiguousFrames` drops it instead. A different size tells by itself.
+    static func isAmbiguous(displayMs: Double, bufferWidth: Int, bufferHeight: Int, inFlight: Switch?) -> Bool {
+        guard let inFlight else { return false }
+        func matches(_ region: CaptureRegion) -> Bool {
+            region.outputWidth == bufferWidth && region.outputHeight == bufferHeight
+        }
+        guard matches(inFlight.previous), matches(inFlight.next) else { return false }
+        return displayMs <= 0 || displayMs >= inFlight.requestedMs
     }
 }
 

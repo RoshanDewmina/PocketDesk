@@ -339,11 +339,46 @@ final class CaptureRateTuningTests: XCTestCase {
                        StreamTuning.captureResolutionKey, StreamTuning.encodingMinBitrateLANKey, StreamTuning.backdropTrackKey, StreamTuning.unlockDisplayRefreshKey, StreamTuning.remoteRouteLANProofKey,
                        StreamTuning.displayedPixelsCapKey, StreamTuning.displayedPixelsScaleKey,
                        StreamTuning.outputLongEdgeKey, StreamTuning.fastStartLANKey, StreamTuning.scrollSmoothingKey, StreamTuning.scrollTargetsStreamKey,
-                       StreamTuning.h264OnLANKey]
+                       StreamTuning.h264OnLANKey, StreamTuning.cropPixelScaleKey, StreamTuning.cropHoldsOutputKey,
+                       StreamTuning.cropDropsAmbiguousFramesKey]
         for key in newKeys { XCTAssertTrue(StreamTuning.experimentKeys.contains(key), key) }
 
         defaults.set(true, forKey: StreamTuning.legacyDefaultsKey)
         XCTAssertEqual(StreamTuning.resolve(defaults: defaults), .legacy, "the legacy switch wins")
+    }
+
+    func testFillCropKeysResolveClampAndAppearInTheSummary() throws {
+        let suite = "FillCropTuningTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let tuned = StreamTuning.resolve(defaults: defaults)
+        XCTAssertEqual(tuned.cropPixelScale, 1, "today's phone-native crop")
+        XCTAssertFalse(tuned.cropHoldsOutput)
+        XCTAssertFalse(tuned.cropDropsAmbiguousFrames)
+        for part in ["crop ×", "crop holds output", "crop drops ambiguous"] {
+            XCTAssertFalse(tuned.summary.contains(part), tuned.summary)
+        }
+
+        defaults.set(0.75, forKey: StreamTuning.cropPixelScaleKey)
+        defaults.set(true, forKey: StreamTuning.cropHoldsOutputKey)
+        defaults.set(true, forKey: StreamTuning.cropDropsAmbiguousFramesKey)
+        let switched = StreamTuning.resolve(defaults: defaults)
+        XCTAssertEqual(switched.cropPixelScale, 0.75)
+        XCTAssertTrue(switched.cropHoldsOutput)
+        XCTAssertTrue(switched.cropDropsAmbiguousFrames)
+        for part in ["crop ×0.75", "crop holds output", "crop drops ambiguous"] {
+            XCTAssertTrue(switched.summary.contains(part), switched.summary)
+        }
+        XCTAssertEqual(switched.fieldTrials, StreamTuning.tuned.fieldTrials)
+        XCTAssertFalse(tuned.dropsAmbiguousFrames)
+        defaults.set(false, forKey: StreamTuning.cropDropsAmbiguousFramesKey)
+        XCTAssertTrue(StreamTuning.resolve(defaults: defaults).dropsAmbiguousFrames, "the hold implies the drop")
+
+        for (scale, expected) in [(0.5, 0.5), (1.0, 1.0), (0.49, 1.0), (1.01, 1.0), (Double.nan, 1.0)] {
+            defaults.set(scale, forKey: StreamTuning.cropPixelScaleKey)
+            XCTAssertEqual(StreamTuning.resolve(defaults: defaults).cropPixelScale, expected, "\(scale)")
+        }
     }
 }
 
