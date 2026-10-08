@@ -159,6 +159,12 @@ struct StreamTuning: Equatable {
     /// statistics sample, before the encoder exists, and hold it at the seed for a few guarded samples
     /// (`FastStartLANPolicy`). Off until a device A/B: the seed waits for the second sample, as today.
     var fastStartLAN = false
+    /// Host: a scroll burst that reaches the Mac at once after a network stall is posted at no more than twice the
+    /// phone's 120 Hz cadence (`ScrollPacer`) instead of in one instant. Off: every scroll message posts on arrival.
+    var scrollSmoothing = false
+    /// Host: before a scroll gesture begins, a Mac cursor that sits outside the streamed display is moved onto it,
+    /// so macOS (which delivers scroll events under the real cursor) scrolls the window the phone shows.
+    var scrollTargetsStream = false
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
         encoderCeilingKbps.map { $0 * 1000 } ?? quality.maximumBitrateBps
@@ -246,6 +252,8 @@ struct StreamTuning: Equatable {
     static let unlockDisplayRefreshKey = "PocketDeskUnlockDisplayRefresh"
     static let remoteRouteLANProofKey = "PocketDeskRemoteRouteLANProof"
     static let fastStartLANKey = "PocketDeskFastStartLAN"
+    static let scrollSmoothingKey = "PocketDeskScrollSmoothing"
+    static let scrollTargetsStreamKey = "PocketDeskScrollTargetsStream"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
@@ -257,7 +265,8 @@ struct StreamTuning: Equatable {
                                  keysOnDemandH264Key, encoderMaxFrameDelayKey, captureQueueDepthKey, captureResolutionKey,
                                  encodingMinBitrateLANKey,
                                  backdropTrackKey, unlockDisplayRefreshKey, remoteRouteLANProofKey,
-                                 displayedPixelsCapKey, displayedPixelsScaleKey, outputLongEdgeKey, fastStartLANKey]
+                                 displayedPixelsCapKey, displayedPixelsScaleKey, outputLongEdgeKey, fastStartLANKey,
+                                                                  scrollSmoothingKey, scrollTargetsStreamKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -403,6 +412,8 @@ struct StreamTuning: Equatable {
         }
         tuning.remoteRouteLANProof = defaults.bool(forKey: remoteRouteLANProofKey)
         tuning.fastStartLAN = defaults.bool(forKey: fastStartLANKey)
+        tuning.scrollSmoothing = defaults.bool(forKey: scrollSmoothingKey)
+        tuning.scrollTargetsStream = defaults.bool(forKey: scrollTargetsStreamKey)
         return tuning
     }
 
@@ -469,6 +480,8 @@ struct StreamTuning: Equatable {
         if backdropTrack { parts.append("backdrop track") }
         if remoteRouteLANProof { parts.append("remote-route LAN proof") }
         if fastStartLAN { parts.append("fast start LAN") }
+        if scrollSmoothing { parts.append("scroll smoothing") }
+        if scrollTargetsStream { parts.append("scroll on stream") }
         if ladder { parts.append("governor " + (!senderQueueGovernor ? "off" : senderQueueGovernorApply ? "apply" : "shadow")) }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }

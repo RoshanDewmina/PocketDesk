@@ -175,7 +175,9 @@ final class RemoteHostModel: ObservableObject {
     #endif
     private var pendingServerRemoval: PendingHostRoomRemoval?
     private var serverRemovalReadFailed = false
-    private lazy var input = HostInputExecutor(driver: RemoteInputDriver(isTrusted: { [snapshot = postingGrantSnapshot] in
+    private lazy var input = HostInputExecutor(driver: RemoteInputDriver(scrollSmoothing: StreamTuning.current.scrollSmoothing,
+                                                                         scrollTargetsStream: StreamTuning.current.scrollTargetsStream,
+                                                                         isTrusted: { [snapshot = postingGrantSnapshot] in
         snapshot.allowsPosting(at: ProcessInfo.processInfo.systemUptime, legacyProbe: {
             InputCadenceTrace.permission("post-legacy", probe: CGPreflightPostEventAccess)
         })

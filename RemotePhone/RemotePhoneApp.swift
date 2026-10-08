@@ -2723,7 +2723,9 @@ let now = ProcessInfo.processInfo.systemUptime
             return accepted
         case .scroll(let delta, let phase, let stream):
             pointerLocator.clear()
-            return sendInput("scroll", x: delta.width, y: delta.height, phase: phase, stream: stream)
+            let accepted = sendInput("scroll", x: delta.width, y: delta.height, phase: phase, stream: stream)
+            if accepted { noteScrollSent(delta, phase: phase, stream: stream) }
+            return accepted
         case .click(let count):
             // Legacy hosts have no semantic count contract. First tap is still prompt.
             return sendInput("click", count: count, probeTextFocus: count == 1 || count == 2)
@@ -2771,6 +2773,23 @@ let now = ProcessInfo.processInfo.systemUptime
         case .zoom, .zoomEnded, .zoomToggle, .navigate, .pan, .precision:
             return false
         }
+    }
+
+    private var lastScrollSent: (stream: String, ms: Double)?
+
+    /// Stats only: the cadence and size of finger-scroll messages, so a device round can see whether touches
+    /// (real or XCTest-synthesized) reach the phone at the expected rate and step.
+    private func noteScrollSent(_ delta: CGSize, phase: String, stream: String) {
+        guard phase == "began" || phase == "changed", delta != .zero, let counters = connection.media?.counters else {
+            lastScrollSent = nil
+            return
+        }
+        let now = MachClock.nowMs()
+        if let last = lastScrollSent, last.stream == stream {
+            counters.phoneRenderTiming(.scrollSendInterval, milliseconds: now - last.ms)
+        }
+        counters.phoneRenderTiming(.scrollStep, milliseconds: Double(hypot(delta.width, delta.height)))
+        lastScrollSent = (stream, now)
     }
 
     func cancelInput() {
