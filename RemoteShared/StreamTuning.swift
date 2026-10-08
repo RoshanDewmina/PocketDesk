@@ -557,8 +557,14 @@ struct StreamTuning: Equatable {
 
     /// `summary` plus the runtime switches, as recorded in statistics samples and diagnostics.
     var liveSummary: String {
-        guard encoderMaxInFlight != nil, !NewestFrameWinsSwitch.isOn else { return summary }
-        return summary + " · newest-frame-wins off"
+        liveSummary(defaults: .standard)
+    }
+    func liveSummary(defaults: UserDefaults) -> String {
+        var parts = [summary]
+        if encoderMaxInFlight != nil, !NewestFrameWinsSwitch.isOn { parts.append("newest-frame-wins off") }
+        if MetalDisplayLinkSwitch.isOn(defaults) { parts.append("metal display link") }
+        if MailboxWakeOnReleaseSwitch.isOn(defaults) { parts.append("mailbox wake on release") }
+        return parts.joined(separator: " · ")
     }
 
     private static func name(_ preference: RTCDegradationPreference) -> String {
@@ -587,6 +593,21 @@ struct StreamTuning: Equatable {
         #endif
         if !trials.isEmpty { RTCInitFieldTrialDictionary(trials) }
     }
+}
+
+/// Phone, research run 3 P1-B (`defaults write com.roshan.PocketDesk.Remote PocketDeskMetalDisplayLink -bool YES`
+/// or the launch argument `-PocketDeskMetalDisplayLink YES`, then relaunch): the owned video view draws on a
+/// `CAMetalDisplayLink` with one frame of latency instead of MTKView's display link. Off keeps today's path.
+enum MetalDisplayLinkSwitch {
+    static let defaultsKey = "PocketDeskMetalDisplayLink"
+    static func isOn(_ defaults: UserDefaults = .standard) -> Bool { defaults.bool(forKey: defaultsKey) }
+}
+
+/// Phone, research run 3 P1-C (`PocketDeskMailboxWakeOnRelease`): a frame waiting behind two unfinished draws
+/// is drawn as soon as a slot frees, and `preferredFramesPerSecond` is rewritten only when it changes.
+enum MailboxWakeOnReleaseSwitch {
+    static let defaultsKey = "PocketDeskMailboxWakeOnRelease"
+    static func isOn(_ defaults: UserDefaults = .standard) -> Bool { defaults.bool(forKey: defaultsKey) }
 }
 
 /// `SCCaptureResolutionType` without ScreenCaptureKit, so the shared tuning compiles on the phone.

@@ -142,6 +142,11 @@ final class NewestFrameMailbox<Frame>: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }; return pending.map(predicate) ?? false
     }
     var hasPending: Bool { lock.lock(); defer { lock.unlock() }; return pending != nil }
+    /// A frame is waiting and a flight slot is free, so a draw now would take it.
+    var pendingAdmissible: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return !closed && pending != nil && flights.union(presentationFlights).count < 2
+    }
     func isInFlight(_ id: UInt64) -> Bool {
         lock.lock(); defer { lock.unlock() }
         return flights.contains(id) || presentationFlights.contains(id)

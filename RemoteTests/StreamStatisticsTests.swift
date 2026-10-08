@@ -7,7 +7,7 @@ final class StreamStatisticsTests: XCTestCase {
             let ms = Double(index)
             counters.phoneDecodeTrace(PhoneDecodeTrace(submitMs: 100, callbackMs: 100 + ms,
                 ownershipMs: 100 + ms * 2, deliveryMs: 100 + ms * 3))
-            for metric in [PhoneRenderTimingMetric.decodedToPresented, .deliveryToPresented,
+            for metric in [PhoneRenderTimingMetric.decodedToPresented, .deliveryToPresented, .commitToPresented,
                            .drawableAcquire, .rendererFenceWait, .displayLinkInterval, .leadingMotionLatency] {
                 counters.phoneRenderTiming(metric, milliseconds: ms)
             }
@@ -28,6 +28,9 @@ final class StreamStatisticsTests: XCTestCase {
         XCTAssertEqual(report.decodedToPresentedSamples, 100)
         XCTAssertEqual(report.deliveryToPresentedP95Ms, 95)
         XCTAssertEqual(report.deliveryToPresentedSamples, 100)
+        XCTAssertEqual(report.commitToPresentedP50Ms, 50)
+        XCTAssertEqual(report.commitToPresentedP95Ms, 95)
+        XCTAssertEqual(report.commitToPresentedSamples, 100)
         XCTAssertEqual(report.drawableAcquireP99Ms, 99)
         XCTAssertEqual(report.drawableAcquireSamples, 100)
         XCTAssertEqual(report.rendererFenceWaitP99Ms, 99)
@@ -44,6 +47,36 @@ final class StreamStatisticsTests: XCTestCase {
         XCTAssertNil(next.decodeVTSamples)
         XCTAssertNil(next.displayLinkIntervalSamples)
         XCTAssertNil(next.displayLinkAt120Share)
+        XCTAssertNil(next.commitToPresentedSamples)
+    }
+
+    func testPresentationStageCountersBecomeRatesAndTheTickCadenceDrains() throws {
+        let counters = StreamCounters(phoneRenderTimingEnabled: true)
+        for tick in 0..<120 { counters.displayTick(at: Double(tick) / 120) }
+        counters.displayTick(at: 1.1)
+        for _ in 0..<3 { counters.drawCommitted(prompt: true) }
+        for _ in 0..<6 { counters.drawCommitted(prompt: false) }
+        counters.takeRefused(); counters.takeRefused()
+        counters.presentedDropped()
+        counters.presented(latencyMs: 1)
+        var snapshot = counters.drain(inputBufferedBytes: nil)
+        snapshot.interval = 2
+        let report = StreamStatsReport(role: "phone", previous: nil, current: StreamStatsSample(entries: []), counters: snapshot)
+        XCTAssertEqual(report.tickIntervalP50Ms, 8.3)
+        XCTAssertEqual(report.tickIntervalP90Ms, 8.3, "one 100 ms tick does not reach p90 of 120")
+        XCTAssertEqual(report.promptDrawsPerSecond, 1.5)
+        XCTAssertEqual(report.tickDrawsPerSecond, 3)
+        XCTAssertEqual(report.takeRefusedPerSecond, 1)
+        XCTAssertEqual(report.presentedDroppedPerSecond, 0.5)
+        XCTAssertTrue(report.summaryLines.contains { $0.hasPrefix("commit→glass") }, report.summaryLines.joined(separator: "\n"))
+        XCTAssertEqual(try JSONDecoder().decode(StreamStatsReport.self, from: JSONEncoder().encode(report)), report)
+        var quiet = counters.drain(inputBufferedBytes: nil)
+        XCTAssertNil(quiet.tickIntervalP50Ms)
+        XCTAssertEqual(quiet.takeRefused, 0); XCTAssertEqual(quiet.tickDraws, 0); XCTAssertEqual(quiet.presentedDropped, 0)
+        quiet.interval = 1
+        let idle = StreamStatsReport(role: "phone", previous: nil, current: StreamStatsSample(entries: []), counters: quiet)
+        XCTAssertNil(idle.takeRefusedPerSecond, "rates appear only for a window that drew or replaced a frame")
+        XCTAssertFalse(idle.summaryLines.contains { $0.hasPrefix("commit→glass") })
     }
 
     func testPhoneRenderTimingDisabledLeavesUnknownStagesAndCapsCadenceSampleDenominator() {
