@@ -88,6 +88,7 @@
 		0FB9D4EBD16FC612336C548E /* PhoneDisplayTickInputPumpTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AAF43074A0E5E8437644AD2 /* PhoneDisplayTickInputPumpTests.swift */; };
 		10034FDF2F07FDA6A2EDE6D6 /* MacReachabilityProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D30BE4E93A054834970E4E8 /* MacReachabilityProbe.swift */; };
 		102B2B06A61F611BA33CDC7D /* UsefulSessionEvidence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96B051B43FEDF1900180FA99 /* UsefulSessionEvidence.swift */; };
+		102B2BE60C4116B440E6C483 /* FastStartLAN.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CE241D176E19E24407357A3 /* FastStartLAN.swift */; };
 		10590D5D43BD387691B9C123 /* BigTextMemoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72DB72C316D26478E9C41D20 /* BigTextMemoryTests.swift */; };
 		105D32FACEAE934593449513 /* WindowWorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFF2B2B715507D375EC3EAD6 /* WindowWorkspaceTests.swift */; };
 		10C7EE0DF73424B296390E2A /* VideoPixelGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CAB0AA6E53D8944C5B17B28 /* VideoPixelGeometry.swift */; };
@@ -143,6 +144,7 @@
 		1947638B234E88E033AE464D /* H26xVideoMarker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 776D9129B320B60F27F2F7A1 /* H26xVideoMarker.swift */; };
 		1950F74D9BBCD2763BA3A239 /* Backdrop.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E5B6947F0CFB57E272DFC59 /* Backdrop.swift */; };
 		1953750CD853D7A15007852A /* HostReadinessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4242DD41D0DF29B3EE9CD1C4 /* HostReadinessTests.swift */; };
+		195F5F85046621EB96D53CD7 /* FastStartLAN.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CE241D176E19E24407357A3 /* FastStartLAN.swift */; };
 		19A2F8EEBB8BA7DAF1BB69A9 /* LocalMacDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 846E6DC5A2B05AC0648494B0 /* LocalMacDiscovery.swift */; };
 		19B31BDC54EA18B6B173EFEE /* LocalLinkProof.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64CCF7A8CB59DF99A9139093 /* LocalLinkProof.swift */; };
 		1A0BC7E1689D72772D4F0043 /* SystemAudioPCM.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86A66D683CB9BD60A09DFA7C /* SystemAudioPCM.swift */; };
@@ -397,6 +399,7 @@
 		4468B66F998C0F74F7BCA47C /* BusyState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC1918C6B5ADA67679BD4464 /* BusyState.swift */; };
 		44734C646549A35790BEF0B9 /* DirectTouchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CA0571A4D3A5DB8B1BF96B9 /* DirectTouchTests.swift */; };
 		4486CB2639B42264CB98420F /* MacVitalsMemoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDBD363AF4C93D774C8B92A5 /* MacVitalsMemoryTests.swift */; };
+		4499DAFEEBB633FB04862CC5 /* FastStartLAN.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CE241D176E19E24407357A3 /* FastStartLAN.swift */; };
 		44AFDEC625CCA12E0B403CAF /* VideoToolboxProbeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE4ADC42F9E53923E64E0B6 /* VideoToolboxProbeTests.swift */; };
 		44C2E153BD26C1C9320975EE /* FarsideUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1B73F93602A3F8610EC7D8B /* FarsideUI.swift */; };
 		452D0C8E996C7B9FB9EC86C0 /* PointerOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6482329EB4BF512BDD7DCCE /* PointerOverlay.swift */; };
@@ -455,6 +458,7 @@
 		4CD3AD690F708BDA3D618894 /* DataUseEstimate.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1CBBF823F587F08E7E83A3D /* DataUseEstimate.swift */; };
 		4CE5A14E4074C69F0F8FCCEC /* CouchPhoneModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C82D18D57919EB208D5BE69 /* CouchPhoneModelTests.swift */; };
 		4CEF0AEA99C6574839652A11 /* FarsideRouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 527102E86ADAE50641246D40 /* FarsideRouteTests.swift */; };
+		4CFFA2D485F00FDFDF2511BA /* FastStartLAN.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CE241D176E19E24407357A3 /* FastStartLAN.swift */; };
 		4D0F8249D178356318C09706 /* FileTransferEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B96D61D9BF42284078B295EC /* FileTransferEngine.swift */; };
 		4D4089FB2499D281685091BB /* BigTextProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F67EED2B1DFE7DA4819F1461 /* BigTextProtocol.swift */; };
 		4D5C486121E44106FEFE1095 /* BigTextMemory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E9D4156E21707DA110DA69C /* BigTextMemory.swift */; };
@@ -506,6 +510,7 @@
 		551B89AC8DF07CE770EBCBF3 /* ShortcutWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1EFECF1B9C22D98FBFB14F7 /* ShortcutWorkspace.swift */; };
 		5555C32EF85E0E5427C6FFBD /* HostLoadMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16277E0C3740408F05B8CFE5 /* HostLoadMonitor.swift */; };
 		556AB11093E5136DBA8B8DB1 /* CaptureRatePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F429A7B8DFDA9B124D6F267 /* CaptureRatePolicy.swift */; };
+		556BF0E1AB335CFBBDF073B1 /* FastStartLAN.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CE241D176E19E24407357A3 /* FastStartLAN.swift */; };
 		5579F391C9082E7BAD2FA3D1 /* MediaResourceBudget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36959078D4590A9845D7D57A /* MediaResourceBudget.swift */; };
 		55810983B6149AE4DA481CF1 /* HostIdentityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29A2166A24EC3846178FA0A2 /* HostIdentityStore.swift */; };
 		5593C6DDC607A0D951C88408 /* HostAgentAlertsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30414107DD0AB39F561435FE /* HostAgentAlertsTests.swift */; };
@@ -994,6 +999,7 @@
 		A8CB053925AF230228BA6C26 /* NetworkLinkHint.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9C5456BB0D9A926EA202AFF /* NetworkLinkHint.swift */; };
 		A8CBCA8DA03D826EBB29342C /* SignalingKeepaliveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4063558000405B9A8C3D84 /* SignalingKeepaliveTests.swift */; };
 		A8D0367D6B72365814E7E79C /* RichClipboardEndpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2FA6DA1D2B9F9139E09837F /* RichClipboardEndpoint.swift */; };
+		A8F3DF2436C40C4F00C08489 /* FastStartLANTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58DFF9F153C9CBFE66F51CA9 /* FastStartLANTests.swift */; };
 		A978B93E1328B10B4D2E04EB /* ControlProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2DA9B236B9DBE30DD8FF063 /* ControlProtocol.swift */; };
 		A9AD79C289AFB29BF13713C9 /* GuestGrant.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCF5D30AA69E197242845680 /* GuestGrant.swift */; };
 		A9F5762AC94F4ED91D4B178B /* NativeHEVC444Capability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5946397E89830075DEF58DC8 /* NativeHEVC444Capability.swift */; };
@@ -1397,6 +1403,7 @@
 		F40DFDC3A8BF082B4808C647 /* SystemIntegrationsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 764203FAFAD2090B12C4B10D /* SystemIntegrationsUITests.swift */; };
 		F45EEEB4EEF0E0D7E8AA0B6F /* LocalScroll.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18A42C87BE8C88AA9A5374DA /* LocalScroll.swift */; };
 		F467F2AC18E666A0748C5E92 /* StreamTuning.swift in Sources */ = {isa = PBXBuildFile; fileRef = E36FFD3DA225862D411FE682 /* StreamTuning.swift */; };
+		F49A7E7C8D8324B733312191 /* FastStartLAN.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CE241D176E19E24407357A3 /* FastStartLAN.swift */; };
 		F4C477395032885A12289F52 /* AnywhereAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 918B1C0137E63AC8DC396FEC /* AnywhereAccess.swift */; };
 		F4DD173F7F7812027D5F9BF0 /* OwnedVTEncoderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D71FFB2DEE9E72F9602C1DDE /* OwnedVTEncoderTests.swift */; };
 		F56662D8CE4FD3E7005B672E /* MacVitals.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE9FD3A2FF5A2D23A3F7E80 /* MacVitals.swift */; };
@@ -1805,6 +1812,7 @@
 		57B016EC93DD7E70F9174455 /* SessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTests.swift; sourceTree = "<group>"; };
 		57D071716ABDF44FABDFD124 /* BenchMarkerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchMarkerTests.swift; sourceTree = "<group>"; };
 		582D95D035E2919E356DEDF1 /* HostFileBrowserServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostFileBrowserServiceTests.swift; sourceTree = "<group>"; };
+		58DFF9F153C9CBFE66F51CA9 /* FastStartLANTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FastStartLANTests.swift; sourceTree = "<group>"; };
 		59112F0D2AF679128638C289 /* HostSignalingRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostSignalingRecoveryTests.swift; sourceTree = "<group>"; };
 		592F15BCC58EFDB4EC8F2C9E /* GuestPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestPolicyTests.swift; sourceTree = "<group>"; };
 		5946397E89830075DEF58DC8 /* NativeHEVC444Capability.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeHEVC444Capability.swift; sourceTree = "<group>"; };
@@ -1954,6 +1962,7 @@
 		8ACE562249808722A5D37ACC /* VideoFrameEnvelope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoFrameEnvelope.swift; sourceTree = "<group>"; };
 		8AF05697B36E188119F45B83 /* PocketDesktopHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PocketDesktopHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8C56F9095024592E3C8FDBD7 /* FarsideScreenshotTour.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarsideScreenshotTour.swift; sourceTree = "<group>"; };
+		8CE241D176E19E24407357A3 /* FastStartLAN.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FastStartLAN.swift; sourceTree = "<group>"; };
 		8D7B6BF70CE8027A12147506 /* AgentAlertSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAlertSessionTests.swift; sourceTree = "<group>"; };
 		8D9C4003049E36E9D4895513 /* OneTimeOfferPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneTimeOfferPolicy.swift; sourceTree = "<group>"; };
 		8DED7B718AA237706D6C395F /* PhoneMediaSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneMediaSessionTests.swift; sourceTree = "<group>"; };
@@ -2356,6 +2365,7 @@
 				C5F4ED1F7D934ECDAFA4F04D /* ExactVideoTiming.swift */,
 				6D465DB529F7AFB91CFA9A74 /* FarsideHalftone.swift */,
 				4FF6FDDF86840B0B358BB424 /* FarsideTheme.swift */,
+				8CE241D176E19E24407357A3 /* FastStartLAN.swift */,
 				4085F60B239B351225F4BB7A /* FileBrowserAccess.swift */,
 				DC5FE2A8977C2AFB2D6E6D60 /* FileBrowserProtocol.swift */,
 				CE1B4E4C6A4BC777773EE887 /* FileTransfer.swift */,
@@ -2737,6 +2747,7 @@
 				A81708FB764ADF1E1AC49696 /* EfficiencyDefaultsTests.swift */,
 				86ACEDEE2DE3C301400EC45A /* EnrollmentCoordinatorTests.swift */,
 				819D174BF501BA6CCEB6DF8E /* ExactVideoTimingTests.swift */,
+				58DFF9F153C9CBFE66F51CA9 /* FastStartLANTests.swift */,
 				7BD52F42EB06946763A268F4 /* FileAdmissionLifecycleTests.swift */,
 				01A9FF6F60398DBF1305C6A6 /* FileBrowserTests.swift */,
 				DB5DAD1A755A51BB4C9638FB /* FileTransferTests.swift */,
@@ -3929,6 +3940,7 @@
 				51ED3FE4D252E175801D5593 /* ExactVideoTiming.swift in Sources */,
 				B766B7E3E937551469C25FB4 /* FarsideHalftone.swift in Sources */,
 				AC5901E1FDA23AE44A914E7D /* FarsideTheme.swift in Sources */,
+				556BF0E1AB335CFBBDF073B1 /* FastStartLAN.swift in Sources */,
 				22C58AA27C25E2E715598A76 /* FileBrowserAccess.swift in Sources */,
 				0C84B0E577F8A32559C6FA8B /* FileBrowserProtocol.swift in Sources */,
 				A64EC8139F3D081331F80635 /* FileTransfer.swift in Sources */,
@@ -4071,6 +4083,7 @@
 				D62BFC5774FFDC5C699587EB /* ExactVideoTiming.swift in Sources */,
 				CCBDE1E65BD36620432BE3B6 /* FarsideHalftone.swift in Sources */,
 				7D5D90BB4AD2AE8B4479E81C /* FarsideTheme.swift in Sources */,
+				4CFFA2D485F00FDFDF2511BA /* FastStartLAN.swift in Sources */,
 				626BA1381E5464F9B6B68171 /* FileBrowserAccess.swift in Sources */,
 				91918202EDA3EA502D3B4C9D /* FileBrowserProtocol.swift in Sources */,
 				8AB8BEE541AA3B0C0048DC14 /* FileTransfer.swift in Sources */,
@@ -4261,6 +4274,7 @@
 				B0A4B9A22148C68A7E7A7100 /* ExactVideoTiming.swift in Sources */,
 				F63F824E0BF289C797D43263 /* FarsideHalftone.swift in Sources */,
 				008F7EA556CF504AC3748264 /* FarsideTheme.swift in Sources */,
+				102B2BE60C4116B440E6C483 /* FastStartLAN.swift in Sources */,
 				0120E591B333F28961BD2532 /* FileBrowserAccess.swift in Sources */,
 				8D39BF716FB092912B6CE348 /* FileBrowserProtocol.swift in Sources */,
 				65C5F6AA13CD5EA1920C8E5B /* FileTransfer.swift in Sources */,
@@ -4431,6 +4445,7 @@
 				C6D914184736F346B1B75EEB /* ExactVideoTiming.swift in Sources */,
 				AC1D7174A3ECFA356ED75F25 /* FarsideHalftone.swift in Sources */,
 				80F6D5347AFCABCBCF257CDE /* FarsideTheme.swift in Sources */,
+				F49A7E7C8D8324B733312191 /* FastStartLAN.swift in Sources */,
 				13AB1025A6A66D74DC42B78C /* FileBrowserAccess.swift in Sources */,
 				1A856DE0809601F031896CD7 /* FileBrowserProtocol.swift in Sources */,
 				E2FA0D19F715A92F7785C66C /* FileTransfer.swift in Sources */,
@@ -4779,6 +4794,8 @@
 				E6CAF366ECE6B4FF905E53CC /* ExactVideoTimingTests.swift in Sources */,
 				6EC4BC0D214EBFFCFEB8CADD /* FarsideHalftone.swift in Sources */,
 				2D3749B5BF7F8FFEF2DE07C4 /* FarsideTheme.swift in Sources */,
+				195F5F85046621EB96D53CD7 /* FastStartLAN.swift in Sources */,
+				A8F3DF2436C40C4F00C08489 /* FastStartLANTests.swift in Sources */,
 				DB200A0306CFB3D57E2B653E /* FileAdmissionLifecycleTests.swift in Sources */,
 				76E6E5486C05199839CBF6A9 /* FileBrowserAccess.swift in Sources */,
 				7C88359C52D598A05E7D6CCF /* FileBrowserProtocol.swift in Sources */,
@@ -5122,6 +5139,7 @@
 				6C64E8715ABA17765508DF14 /* FarsideSystemIntegrations.swift in Sources */,
 				334ABA9B7C8740E62AC92B14 /* FarsideTheme.swift in Sources */,
 				44C2E153BD26C1C9320975EE /* FarsideUI.swift in Sources */,
+				4499DAFEEBB633FB04862CC5 /* FastStartLAN.swift in Sources */,
 				E63F43740C09929CAA00B571 /* FileBrowserAccess.swift in Sources */,
 				C74327EC72160DC355C4A9A1 /* FileBrowserModel.swift in Sources */,
 				6FA75599025EA39783737AF3 /* FileBrowserProtocol.swift in Sources */,

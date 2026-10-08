@@ -155,6 +155,10 @@ struct StreamTuning: Equatable {
     /// route; it only lets `LANTrustTracker` judge a selected pair that is exactly the proven one.
     /// Off until a device A/B: every remote-route session stays unproven, as today.
     var remoteRouteLANProof = false
+    /// Host: on a likely-LAN pair (`LikelyLANPair`) with a LAN round trip, seed the estimate at the first
+    /// statistics sample, before the encoder exists, and hold it at the seed for a few guarded samples
+    /// (`FastStartLANPolicy`). Off until a device A/B: the seed waits for the second sample, as today.
+    var fastStartLAN = false
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
         encoderCeilingKbps.map { $0 * 1000 } ?? quality.maximumBitrateBps
@@ -241,6 +245,7 @@ struct StreamTuning: Equatable {
     /// Host readiness, not streaming: read by `HostDisplayRecovery`; listed here for the cleanup step only.
     static let unlockDisplayRefreshKey = "PocketDeskUnlockDisplayRefresh"
     static let remoteRouteLANProofKey = "PocketDeskRemoteRouteLANProof"
+    static let fastStartLANKey = "PocketDeskFastStartLAN"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
@@ -252,7 +257,7 @@ struct StreamTuning: Equatable {
                                  keysOnDemandH264Key, encoderMaxFrameDelayKey, captureQueueDepthKey, captureResolutionKey,
                                  encodingMinBitrateLANKey,
                                  backdropTrackKey, unlockDisplayRefreshKey, remoteRouteLANProofKey,
-                                 displayedPixelsCapKey, displayedPixelsScaleKey, outputLongEdgeKey]
+                                 displayedPixelsCapKey, displayedPixelsScaleKey, outputLongEdgeKey, fastStartLANKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -397,6 +402,7 @@ struct StreamTuning: Equatable {
             tuning.backdropTrack = defaults.bool(forKey: backdropTrackKey)
         }
         tuning.remoteRouteLANProof = defaults.bool(forKey: remoteRouteLANProofKey)
+        tuning.fastStartLAN = defaults.bool(forKey: fastStartLANKey)
         return tuning
     }
 
@@ -462,6 +468,7 @@ struct StreamTuning: Equatable {
         if let encodingMinBitrateLANKbps { parts.append("LAN encoding floor \(encodingMinBitrateLANKbps)") }
         if backdropTrack { parts.append("backdrop track") }
         if remoteRouteLANProof { parts.append("remote-route LAN proof") }
+        if fastStartLAN { parts.append("fast start LAN") }
         if ladder { parts.append("governor " + (!senderQueueGovernor ? "off" : senderQueueGovernorApply ? "apply" : "shadow")) }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }
@@ -514,6 +521,12 @@ struct BandwidthSeedPolicy {
     static let maximumAttempts = 2
     private(set) var attempts = 0
     private var eligibleSamples = 0
+
+    /// `FastStartLANPolicy` seeded at the first sample. Its hold replaces the re-check: the minimum keeps
+    /// the estimate at the seed, so a probe result can no longer replace it.
+    mutating func markSeeded() {
+        attempts = Self.maximumAttempts
+    }
 
     mutating func observe(route: String, estimateKbps: Double?, lossPercent: Double?, seedKbps: Double) -> Bool {
         observe(eligible: route == "Direct", estimateKbps: estimateKbps, lossPercent: lossPercent, seedKbps: seedKbps)
