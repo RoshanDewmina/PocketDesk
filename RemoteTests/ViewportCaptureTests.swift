@@ -6,6 +6,12 @@ import ScreenCaptureKit
 
 final class ViewportCaptureTests: XCTestCase {
     private typealias Policy = ViewportCapturePolicy
+    /// The crop tests pin the crop policy; the shipping default streams the whole display since 8 Oct 2026.
+    fileprivate static let cropping: StreamTuning = {
+        var tuning = StreamTuning.tuned
+        tuning.viewportCapture = true
+        return tuning
+    }()
 
     /// Roshan's ASUS VG32VQ1B at 1x, and the M4 Air 13" panel at its default 1470x956 pt @2x.
     private let asus = DisplayGeometry(size: CGSize(width: 2560, height: 1440), pointPixelScale: 1)
@@ -32,7 +38,7 @@ final class ViewportCaptureTests: XCTestCase {
     /// so the crop maths below is checked at every zoom; `keepBand` defaults on, the behaviour the golden
     /// replay (G04, testSmallPinchAndPanReplayKeepsCoveredRegionAndEncoderSizeStable) demands.
     private func region(_ viewport: ViewportRegion?, on display: DisplayGeometry? = nil,
-                        output: CapturePixelDimensions, tuning: StreamTuning = .tuned,
+                        output: CapturePixelDimensions, tuning: StreamTuning = ViewportCaptureTests.cropping,
                         previous: CaptureRegion? = nil, previousZoom: Double? = nil, phoneNative: Bool = true,
                         nearNative: Bool = false, keepBand: Bool = true, cropEngaged: Bool? = nil) -> CaptureRegion {
         Policy.region(for: viewport, display: display ?? asus, output: output, tuning: tuning, previous: previous,
@@ -315,6 +321,19 @@ final class ViewportCaptureTests: XCTestCase {
     private func sharpness(_ region: CaptureRegion, _ viewport: ViewportRegion,
                            on display: DisplayGeometry) throws -> Double {
         try XCTUnwrap(Policy.deliveredSharpness(region: region, viewport: viewport, display: display))
+    }
+
+    func testTheShippingDefaultStreamsTheWholeDisplayAtEveryZoom() throws {
+        let whole = try output(moreSpace, fps: 60)
+        for portrait in [false, true] {
+            for zoom in [1.5, 2.1094, 3] {
+                let viewport = iPhone17(zoom: zoom, portrait: portrait, on: moreSpace)
+                XCTAssertTrue(region(viewport, on: moreSpace, output: whole, tuning: .tuned).isWholeDisplay,
+                              "portrait \(portrait), zoom \(zoom)")
+                XCTAssertFalse(region(viewport, on: moreSpace, output: whole).isWholeDisplay,
+                               "PocketDeskViewportCapture YES crops: portrait \(portrait), zoom \(zoom)")
+            }
+        }
     }
 
     func testIPhone17OnMoreSpaceCropsWheneverItWouldUpscaleAndGetsPhoneNativePixels() throws {
@@ -998,9 +1017,9 @@ final class ViewportCaptureTests: XCTestCase {
     }
 
     private func builderCases() -> [BuilderCase] {
-        var native = StreamTuning.tuned
+        var native = Self.cropping
         native.captureAtNativeRate = true
-        var uncapped = StreamTuning.tuned
+        var uncapped = Self.cropping
         uncapped.capToClientPixels = false
         let displays = [CGSize(width: 2560, height: 1440), CGSize(width: 1470, height: 956),
                         CGSize(width: 1842, height: 1192), CGSize(width: 1200, height: 1800),
@@ -1013,7 +1032,7 @@ final class ViewportCaptureTests: XCTestCase {
                     for refresh: Double? in [nil, 60, 120, 144] {
                         for client: Int? in [nil, 1179, 2622, 3000] {
                             for budget: H264FrameBudget? in [nil, .level(52), .level(31)] {
-                                for tuning in [StreamTuning.tuned, native, uncapped] {
+                                for tuning in [Self.cropping, native, uncapped] {
                                     cases.append(BuilderCase(display: display, quality: quality, fps: fps,
                                                              refresh: refresh, client: client, budget: budget,
                                                              tuning: tuning))
@@ -1099,9 +1118,9 @@ final class ViewportCaptureTests: XCTestCase {
 
     func testAFillPanAtTheSameZoomKeepsTheOutputAndMovesOnlyTheSourceRect() throws {
         let whole = try output(moreSpace, fps: 60)
-        let holds = StreamTuning.tuned
+        let holds = Self.cropping
         XCTAssertTrue(holds.cropHoldsOutput, "the hold is the tuned default since the 8 Oct 2026 device A/B")
-        var noHold = StreamTuning.tuned
+        var noHold = Self.cropping
         noHold.cropHoldsOutput = false
         let rest = region(fillPortrait(), on: moreSpace, output: whole, tuning: holds)
         XCTAssertEqual(outputSize(rest), size(1328, 2496), "phone-native, 8 % margin, full height")
@@ -1132,9 +1151,9 @@ final class ViewportCaptureTests: XCTestCase {
 
     func testAPinchOutsWidenedOutputDoesNotOutliveThePinch() throws {
         let whole = try output(moreSpace, fps: 60)
-        let holds = StreamTuning.tuned
+        let holds = Self.cropping
         XCTAssertTrue(holds.cropHoldsOutput, "the hold is the tuned default since the 8 Oct 2026 device A/B")
-        var noHold = StreamTuning.tuned
+        var noHold = Self.cropping
         noHold.cropHoldsOutput = false
         let rest = region(fillPortrait(), on: moreSpace, output: whole, tuning: holds)
         // A continuing pinch-out asks for twice its visible rect at the new zoom: a new zoom, so no hold.
@@ -1153,7 +1172,7 @@ final class ViewportCaptureTests: XCTestCase {
 
     func testCropPixelScaleShrinksTheOutputWhileTheGateStillSeesPhoneNative() throws {
         let whole = try output(moreSpace, fps: 60)
-        var scaled = StreamTuning.tuned
+        var scaled = Self.cropping
         scaled.cropPixelScale = 0.75
         let viewport = fillPortrait()
         let full = region(viewport, on: moreSpace, output: whole)
@@ -1207,14 +1226,14 @@ extension ViewportCaptureTests {
 
     /// The cap at unit scale, so these tests pin the policy, not the shipping 1.25 headroom.
     private var capOn: StreamTuning {
-        var tuning = StreamTuning.tuned
+        var tuning = Self.cropping
         tuning.displayedPixelsCap = true
         tuning.displayedPixelsScale = 1
         return tuning
     }
 
     private var capOff: StreamTuning {
-        var tuning = StreamTuning.tuned
+        var tuning = Self.cropping
         tuning.displayedPixelsCap = false
         return tuning
     }
@@ -1485,7 +1504,7 @@ extension ViewportCaptureTests {
     }
 
     private func replay(cap: Bool, crop: Bool) throws -> Replay {
-        var tuning = StreamTuning.tuned
+        var tuning = Self.cropping
         tuning.displayedPixelsCap = cap
         tuning.displayedPixelsScale = 1
         tuning.viewportCapture = crop
@@ -1496,7 +1515,7 @@ extension ViewportCaptureTests {
 
     func testTheHostAcceptsViewportsForCroppingOrForTheCapAlone() {
         for (crop, cap, accepts) in [(true, false, true), (true, true, true), (false, true, true), (false, false, false)] {
-            var tuning = StreamTuning.tuned
+            var tuning = Self.cropping
             tuning.viewportCapture = crop
             tuning.displayedPixelsCap = cap
             XCTAssertEqual(tuning.acceptsViewport, accepts, "crop \(crop), cap \(cap)")

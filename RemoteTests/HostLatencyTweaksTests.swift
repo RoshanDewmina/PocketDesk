@@ -228,7 +228,9 @@ final class HostLatencyTweaksTests: XCTestCase {
     /// The test Mac's "More Space" mode: 1920×1243 pt backed at 2×.
     func testNominalCaptureComputesSizesAndCropsAtOnePixelPerPoint() throws {
         let points = CGSize(width: 1920, height: 1243)
-        var nominal = StreamTuning.tuned
+        var cropping = StreamTuning.tuned
+        cropping.viewportCapture = true
+        var nominal = cropping
         nominal.captureResolution = .nominal
         var best = StreamTuning.tuned
         best.captureResolution = .best
@@ -247,7 +249,7 @@ final class HostLatencyTweaksTests: XCTestCase {
 
         // iPhone 17 portrait zoomed to 3 phone px per Mac point: 1206×2622 px shows 402×874 pt.
         let viewport = ViewportRegion(epoch: 7, x: 700, y: 180, width: 402, height: 874, pixelWidth: 1206, pixelHeight: 2622, zoom: 3)
-        for (name, geometry, tuning) in [("automatic", atTwo, StreamTuning.tuned), ("nominal", atOne, nominal)] {
+        for (name, geometry, tuning) in [("automatic", atTwo, cropping), ("nominal", atOne, nominal)] {
             let output = try whole(geometry, tuning)
             let crop = ViewportCapturePolicy.region(for: viewport, display: geometry, output: output, tuning: tuning, previous: nil,
                                                     phoneNative: true, nearNative: false)
@@ -268,9 +270,9 @@ final class HostLatencyTweaksTests: XCTestCase {
         let gated = ViewportCapturePolicy.region(for: viewport, display: atOne, output: try whole(atOne, nominal), tuning: nominal,
                                                  previous: nil, phoneNative: true, nearNative: true)
         XCTAssertTrue(gated.isWholeDisplay, "at one pixel per point a crop is no denser than the whole display, so the gain gate keeps it")
-        let automaticGated = ViewportCapturePolicy.region(for: viewport, display: atTwo, output: try whole(atTwo, .tuned), tuning: .tuned,
+        let automaticGated = ViewportCapturePolicy.region(for: viewport, display: atTwo, output: try whole(atTwo, .tuned), tuning: cropping,
                                                           previous: nil, phoneNative: true, nearNative: true)
-        XCTAssertFalse(automaticGated.isWholeDisplay, "today the same zoom crops")
+        XCTAssertFalse(automaticGated.isWholeDisplay, "with cropping on, the same zoom crops at the backing scale")
     }
 
     // MARK: Item 5 — LAN encoding floor

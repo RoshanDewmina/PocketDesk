@@ -80,7 +80,8 @@ struct StreamTuning: Equatable {
     /// Resolution-floor test: the capture long edge (any scope), under the mode cap only; wins over the
     /// client and displayed-pixels caps and ignores the 640 client floor. Unset by default.
     var outputLongEdgeOverride: Int?
-    /// G4: crop the capture to the phone's reported viewport (`SessionFeature.viewportCapture`).
+    /// G4: crop the capture to the phone's reported viewport (`SessionFeature.viewportCapture`). Off in `tuned`
+    /// since 8 Oct 2026; `PocketDeskViewportCapture YES` turns the crop back on.
     var viewportCapture = true
     /// Fill view (7 Oct 2026): a crop's output is its phone-native size × this (0.5…1.0). Below 1 the
     /// visible rect is upscaled a little on the phone in exchange for a cheaper encode; the crop-gain
@@ -213,6 +214,9 @@ struct StreamTuning: Equatable {
         tuning.cropDropsAmbiguousFrames = true
         tuning.remoteRouteLANProof = true
         tuning.scrollSmoothing = true
+        // 8 Oct 2026 on device: the Fill crop's pan edges showed black strips (the backdrop did not hide them);
+        // the whole display in Fill was "perfect", text about as sharp. The phone still asks for the crop.
+        tuning.viewportCapture = false
         return tuning
     }()
     static let legacy: StreamTuning = {

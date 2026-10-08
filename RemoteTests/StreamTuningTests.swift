@@ -31,7 +31,7 @@ final class StreamTuningTests: XCTestCase {
         XCTAssertFalse(legacy.ladder)
         XCTAssertTrue(StreamTuning.tuned.highRefreshCapture)
         XCTAssertTrue(StreamTuning.tuned.capToClientPixels)
-        XCTAssertTrue(StreamTuning.tuned.viewportCapture)
+        XCTAssertFalse(StreamTuning.tuned.viewportCapture, "the whole display by default since 8 Oct 2026")
         XCTAssertTrue(StreamTuning.tuned.ladder)
     }
 

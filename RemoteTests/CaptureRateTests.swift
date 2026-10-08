@@ -303,11 +303,15 @@ final class CaptureRateTuningTests: XCTestCase {
         XCTAssertNil(tuned.targetFPSOverride)
         XCTAssertTrue(tuned.highRefreshNoAdaptation, "at 120 the app's ladder adapts, not WebRTC")
         XCTAssertTrue(tuned.capToClientPixels)
-        XCTAssertTrue(tuned.viewportCapture)
+        XCTAssertFalse(tuned.viewportCapture, "the whole display by default since the 8 Oct 2026 device check")
+        XCTAssertTrue(tuned.summary.contains("whole-display capture"), tuned.summary)
         XCTAssertTrue(tuned.ladder)
-        let switchParts = ["60 fps only", "target 90 fps", "webrtc adaptation at 120", "no client cap",
-                           "whole-display capture", "no ladder"]
+        let switchParts = ["60 fps only", "target 90 fps", "webrtc adaptation at 120", "no client cap", "no ladder"]
         for part in switchParts { XCTAssertFalse(tuned.summary.contains(part), tuned.summary) }
+        defaults.set(true, forKey: StreamTuning.viewportCaptureKey)
+        let cropping = StreamTuning.resolve(defaults: defaults)
+        XCTAssertTrue(cropping.viewportCapture, "YES turns the crop back on")
+        XCTAssertFalse(cropping.summary.contains("whole-display capture"), cropping.summary)
 
         defaults.set(false, forKey: StreamTuning.highRefreshCaptureKey)
         defaults.set(90, forKey: StreamTuning.targetFPSKey)
@@ -323,6 +327,7 @@ final class CaptureRateTuningTests: XCTestCase {
         XCTAssertFalse(switched.viewportCapture)
         XCTAssertFalse(switched.ladder)
         for part in switchParts { XCTAssertTrue(switched.summary.contains(part), switched.summary) }
+        XCTAssertTrue(switched.summary.contains("whole-display capture"), switched.summary)
         XCTAssertEqual(switched.fieldTrials, StreamTuning.tuned.fieldTrials, "switches never change field trials")
 
         let overrides: [(Int, Int?)] = [(30, 30), (120, 120), (29, nil), (121, nil), (0, nil)]
