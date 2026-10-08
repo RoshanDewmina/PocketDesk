@@ -62,6 +62,15 @@ enum NativeGestureCommand {
     case precision(PrecisionPhase, CGPoint)
 }
 
+/// Touch-down feedback for the press highlight. `began` carries the canvas point a direct touch pressed, or nil
+/// for a trackpad touch, whose target is the drawn pointer. It waits `pressDelay` with the finger still and alone
+/// (or until a direct slide presses), so pointer travel and a scroll's first finger never flash; `withdrawn`
+/// follows if a shown touch still turns into pointer travel, a multi-finger gesture, the loupe or a cancel.
+enum PressFeedback: Equatable {
+    case began(CGPoint?)
+    case withdrawn
+}
+
 /// A deterministic, single-owner touch arbiter. Call `update` with the entire active
 /// direct-touch set after each UIKit event, and `tick` while touches are active.
 ///
@@ -106,6 +115,12 @@ final class NativeGestureEngine {
 
     var onCommand: (NativeGestureCommand) -> Bool
     var onPointerMotionEnded: () -> Void = {}
+    /// Nil (the default) sends nothing; the phone sets it only with `PocketDeskPressHighlight` on.
+    var onPressFeedback: ((PressFeedback) -> Void)?
+    /// Inside the Mac's 50–80 ms picture delay, and longer than a scroll's second finger or a flick's slop usually takes.
+    static let pressDelay: TimeInterval = 0.04
+    private var pressArmed: CGPoint??
+    private var pressShown = false
     /// Internal rollback switch; injected by deterministic tests without changing global defaults.
     var clipboardGesturesEnabled: () -> Bool = {
         !UserDefaults.standard.bool(forKey: NativeGestureEngine.clipboardGesturesDisabledKey)
@@ -298,6 +313,7 @@ final class NativeGestureEngine {
                     if onCommand(.pointTo(directPoint)) {
                         mode = .candidate
                         if precision == .always && !secondTap { beginPrecision(at: point) }
+                        if mode == .candidate { armPress(directPoint) }
                     } else {
                         mode = .blocked
                         secondTap = false
@@ -305,6 +321,7 @@ final class NativeGestureEngine {
                     }
                 } else {
                     mode = .candidate
+                    if enabled { armPress(nil) }
                 }
             }
             return
@@ -340,6 +357,7 @@ final class NativeGestureEngine {
             let eligible = count == 3 && enabled && !panMode && settling &&
                 time - startTime <= Self.workspaceLandingWindow
             cancelOwnedCommand()
+            withdrawPress()
             beginWorkspace(next, eligible: eligible)
             active = next
             return
@@ -353,6 +371,7 @@ final class NativeGestureEngine {
             }
             multiTapEligible = mode == .candidate
             cancelOwnedCommand()
+            withdrawPress()
             hadTwo = true
             lastTap = nil
             beginMulti(next)
@@ -419,6 +438,7 @@ final class NativeGestureEngine {
     func tick(at time: TimeInterval) {
         guard time.isFinite else { return }
         if let id = momentumStream { stepMomentum(id, at: time) }
+        if pressArmed != nil, active.count == 1, mode == .candidate, time - startTime >= Self.pressDelay { showPress() }
         if active.count == 2, mode == .multiCandidate, !panMode {
             // A deliberate anchored pinch can settle while both contacts are held still.
             processMulti(active, at: time)
@@ -456,6 +476,7 @@ final class NativeGestureEngine {
     func cancel() {
         stopMomentum()
         cancelOwnedCommand()
+        withdrawPress()
         lastTap = nil
         workspaceTapEligible = false
         if !active.isEmpty { mode = .blocked }
@@ -487,6 +508,7 @@ final class NativeGestureEngine {
             } else {
                 mode = .pointer
                 lastTap = nil
+                withdrawPress()
                 discardLandingMotion(toward: point, at: time)
                 sendMotion(point, at: time)
             }
@@ -512,6 +534,7 @@ final class NativeGestureEngine {
 
     private func beginPrecision(at point: CGPoint) {
         guard onCommand(.precision(.began, point)) else { return }
+        withdrawPress()
         precisionActive = true
         mode = .precision
         lastPoint = point
@@ -542,6 +565,7 @@ final class NativeGestureEngine {
             dragID = id
             mode = .drag
             lastTap = nil
+            showPress()
         } else {
             mode = .blocked
         }
@@ -930,8 +954,30 @@ final class NativeGestureEngine {
 
     private func cancelOwnedCommand() { finishContinuous(cancelled: true) }
 
+    private func armPress(_ point: CGPoint?) {
+        guard onPressFeedback != nil else { return }
+        pressArmed = .some(point)
+    }
+
+    private func showPress() {
+        guard let armed = pressArmed else { return }
+        pressArmed = nil
+        pressShown = true
+        onPressFeedback?(.began(armed))
+    }
+
+    private func withdrawPress() {
+        pressArmed = nil
+        guard pressShown else { return }
+        pressShown = false
+        onPressFeedback?(.withdrawn)
+    }
+
     private func resetSequence() {
         endPointerMotion()
+        // A lifted tap keeps its highlight: the click it sent is real, and the highlight fades by itself.
+        pressArmed = nil
+        pressShown = false
         mode = .blocked
         precisionFromHold = false
         aimOffset = .zero

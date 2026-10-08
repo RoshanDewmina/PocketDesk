@@ -160,6 +160,39 @@ final class PointerOverlayTests: XCTestCase {
         XCTAssertTrue(PointerAccentView.settleHaloEnabled(defaults))
     }
 
+    func testThePressHighlightIsOffUnlessItsFlagIsSetAndRestartsOnEveryPress() async throws {
+        let suite = "press-highlight-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertFalse(PressHighlightSwitch.enabled(defaults))
+        defaults.set("YES", forKey: PressHighlightSwitch.defaultsKey)
+        XCTAssertTrue(PressHighlightSwitch.enabled(defaults), "The `-PocketDeskPressHighlight YES` launch argument is a string")
+
+        let off = PressHighlight(enabled: false)
+        off.begin(at: CGPoint(x: 10, y: 10))
+        XCTAssertNil(off.press)
+
+        let on = PressHighlight(enabled: true)
+        on.begin(at: nil)
+        on.begin(at: CGPoint(x: CGFloat.nan, y: 4))
+        XCTAssertNil(on.press, "No drawn pointer or no Mac point: nothing to highlight")
+        on.begin(at: CGPoint(x: 10, y: 10))
+        on.begin(at: CGPoint(x: 10, y: 10))
+        XCTAssertEqual(on.press, PressHighlight.Press(source: CGPoint(x: 10, y: 10), serial: 2),
+                       "A second press on the same spot replays the highlight")
+        on.withdraw()
+        on.begin(at: CGPoint(x: 20, y: 20))
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(on.press?.serial, 3, "A withdrawal never clears a newer press")
+        on.withdraw()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertNil(on.press)
+
+        on.begin(at: CGPoint(x: 30, y: 30))
+        try await Task.sleep(for: .seconds(ContactRipple.pressFade + 0.2))
+        XCTAssertNil(on.press, "A faded press is gone, so a rebuilt session view cannot replay it")
+    }
+
     func testFollowStylesOfferSmoothRigidAndOff() {
         XCTAssertEqual(PointerFollowStyle.allCases, [.smooth, .rigid, .off])
         XCTAssertNotNil(PointerFollowStyle.smooth.animation(reduceMotion: false))
