@@ -191,6 +191,11 @@ struct StreamTuning: Equatable {
     /// Host: before a scroll gesture begins, a Mac cursor that sits outside the streamed display is moved onto it,
     /// so macOS (which delivers scroll events under the real cursor) scrolls the window the phone shows.
     var scrollTargetsStream = false
+    /// Host (research3 P4-B): a paired phone's next whole-display or window capture on the same display starts in
+    /// the picture mode, client edge and displayed edge it last applied (`StreamShapeMemory`) instead of Balanced
+    /// with no client edge, which cost two reconfigures and an encoder size swap per connect. Off: nothing is
+    /// remembered or applied.
+    var rememberStreamShape = false
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
         encoderCeilingKbps.map { $0 * 1000 } ?? quality.maximumBitrateBps
@@ -300,6 +305,7 @@ struct StreamTuning: Equatable {
     static let fastStartLANKey = "PocketDeskFastStartLAN"
     static let scrollSmoothingKey = "PocketDeskScrollSmoothing"
     static let scrollTargetsStreamKey = "PocketDeskScrollTargetsStream"
+    static let rememberStreamShapeKey = "PocketDeskRememberStreamShape"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
@@ -314,7 +320,7 @@ struct StreamTuning: Equatable {
                                  displayedPixelsCapKey, displayedPixelsScaleKey, outputLongEdgeKey, fastStartLANKey,
                                  scrollSmoothingKey, scrollTargetsStreamKey, h264OnLANKey,
                                  cropPixelScaleKey, cropHoldsOutputKey, cropDropsAmbiguousFramesKey,
-                                 encoderRealTimeKey, encoderMinExpectedFPSKey]
+                                 encoderRealTimeKey, encoderMinExpectedFPSKey, rememberStreamShapeKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -481,6 +487,7 @@ struct StreamTuning: Equatable {
         tuning.fastStartLAN = defaults.bool(forKey: fastStartLANKey)
         if defaults.object(forKey: scrollSmoothingKey) != nil { tuning.scrollSmoothing = defaults.bool(forKey: scrollSmoothingKey) }
         tuning.scrollTargetsStream = defaults.bool(forKey: scrollTargetsStreamKey)
+        tuning.rememberStreamShape = defaults.bool(forKey: rememberStreamShapeKey)
         return tuning
     }
 
@@ -555,6 +562,7 @@ struct StreamTuning: Equatable {
         if fastStartLAN { parts.append("fast start LAN") }
         if scrollSmoothing { parts.append("scroll smoothing") }
         if scrollTargetsStream { parts.append("scroll on stream") }
+        if rememberStreamShape { parts.append("remembered shape") }
         if ladder { parts.append("governor " + (!senderQueueGovernor ? "off" : senderQueueGovernorApply ? "apply" : "shadow")) }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }

@@ -183,6 +183,9 @@ final class RemoteHostModel: ObservableObject {
         })
     }))
     private let capture = RemoteCapture()
+    private let streamShapeMemory = StreamShapeMemory()
+    /// The last shape handed to `streamShapeMemory`, so a heartbeat with nothing new reads no defaults.
+    private var rememberedStreamShape: (phone: String, display: StreamShapeMemory.Display, shape: StreamShape)?
     private let guests = HostGuestController()
     private var guestContext: HostGuestContext? {
         guard active, captureHealthy, sessionState == .picture, !screenLocked, !terminating,
@@ -297,6 +300,11 @@ final class RemoteHostModel: ObservableObject {
         return false
     }
     private var capturedDisplayID: CGDirectDisplayID?
+    /// The approved device this session's phone was admitted as; nil during an enrollment.
+    private var streamShapePhoneID: String? {
+        guard let invitation = connection.invitation else { return nil }
+        return connection.pairedDevices.first { $0.invitation == invitation }?.id
+    }
     private lazy var scrollRegionProbe: HostScrollRegionProbe = {
         let probe = HostScrollRegionProbe()
         probe.onChange = { [weak self] in
@@ -1057,6 +1065,7 @@ final class RemoteHostModel: ObservableObject {
             connection.revoke()
             guard connection.hostPair == nil else { throw HostRoomRemovalCleanupError.localPairingRetained }
         }
+        streamShapeMemory.forgetAll(); rememberedStreamShape = nil
         if let _ = try hostPairStore.read(HostPair.self) {
             throw HostRoomRemovalCleanupError.localPairingRetained
         }
@@ -1108,6 +1117,7 @@ final class RemoteHostModel: ObservableObject {
         preferences.sharingEnabled = false
         if !browserSession.controller.running { stop() }
         let removed = connection.revoke()
+        if removed { streamShapeMemory.forgetAll(); rememberedStreamShape = nil }
         localPairRemovalMessage = removed
             ? "Phone pairing removed from this Mac."
             : "Couldn’t confirm removal. Phone sharing is off. Unlock this Mac and retry Remove."
@@ -1121,6 +1131,7 @@ final class RemoteHostModel: ObservableObject {
         cancelTimedPause()
         if !browserSession.controller.running { stop() }
         let removed = connection.removePairedDevice(id)
+        if removed { streamShapeMemory.retain(paired: connection.pairedDevices.map(\.id)); rememberedStreamShape = nil }
         localPairRemovalMessage = removed
             ? "Device removed. Your other devices stay paired."
             : "Couldn’t confirm removal. Sharing is off. Unlock this Mac and retry Remove."
@@ -2593,6 +2604,11 @@ final class RemoteHostModel: ObservableObject {
         input.enabled = false
         advanceEpoch()
         pointerTelemetry.begin(displayFrame: display.frame, epoch: inputEpoch.value)
+        if StreamTuning.current.rememberStreamShape, let phone = streamShapePhoneID,
+           var shape = streamShapeMemory.shape(phone: phone, display: Self.streamShapeDisplay(display)) {
+            if captureScopeViewOnly { shape.viewport = nil }
+            capture.primeStart(shape, displayID: display.displayID)
+        }
 
         startLifecycleTimer()
 
@@ -2666,6 +2682,22 @@ final class RemoteHostModel: ObservableObject {
                     : "Screen sharing couldn’t start. Try again."
             }
         }
+    }
+
+    /// P4-B: whole-display sessions only, so a window scope never overwrites the remembered displayed edge.
+    private func rememberStreamShape() {
+        guard StreamTuning.current.rememberStreamShape, let phone = streamShapePhoneID,
+              var shape = capture.appliedStreamShape,
+              let captured = displays.first(where: { $0.displayID == capturedDisplayID }) else { return }
+        shape.viewport = shape.viewport.map(StreamShapeMemory.sizing)
+        let display = Self.streamShapeDisplay(captured)
+        if let last = rememberedStreamShape, last.phone == phone, last.display == display, last.shape == shape { return }
+        rememberedStreamShape = (phone, display, shape)
+        streamShapeMemory.remember(shape, phone: phone, display: display, paired: connection.pairedDevices.map(\.id))
+    }
+
+    private static func streamShapeDisplay(_ display: SCDisplay) -> StreamShapeMemory.Display {
+        StreamShapeMemory.Display(id: display.displayID, width: display.width, height: display.height)
     }
 
     /// What a display change does to a Picture session today, deferred until the picture is wanted.
@@ -3140,6 +3172,9 @@ final class RemoteHostModel: ObservableObject {
                 // visible area. Return to the whole display instead of retaining an old crop.
                 capture.setViewport(action.viewport)
                 connection.media?.captureSharpness = capture.deliveredSharpness
+            }
+            if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, !captureScopeViewOnly {
+                rememberStreamShape()
             }
             if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value {
                 phoneLoad.beginLifetime(connection.presentationSessionID)

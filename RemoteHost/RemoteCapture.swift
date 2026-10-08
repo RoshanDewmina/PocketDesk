@@ -394,6 +394,11 @@ final class RemoteCapture {
     private var requestedViewport: ViewportRegion?
     /// The display the requested viewport's points refer to.
     private var viewportDisplayID: CGDirectDisplayID?
+    /// P4-B: a remembered viewport that only sizes the next start's displayed edge on its display. It is never
+    /// replayed as a viewport: its epoch belongs to an earlier session, and a crop echoes the epoch to the phone.
+    private var startSeed: (displayID: CGDirectDisplayID, viewport: ViewportRegion?)?
+    /// A heartbeat has set the quality or client edge since the last stop, so a prime would be older.
+    private var liveShapeSinceStop = false
     private var requestedLadder: LadderState?
     private var captureStarted = false
     private var qualityUpdateTask: Task<Void, Never>?
@@ -411,6 +416,7 @@ final class RemoteCapture {
     }
 
     func setQuality(_ quality: StreamQuality) {
+        liveShapeSinceStop = true
         guard quality != requestedQuality else { return }
         requestedQuality = quality
         scheduleQualityUpdate()
@@ -419,6 +425,7 @@ final class RemoteCapture {
     /// The client's screen in pixels (heartbeats); the capture never exceeds its longest edge.
     func setClientPixels(_ pixels: PixelSize?) {
         let edge = pixels?.longEdge
+        liveShapeSinceStop = true
         guard edge != requestedClientLongEdge else { return }
         requestedClientLongEdge = edge
         scheduleQualityUpdate()
@@ -440,6 +447,28 @@ final class RemoteCapture {
         requestedLadder = state
         guard captureStarted, let session else { return }
         session.requestLadder(state)
+    }
+
+    /// P4-B: the next `start` builds its first configuration in a remembered shape. Ignored while a capture runs
+    /// or once a heartbeat has set the shape (its requests are newer); the cursor is never remembered.
+    func primeStart(_ shape: StreamShape, displayID: CGDirectDisplayID) {
+        guard session == nil, !captureStarted, !liveShapeSinceStop else { return }
+        requestedQuality = shape.quality
+        requestedClientLongEdge = shape.clientLongEdge
+        startSeed = (displayID, shape.viewport)
+    }
+
+    /// What a `start` on this display builds its first configuration from.
+    func startShape(displayID: CGDirectDisplayID, scoped: Bool) -> StreamShape {
+        let seed = !scoped && startSeed?.displayID == displayID ? startSeed?.viewport : nil
+        return StreamShape(quality: requestedQuality, clientLongEdge: requestedClientLongEdge,
+                           viewport: requestedViewport ?? seed)
+    }
+
+    /// P4-B: what the running session applied, for `StreamShapeMemory`; nil while an update is in flight.
+    var appliedStreamShape: StreamShape? {
+        guard captureStarted, let appliedQuality, !qualityUpdatePending else { return nil }
+        return StreamShape(quality: appliedQuality, clientLongEdge: appliedClientLongEdge, viewport: requestedViewport)
     }
 
     /// Only a client drawing its own pointer may hide it. Every capture starts with it shown.
@@ -499,8 +528,10 @@ final class RemoteCapture {
                 filter: SCContentFilter(display: display, excludingWindows: excluding), target: nil)
         }
         let lease = CaptureScopeLease(validUntil: target == nil ? .infinity : CACurrentMediaTime() + 1, clock: { CACurrentMediaTime() })
-        let initialQuality = requestedQuality
-        let initialClientLongEdge = requestedClientLongEdge
+        let shape = startShape(displayID: display.displayID, scoped: target != nil)
+        startSeed = nil
+        let initialQuality = shape.quality
+        let initialClientLongEdge = shape.clientLongEdge
         let guestFence = onGuestSourceFence
         let scopedGuestFence: () -> Void = { [weak self] in
             // An old session cannot retire a replacement session's guests. Source lease → guest lease.
@@ -519,7 +550,7 @@ final class RemoteCapture {
         let next: RemoteCaptureSession
         do {
             next = try RemoteCaptureSession(resolved: resolved, lease: lease, peer: peer, quality: initialQuality,
-                clientLongEdge: initialClientLongEdge, initialViewport: requestedViewport, guestFrame: onGuestFrame,
+                clientLongEdge: initialClientLongEdge, initialViewport: shape.viewport, guestFrame: onGuestFrame,
                 guestSourceFence: scopedGuestFence, producerToken: producerToken)
         } catch { reservation.release(producerToken); throw error }
         reservation.retain(next, token: producerToken)
@@ -620,6 +651,8 @@ final class RemoteCapture {
         appliedClientLongEdge = nil
         requestedViewport = nil
         viewportDisplayID = nil
+        startSeed = nil
+        liveShapeSinceStop = false
         requestedLadder = nil
         appliedCaptureRegion = nil
         resetCursor()
@@ -893,6 +926,90 @@ enum RemoteCaptureConfiguration {
         configuration.colorSpaceName = StreamColor.captureColorSpaceName
         configuration.colorMatrix = StreamColor.captureYCbCrMatrix
         return configuration
+    }
+}
+
+/// P4-B (`StreamTuning.rememberStreamShape`): the inputs a capture's first configuration is built from.
+struct StreamShape: Codable, Equatable {
+    var quality: StreamQuality
+    var clientLongEdge: Int?
+    /// Sizes the displayed-pixels cap only (`RemoteCapture.primeStart`).
+    var viewport: ViewportRegion?
+}
+
+/// P4-B: the last shape each paired phone's whole-display session applied, per display, in this Mac's defaults.
+/// Phones are stored as a hash of their pair identity; an entry for a phone that is no longer paired is never
+/// returned and is dropped at the next write or removal.
+struct StreamShapeMemory {
+    static let defaultsKey = "FarsideRememberedStreamShapes"
+    static let capacity = 10
+
+    /// A display and the point size its viewports were measured on; a mode change or another display misses.
+    struct Display: Codable, Equatable {
+        var id: UInt32
+        var width: Int
+        var height: Int
+    }
+
+    private struct Entry: Codable, Equatable {
+        var phone: String
+        var display: Display
+        var shape: StreamShape
+    }
+
+    var defaults: UserDefaults = .standard
+
+    static func phoneKey(_ deviceID: String) -> String { SecureRandom.digest("stream-shape|" + deviceID) }
+
+    func shape(phone deviceID: String, display: Display) -> StreamShape? {
+        let phone = Self.phoneKey(deviceID)
+        return entries.first { $0.phone == phone && $0.display == display }?.shape
+    }
+
+    /// Writes only when the shape changed; keeps the newest `capacity` entries of the `paired` device IDs.
+    func remember(_ shape: StreamShape, phone deviceID: String, display: Display, paired: [String]) {
+        var shape = shape
+        shape.viewport = shape.viewport.map(Self.sizing)
+        let entry = Entry(phone: Self.phoneKey(deviceID), display: display, shape: shape)
+        let current = entries
+        guard current.first != entry else { return }
+        let kept = Set(paired.map(Self.phoneKey))
+        let next = [entry] + current.filter { !($0.phone == entry.phone && $0.display == display) && kept.contains($0.phone) }
+        save(Array(next.prefix(Self.capacity)))
+    }
+
+    /// Only the size and zoom set the displayed edge, so a pan or a new session's epoch neither rewrites the
+    /// entry nor keeps where on the Mac the phone was looking.
+    static func sizing(_ viewport: ViewportRegion) -> ViewportRegion {
+        var sized = viewport
+        sized.epoch = 0
+        sized.x = 0
+        sized.y = 0
+        return sized
+    }
+
+    func retain(paired: [String]) {
+        guard defaults.object(forKey: Self.defaultsKey) != nil else { return }
+        let kept = Set(paired.map(Self.phoneKey))
+        let current = entries
+        let next = current.filter { kept.contains($0.phone) }
+        if next != current { save(next) }
+    }
+
+    func forgetAll() {
+        guard defaults.object(forKey: Self.defaultsKey) != nil else { return }
+        defaults.removeObject(forKey: Self.defaultsKey)
+    }
+
+    private var entries: [Entry] {
+        guard let data = defaults.data(forKey: Self.defaultsKey) else { return [] }
+        return (try? JSONDecoder().decode([Entry].self, from: data)) ?? []
+    }
+
+    private func save(_ entries: [Entry]) {
+        if entries.isEmpty { defaults.removeObject(forKey: Self.defaultsKey); return }
+        guard let data = try? JSONEncoder().encode(entries) else { return }
+        defaults.set(data, forKey: Self.defaultsKey)
     }
 }
 

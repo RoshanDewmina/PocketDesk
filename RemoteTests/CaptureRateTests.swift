@@ -345,7 +345,8 @@ final class CaptureRateTuningTests: XCTestCase {
                        StreamTuning.displayedPixelsCapKey, StreamTuning.displayedPixelsScaleKey,
                        StreamTuning.outputLongEdgeKey, StreamTuning.fastStartLANKey, StreamTuning.scrollSmoothingKey, StreamTuning.scrollTargetsStreamKey,
                        StreamTuning.h264OnLANKey, StreamTuning.cropPixelScaleKey, StreamTuning.cropHoldsOutputKey,
-                       StreamTuning.cropDropsAmbiguousFramesKey, StreamTuning.encoderRealTimeKey, StreamTuning.encoderMinExpectedFPSKey]
+                       StreamTuning.cropDropsAmbiguousFramesKey, StreamTuning.encoderRealTimeKey, StreamTuning.encoderMinExpectedFPSKey,
+                       StreamTuning.rememberStreamShapeKey]
         for key in newKeys { XCTAssertTrue(StreamTuning.experimentKeys.contains(key), key) }
 
         defaults.set(true, forKey: StreamTuning.legacyDefaultsKey)

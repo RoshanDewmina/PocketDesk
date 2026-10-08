@@ -1568,3 +1568,138 @@ extension ViewportCaptureTests {
         }
     }
 }
+
+/// research3 P4-B (`PocketDeskRememberStreamShape`): a repeat connect starts in the shape the phone last applied.
+final class StreamShapeMemoryTests: XCTestCase {
+    private let display = StreamShapeMemory.Display(id: 1, width: 1920, height: 1243)
+    private let fill = ViewportRegion(epoch: 57, x: 660, y: 0, width: 600, height: 1243,
+                                      pixelWidth: 1206, pixelHeight: 2622, zoom: 2.1094)
+    private var sharp: StreamShape { StreamShape(quality: .sharp, clientLongEdge: 2622, viewport: fill) }
+    /// What is kept of `sharp`: the viewport's size and zoom, not its epoch or position.
+    private var stored: StreamShape {
+        StreamShape(quality: .sharp, clientLongEdge: 2622, viewport: ViewportRegion(
+            epoch: 0, x: 0, y: 0, width: 600, height: 1243, pixelWidth: 1206, pixelHeight: 2622, zoom: 2.1094))
+    }
+
+    private func memory() throws -> StreamShapeMemory {
+        let name = "StreamShapeMemoryTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        addTeardownBlock { defaults.removePersistentDomain(forName: name) }
+        return StreamShapeMemory(defaults: defaults)
+    }
+
+    func testTheFlagDefaultsOffParsesAndReachesTheSummary() throws {
+        XCTAssertTrue(StreamTuning.experimentKeys.contains(StreamTuning.rememberStreamShapeKey))
+        let name = "StreamShapeFlag-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let today = StreamTuning.resolve(defaults: defaults)
+        XCTAssertEqual(today, StreamTuning.tuned)
+        XCTAssertFalse(today.rememberStreamShape)
+        XCTAssertFalse(today.summary.contains("remembered shape"))
+        defaults.set(true, forKey: StreamTuning.rememberStreamShapeKey)
+        let on = StreamTuning.resolve(defaults: defaults)
+        XCTAssertTrue(on.rememberStreamShape)
+        XCTAssertTrue(on.summary.contains("remembered shape"), on.summary)
+        XCTAssertEqual(on.fieldTrials, StreamTuning.tuned.fieldTrials)
+    }
+
+    func testAShapeIsRememberedPerPhoneAndDisplay() throws {
+        let memory = try memory()
+        XCTAssertNil(memory.shape(phone: "a", display: display), "first-ever connect: today's start")
+        memory.remember(sharp, phone: "a", display: display, paired: ["a", "b"])
+        XCTAssertEqual(memory.shape(phone: "a", display: display), stored)
+        let written = try XCTUnwrap(memory.defaults.data(forKey: StreamShapeMemory.defaultsKey))
+        var panned = sharp
+        panned.viewport?.epoch = 3
+        panned.viewport?.x = 100
+        memory.remember(panned, phone: "a", display: display, paired: ["a", "b"])
+        XCTAssertEqual(memory.defaults.data(forKey: StreamShapeMemory.defaultsKey), written,
+                       "a pan or a new session's epoch does not rewrite the entry")
+        XCTAssertNil(memory.shape(phone: "b", display: display), "another phone has its own shape")
+        XCTAssertNil(memory.shape(phone: "a", display: .init(id: 2, width: 1920, height: 1243)), "another display")
+        XCTAssertNil(memory.shape(phone: "a", display: .init(id: 1, width: 1470, height: 956)), "the same display in another mode")
+
+        memory.remember(StreamShape(quality: .balanced, clientLongEdge: 2622, viewport: fill), phone: "a", display: display,
+                        paired: ["a", "b"])
+        XCTAssertEqual(memory.shape(phone: "a", display: display)?.quality, .balanced, "the newest applied shape wins")
+        for id in 0..<StreamShapeMemory.capacity + 2 {
+            memory.remember(sharp, phone: "a", display: .init(id: UInt32(10 + id), width: 1920, height: 1243), paired: ["a"])
+        }
+        XCTAssertNil(memory.shape(phone: "a", display: display), "only the newest entries are kept")
+    }
+
+    func testRemovedPairingsLoseTheirShapesAndThePairIdentityIsNotStored() throws {
+        let memory = try memory()
+        memory.remember(sharp, phone: "phone-a-identity", display: display, paired: ["phone-a-identity", "phone-b-identity"])
+        memory.remember(sharp, phone: "phone-b-identity", display: display, paired: ["phone-a-identity", "phone-b-identity"])
+        let data = try XCTUnwrap(memory.defaults.data(forKey: StreamShapeMemory.defaultsKey))
+        XCTAssertNil(String(decoding: data, as: UTF8.self).range(of: "identity"), "phones are stored as a hash")
+
+        memory.retain(paired: ["phone-b-identity"])
+        XCTAssertNil(memory.shape(phone: "phone-a-identity", display: display), "a removed phone is forgotten")
+        XCTAssertEqual(memory.shape(phone: "phone-b-identity", display: display), stored)
+        memory.remember(sharp, phone: "phone-c-identity", display: display, paired: ["phone-c-identity"])
+        XCTAssertNil(memory.shape(phone: "phone-b-identity", display: display), "a write drops phones no longer paired")
+        memory.forgetAll()
+        XCTAssertNil(memory.defaults.object(forKey: StreamShapeMemory.defaultsKey), "removing the pairing forgets everything")
+    }
+
+    @MainActor
+    func testAPrimedStartUsesTheShapeOnItsDisplayAndALiveHeartbeatWins() {
+        let capture = RemoteCapture()
+        let today = StreamShape(quality: .balanced, clientLongEdge: nil, viewport: nil)
+        XCTAssertEqual(capture.startShape(displayID: 1, scoped: false), today, "unprimed: Balanced, no client edge")
+        XCTAssertNil(capture.appliedStreamShape, "nothing is applied before capture starts")
+
+        capture.primeStart(sharp, displayID: 1)
+        XCTAssertEqual(capture.startShape(displayID: 1, scoped: false), sharp)
+        XCTAssertEqual(capture.startShape(displayID: 2, scoped: false),
+                       StreamShape(quality: .sharp, clientLongEdge: 2622, viewport: nil), "another display: no displayed edge")
+        XCTAssertEqual(capture.startShape(displayID: 1, scoped: true),
+                       StreamShape(quality: .sharp, clientLongEdge: 2622, viewport: nil), "a window scope takes no viewport")
+        XCTAssertTrue(capture.cursorInVideo, "the cursor is never remembered")
+
+        capture.setQuality(.balanced)
+        capture.setClientPixels(PixelSize(width: 1206, height: 2400))
+        XCTAssertEqual(capture.startShape(displayID: 1, scoped: false),
+                       StreamShape(quality: .balanced, clientLongEdge: 2400, viewport: fill), "a heartbeat before the start wins")
+        capture.primeStart(sharp, displayID: 1)
+        XCTAssertEqual(capture.startShape(displayID: 1, scoped: false).quality, .balanced,
+                       "a retry's prime never replaces what a heartbeat already set")
+
+        _ = capture.stop()
+        XCTAssertEqual(capture.startShape(displayID: 1, scoped: false), today, "stop forgets the primed shape")
+    }
+
+    func testTheSeedKeepsTheFirstLiveViewportFromReconfiguring() throws {
+        let geometry = DisplayGeometry(size: CGSize(width: 1920, height: 1243), pointPixelScale: 2)
+        let tuning = StreamTuning.tuned
+        XCTAssertFalse(tuning.viewportCapture, "the whole display is the default since 8 Oct 2026")
+        func output(_ edge: Int?) -> CapturePixelDimensions? {
+            RemoteCaptureConfiguration.outputSize(contentSize: geometry.size, pointPixelScale: 2, quality: .sharp, budget: nil,
+                                                  fps: 60, clientLongEdge: 2622, tuning: tuning, displayedLongEdge: edge)
+        }
+        let fit = ViewportRegion(epoch: 9, x: 0, y: 0, width: 1920, height: 1243, pixelWidth: 1206, pixelHeight: 2622, zoom: 0.6281)
+        for remembered in [fit, fill] {
+            let seed = StreamShapeMemory.sizing(remembered)
+            let edge = try XCTUnwrap(DisplayedPixelsPolicy.initialEdge(viewport: seed, windowScoped: false,
+                                                                       display: geometry, tuning: tuning))
+            let first = try XCTUnwrap(output(edge))
+            let applied = ViewportCapturePolicy.wholeDisplay(geometry, output: first)
+            var live = remembered
+            live.epoch = 1
+            let layout = DisplayedPixelsPolicy.layout(
+                viewport: live, display: geometry, tuning: tuning, budget: try XCTUnwrap(output(nil)), sizeFraction: nil,
+                previous: applied, applied: applied, inputsChanged: false, held: DisplayedPixelsPolicy.Hold(edge: edge),
+                now: 0, wholeAt: output)
+            XCTAssertFalse(ViewportCapturePolicy.needsReconfiguration(from: applied, to: layout.region),
+                           "zoom \(remembered.zoom): the first live viewport only publishes")
+            XCTAssertEqual(layout.output, first)
+            XCTAssertNil(layout.decision.deadline)
+        }
+        XCTAssertEqual(try XCTUnwrap(output(DisplayedPixelsPolicy.initialEdge(viewport: fit, windowScoped: false,
+                                                                               display: geometry, tuning: tuning))).width,
+                       1520, "Fit starts at the displayed edge, not the 2560 mode cap")
+    }
+}
