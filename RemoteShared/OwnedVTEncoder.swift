@@ -176,7 +176,8 @@ struct EncoderInFlightGate<Entry> {
 }
 
 /// Optional session settings behind `StreamTuning` switches. A setter the encoder rejects is reported in
-/// the evidence and never fails the session.
+/// the evidence and never fails the session, except `realTime` and the ExpectedFrameRate floor, whose
+/// properties session creation already requires.
 struct OwnedEncoderOptions: Equatable {
     var prioritizeSpeed = false
     var hevcLowLatency = false
@@ -199,6 +200,7 @@ struct OwnedEncoderOptions: Equatable {
     }
     init(_ tuning: StreamTuning, phoneRequestsKeysOnDemand: Bool = false) {
         self.init(prioritizeSpeed: tuning.encoderPrioritizeSpeed, hevcLowLatency: tuning.hevcLowLatency, periodicKeyFrames: tuning.encoderPeriodicKeyFrames,
+                  realTime: tuning.encoderRealTime, minimumExpectedFPS: tuning.encoderMinExpectedFPS,
                   keysOnDemand: tuning.keysOnDemand && phoneRequestsKeysOnDemand,
                   keysOnDemandH264: tuning.keysOnDemandH264 && phoneRequestsKeysOnDemand, maxFrameDelayCount: tuning.encoderMaxFrameDelay)
     }
@@ -460,13 +462,30 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         let limits: [Double] = [bytesPerSecond * 2, 1, bytesPerSecond * 5, 5]
         let cap = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: limits as CFArray)
         guard cap == noErr else { return cap }
-        return VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: max(Int(fps), sessionOptions.minimumExpectedFPS) as CFNumber)
+        // The floor stays within the negotiated level: VideoToolbox may pick the level from this rate, and
+        // `acceptsSPS` drops every frame of a stream above it.
+        let expected = sessionOptions.minimumExpectedFPS > Int(fps) ? min(sessionOptions.minimumExpectedFPS, maximumFittingFPS) : Int(fps)
+        return VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: expected as CFNumber)
+    }
+    private var maximumFittingFPS: Int {
+        var maximumFPS = 120
+        while maximumFPS > 1 && !configuration.fits(width: Int(width), height: Int(height), fps: maximumFPS) { maximumFPS -= 1 }
+        return maximumFPS
+    }
+    func sessionProperty(_ key: CFString) -> CFTypeRef? {
+        serialized {
+            guard let session else { return nil }
+            var value: CFTypeRef?
+            let status = withUnsafeMutablePointer(to: &value) {
+                VTSessionCopyProperty(session, key: key, allocator: nil, valueOut: UnsafeMutableRawPointer($0))
+            }
+            return status == noErr ? value : nil
+        }
     }
     func setBitrate(_ bitrateKbit: UInt32, framerate: UInt32) -> Int32 {
         serialized {
             bitrate = max(1, min(configuration.maximumKbps, bitrateKbit))
-            var maximumFPS = 120
-            while maximumFPS > 1 && !configuration.fits(width: Int(width), height: Int(height), fps: maximumFPS) { maximumFPS -= 1 }
+            let maximumFPS = maximumFittingFPS
             if framerate > 0 { fps = UInt32(max(1, min(120, min(Int(framerate), maximumFPS)))) }
             restart.updateTarget(kbps: Double(bitrate)); counters?.encoderRateUpdated()
             guard let session else { return -1 }
