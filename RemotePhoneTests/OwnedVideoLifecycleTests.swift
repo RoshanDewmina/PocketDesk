@@ -734,6 +734,163 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         view.offer(envelope(4, prompt: false)); await drainMain()
         XCTAssertEqual(requests, 1, "paced interpolation output does not request an active immediate draw")
     }
+    @MainActor
+    func testMailboxWakeOnReleaseDrawsAWaitingFrameOnceBothSlotEdgesFreeOnlyWithTheSwitch() async throws {
+        let name = "OwnedVideoWakeOnRelease." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let admission = VideoPresentationAdmission(identity: identity(), validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 64, 64, kCVPixelFormatType_32BGRA, nil, &pixels), kCVReturnSuccess)
+        let buffer = try XCTUnwrap(pixels)
+        func envelope(_ stamp: Int64) -> VideoFrameEnvelope {
+            VideoFrameEnvelope(receiptID: UUID(), identity: admission.identity,
+                frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: stamp),
+                arrivalMs: MachClock.nowMs(), marker: nil, originalSource: true, promptDraw: true)
+        }
+        func drainMain() async {
+            await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+        }
+        func requestsAfterRelease(switchOn: Bool) async throws -> Int {
+            defaults.set(switchOn ? "YES" : nil, forKey: MailboxWakeOnReleaseSwitch.defaultsKey)
+            let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission), defaults: defaults)
+            defer { view.drawRequester = { $0.draw() }; view.invalidate() }
+            view.metal.isPaused = true
+            var requests = 0
+            view.drawRequester = { _ in requests += 1 }
+            view.mailbox.offer(envelope(1)); let first = try XCTUnwrap(view.mailbox.take(holdUntilPresented: true))
+            view.mailbox.offer(envelope(2)); let second = try XCTUnwrap(view.mailbox.take(holdUntilPresented: true))
+            view.offer(envelope(3)); await drainMain()
+            XCTAssertEqual(requests, 1, "the arrival wake runs as before and finds both slots owned")
+            XCTAssertTrue(view.mailbox.hasPending); XCTAssertFalse(view.mailbox.pendingAdmissible)
+            view.flightReleased(); view.mailbox.gpuCompleted(first.id); view.flightReleased(); await drainMain()
+            XCTAssertEqual(requests, 1, "GPU completion alone frees no slot")
+            view.mailbox.presented(first.id)
+            XCTAssertTrue(view.mailbox.pendingAdmissible)
+            view.flightReleased(); await drainMain()
+            view.mailbox.completed(second.id)
+            return requests
+        }
+        let on = try await requestsAfterRelease(switchOn: true)
+        XCTAssertEqual(on, 2, "a freed slot draws the waiting frame at once")
+        let off = try await requestsAfterRelease(switchOn: false)
+        XCTAssertEqual(off, 1, "off, the frame waits for the next tick as today")
+        let box = NewestFrameMailbox<Int>()
+        box.offer(1); let a = try XCTUnwrap(box.take(holdUntilPresented: true))
+        box.offer(2); _ = try XCTUnwrap(box.take(holdUntilPresented: true))
+        var refused = false
+        XCTAssertNil(box.take(redraw: false, holdUntilPresented: true, refused: &refused)); XCTAssertFalse(refused, "nothing pending is not a refusal")
+        box.offer(3)
+        XCTAssertNil(box.take(redraw: false, holdUntilPresented: true, refused: &refused)); XCTAssertTrue(refused)
+        refused = false
+        XCTAssertNil(box.take(redraw: false, holdUntilPresented: true, refused: &refused)); XCTAssertFalse(refused, "one refusal per waiting frame")
+        box.offer(4)
+        XCTAssertNil(box.take(redraw: false, holdUntilPresented: true, refused: &refused)); XCTAssertTrue(refused, "a newer waiting frame is refused once more")
+        box.completed(a.id); refused = false
+        XCTAssertEqual(try XCTUnwrap(box.take(redraw: false, holdUntilPresented: true, refused: &refused)).frame, 4); XCTAssertFalse(refused)
+    }
+    func testPresentedReceiptRecordsCommitToGlassAndCountsADroppedDrawableOnce() throws {
+        let id = identity()
+        let admission = VideoPresentationAdmission(identity: id, validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission))
+        defer { view.invalidate() }
+        let counters = StreamCounters(phoneRenderTimingEnabled: true)
+        view.counters = counters
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 64, 64, kCVPixelFormatType_32BGRA, nil, &pixels), kCVReturnSuccess)
+        let envelope = VideoFrameEnvelope(receiptID: UUID(), identity: id,
+            frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixels)), rotation: ._0, timeStampNs: 1),
+            arrivalMs: 1, marker: nil, originalSource: true)
+        let stamp = PresentationStamp(); stamp.commitMs = 1_000
+        view.presentedReceipt(envelope, commit: stamp, callback: nil)(1.02)
+        view.presentedReceipt(envelope, commit: stamp, callback: nil)(0)
+        view.presentedReceipt(envelope, commit: nil, callback: nil)(1.03)
+        let drained = expectation(description: "receipt queue drained")
+        OwnedMetalVideoView.presentedReceiptQueue.async { drained.fulfill() }
+        wait(for: [drained], timeout: 2)
+        let snapshot = counters.drain(inputBufferedBytes: nil)
+        XCTAssertEqual(snapshot.commitToPresentedSamples, 1, "no commit stamp, no commit→glass sample")
+        XCTAssertEqual(snapshot.commitToPresentedP50Ms ?? 0, 20, accuracy: 0.001)
+        XCTAssertEqual(snapshot.presentedDropped, 1)
+        XCTAssertEqual(snapshot.presentedIntervalP50Ms ?? 0, 10, accuracy: 0.001, "the dropped drawable adds no interval")
+    }
+    @MainActor
+    func testMetalDisplayLinkPresenterDrawsIntoTheLinkDrawableAndNeverAsksMTKViewToDraw() async throws {
+        let name = "OwnedVideoMetalDisplayLink." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let admission = VideoPresentationAdmission(identity: identity(), validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        let plain = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission), defaults: defaults)
+        defer { plain.invalidate() }
+        XCTAssertFalse(plain.presentsThroughDisplayLink); XCTAssertFalse(plain.metal.isPaused)
+        defaults.set("YES", forKey: MetalDisplayLinkSwitch.defaultsKey)
+        let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission), defaults: defaults)
+        defer { view.drawRequester = { $0.draw() }; view.invalidate() }
+        XCTAssertTrue(view.presentsThroughDisplayLink); XCTAssertTrue(view.metal.isPaused); XCTAssertFalse(view.metal.enableSetNeedsDisplay)
+        view.displayLinkPaused = true // This test hands the drawables out itself.
+        var requests = 0
+        view.drawRequester = { _ in requests += 1 }
+        var drawn: [VideoFrameEnvelope] = []
+        view.onFrameDrawn = { drawn.append($0) }
+        view.frame = CGRect(x: 0, y: 0, width: 64, height: 64)
+        view.setNeedsLayout(); view.layoutIfNeeded()
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 64, 64, kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+        let buffer = try XCTUnwrap(pixels)
+        CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+        let envelope = VideoFrameEnvelope(receiptID: UUID(), identity: admission.identity,
+            frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: 1),
+            arrivalMs: MachClock.nowMs(), marker: nil, originalSource: true, promptDraw: true)
+        view.offer(envelope)
+        await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+        XCTAssertEqual(requests, 0, "a pass-through arrival waits for the next link callback; no out-of-band draw")
+        XCTAssertEqual(view.metal.preferredFramesPerSecond, 60, "no window yet: the link is clamped to a 60 Hz panel")
+        // Core Animation refuses `nextDrawable` on the link's own layer, so stand-in layers supply the drawables
+        // the link would hand to the callback.
+        var layers: [CAMetalLayer] = []
+        func drawable(_ edge: CGFloat) throws -> CAMetalDrawable {
+            let layer = CAMetalLayer()
+            layer.device = view.metal.device; layer.pixelFormat = view.metal.colorPixelFormat
+            layer.drawableSize = CGSize(width: edge, height: edge); layers.append(layer)
+            return try XCTUnwrap(layer.nextDrawable())
+        }
+        view.drawLinkFrame(into: try drawable(1))
+        XCTAssertEqual(view.drawsPresented, 0); XCTAssertTrue(view.mailbox.hasPending, "a drawable of the old size requeues the frame")
+        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 64, height: 64))
+        view.drawLinkFrame(into: try drawable(64))
+        XCTAssertEqual(view.fallbackCreationCount, 0, "the picture went into the link's drawable, not the compatibility view")
+        XCTAssertEqual(view.drawsPresented, 1); XCTAssertEqual(drawn.count, 1); XCTAssertFalse(view.mailbox.hasPending)
+        view.drawLinkFrame(into: try drawable(64))
+        XCTAssertEqual(view.drawsPresented, 1, "an empty callback leaves its drawable untouched")
+        XCTAssertEqual(requests, 0)
+        view.offer(envelope)
+        view.draw(in: view.metal)
+        XCTAssertEqual(view.drawsPresented, 1, "a draw without a link drawable never asks the link's layer for one")
+        XCTAssertTrue(view.mailbox.hasPending, "the frame waits for the next callback instead")
+        view.invalidate(); view.invalidate() // Then the deferred invalidate and dealloc: the link is torn down exactly once.
+        XCTAssertFalse(view.presentsThroughDisplayLink)
+        // An admission that expires mid-session invalidates from inside the link's own callback.
+        let brief = VideoPresentationAdmission(identity: identity(), validUntil: ProcessInfo.processInfo.systemUptime + 0.05)
+        let expiring = OwnedMetalVideoView(admission: brief, fence: VideoPresentationFence(brief), defaults: defaults)
+        expiring.displayLinkPaused = true
+        XCTAssertTrue(expiring.presentsThroughDisplayLink)
+        try await Task.sleep(for: .milliseconds(80))
+        expiring.drawLinkFrame(into: try drawable(64))
+        XCTAssertFalse(expiring.presentsThroughDisplayLink, "the expired fence tore the link down from its callback")
+        XCTAssertTrue(expiring.metal.isHidden)
+        await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+    }
+    func testTheLinkRateFollowsThePanelLowPowerModeAndASixtyHertzIdleFloor() {
+        XCTAssertEqual(OwnedMetalVideoView.linkRate(active: 120, panelMaximum: 120, lowPower: false, idle: false), 120)
+        XCTAssertEqual(OwnedMetalVideoView.linkRate(active: 120, panelMaximum: 60, lowPower: false, idle: false), 60)
+        XCTAssertEqual(OwnedMetalVideoView.linkRate(active: 120, panelMaximum: 120, lowPower: true, idle: false), 60)
+        XCTAssertEqual(OwnedMetalVideoView.linkRate(active: 120, panelMaximum: 120, lowPower: false, idle: true), 60,
+                       "idle waits at most one 60 Hz tick, not MTKView's 30 Hz")
+        XCTAssertEqual(OwnedMetalVideoView.linkRate(active: 60, panelMaximum: 120, lowPower: false, idle: false), 60)
+        XCTAssertEqual(OwnedMetalVideoView.linkRate(active: 60, panelMaximum: 120, lowPower: true, idle: true), 60)
+    }
     func testPromptPendingIsConsumedOnceAndPacedOutputDoesNotWake() throws {
         let box = NewestFrameMailbox<(Int, Bool)>()
         box.offer((1, true)); box.offer((2, true))

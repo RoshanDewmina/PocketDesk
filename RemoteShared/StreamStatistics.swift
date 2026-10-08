@@ -152,6 +152,17 @@ struct StreamCounterSnapshot {
     var scrollStepP50: Double?
     var displayLinkIntervalP50Ms: Double?
     var displayLinkAt120Share: Double?
+    // Phone presentation stage (research run 3, P1-A): commit → glass, the video view's own tick cadence,
+    // commits by origin, mailbox take refusals under the flight cap, and drawables Core Animation dropped.
+    var commitToPresentedP50Ms: Double?
+    var commitToPresentedP95Ms: Double?
+    var commitToPresentedSamples: Int?
+    var tickIntervalP50Ms: Double?
+    var tickIntervalP90Ms: Double?
+    var tickDraws = 0
+    var promptDraws = 0
+    var takeRefused = 0
+    var presentedDropped = 0
 
     // Bench marker (G28): per presented frame, Mac display time → phone display time.
     var markerFrames = 0
@@ -500,6 +511,16 @@ struct StreamStatsReport: Codable, Equatable {
     var scrollStepP50: Double?
     var displayLinkIntervalP50Ms: Double?
     var displayLinkAt120Share: Double?
+    // Phone presentation stage (P1-A); the per-second rates cover the counter window like `presentedFPS`.
+    var commitToPresentedP50Ms: Double?
+    var commitToPresentedP95Ms: Double?
+    var commitToPresentedSamples: Int?
+    var tickIntervalP50Ms: Double?
+    var tickIntervalP90Ms: Double?
+    var tickDrawsPerSecond: Double?
+    var promptDrawsPerSecond: Double?
+    var takeRefusedPerSecond: Double?
+    var presentedDroppedPerSecond: Double?
     var host: HostStreamSummary?
     /// Age of `host` when this report was made: the summary rides the Mac's 1 s heartbeat.
     var hostSummaryAgeMs: Double?
@@ -794,6 +815,11 @@ struct StreamStatsReport: Codable, Equatable {
                 scrollStepP50 = Self.round(counters.scrollStepP50)
                 displayLinkIntervalP50Ms = Self.round(counters.displayLinkIntervalP50Ms)
                 displayLinkAt120Share = counters.displayLinkAt120Share
+                commitToPresentedP50Ms = Self.round(counters.commitToPresentedP50Ms)
+                commitToPresentedP95Ms = Self.round(counters.commitToPresentedP95Ms)
+                commitToPresentedSamples = counters.commitToPresentedSamples
+                tickIntervalP50Ms = Self.round(counters.tickIntervalP50Ms)
+                tickIntervalP90Ms = Self.round(counters.tickIntervalP90Ms)
                 if counters.presentedFrames > 0 || counters.supersededFrames > 0 {
                     presentedFPS = Self.round(Double(counters.presentedFrames) / seconds)
                     supersededFrames = counters.supersededFrames
@@ -802,6 +828,10 @@ struct StreamStatsReport: Codable, Equatable {
                     presentLatencyMs = Self.round(counters.presentLatencyP50Ms)
                     presentLatencyP90Ms = Self.round(counters.presentLatencyP90Ms)
                     presentGapP90Ms = Self.round(counters.presentGapP90Ms)
+                    tickDrawsPerSecond = Self.round(Double(counters.tickDraws) / seconds)
+                    promptDrawsPerSecond = Self.round(Double(counters.promptDraws) / seconds)
+                    takeRefusedPerSecond = Self.round(Double(counters.takeRefused) / seconds)
+                    presentedDroppedPerSecond = Self.round(Double(counters.presentedDropped) / seconds)
                 }
                 if counters.markerFrames > 0 {
                     markerFrames = counters.markerFrames
@@ -1124,6 +1154,9 @@ struct StreamStatsReport: Codable, Equatable {
                 let share = presentedAt120Share.map { "\(Int(($0 * 100).rounded()))%" } ?? "–"
                 lines.append("shownΔ p50 \(value(presentedIntervalP50Ms, "ms")) p90 \(value(presentedIntervalP90Ms, "ms")) min \(value(presentedIntervalMinMs, "ms")) · at 120Hz \(share)")
             }
+            if commitToPresentedP50Ms != nil || tickIntervalP50Ms != nil {
+                lines.append("commit→glass p50 \(value(commitToPresentedP50Ms, "ms")) p95 \(value(commitToPresentedP95Ms, "ms")) · tickΔ p50 \(value(tickIntervalP50Ms, "ms")) p90 \(value(tickIntervalP90Ms, "ms")) · draws tick \(value(tickDrawsPerSecond))/s prompt \(value(promptDrawsPerSecond))/s · refused \(value(takeRefusedPerSecond))/s · CA dropped \(value(presentedDroppedPerSecond))/s")
+            }
             if (inputToPhotonSamples ?? 0) > 0 || legibility != nil {
                 var parts: [String] = []
                 if let samples = inputToPhotonSamples, samples > 0 {
@@ -1352,7 +1385,7 @@ enum SenderQueueEstimate {
 /// A local observed duration. Decode stages are added once for a delivered trace; presentation
 /// stages belong only to original frames confirmed by the Metal drawable presented handler.
 enum PhoneRenderTimingMetric: CaseIterable, Hashable, Sendable {
-    case decodeVT, ownershipDelay, deliveryDelay, decodedToPresented, deliveryToPresented
+    case decodeVT, ownershipDelay, deliveryDelay, decodedToPresented, deliveryToPresented, commitToPresented
     case drawableAcquire, rendererFenceWait, displayLinkInterval, leadingMotionLatency
     /// Not durations: finger-scroll cadence (ms) and per-message scroll (Mac points), phone-local.
     case scrollSendInterval, scrollStep
@@ -1401,6 +1434,7 @@ final class StreamCounters: @unchecked Sendable {
     private var captureLatency = LatencyWindow()
     private var presentLatency = LatencyWindow()
     private var presentCadence = FrameCadenceWindow()
+    private var tickCadence = FrameCadenceWindow()
     private var displayMaxFPS: Int?
     private var glassLatency = LatencyWindow()
     private var presentedIntervals = LatencyWindow()
@@ -1533,6 +1567,29 @@ final class StreamCounters: @unchecked Sendable {
     func superseded(_ count: Int = 1) {
         guard count > 0 else { return }
         lock.lock(); snapshot.supersededFrames += count; lock.unlock()
+    }
+
+    // MARK: Phone presentation stage (P1-A)
+
+    /// The video view's draw clock fired (an MTKView tick or a `CAMetalDisplayLink` callback), not a source wake.
+    func displayTick(at time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        guard phoneRenderTimingEnabled else { return }
+        lock.lock(); tickCadence.record(at: time); lock.unlock()
+    }
+    /// A drawable commit, by the wake that drew it.
+    func drawCommitted(prompt: Bool) {
+        guard phoneRenderTimingEnabled else { return }
+        lock.lock(); if prompt { snapshot.promptDraws += 1 } else { snapshot.tickDraws += 1 }; lock.unlock()
+    }
+    /// A frame waited in the mailbox while both flight slots were still owned by earlier draws (once per frame).
+    func takeRefused() {
+        guard phoneRenderTimingEnabled else { return }
+        lock.lock(); snapshot.takeRefused += 1; lock.unlock()
+    }
+    /// Core Animation reported a presented drawable with no presentation time: it never reached the glass.
+    func presentedDropped() {
+        guard phoneRenderTimingEnabled else { return }
+        lock.lock(); snapshot.presentedDropped += 1; lock.unlock()
     }
 
     func inputBuffered(_ bytes: UInt64) {
@@ -1751,6 +1808,13 @@ final class StreamCounters: @unchecked Sendable {
         let drawableAcquire = phoneRenderWindows[.drawableAcquire, default: LatencyWindow()].drainPercentiles()
         result.drawableAcquireP99Ms = drawableAcquire.p99
         result.drawableAcquireSamples = drawableAcquire.count > 0 ? drawableAcquire.count : nil
+        let commitToPresented = phoneRenderWindows[.commitToPresented, default: LatencyWindow()].drainPercentiles()
+        result.commitToPresentedP50Ms = commitToPresented.p50
+        result.commitToPresentedP95Ms = commitToPresented.p95
+        result.commitToPresentedSamples = commitToPresented.count > 0 ? commitToPresented.count : nil
+        let ticks = tickCadence.drain()
+        result.tickIntervalP50Ms = ticks.medianGapMs
+        result.tickIntervalP90Ms = ticks.p90GapMs
         let rendererFenceWait = phoneRenderWindows[.rendererFenceWait, default: LatencyWindow()].drainPercentiles()
         result.rendererFenceWaitP99Ms = rendererFenceWait.p99
         result.rendererFenceWaitSamples = rendererFenceWait.count > 0 ? rendererFenceWait.count : nil

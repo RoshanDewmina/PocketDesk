@@ -112,6 +112,20 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     // Internal A/B controls, read once for this immutable renderer registration.
     private let unfencedPreparation: Bool
     private let immediateSourceDraw: Bool
+    /// Research run 3. P1-C: a waiting frame is drawn as soon as a flight slot frees, and MTKView's rate is
+    /// rewritten only when it changes. P1-B: a `CAMetalDisplayLink` on MTKView's layer is the only draw clock.
+    private let mailboxWakeOnRelease: Bool
+    private var displayLink: CAMetalDisplayLink?
+    private var linkDrawable: CAMetalDrawable?
+    private var linkRate = 0
+    private var panelMaximumFramesPerSecond = 60
+    private var powerStateObserver: NSObjectProtocol?
+    var lowPowerMode: () -> Bool = { ProcessInfo.processInfo.isLowPowerModeEnabled }
+    var presentsThroughDisplayLink: Bool { displayLink != nil }
+    var displayLinkPaused: Bool {
+        get { displayLink?.isPaused ?? false }
+        set { displayLink?.isPaused = newValue }
+    }
     /// Explicit development experiment only; ordinary and distribution launches keep two drawables.
     let drawablePoolCount: Int
     private let pacingDiagnosticsEnabled: Bool
@@ -141,6 +155,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         self.fence = fence; identity = admission.identity
         unfencedPreparation = !defaults.bool(forKey: "phoneUnfencedDrawableDisabled")
         immediateSourceDraw = !defaults.bool(forKey: "phoneImmediateSourceDrawDisabled")
+        mailboxWakeOnRelease = MailboxWakeOnReleaseSwitch.isOn(defaults)
         drawablePoolCount = OwnedVideoPacingExperiment.drawableCount(defaults: defaults)
         pacingDiagnosticsEnabled = OwnedVideoPacingExperiment.diagnosticsEnabled(defaults: defaults)
         // On in Roshan's combined .7 device test (3 Oct); NO turns each off. Release defaults follow that test.
@@ -174,10 +189,32 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache)
             pipelines = Self.makePipelines(device: device, format: metal.colorPixelFormat, precompiled: precompiledShaders)
         }
+        if MetalDisplayLinkSwitch.isOn(defaults), let layer = metal.layer as? CAMetalLayer {
+            // MTKView keeps the layer, its drawable pool and size; it no longer drives any draw.
+            metal.isPaused = true; metal.enableSetNeedsDisplay = false
+            let link = CAMetalDisplayLink(metalLayer: layer)
+            link.delegate = self
+            link.preferredFrameLatency = 1
+            displayLink = link
+            applyRefreshRate()
+            link.add(to: .main, forMode: .common)
+            powerStateObserver = NotificationCenter.default.addObserver(forName: .NSProcessInfoPowerStateDidChange,
+                object: nil, queue: .main) { [weak self] _ in self?.applyRefreshRate() }
+        }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    deinit {
+        displayLink?.invalidate()
+        if let powerStateObserver { NotificationCenter.default.removeObserver(powerStateObserver) }
+    }
     override func layoutSubviews() {
         super.layoutSubviews(); metal.frame = bounds; fallback?.frame = bounds; redraw = true
+    }
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard displayLink != nil, let screen = window?.windowScene?.screen else { return }
+        panelMaximumFramesPerSecond = screen.maximumFramesPerSecond
+        applyRefreshRate()
     }
     /// Backing pixels ratchet: the drawable keeps its size while the picture aspect stays within 5 % of
     /// its own and it is at least as large as the picture, so a ladder step down, a crop wobble and a
@@ -217,6 +254,15 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
                 if replaced.originalSource { self?.counters?.superseded(1) }
             }
         }) != nil else { return }
+        scheduleWake()
+    }
+    /// Main thread, after a presented or GPU-completed edge freed a flight slot (P1-C): a frame that waited for
+    /// it is drawn now instead of at the next tick, where the next arrival might supersede it first.
+    func flightReleased() {
+        guard mailboxWakeOnRelease, mailbox.pendingAdmissible else { return }
+        scheduleWake()
+    }
+    private func scheduleWake() {
         wakeLock.lock()
         guard !wakeScheduled, !closed else { wakeLock.unlock(); return }
         wakeScheduled = true; wakeLock.unlock()
@@ -225,7 +271,8 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             self.wakeLock.lock(); self.wakeScheduled = false; let closed = self.closed; self.wakeLock.unlock()
             guard !closed else { return }
             let wake = self.refresh.signal(at: ProcessInfo.processInfo.systemUptime, newFrame: true)
-            self.metal.preferredFramesPerSecond = self.refresh.framesPerSecond
+            self.applyRefreshRate()
+            guard self.displayLink == nil else { return } // The next link callback draws whatever is pending.
             // A tick may already have consumed the coalesced source. Do not redraw it twice.
             let prompt = self.immediateSourceDraw && self.mailbox.hasPending(where: { $0.promptDraw })
             if (wake == .raiseAndDraw || prompt), self.mailbox.hasPending {
@@ -238,6 +285,29 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             }
         }
     }
+    /// Off the link: MTKView's rate, rewritten on every call as before unless P1-C is on. On the link: the
+    /// callback range, with MTKView's rate kept in step because Smooth Motion and the local scroll read
+    /// the tick length from it.
+    private func applyRefreshRate() {
+        guard let displayLink else {
+            if !mailboxWakeOnRelease || metal.preferredFramesPerSecond != refresh.framesPerSecond {
+                metal.preferredFramesPerSecond = refresh.framesPerSecond
+            }
+            return
+        }
+        let rate = Self.linkRate(active: refresh.activeFramesPerSecond, panelMaximum: panelMaximumFramesPerSecond,
+                                 lowPower: lowPowerMode(), idle: refresh.idle)
+        guard rate != linkRate else { return }
+        linkRate = rate
+        displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: Float(rate), maximum: Float(rate), preferred: Float(rate))
+        metal.preferredFramesPerSecond = rate
+    }
+    /// The link's fixed rate: the panel maximum (60 in Low Power Mode) while active; a 60 Hz floor while idle,
+    /// so with no out-of-band draw the first frame after a still picture waits at most one 60 Hz tick.
+    static func linkRate(active: Int, panelMaximum: Int, lowPower: Bool, idle: Bool) -> Int {
+        let ceiling = max(1, min(active, panelMaximum, lowPower ? 60 : Int.max))
+        return idle ? min(60, ceiling) : ceiling
+    }
     /// Main thread: the local scroll slide moved. A display tick redraws the shown frame, only while no
     /// other draw is in flight and no real frame is due within the coming refresh (`LocalScrollEcho.redrawAllowed`).
     func localScrollChanged() {
@@ -248,7 +318,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     }
     func noteActivity(at now: TimeInterval) {
         _ = refresh.signal(at: now, newFrame: false)
-        metal.preferredFramesPerSecond = refresh.framesPerSecond
+        applyRefreshRate()
     }
     /// Main-thread root fence closure must precede ALL downstream renderer/interpolator flushing.
     func invalidate() {
@@ -258,6 +328,13 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         localScroll = nil; localScrollRedrawPending = false
         videoFeedback = nil
         originalSourcePresented = nil // The terminal fence already drained any earlier callback.
+        if let link = displayLink {
+            // A second invalidate() of a CAMetalDisplayLink crashes (null layer), and this may run inside the
+            // link's own callback, so the object outlives the callback that is still executing on it.
+            displayLink = nil; link.invalidate()
+            DispatchQueue.main.async { withExtendedLifetime(link) {} }
+        }
+        if let powerStateObserver { NotificationCenter.default.removeObserver(powerStateObserver); self.powerStateObserver = nil }
         metal.isPaused = true; metal.isHidden = true
         fallback?.isEnabled = false; fallback?.removeFromSuperview(); fallback = nil
         cache.map { CVMetalTextureCacheFlush($0, 0) }
@@ -270,6 +347,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             if pacingWindowStartedAt == nil { pacingWindowStartedAt = now }
             pacingDiagnostics.draw(pacingDrawOrigin)
         }
+        if pacingDrawOrigin == .tick { counters?.displayTick() }
         defer { logPacingIfDue(view) }
         // Presenter holds its own lock while delivering to the presentation fence. Do not
         // invert that order by pumping the presenter under this fence.
@@ -295,14 +373,16 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         }
         if StreamTuning.current.idleVideoRefresh {
             refresh.drew(at: ProcessInfo.processInfo.systemUptime, framePending: mailbox.hasPending)
-            view.preferredFramesPerSecond = refresh.framesPerSecond
+            applyRefreshRate()
         }
     }
     private func drawAdmitted(in view: MTKView) {
+        var refused = false
         guard let submission = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, {
-            mailbox.take(redraw: redraw, holdUntilPresented: true)
+            mailbox.take(redraw: redraw, holdUntilPresented: true, refused: &refused)
         }) ?? nil else {
             if pacingDiagnosticsEnabled { pacingDiagnostics.noSubmission += 1 }
+            if refused { counters?.takeRefused() }
             return
         }
         let envelope = submission.frame
@@ -330,6 +410,12 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             if pacingDiagnosticsEnabled { pacingDiagnostics.backingChanges += 1 }
             view.drawableSize = backing
         }
+        if let linkDrawable, linkDrawable.texture.width != Int(backing.width) || linkDrawable.texture.height != Int(backing.height) {
+            // The link handed this drawable out before the size change; the next callback's has the new size.
+            mailbox.requeue(submission.id, frame: envelope, wasNew: submission.isNew)
+            redraw = true
+            return
+        }
         guard let pixels = envelope.pixels, let pipeline = pipelines[pixels.bgra], let cache,
               let command = commandQueue?.makeCommandBuffer() else {
             mailbox.completed(submission.id)
@@ -338,10 +424,12 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             return
         }
         let acquisitionStartMs = MachClock.nowMs()
-        let acquired = drawableAcquirer(view)
+        // A layer driven by a CAMetalDisplayLink refuses `nextDrawable`; the link's own drawable is the only source.
+        let acquired = linkDrawable.map { (Self.renderPass(into: $0, clearing: view.clearColor), $0) }
+            ?? (displayLink == nil ? drawableAcquirer(view) : nil)
         let acquireMs = MachClock.nowMs() - acquisitionStartMs
         if pacingDiagnosticsEnabled { pacingDiagnostics.acquired(milliseconds: acquireMs, available: acquired != nil) }
-        counters?.phoneRenderTiming(.drawableAcquire, milliseconds: acquireMs)
+        if linkDrawable == nil { counters?.phoneRenderTiming(.drawableAcquire, milliseconds: acquireMs) } // The link's wait is in tickInterval*.
         drawableWaits.record(acquireMs)
         renderDiagnostics?.drawableAcquisition(ms: acquireMs)
         let logAt = ProcessInfo.processInfo.systemUptime
@@ -426,15 +514,21 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         encoder.setFragmentTexture(first, index: 0); encoder.setFragmentTexture(second, index: 1)
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4); encoder.endEncoding()
         // Capture this drawable's exact envelope, not whichever frame is newest at callback time.
+        // Off main, only the mailbox is read; the view is touched (and could be released) on main alone.
+        let released: (() -> Void)? = mailboxWakeOnRelease ? { [weak self, mailbox] in
+            guard mailbox.pendingAdmissible else { return }
+            DispatchQueue.main.async { self?.flightReleased() }
+        } : nil
+        let commitStamp = PresentationStamp()
         #if !targetEnvironment(simulator)
         if observesPresentation(isNew: submission.isNew) {
             let callback = onOriginalSourcePresented // Short admission snapshot, no layer access under it.
-            let receipt = submission.isNew ? presentedReceipt(envelope, callback: callback) : nil
+            let receipt = submission.isNew ? presentedReceipt(envelope, commit: commitStamp, callback: callback) : nil
             let mailbox = mailbox, id = submission.id
             let coverageReceipt = viewportCoverageReceipt(envelope)
             drawable.addPresentedHandler { shown in
                 // Core Animation holds its private lock: enqueue before taking ANY local lock.
-                Self.presentedReceiptQueue.async { mailbox.presented(id) }
+                Self.presentedReceiptQueue.async { mailbox.presented(id); released?() }
                 coverageReceipt?(shown.presentedTime)
                 receipt?(shown.presentedTime)
             }
@@ -449,13 +543,17 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
                 if holdUntilPresented && completed.status != .error { mailbox.gpuCompleted(submission.id) }
                 else { mailbox.completed(submission.id) }
                 #endif
+                released?()
             }
         }
         // Retirement can run while acquisition/preparation blocks. Only this final, short
         // effect is fenced; rejected preparation cannot publish or resurrect old pixels.
+        let viaLink = linkDrawable != nil
         let submitted = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) {
             guard viewportCoverageAllows(envelope, submissionID: submission.id) else { return false }
-            command.present(drawable); command.commit(); drawsPresented += 1
+            if viaLink { command.commit(); drawable.present() } else { command.present(drawable); command.commit() }
+            commitStamp.commitMs = MachClock.nowMs()
+            drawsPresented += 1
             drawnEnvelope = envelope // Only the accepted commit may update model placement.
             if scroll != .off { slideSubmissionID = submission.id; localScroll?.slideDraws += 1 }
             if pacingDiagnosticsEnabled {
@@ -465,6 +563,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             if submission.isNew && envelope.originalSource {
                 counters?.presented(latencyMs: max(0, MachClock.nowMs() - envelope.arrivalMs))
             }
+            counters?.drawCommitted(prompt: pacingDrawOrigin == .sourceWake)
             return true
         }
         if submitted != true {
@@ -499,10 +598,16 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     /// handler inverts that order and deadlocks main (20260930.8 watchdog reports), so the handler
     /// only enqueues; admission is rechecked off Core Animation's thread.
     static let presentedReceiptQueue = DispatchQueue(label: "farside.owned-video.presented", qos: .userInteractive)
-    func presentedReceipt(_ envelope: VideoFrameEnvelope,
+    func presentedReceipt(_ envelope: VideoFrameEnvelope, commit: PresentationStamp? = nil,
                           callback: ((VideoPresentationIdentity, UUID) -> Void)?) -> (CFTimeInterval) -> Void {
         { [weak self] presentedTime in
-            guard presentedTime.isFinite, presentedTime > 0 else { return }
+            guard presentedTime.isFinite, presentedTime > 0 else {
+                Self.presentedReceiptQueue.async {
+                    guard let self, envelope.originalSource else { return }
+                    _ = self.fence.withAdmission(envelope.identity, at: ProcessInfo.processInfo.systemUptime) { self.counters?.presentedDropped() }
+                }
+                return
+            }
             Self.presentedReceiptQueue.async {
                 guard let self else { return }
                 _ = self.fence.withAdmission(envelope.identity, at: ProcessInfo.processInfo.systemUptime) {
@@ -512,6 +617,9 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
                             self.counters?.phoneRenderTiming(.decodedToPresented, milliseconds: presentedTime * 1000 - callbackMs)
                         }
                         self.counters?.phoneRenderTiming(.deliveryToPresented, milliseconds: presentedTime * 1000 - trace.deliveryMs)
+                    }
+                    if envelope.originalSource, let commitMs = commit?.commitMs {
+                        self.counters?.phoneRenderTiming(.commitToPresented, milliseconds: presentedTime * 1000 - commitMs)
                     }
                     let clock = self.counters?.clockObservation
                     self.videoFeedback?.presentedTiming(envelope.videoTag, originalSource: envelope.originalSource,
@@ -546,6 +654,14 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         fallback?.videoContentMode = fillsFrame ? .scaleToFill : .scaleAspectFit
         stamp = max(stamp + 1, Int64(ProcessInfo.processInfo.systemUptime * 1e9))
         fallback?.renderFrame(RTCVideoFrame(buffer: buffer, rotation: envelope.frame.rotation, timeStampNs: stamp))
+    }
+    private static func renderPass(into drawable: CAMetalDrawable, clearing color: MTLClearColor) -> MTLRenderPassDescriptor {
+        let descriptor = MTLRenderPassDescriptor()
+        descriptor.colorAttachments[0].texture = drawable.texture
+        descriptor.colorAttachments[0].loadAction = .clear
+        descriptor.colorAttachments[0].clearColor = color
+        descriptor.colorAttachments[0].storeAction = .store
+        return descriptor
     }
     private struct RefinementUniform { var rect: SIMD4<Float>; var options: SIMD4<Float> }
     private struct Uniforms {
@@ -659,6 +775,30 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         return float4(refined(displayEncoded(image.sample(s,t).rgb,u),sampleUV,r,refinement),1);
     }
     """
+}
+
+extension OwnedMetalVideoView: CAMetalDisplayLinkDelegate {
+    func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
+        drawLinkFrame(into: update.drawable)
+    }
+    /// One link callback on the main run loop: the ordinary tick draw, taking this drawable instead of asking
+    /// MTKView for one. With nothing to draw the drawable is left untouched and released with the update.
+    func drawLinkFrame(into drawable: CAMetalDrawable) {
+        linkDrawable = drawable
+        defer { linkDrawable = nil }
+        draw(in: metal)
+    }
+}
+
+/// The commit time of one draw, written on main after `commit()` and read on the receipt queue once Core
+/// Animation reports the drawable presented.
+final class PresentationStamp: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ms: Double?
+    var commitMs: Double? {
+        get { lock.lock(); defer { lock.unlock() }; return ms }
+        set { lock.lock(); ms = newValue; lock.unlock() }
+    }
 }
 
 /// Drawable pool size, frozen once per registered renderer. Three by default since the 7 Oct 2026

@@ -63,6 +63,23 @@ final class StreamTuningTests: XCTestCase {
         XCTAssertGreaterThan(RemoteCaptureConfiguration.queueDepth, 3)
         XCTAssertLessThanOrEqual(RemoteCaptureConfiguration.queueDepth, 8)
     }
+
+    func testPhonePresentationSwitchesShowInTheLiveSummaryOnlyWhenOn() throws {
+        let suite = "r3-phone.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let tuning = StreamTuning.tuned
+        XCTAssertFalse(MetalDisplayLinkSwitch.isOn(defaults)); XCTAssertFalse(MailboxWakeOnReleaseSwitch.isOn(defaults))
+        let off = tuning.liveSummary(defaults: defaults)
+        XCTAssertTrue(off.hasPrefix(tuning.summary)); XCTAssertFalse(off.contains("metal display link"))
+        defaults.set("YES", forKey: MetalDisplayLinkSwitch.defaultsKey) // A launch argument arrives as a string.
+        XCTAssertTrue(MetalDisplayLinkSwitch.isOn(defaults))
+        XCTAssertEqual(tuning.liveSummary(defaults: defaults), off + " · metal display link")
+        defaults.set(true, forKey: MailboxWakeOnReleaseSwitch.defaultsKey)
+        XCTAssertEqual(tuning.liveSummary(defaults: defaults), off + " · metal display link · mailbox wake on release")
+        defaults.set(false, forKey: MetalDisplayLinkSwitch.defaultsKey)
+        XCTAssertEqual(tuning.liveSummary(defaults: defaults), off + " · mailbox wake on release")
+    }
 }
 
 final class EncoderRestartPolicyTests: XCTestCase {
