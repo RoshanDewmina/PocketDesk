@@ -775,6 +775,44 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         XCTAssertEqual(on, 2, "a freed slot draws the waiting frame at once")
         let off = try await requestsAfterRelease(switchOn: false)
         XCTAssertEqual(off, 1, "off, the frame waits for the next tick as today")
+        let box = NewestFrameMailbox<Int>()
+        box.offer(1); let a = try XCTUnwrap(box.take(holdUntilPresented: true))
+        box.offer(2); _ = try XCTUnwrap(box.take(holdUntilPresented: true))
+        var refused = false
+        XCTAssertNil(box.take(redraw: false, holdUntilPresented: true, refused: &refused)); XCTAssertFalse(refused, "nothing pending is not a refusal")
+        box.offer(3)
+        XCTAssertNil(box.take(redraw: false, holdUntilPresented: true, refused: &refused)); XCTAssertTrue(refused)
+        refused = false
+        XCTAssertNil(box.take(redraw: false, holdUntilPresented: true, refused: &refused)); XCTAssertFalse(refused, "one refusal per waiting frame")
+        box.offer(4)
+        XCTAssertNil(box.take(redraw: false, holdUntilPresented: true, refused: &refused)); XCTAssertTrue(refused, "a newer waiting frame is refused once more")
+        box.completed(a.id); refused = false
+        XCTAssertEqual(try XCTUnwrap(box.take(redraw: false, holdUntilPresented: true, refused: &refused)).frame, 4); XCTAssertFalse(refused)
+    }
+    func testPresentedReceiptRecordsCommitToGlassAndCountsADroppedDrawableOnce() throws {
+        let id = identity()
+        let admission = VideoPresentationAdmission(identity: id, validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission))
+        defer { view.invalidate() }
+        let counters = StreamCounters(phoneRenderTimingEnabled: true)
+        view.counters = counters
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 64, 64, kCVPixelFormatType_32BGRA, nil, &pixels), kCVReturnSuccess)
+        let envelope = VideoFrameEnvelope(receiptID: UUID(), identity: id,
+            frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixels)), rotation: ._0, timeStampNs: 1),
+            arrivalMs: 1, marker: nil, originalSource: true)
+        let stamp = PresentationStamp(); stamp.commitMs = 1_000
+        view.presentedReceipt(envelope, commit: stamp, callback: nil)(1.02)
+        view.presentedReceipt(envelope, commit: stamp, callback: nil)(0)
+        view.presentedReceipt(envelope, commit: nil, callback: nil)(1.03)
+        let drained = expectation(description: "receipt queue drained")
+        OwnedMetalVideoView.presentedReceiptQueue.async { drained.fulfill() }
+        wait(for: [drained], timeout: 2)
+        let snapshot = counters.drain(inputBufferedBytes: nil)
+        XCTAssertEqual(snapshot.commitToPresentedSamples, 1, "no commit stamp, no commit→glass sample")
+        XCTAssertEqual(snapshot.commitToPresentedP50Ms ?? 0, 20, accuracy: 0.001)
+        XCTAssertEqual(snapshot.presentedDropped, 1)
+        XCTAssertEqual(snapshot.presentedIntervalP50Ms ?? 0, 10, accuracy: 0.001, "the dropped drawable adds no interval")
     }
     @MainActor
     func testMetalDisplayLinkPresenterDrawsIntoTheLinkDrawableAndNeverAsksMTKViewToDraw() async throws {
@@ -833,6 +871,16 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         XCTAssertTrue(view.mailbox.hasPending, "the frame waits for the next callback instead")
         view.invalidate(); view.invalidate() // Then the deferred invalidate and dealloc: the link is torn down exactly once.
         XCTAssertFalse(view.presentsThroughDisplayLink)
+        // An admission that expires mid-session invalidates from inside the link's own callback.
+        let brief = VideoPresentationAdmission(identity: identity(), validUntil: ProcessInfo.processInfo.systemUptime + 0.05)
+        let expiring = OwnedMetalVideoView(admission: brief, fence: VideoPresentationFence(brief), defaults: defaults)
+        expiring.displayLinkPaused = true
+        XCTAssertTrue(expiring.presentsThroughDisplayLink)
+        try await Task.sleep(for: .milliseconds(80))
+        expiring.drawLinkFrame(into: try drawable(64))
+        XCTAssertFalse(expiring.presentsThroughDisplayLink, "the expired fence tore the link down from its callback")
+        XCTAssertTrue(expiring.metal.isHidden)
+        await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
     }
     func testTheLinkRateFollowsThePanelLowPowerModeAndASixtyHertzIdleFloor() {
         XCTAssertEqual(OwnedMetalVideoView.linkRate(active: 120, panelMaximum: 120, lowPower: false, idle: false), 120)

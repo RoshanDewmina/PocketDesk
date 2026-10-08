@@ -1573,16 +1573,24 @@ final class StreamCounters: @unchecked Sendable {
 
     /// The video view's draw clock fired (an MTKView tick or a `CAMetalDisplayLink` callback), not a source wake.
     func displayTick(at time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        guard phoneRenderTimingEnabled else { return }
         lock.lock(); tickCadence.record(at: time); lock.unlock()
     }
     /// A drawable commit, by the wake that drew it.
     func drawCommitted(prompt: Bool) {
+        guard phoneRenderTimingEnabled else { return }
         lock.lock(); if prompt { snapshot.promptDraws += 1 } else { snapshot.tickDraws += 1 }; lock.unlock()
     }
-    /// A frame waited in the mailbox while both flight slots were still owned by earlier draws.
-    func takeRefused() { lock.lock(); snapshot.takeRefused += 1; lock.unlock() }
+    /// A frame waited in the mailbox while both flight slots were still owned by earlier draws (once per frame).
+    func takeRefused() {
+        guard phoneRenderTimingEnabled else { return }
+        lock.lock(); snapshot.takeRefused += 1; lock.unlock()
+    }
     /// Core Animation reported a presented drawable with no presentation time: it never reached the glass.
-    func presentedDropped() { lock.lock(); snapshot.presentedDropped += 1; lock.unlock() }
+    func presentedDropped() {
+        guard phoneRenderTimingEnabled else { return }
+        lock.lock(); snapshot.presentedDropped += 1; lock.unlock()
+    }
 
     func inputBuffered(_ bytes: UInt64) {
         lock.lock(); defer { lock.unlock() }

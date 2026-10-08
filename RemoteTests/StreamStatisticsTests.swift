@@ -83,9 +83,13 @@ final class StreamStatisticsTests: XCTestCase {
         let disabled = StreamCounters(phoneRenderTimingEnabled: false)
         disabled.phoneDecodeTrace(PhoneDecodeTrace(submitMs: 1, callbackMs: 2, ownershipMs: 3, deliveryMs: 4))
         disabled.phoneRenderTiming(.decodedToPresented, milliseconds: 5)
+        disabled.displayTick(at: 1); disabled.displayTick(at: 1.01)
+        disabled.drawCommitted(prompt: true); disabled.takeRefused(); disabled.presentedDropped()
         let absent = disabled.drain(inputBufferedBytes: nil)
         XCTAssertNil(absent.decodeVTSamples)
         XCTAssertNil(absent.decodedToPresentedP95Ms)
+        XCTAssertNil(absent.tickIntervalP50Ms)
+        XCTAssertEqual([absent.promptDraws, absent.takeRefused, absent.presentedDropped], [0, 0, 0], "the kill switch covers the presentation stage")
         let bounded = StreamCounters(phoneRenderTimingEnabled: true)
         for _ in 0..<LatencyWindow.capacity { bounded.phoneRenderTiming(.displayLinkInterval, milliseconds: 8) }
         for _ in 0..<10 { bounded.phoneRenderTiming(.displayLinkInterval, milliseconds: 50) }

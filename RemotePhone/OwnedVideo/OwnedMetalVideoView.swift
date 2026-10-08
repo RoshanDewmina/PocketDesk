@@ -256,8 +256,8 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         }) != nil else { return }
         scheduleWake()
     }
-    /// Off Core Animation's thread, after a presented or GPU-completed edge (P1-C): a frame that waited for a
-    /// slot is drawn now instead of at the next tick, where the next arrival might supersede it first.
+    /// Main thread, after a presented or GPU-completed edge freed a flight slot (P1-C): a frame that waited for
+    /// it is drawn now instead of at the next tick, where the next arrival might supersede it first.
     func flightReleased() {
         guard mailboxWakeOnRelease, mailbox.pendingAdmissible else { return }
         scheduleWake()
@@ -328,7 +328,12 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         localScroll = nil; localScrollRedrawPending = false
         videoFeedback = nil
         originalSourcePresented = nil // The terminal fence already drained any earlier callback.
-        displayLink?.invalidate(); displayLink = nil // A second invalidate() of a CAMetalDisplayLink crashes (null layer).
+        if let link = displayLink {
+            // A second invalidate() of a CAMetalDisplayLink crashes (null layer), and this may run inside the
+            // link's own callback, so the object outlives the callback that is still executing on it.
+            displayLink = nil; link.invalidate()
+            DispatchQueue.main.async { withExtendedLifetime(link) {} }
+        }
         if let powerStateObserver { NotificationCenter.default.removeObserver(powerStateObserver); self.powerStateObserver = nil }
         metal.isPaused = true; metal.isHidden = true
         fallback?.isEnabled = false; fallback?.removeFromSuperview(); fallback = nil
@@ -372,11 +377,12 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         }
     }
     private func drawAdmitted(in view: MTKView) {
+        var refused = false
         guard let submission = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, {
-            mailbox.take(redraw: redraw, holdUntilPresented: true)
+            mailbox.take(redraw: redraw, holdUntilPresented: true, refused: &refused)
         }) ?? nil else {
             if pacingDiagnosticsEnabled { pacingDiagnostics.noSubmission += 1 }
-            if mailbox.hasPending { counters?.takeRefused() }
+            if refused { counters?.takeRefused() }
             return
         }
         let envelope = submission.frame
@@ -423,7 +429,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             ?? (displayLink == nil ? drawableAcquirer(view) : nil)
         let acquireMs = MachClock.nowMs() - acquisitionStartMs
         if pacingDiagnosticsEnabled { pacingDiagnostics.acquired(milliseconds: acquireMs, available: acquired != nil) }
-        counters?.phoneRenderTiming(.drawableAcquire, milliseconds: acquireMs)
+        if linkDrawable == nil { counters?.phoneRenderTiming(.drawableAcquire, milliseconds: acquireMs) } // The link's wait is in tickInterval*.
         drawableWaits.record(acquireMs)
         renderDiagnostics?.drawableAcquisition(ms: acquireMs)
         let logAt = ProcessInfo.processInfo.systemUptime
@@ -508,7 +514,11 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         encoder.setFragmentTexture(first, index: 0); encoder.setFragmentTexture(second, index: 1)
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4); encoder.endEncoding()
         // Capture this drawable's exact envelope, not whichever frame is newest at callback time.
-        let released: (() -> Void)? = mailboxWakeOnRelease ? { [weak self] in self?.flightReleased() } : nil
+        // Off main, only the mailbox is read; the view is touched (and could be released) on main alone.
+        let released: (() -> Void)? = mailboxWakeOnRelease ? { [weak self, mailbox] in
+            guard mailbox.pendingAdmissible else { return }
+            DispatchQueue.main.async { self?.flightReleased() }
+        } : nil
         let commitStamp = PresentationStamp()
         #if !targetEnvironment(simulator)
         if observesPresentation(isNew: submission.isNew) {

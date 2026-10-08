@@ -105,6 +105,7 @@ final class NewestFrameMailbox<Frame>: @unchecked Sendable {
     private var flights: Set<UInt64> = []
     private var presentationFlights: Set<UInt64> = []
     private var sequence: UInt64 = 0
+    private var pendingRefused = false
     private var closed = false
     @discardableResult
     func offer(_ frame: Frame, onReplacement: ((Frame) -> Void)? = nil) -> Bool {
@@ -112,14 +113,25 @@ final class NewestFrameMailbox<Frame>: @unchecked Sendable {
         guard !closed else { return false }
         let replaced = pending != nil
         if let pending { onReplacement?(pending) }
-        pending = frame
+        pending = frame; pendingRefused = false
         return replaced
     }
     func take(redraw: Bool = false, holdUntilPresented: Bool = false) -> (id: UInt64, frame: Frame, isNew: Bool)? {
+        var refused = false
+        return take(redraw: redraw, holdUntilPresented: holdUntilPresented, refused: &refused)
+    }
+    /// `refused` is set when a pending frame could not be taken because both flight slots are owned, at most
+    /// once per pending frame (decided under the mailbox lock, so a frame arriving mid-tick is not miscounted).
+    func take(redraw: Bool, holdUntilPresented: Bool, refused: inout Bool) -> (id: UInt64, frame: Frame, isNew: Bool)? {
         lock.lock(); defer { lock.unlock() }
-        guard !closed, flights.union(presentationFlights).count < 2, let frame = pending ?? (redraw ? shown : nil) else { return nil }
+        guard !closed else { return nil }
+        guard flights.union(presentationFlights).count < 2 else {
+            if pending != nil, !pendingRefused { pendingRefused = true; refused = true }
+            return nil
+        }
+        guard let frame = pending ?? (redraw ? shown : nil) else { return nil }
         let isNew = pending != nil
-        pending = nil; shown = frame
+        pending = nil; shown = frame; pendingRefused = false
         sequence &+= 1; flights.insert(sequence)
         if holdUntilPresented { presentationFlights.insert(sequence) }
         return (sequence, frame, isNew)
