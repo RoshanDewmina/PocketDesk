@@ -1271,6 +1271,9 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             regionSwitchInFlight = CaptureFrameRegionPolicy.Switch(
                 previous: previousRegion, next: region, requestedMs: CaptureTiming.milliseconds(fromMachTicks: updateRequestedAt))
         }
+        peer?.counters.captureReconfigureRequested(atMs: CaptureTiming.milliseconds(fromMachTicks: updateRequestedAt),
+            width: configuration.width, height: configuration.height,
+            previousWidth: witnessConfiguration.width, previousHeight: witnessConfiguration.height)
         stream.updateConfiguration(configuration) { [self] error in
             queue.async { [self] in
                 // stop() already answered the waiters.
@@ -1280,6 +1283,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
                     lastRegionSwitch = error == nil ? inFlight : nil
                     regionSwitchInFlight = nil
                 }
+                if error != nil { peer?.counters.captureReconfigureFailed() }
                 if error == nil {
                     witnessConfiguration = configuration
                     applied = inputs
@@ -1406,6 +1410,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
                 displayedDwell?.cancel()
                 displayedDwell = nil
                 lastBuffer = nil
+                peer?.counters.captureReconfigureCancelled()
                 peer = nil
                 onFailure = nil
                 onHealth = nil
@@ -1475,6 +1480,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         lastBufferDisplayTime = displayTime
         let timing = sourceTiming.captured(displayTicks: displayTime, atMs: capturedMs)
         let displayMs = displayTime > 0 ? CaptureTiming.milliseconds(fromMachTicks: displayTime) : 0
+        peer?.counters.captureFrameDelivered(atMs: capturedMs, displayMs: displayMs,
+                                             width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer))
         let region = CaptureFrameRegionPolicy.region(
             displayMs: displayMs, bufferWidth: CVPixelBufferGetWidth(buffer), bufferHeight: CVPixelBufferGetHeight(buffer),
             applied: appliedRegion, inFlight: regionSwitchInFlight, lastSwitch: lastRegionSwitch)

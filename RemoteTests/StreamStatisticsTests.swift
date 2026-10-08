@@ -548,3 +548,90 @@ final class FrameCadenceWindowTests: XCTestCase {
     }
 
 }
+
+/// B0: the capture stall each `SCStream.updateConfiguration` costs, as a local host stats field.
+final class ReconfigureStallTests: XCTestCase {
+    func testASizeChangeEndsAtTheFirstFrameOfTheNewSize() {
+        var tracker = ReconfigureStallTracker()
+        tracker.requested(atMs: 1_000, width: 1520, height: 984, previousWidth: 2560, previousHeight: 1656)
+        tracker.frame(atMs: 1_020, displayMs: 1_010, width: 2560, height: 1656)
+        tracker.frame(atMs: 1_050, displayMs: 990, width: 1520, height: 984)
+        XCTAssertEqual(tracker.drain(atMs: 1_100).longestStallMs, nil, "old-size frames and frames displayed before the request do not end it")
+        tracker.frame(atMs: 1_310, displayMs: 1_300, width: 1520, height: 984)
+        let window = tracker.drain(atMs: 1_400)
+        XCTAssertNil(window.reconfigures, "the request was counted in the window it happened in")
+        XCTAssertEqual(window.longestStallMs, 310)
+    }
+
+    func testSameSizeUpdatesEndAtTheFirstFrameDisplayedAfterTheNewestRequest() {
+        var tracker = ReconfigureStallTracker()
+        tracker.requested(atMs: 1_000, width: 2560, height: 1656, previousWidth: 2560, previousHeight: 1656)
+        tracker.requested(atMs: 1_100, width: 2560, height: 1656, previousWidth: 2560, previousHeight: 1656)
+        tracker.frame(atMs: 1_120, displayMs: 1_090, width: 2560, height: 1656)
+        tracker.frame(atMs: 1_180, displayMs: 1_170, width: 2560, height: 1656)
+        tracker.frame(atMs: 1_200, displayMs: 1_190, width: 2560, height: 1656)
+        let window = tracker.drain(atMs: 1_300)
+        XCTAssertEqual(window.reconfigures, 2)
+        XCTAssertEqual(window.longestStallMs, 180, "back-to-back updates are one stall from the first request")
+    }
+
+    func testFailedAndAbandonedStallsAreNotRecordedButStillCounted() {
+        var tracker = ReconfigureStallTracker()
+        tracker.requested(atMs: 1_000, width: 1520, height: 984, previousWidth: 2560, previousHeight: 1656)
+        tracker.failed()
+        tracker.frame(atMs: 1_100, displayMs: 1_090, width: 1520, height: 984)
+        tracker.requested(atMs: 2_000, width: 2560, height: 1656, previousWidth: 1520, previousHeight: 984)
+        tracker.frame(atMs: 2_000 + ReconfigureStallTracker.abandonAfterMs + 1, displayMs: 0, width: 2560, height: 1656)
+        let window = tracker.drain(atMs: 9_000)
+        XCTAssertEqual(window.reconfigures, 2)
+        XCTAssertNil(window.longestStallMs, "a still screen that sends no frame is not a measured stall")
+        XCTAssertNil(tracker.drain(atMs: 9_100).reconfigures, "an empty window reports nothing")
+    }
+
+    func testALongStallWithFramesStillArrivingIsRecordedAtTheFloor() {
+        var tracker = ReconfigureStallTracker()
+        tracker.requested(atMs: 1_000, width: 1520, height: 984, previousWidth: 2560, previousHeight: 1656)
+        tracker.frame(atMs: 1_500, displayMs: 1_490, width: 2560, height: 1656)
+        XCTAssertEqual(tracker.drain(atMs: 1_000 + ReconfigureStallTracker.abandonAfterMs + 1).longestStallMs,
+                       ReconfigureStallTracker.abandonAfterMs)
+    }
+
+    func testAFailedUpdateKeepsTheStallOpenBeforeItAndRetirementCancels() {
+        var tracker = ReconfigureStallTracker()
+        tracker.requested(atMs: 1_000, width: 1520, height: 984, previousWidth: 2560, previousHeight: 1656)
+        tracker.requested(atMs: 1_100, width: 1216, height: 788, previousWidth: 1520, previousHeight: 984)
+        tracker.failed()
+        tracker.frame(atMs: 1_250, displayMs: 1_240, width: 1216, height: 788)
+        tracker.frame(atMs: 1_300, displayMs: 1_290, width: 1520, height: 984)
+        XCTAssertEqual(tracker.drain(atMs: 1_400).longestStallMs, 300, "the earlier successful update's stall still ends at its size")
+        tracker.requested(atMs: 2_000, width: 2560, height: 1656, previousWidth: 1520, previousHeight: 984)
+        tracker.cancel()
+        tracker.frame(atMs: 2_100, displayMs: 2_090, width: 2560, height: 1656)
+        XCTAssertNil(tracker.drain(atMs: 2_200).longestStallMs, "a new capture's first frame never closes a retired capture's stall")
+    }
+
+    func testHostReportCarriesTheLongestStallOfTheWindowLocallyOnly() throws {
+        let counters = StreamCounters()
+        let now = MachClock.nowMs()
+        counters.captureReconfigureRequested(atMs: now - 500, width: 1520, height: 984, previousWidth: 2560, previousHeight: 1656)
+        counters.captureFrameDelivered(atMs: now - 380, displayMs: now - 390, width: 1520, height: 984)
+        counters.captureReconfigureRequested(atMs: now - 300, width: 1216, height: 788, previousWidth: 1520, previousHeight: 984)
+        counters.captureFrameDelivered(atMs: now - 250, displayMs: now - 260, width: 1216, height: 788)
+        let snapshot = counters.drain(inputBufferedBytes: nil)
+        XCTAssertEqual(snapshot.reconfigures, 2)
+        XCTAssertEqual(try XCTUnwrap(snapshot.reconfigureStallMs), 120, accuracy: 0.001)
+
+        let host = StreamStatsReport(role: "host", previous: nil, current: StreamStatsSample(entries: []), counters: snapshot)
+        XCTAssertEqual(host.reconfigures, 2)
+        XCTAssertEqual(host.reconfigureStallMs, 120)
+        XCTAssertTrue(host.logLine.contains("\"reconfigureStallMs\":120"), host.logLine)
+        let summary = try JSONEncoder().encode(host.hostSummary)
+        XCTAssertFalse(String(decoding: summary, as: UTF8.self).contains("reconfigure"), "the phone's summary is unchanged")
+        let phone = StreamStatsReport(role: "phone", previous: nil, current: StreamStatsSample(entries: []), counters: snapshot)
+        XCTAssertNil(phone.reconfigures)
+
+        let quiet = StreamStatsReport(role: "host", previous: nil, current: StreamStatsSample(entries: []),
+                                      counters: counters.drain(inputBufferedBytes: nil))
+        XCTAssertFalse(quiet.logLine.contains("reconfigure"), "absent when nothing reconfigured")
+    }
+}

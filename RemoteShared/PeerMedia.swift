@@ -723,6 +723,8 @@ final class PeerMedia: NSObject {
     }
 
     private(set) var fullColorCaptureEnabled = false
+    /// `LANCodecPolicy` chose H.264 for this session (both factories then offer no HEVC).
+    private(set) var h264OnLAN = false
     let textClarity: TextClarityContext
     /// The phone asked for `SessionFeature.keysOnDemand`; the encoder honours it only with `StreamTuning.keysOnDemand`
     /// (HEVC) or `StreamTuning.keysOnDemandH264` (H.264).
@@ -782,8 +784,11 @@ final class PeerMedia: NSObject {
         // Connect readiness get a conservative nonjoining snapshot. NO passes nil throughout.
         let capabilities = NativeVideoCapabilitySnapshot.enabled
             ? (capabilitySnapshot ?? NativeVideoCapabilitySnapshot.current(isHost: isHost)) : nil
-        let useHEVC = hevc ?? (nativeDesktopCodecs && NativeHEVCCapability.permits(isHost: isHost, snapshot: capabilities))
-        let useFullColor = nativeDesktopCodecs && (hevc444 ?? NativeHEVC444Capability.permits(isHost: isHost, snapshot: capabilities))
+        h264OnLAN = hevc == nil && hevc444 == nil && LANCodecPolicy.prefersH264(isHost: isHost, nativeDesktopCodecs: nativeDesktopCodecs,
+            provenLocalLink: localLink != nil, forceRelay: forceRelay, enabled: LANCodecPolicy.enabled(tuning))
+        if h264OnLAN { SessionLog.log.info("codec: H.264 on the proven local link (PocketDeskH264OnLAN)") }
+        let useHEVC = !h264OnLAN && (hevc ?? (nativeDesktopCodecs && NativeHEVCCapability.permits(isHost: isHost, snapshot: capabilities)))
+        let useFullColor = !h264OnLAN && nativeDesktopCodecs && (hevc444 ?? NativeHEVC444Capability.permits(isHost: isHost, snapshot: capabilities))
         fullColorCaptureEnabled = isHost && useFullColor
         let fullColorFailure: () -> Void = { [weak self] in
             NativeHEVC444Capability.failed() // Fresh negotiation may use Main1 or H264, never active-byte relabeling.

@@ -31,6 +31,31 @@ enum H264LevelPolicy {
     }
 }
 
+/// Host codec on the local network (`StreamTuning.h264OnLAN`). The codec is fixed when the peer is created,
+/// before ICE has selected any pair, and nothing renegotiates it mid-session (the packet-repair offer only
+/// filters FEC), so the signal is the one known then: the proven one-hop local link. On that route the media
+/// pair is pinned to the proof's host-candidate IPv4 pair on one physical Wi-Fi or Ethernet interface (no VPN,
+/// cellular or relay), and the session ends rather than leave it. A remote (Anywhere) route keeps today's
+/// choice even on the same Wi-Fi: its LAN proof runs beside the stream and does not pin the pair, which can
+/// move to a relay or cellular later in the same session.
+enum LANCodecPolicy {
+    #if DEBUG
+    /// The process tuning is fixed once a factory exists, so tests switch the flag here.
+    static var enabledForTesting: Bool?
+    #endif
+    static func enabled(_ tuning: StreamTuning) -> Bool {
+        #if DEBUG
+        if let enabledForTesting { return enabledForTesting }
+        #endif
+        return tuning.h264OnLAN
+    }
+
+    static func prefersH264(isHost: Bool, nativeDesktopCodecs: Bool, provenLocalLink: Bool, forceRelay: Bool,
+                            enabled: Bool) -> Bool {
+        isHost && nativeDesktopCodecs && provenLocalLink && !forceRelay && enabled
+    }
+}
+
 final class PocketDeskVideoEncoderFactory: NSObject, RTCVideoEncoderFactory {
     private let fallback = RTCDefaultVideoEncoderFactory()
     private let counters: StreamCounters?
