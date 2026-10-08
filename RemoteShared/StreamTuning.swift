@@ -104,6 +104,11 @@ struct StreamTuning: Equatable {
     /// HEVC is offered whenever both ends' hardware probes pass. Off (internal A/B or kill switch only)
     /// makes this side offer H.264 alone, so the session negotiates H.264 with the owned encoder.
     var hevc = true
+    /// Host: on a proven one-hop local link (`LANCodecPolicy`), offer H.264 alone instead of HEVC. 7 Oct 2026
+    /// device A/B (M4 Air, iPhone 17): H.264 felt less jittery, with VT p90 ≈19 ms against 24–27 ms at 2560 and a
+    /// ≈0.1 ms submit against ≈9 ms; HEVC's ~30 % bandwidth saving matters mainly off the LAN. An explicit
+    /// `PocketDeskHEVC` wins (this stays off). Off until decided: every session keeps today's codec choice.
+    var h264OnLAN = false
     /// Owned encoder: ask VideoToolbox to favour encode speed over quality (an optional hint; a rejecting
     /// encoder keeps its default). Not offered by the low-latency rate controller.
     var encoderPrioritizeSpeed = false
@@ -223,6 +228,7 @@ struct StreamTuning: Equatable {
     static let frameTimingKey = "PocketDeskFrameTiming"
     static let encoderMaximumQPKey = "PocketDeskEncoderMaxQP"
     static let hevcKey = "PocketDeskHEVC"
+    static let h264OnLANKey = "PocketDeskH264OnLAN"
     static let encoderPrioritizeSpeedKey = "PocketDeskEncoderPrioritizeSpeed"
     static let hevcLowLatencyKey = "PocketDeskHEVCLowLatency"
     static let encoderPeriodicKeyFramesKey = "PocketDeskEncoderPeriodicKeyFrames"
@@ -252,7 +258,7 @@ struct StreamTuning: Equatable {
                                  keysOnDemandH264Key, encoderMaxFrameDelayKey, captureQueueDepthKey, captureResolutionKey,
                                  encodingMinBitrateLANKey,
                                  backdropTrackKey, unlockDisplayRefreshKey, remoteRouteLANProofKey,
-                                 displayedPixelsCapKey, displayedPixelsScaleKey, outputLongEdgeKey]
+                                 displayedPixelsCapKey, displayedPixelsScaleKey, outputLongEdgeKey, h264OnLANKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -356,6 +362,8 @@ struct StreamTuning: Equatable {
         }
         if defaults.object(forKey: hevcKey) != nil {
             tuning.hevc = defaults.bool(forKey: hevcKey)
+        } else {
+            tuning.h264OnLAN = defaults.bool(forKey: h264OnLANKey)
         }
         if defaults.object(forKey: encoderPrioritizeSpeedKey) != nil {
             tuning.encoderPrioritizeSpeed = defaults.bool(forKey: encoderPrioritizeSpeedKey)
@@ -449,6 +457,7 @@ struct StreamTuning: Equatable {
         if !frameTiming { parts.append("no frame timing") }
         if encoderMaximumQP != Self.tuned.encoderMaximumQP { parts.append("max QP \(encoderMaximumQP)") }
         if !hevc { parts.append("no HEVC") }
+        if h264OnLAN { parts.append("H.264 on LAN") }
         if encoderPrioritizeSpeed { parts.append("encode speed priority") }
         if hevcLowLatency { parts.append("HEVC low-latency") }
         if encoderPeriodicKeyFrames { parts.append("periodic keys") }

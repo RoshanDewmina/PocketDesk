@@ -116,6 +116,9 @@ struct StreamCounterSnapshot {
     var captureGapMaxMs: Double?
     /// Median gap between ScreenCaptureKit display times of complete frames: the source's real cadence.
     var captureGapMedianMs: Double?
+    /// B0 (`ReconfigureStallTracker`): `SCStream.updateConfiguration` calls this window, and the longest stall ended in it.
+    var reconfigures: Int?
+    var reconfigureStallMs: Double?
     var presentedFrames = 0
     var supersededFrames = 0
     var presentLatencyP50Ms: Double?
@@ -561,6 +564,10 @@ struct StreamStatsReport: Codable, Equatable {
     var remoteRouteLANPair: Bool?
     /// The `LANBitrateFloor` under the estimate this second, nil while the link is not trusted.
     var lanFloorKbps: Double?
+    /// Host, local log only (B0, `ReconfigureStallTracker`): capture reconfigurations requested this window and
+    /// the longest request → first-frame stall that ended in it; both nil when neither happened.
+    var reconfigures: Int?
+    var reconfigureStallMs: Double?
     var senderQueueMs: Double?
     var networkQueueMs: Double?
     var backlogDrainMs: Double?
@@ -689,6 +696,8 @@ struct StreamStatsReport: Codable, Equatable {
                 captureGapP90Ms = Self.round(counters.captureGapP90Ms)
                 captureGapMaxMs = Self.round(counters.captureGapMaxMs)
                 captureGapMedianMs = Self.round(counters.captureGapMedianMs)
+                reconfigures = counters.reconfigures.map { min($0, 100_000) }
+                reconfigureStallMs = Self.round(counters.reconfigureStallMs.map { min($0, 10_000_000) })
                 encodeLatencyMs = Self.round(counters.encodeLatencyP50Ms)
                 encodeLatencyP90Ms = Self.round(counters.encodeLatencyP90Ms)
                 encodeLatencyMaxMs = Self.round(counters.encodeLatencyMaxMs)
@@ -1218,6 +1227,80 @@ struct LatencyWindow {
     }
 }
 
+/// B0: the capture stall an `SCStream.updateConfiguration` costs, from the request to the first complete frame
+/// that can show it: displayed after the newest request and, when the output size changed, at the new size. A
+/// request while one is still open keeps the earlier start, so back-to-back updates are one stall ending at the
+/// newest size. A crop that keeps its pixel size ends at the first frame displayed after the request, which may
+/// still be an old-region frame, so that case can read short. A stall still open after `abandonAfterMs` is
+/// recorded as `abandonAfterMs` (a floor) when complete frames kept arriving without qualifying, and dropped when
+/// none arrived (a still screen sends none). A failed update reverts to the stall that was open before it; a
+/// retired capture cancels the open stall.
+struct ReconfigureStallTracker {
+    static let abandonAfterMs = 3_000.0
+    private struct Pending {
+        var startedMs: Double
+        var latestRequestMs: Double
+        var width: Int
+        var height: Int
+        var sizeChanged: Bool
+        var sawFrame = false
+    }
+    private var pending: Pending?
+    private var beforeLatest: Pending?
+    private var requests = 0
+    private var longestMs: Double?
+
+    mutating func requested(atMs now: Double, width: Int, height: Int, previousWidth: Int, previousHeight: Int) {
+        expire(atMs: now)
+        requests += 1
+        beforeLatest = pending
+        let changed = width != previousWidth || height != previousHeight
+        if var open = pending {
+            open.latestRequestMs = now
+            open.sizeChanged = open.sizeChanged || changed
+            open.width = width; open.height = height
+            pending = open
+        } else {
+            pending = Pending(startedMs: now, latestRequestMs: now, width: width, height: height, sizeChanged: changed)
+        }
+    }
+
+    /// The newest request failed: the stall open before it, if any, still waits for its own frame.
+    mutating func failed() {
+        if pending != nil { pending = beforeLatest }
+        beforeLatest = nil
+    }
+
+    mutating func cancel() { pending = nil; beforeLatest = nil }
+
+    /// A complete frame reached the capture callback at `now`; `displayMs` is its ScreenCaptureKit display time (0 unknown).
+    mutating func frame(atMs now: Double, displayMs: Double, width: Int, height: Int) {
+        expire(atMs: now)
+        guard var open = pending else { return }
+        guard displayMs <= 0 || displayMs >= open.latestRequestMs,
+              !open.sizeChanged || (width == open.width && height == open.height) else {
+            open.sawFrame = true; pending = open
+            return
+        }
+        pending = nil; beforeLatest = nil
+        record(max(0, now - open.startedMs))
+    }
+
+    mutating func drain(atMs now: Double) -> (reconfigures: Int?, longestStallMs: Double?) {
+        expire(atMs: now)
+        defer { requests = 0; longestMs = nil }
+        return (requests > 0 ? requests : nil, longestMs)
+    }
+
+    private mutating func record(_ stallMs: Double) { longestMs = max(longestMs ?? 0, stallMs) }
+
+    private mutating func expire(atMs now: Double) {
+        guard let open = pending, now - open.startedMs > Self.abandonAfterMs else { return }
+        pending = nil; beforeLatest = nil
+        if open.sawFrame { record(Self.abandonAfterMs) }
+    }
+}
+
 /// X17: sender-queue estimates from per-window statistics. None is a wire measurement.
 /// - `senderQueueMs` (the governor's trigger) = the pacer's mean per-packet send delay this window.
 /// - `backlogDrainMs` (overlay only) = max(0, bytes the encoder produced this window − outbound-rtp
@@ -1332,6 +1415,22 @@ final class StreamCounters: @unchecked Sendable {
     private var lastSourceDisplayMs: Double?
     private var recentDecodedRtp: [UInt32] = []
     static let decodedRtpMemory = 32
+    private var reconfigureStall = ReconfigureStallTracker()
+
+    /// Host (B0): the capture asked ScreenCaptureKit for a new configuration of `width`×`height`.
+    func captureReconfigureRequested(atMs now: Double, width: Int, height: Int, previousWidth: Int, previousHeight: Int) {
+        lock.lock(); defer { lock.unlock() }
+        reconfigureStall.requested(atMs: now, width: width, height: height, previousWidth: previousWidth, previousHeight: previousHeight)
+    }
+
+    func captureReconfigureFailed() { lock.lock(); reconfigureStall.failed(); lock.unlock() }
+    func captureReconfigureCancelled() { lock.lock(); reconfigureStall.cancel(); lock.unlock() }
+
+    /// Host (B0): a complete frame of `width`×`height` reached the capture callback.
+    func captureFrameDelivered(atMs now: Double, displayMs: Double, width: Int, height: Int) {
+        lock.lock(); defer { lock.unlock() }
+        reconfigureStall.frame(atMs: now, displayMs: displayMs, width: width, height: height)
+    }
 
     func beginResumeCapture(at time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         lock.lock(); resumeCaptureBeganAt = time; lock.unlock()
@@ -1581,6 +1680,9 @@ final class StreamCounters: @unchecked Sendable {
         result.captureGapP90Ms = captureGaps.p90GapMs
         result.captureGapMaxMs = captureGaps.maxGapMs
         result.captureGapMedianMs = captureDisplayCadence.drain().medianGapMs
+        let reconfigure = reconfigureStall.drain(atMs: MachClock.nowMs())
+        result.reconfigures = reconfigure.reconfigures
+        result.reconfigureStallMs = reconfigure.longestStallMs
         let capture = captureLatency.drain()
         result.captureLatencyP50Ms = capture.p50
         result.captureLatencyP90Ms = capture.p90
