@@ -1,6 +1,7 @@
 """script/physical/run.sh against fake devicectl, ioreg and xcodebuild: no iPhone, no Mac input."""
 import json
 import os
+import re
 import pty
 import select
 import signal
@@ -214,6 +215,63 @@ class PhysicalRunnerTests(unittest.TestCase):
         devicectl = (self.dir / 'devicectl-calls').read_text()
         self.assertNotIn('process', devicectl)
 
+    def test_repo_physical_tests_are_classified(self):
+        self.sources = RUNNER.parents[2] / 'RemotePhysicalUITests'
+        # A new test in a read-only class must be reviewed for Mac input before it can run.
+        tests, cls = {}, None
+        for line in (self.sources / 'PhysicalFeatureTests.swift').read_text().splitlines():
+            if m := re.match(r'\s*(?:final\s+)?(?:class|extension|protocol)\s+(\w+)', line):
+                cls = m.group(1)
+            elif m := re.match(r'\s*func\s+(test\w*)\(\)', line):
+                tests.setdefault(cls, []).append(m.group(1))
+        self.assertEqual(tests, {
+            'PhysicalFeatureTests': ['testBottomKeyboardOpensOnFirstTapAndMoreOffersControlView',
+                                     'testSmartZoomInViewModeSendsNoMacInput', 'testMagnifierOpensDragsAndCloses',
+                                     'testSelectTextFromPictureFindsAndCopiesKnownText', 'testSavedViewRestoresViewport'],
+            'PhysicalMacFixtureFeatureTests': ['testImageClipboardMacToPhone'],
+            'PhysicalMacInputFeatureTests': ['testWorkspaceSwitchesToCalculator', 'testOpenAppTypesCalculatorIntoSpotlight',
+                                             'testImageClipboardPhoneToMac', 'testMacFolderBrowserDownloadsSharedFile'],
+        })
+        r = self.run_runner('--dry-run', '--mac-input')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('Read-only:    PhysicalLifecycleSmokeTests, PhysicalFeatureTests (', r.stdout)
+        self.assertIn('Skipping PhysicalMacFixtureFeatureTests', r.stderr)
+        mac_input = ', '.join(f'PhysicalMacInputFeatureTests/{t}' for t in tests['PhysicalMacInputFeatureTests'])
+        self.assertIn(f'Mac input:    {mac_input};', r.stdout)
+        self.assertNotIn('Never run', r.stdout)
+        self.assertNotIn('WARNING', r.stderr)
+        r = self.run_runner('--dry-run', '--features')
+        self.assertIn('Read-only:    PhysicalLifecycleSmokeTests, PhysicalFeatureTests, PhysicalMacFixtureFeatureTests (', r.stdout)
+        r = self.run_runner('--only', 'PhysicalFeatureTests/testOpenAppTypesCalculatorIntoSpotlight')
+        self.assertEqual(r.returncode, 2)
+        self.assertIn('does not exist', r.last)
+        self.assertEqual(self.calls(), [])
+
+    def test_feature_classes_run_only_with_the_features_flag(self):
+        (self.sources / 'PhysicalFixtureTests.swift').write_text(
+            'final class PhysicalMacFixtureFeatureTests: XCTestCase {\n    func testMacImage() throws {}\n}\n')
+        r = self.run_runner('--dry-run', '--only', 'PhysicalMacFixtureFeatureTests')
+        self.assertEqual(r.returncode, 2)
+        self.assertIn('add --features', r.last)
+        r = self.run_runner('--skip-build')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.calls()[1]['only'], [f'{TARGET}/PhysicalLifecycleSmokeTests'])
+        self.assertEqual(self.calls()[1]['env'], {'TEST_RUNNER_FARSIDE_PHYSICAL_LIFECYCLE_SMOKE': '1'})
+        (self.dir / 'xcodebuild-calls').unlink()
+        r = self.run_runner('--skip-build', '--features')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.calls()[1]['only'], [f'{TARGET}/PhysicalLifecycleSmokeTests', f'{TARGET}/PhysicalMacFixtureFeatureTests'])
+        self.assertEqual(self.calls()[1]['env'], {'TEST_RUNNER_FARSIDE_PHYSICAL_LIFECYCLE_SMOKE': '1',
+                                                  'TEST_RUNNER_FARSIDE_PHYSICAL_FEATURES': '1'})
+
+    def test_read_only_limit_grows_with_the_selected_tests(self):
+        r = self.run_runner('--dry-run', read_only_per_test=150)
+        self.assertIn('limit 480 s', r.stdout.split('Read-only:')[1].splitlines()[0])
+        (self.sources / 'PhysicalLifecycleSmokeTests.swift').write_text(
+            'final class PhysicalLifecycleSmokeTests: XCTestCase {\n' + ''.join(f'    func testCase{i}() throws {{}}\n' for i in range(11)) + '}\n')
+        r = self.run_runner('--dry-run', read_only_per_test=150)
+        self.assertIn('limit 1650 s', r.stdout.split('Read-only:')[1].splitlines()[0])
+
     def test_locked_iphone_stops_with_one_instruction(self):
         self.state({'devices': [IPHONE], 'lock': {'passcodeRequired': True, 'unlockedSinceBoot': True}})
         r = self.run_runner('--dry-run')
@@ -264,11 +322,11 @@ class PhysicalRunnerTests(unittest.TestCase):
         r = self.run_runner('--dry-run', '--only', 'PhysicalSpotlightTests')
         self.assertEqual(r.returncode, 2)
         self.assertIn('Add --mac-input', r.last)
-        (self.sources / 'PhysicalFeatureTests.swift').write_text('final class PhysicalFeatureTests: XCTestCase {\n    func testOpenApp() throws {}\n}\n')
+        (self.sources / 'PhysicalUnreviewedTests.swift').write_text('final class PhysicalUnreviewedTests: XCTestCase {\n    func testOpenApp() throws {}\n}\n')
         r = self.run_runner('--dry-run')
         self.assertEqual(r.returncode, 0)
-        self.assertIn('Never run:    PhysicalFeatureTests', r.stdout)
-        r = self.run_runner('--dry-run', '--only', 'PhysicalFeatureTests')
+        self.assertIn('Never run:    PhysicalUnreviewedTests', r.stdout)
+        r = self.run_runner('--dry-run', '--only', 'PhysicalUnreviewedTests')
         self.assertEqual(r.returncode, 2)
         self.assertIn('not a known physical test class', r.last)
 
