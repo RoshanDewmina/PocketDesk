@@ -625,11 +625,12 @@ enum WidenCapSwitch {
 }
 
 /// Internal key for the baseline-Fill crop (`defaults write <phone bundle id> PocketDeskBaselineFillCrop
-/// -bool YES`, then relaunch the app). Off by default until the device check of pans at that zoom.
+/// -bool NO`, then relaunch the app, turns it off). On by default since the 8 Oct 2026 device A/B: portrait Fill
+/// at 57 fps (95 % of moving seconds at 50+) and sharpness 0.95, against 30 fps and 0.63 with the whole display.
 enum BaselineFillCropSwitch {
     static let defaultsKey = "PocketDeskBaselineFillCrop"
     // `bool(forKey:)` also reads a `-PocketDeskBaselineFillCrop YES` launch argument, which is a string.
-    static let isOn = UserDefaults.standard.bool(forKey: defaultsKey)
+    static let isOn = UserDefaults.standard.object(forKey: defaultsKey) == nil || UserDefaults.standard.bool(forKey: defaultsKey)
 }
 
 /// Kill switch for widening a baseline-Fill crop while a pan outruns it (`defaults write <phone bundle id>

@@ -204,6 +204,15 @@ struct StreamTuning: Equatable {
         // against 43–60 % uncapped; 1520 matched full-size sharpness where 1216 softened small text.
         tuning.displayedPixelsCap = true
         tuning.displayedPixelsScale = 1.25
+        // 8 Oct 2026 device A/B: HEVC with RealTime off encoded in 7 ms p90 against 15-16 ms, at 99 % of
+        // moving seconds at 50+ fps and 35 % less bitrate than H.264, thermal state nominal throughout.
+        tuning.encoderRealTime = false
+        // Same session: the portrait Fill crop with output hold and ambiguous-frame drop kept 60 fps with fewer
+        // key frames; the remote-route LAN proof trusted the link; scroll smoothing halved the largest jump.
+        tuning.cropHoldsOutput = true
+        tuning.cropDropsAmbiguousFrames = true
+        tuning.remoteRouteLANProof = true
+        tuning.scrollSmoothing = true
         return tuning
     }()
     static let legacy: StreamTuning = {
@@ -464,9 +473,9 @@ struct StreamTuning: Equatable {
         if defaults.object(forKey: backdropTrackKey) != nil {
             tuning.backdropTrack = defaults.bool(forKey: backdropTrackKey)
         }
-        tuning.remoteRouteLANProof = defaults.bool(forKey: remoteRouteLANProofKey)
+        if defaults.object(forKey: remoteRouteLANProofKey) != nil { tuning.remoteRouteLANProof = defaults.bool(forKey: remoteRouteLANProofKey) }
         tuning.fastStartLAN = defaults.bool(forKey: fastStartLANKey)
-        tuning.scrollSmoothing = defaults.bool(forKey: scrollSmoothingKey)
+        if defaults.object(forKey: scrollSmoothingKey) != nil { tuning.scrollSmoothing = defaults.bool(forKey: scrollSmoothingKey) }
         tuning.scrollTargetsStream = defaults.bool(forKey: scrollTargetsStreamKey)
         return tuning
     }

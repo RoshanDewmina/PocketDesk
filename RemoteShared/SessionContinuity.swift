@@ -85,11 +85,11 @@ enum KeysOnDemandRequest {
 /// Phone: offer to answer the Mac's one-hop local link proof on a remote (Anywhere) route
 /// (`MacShareBlocker.Handshake.lanProof`; the Mac side is `StreamTuning.remoteRouteLANProof`).
 /// Launch argument `-PocketDeskRemoteRouteLANProofRequest YES` (or the same defaults key), then relaunch.
-/// Off by default: the phone never offers, and a Mac never sends it an endpoint on a remote route.
+/// On by default since the 8 Oct 2026 device A/B (the session was LAN-trusted ~80 % of the time); NO turns it off.
 enum RemoteRouteLANProofRequest {
     static let defaultsKey = "PocketDeskRemoteRouteLANProofRequest"
     static func isEnabled(_ defaults: UserDefaults = .standard) -> Bool {
-        defaults.bool(forKey: defaultsKey)
+        defaults.object(forKey: defaultsKey) == nil || defaults.bool(forKey: defaultsKey)
     }
 }
 

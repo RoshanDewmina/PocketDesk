@@ -42,8 +42,10 @@ struct ViewportRegion: Codable, Equatable {
 enum ScrollFixesSwitch {
     static let defaultsKey = "PocketDeskScrollFixes"
     // NSArgumentDomain stores launch overrides as strings (YES/NO), unlike defaults write.
-    // Foundation's Boolean accessor handles both; absent remains off.
-    static func enabled(defaults: UserDefaults = .standard) -> Bool { defaults.bool(forKey: defaultsKey) }
+    // Foundation's Boolean accessor handles both; absent is on since the 8 Oct 2026 device A/B.
+    static func enabled(defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: defaultsKey) == nil || defaults.bool(forKey: defaultsKey)
+    }
     static let isOn = enabled()
 }
 
