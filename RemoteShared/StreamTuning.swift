@@ -82,6 +82,20 @@ struct StreamTuning: Equatable {
     var outputLongEdgeOverride: Int?
     /// G4: crop the capture to the phone's reported viewport (`SessionFeature.viewportCapture`).
     var viewportCapture = true
+    /// Fill view (7 Oct 2026): a crop's output is its phone-native size × this (0.5…1.0). Below 1 the
+    /// visible rect is upscaled a little on the phone in exchange for a cheaper encode; the crop-gain
+    /// gate is still judged at phone-native size, so the knob never flips a crop back to the whole display.
+    var cropPixelScale = 1.0
+    /// A crop rect change at the same viewport zoom (a pan, the phone's pan widening, the return to rest)
+    /// keeps the held output size while it fits the budget, so only the ScreenCaptureKit source rect
+    /// moves and the encoder never restarts for a pan (ViewportCapturePolicy).
+    var cropHoldsOutput = false
+    /// A frame of the same pixel size shown after a region switch was requested and before it completed
+    /// cannot be tagged with its region (CaptureFrameRegionPolicy); drop it rather than let the phone
+    /// place it by the status echo, which is still the old rect.
+    var cropDropsAmbiguousFrames = false
+    /// Holding the output makes every pan re-crop a same-size switch, so the hold always drops those frames too.
+    var dropsAmbiguousFrames: Bool { cropDropsAmbiguousFrames || cropHoldsOutput }
     /// The host asks for and applies the phone's viewport: to crop, or only to size the whole display for
     /// the displayed-pixels cap while cropping stays off (it never crops without `viewportCapture`).
     var acceptsViewport: Bool { viewportCapture || displayedPixelsCap }
@@ -212,6 +226,10 @@ struct StreamTuning: Equatable {
     static let outputLongEdgeKey = "PocketDeskOutputLongEdge"
     static let outputLongEdgeRange = 256...4096
     static let viewportCaptureKey = "PocketDeskViewportCapture"
+    static let cropPixelScaleKey = "PocketDeskCropPixelScale"
+    static let cropPixelScaleRange = 0.5...1.0
+    static let cropHoldsOutputKey = "PocketDeskCropHoldsOutput"
+    static let cropDropsAmbiguousFramesKey = "PocketDeskCropDropsAmbiguousFrames"
     static let ladderKey = "PocketDeskLadder"
     static let senderQueueGovernorKey = "PocketDeskSenderQueueGovernor"
     static let senderQueueGovernorApplyKey = "PocketDeskSenderQueueGovernorApply"
@@ -252,7 +270,8 @@ struct StreamTuning: Equatable {
                                  keysOnDemandH264Key, encoderMaxFrameDelayKey, captureQueueDepthKey, captureResolutionKey,
                                  encodingMinBitrateLANKey,
                                  backdropTrackKey, unlockDisplayRefreshKey, remoteRouteLANProofKey,
-                                 displayedPixelsCapKey, displayedPixelsScaleKey, outputLongEdgeKey]
+                                 displayedPixelsCapKey, displayedPixelsScaleKey, outputLongEdgeKey,
+                                 cropPixelScaleKey, cropHoldsOutputKey, cropDropsAmbiguousFramesKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -321,6 +340,16 @@ struct StreamTuning: Equatable {
         }
         if defaults.object(forKey: viewportCaptureKey) != nil {
             tuning.viewportCapture = defaults.bool(forKey: viewportCaptureKey)
+        }
+        if defaults.object(forKey: cropPixelScaleKey) != nil {
+            let scale = defaults.double(forKey: cropPixelScaleKey)
+            if cropPixelScaleRange.contains(scale) { tuning.cropPixelScale = scale }
+        }
+        if defaults.object(forKey: cropHoldsOutputKey) != nil {
+            tuning.cropHoldsOutput = defaults.bool(forKey: cropHoldsOutputKey)
+        }
+        if defaults.object(forKey: cropDropsAmbiguousFramesKey) != nil {
+            tuning.cropDropsAmbiguousFrames = defaults.bool(forKey: cropDropsAmbiguousFramesKey)
         }
         if defaults.object(forKey: ladderKey) != nil {
             tuning.ladder = defaults.bool(forKey: ladderKey)
@@ -441,6 +470,9 @@ struct StreamTuning: Equatable {
         if displayedPixelsScale != 1 { parts.append("displayed ×\(String(format: "%g", displayedPixelsScale))") }
         if let outputLongEdgeOverride { parts.append("output edge \(outputLongEdgeOverride)") }
         if !viewportCapture { parts.append("whole-display capture") }
+        if cropPixelScale != 1 { parts.append("crop ×\(String(format: "%g", cropPixelScale))") }
+        if cropHoldsOutput { parts.append("crop holds output") }
+        if cropDropsAmbiguousFrames { parts.append("crop drops ambiguous") }
         if !ladder { parts.append("no ladder") }
         if let encoderMaxInFlight { parts.append("max in-flight \(encoderMaxInFlight)") }
         if lanBandwidthHeadroom > 1 { parts.append("LAN ceiling ×\(String(format: "%g", lanBandwidthHeadroom))") }

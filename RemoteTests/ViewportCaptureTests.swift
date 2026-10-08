@@ -33,10 +33,11 @@ final class ViewportCaptureTests: XCTestCase {
     /// replay (G04, testSmallPinchAndPanReplayKeepsCoveredRegionAndEncoderSizeStable) demands.
     private func region(_ viewport: ViewportRegion?, on display: DisplayGeometry? = nil,
                         output: CapturePixelDimensions, tuning: StreamTuning = .tuned,
-                        previous: CaptureRegion? = nil, phoneNative: Bool = true,
+                        previous: CaptureRegion? = nil, previousZoom: Double? = nil, phoneNative: Bool = true,
                         nearNative: Bool = false, keepBand: Bool = true, cropEngaged: Bool? = nil) -> CaptureRegion {
         Policy.region(for: viewport, display: display ?? asus, output: output, tuning: tuning, previous: previous,
-                      phoneNative: phoneNative, nearNative: nearNative, keepBand: keepBand, cropEngaged: cropEngaged)
+                      previousZoom: previousZoom, phoneNative: phoneNative, nearNative: nearNative, keepBand: keepBand,
+                      cropEngaged: cropEngaged)
     }
 
     private func size(_ width: Int, _ height: Int) -> CapturePixelDimensions {
@@ -1077,6 +1078,115 @@ final class ViewportCaptureTests: XCTestCase {
             reference[key] = nil
         }
         XCTAssertEqual(unchanged, reference)
+    }
+
+    // MARK: Fill view (claude/fill-view, 7 Oct)
+
+    /// A baseline-Fill iPhone 17 in portrait on More Space: 571.7 pt of the 1920 visible at 2.1094 px per
+    /// point, `width` points wide and centred like the phone's pan widening.
+    private func outputSize(_ region: CaptureRegion) -> CapturePixelDimensions { size(region.outputWidth, region.outputHeight) }
+
+    private func fillPortrait(width: Double = 1206 / 2.1094, epoch: UInt64 = 1) -> ViewportRegion {
+        ViewportRegion(epoch: epoch, x: (Double(moreSpace.size.width) - width) / 2, y: 0, width: width,
+                       height: Double(moreSpace.size.height), pixelWidth: 1206, pixelHeight: 2622, zoom: 2.1094)
+    }
+
+    func testAFillPanAtTheSameZoomKeepsTheOutputAndMovesOnlyTheSourceRect() throws {
+        let whole = try output(moreSpace, fps: 60)
+        var holds = StreamTuning.tuned
+        holds.cropHoldsOutput = true
+        let rest = region(fillPortrait(), on: moreSpace, output: whole, tuning: holds)
+        XCTAssertEqual(outputSize(rest), size(1328, 2496), "phone-native, 8 % margin, full height")
+        XCTAssertFalse(rest.isWholeDisplay)
+
+        let widened = fillPortrait(width: 2 * 1206 / 2.1094, epoch: 2)
+        let pan = region(widened, on: moreSpace, output: whole, tuning: holds, previous: rest, previousZoom: 2.1094)
+        XCTAssertFalse(pan.isWholeDisplay)
+        XCTAssertGreaterThanOrEqual(pan.width, widened.width, "the wider rect is streamed")
+        XCTAssertEqual(outputSize(pan), outputSize(rest), "same output: no encoder restart")
+        XCTAssertLessThan(try sharpness(pan, widened, on: moreSpace), try sharpness(rest, fillPortrait(), on: moreSpace),
+                          "stretched into the held output while the finger moves")
+        let today = region(widened, on: moreSpace, output: whole, previous: rest, previousZoom: 2.1094)
+        XCTAssertNotEqual(outputSize(today), outputSize(rest),
+                          "without the switch the widening changes the output, as today")
+        XCTAssertEqual(region(widened, on: moreSpace, output: whole, tuning: holds, previous: rest), today,
+                       "no previous zoom (output just changed): no hold")
+
+        let back = region(fillPortrait(epoch: 3), on: moreSpace, output: whole, tuning: holds, previous: pan, previousZoom: 2.1094)
+        XCTAssertEqual(outputSize(back), outputSize(rest), "sharp again at rest, same output")
+        XCTAssertLessThan(back.width, pan.width)
+
+        let pinched = iPhone17(zoom: 2.5, portrait: true, on: moreSpace, epoch: 4)
+        let zoomed = region(pinched, on: moreSpace, output: whole, tuning: holds, previous: rest, previousZoom: 2.1094)
+        XCTAssertNotEqual(zoomed.outputWidth, rest.outputWidth, "a pinch is not a pan: the output follows the zoom")
+        XCTAssertEqual(zoomed, region(pinched, on: moreSpace, output: whole, previous: rest), "exactly as without the switch")
+    }
+
+    func testAPinchOutsWidenedOutputDoesNotOutliveThePinch() throws {
+        let whole = try output(moreSpace, fps: 60)
+        var holds = StreamTuning.tuned
+        holds.cropHoldsOutput = true
+        let rest = region(fillPortrait(), on: moreSpace, output: whole, tuning: holds)
+        // A continuing pinch-out asks for twice its visible rect at the new zoom: a new zoom, so no hold.
+        let pinch = iPhone17(zoom: 1.6, portrait: true, on: moreSpace, epoch: 2)
+        let wide = ViewportRegion(epoch: 2, x: pinch.x - pinch.width / 2, y: 0, width: pinch.width * 2,
+                                  height: Double(moreSpace.size.height), pixelWidth: 1206, pixelHeight: 2622, zoom: 1.6)
+        let widened = region(wide, on: moreSpace, output: whole, tuning: holds, previous: rest, previousZoom: 2.1094)
+        XCTAssertFalse(widened.isWholeDisplay)
+        XCTAssertEqual(widened, region(wide, on: moreSpace, output: whole, previous: rest), "as without the switch")
+        // The settled exact rect at that zoom shrinks the crop: sized by the band again, not held at the wide output.
+        let settled = region(iPhone17(zoom: 1.6, portrait: true, on: moreSpace, epoch: 3), on: moreSpace, output: whole, tuning: holds, previous: widened, previousZoom: 1.6)
+        XCTAssertEqual(settled, region(iPhone17(zoom: 1.6, portrait: true, on: moreSpace, epoch: 3), on: moreSpace, output: whole, previous: widened))
+        XCTAssertNotEqual(outputSize(settled), outputSize(widened))
+        XCTAssertLessThan(settled.outputWidth, widened.outputWidth)
+    }
+
+    func testCropPixelScaleShrinksTheOutputWhileTheGateStillSeesPhoneNative() throws {
+        let whole = try output(moreSpace, fps: 60)
+        var scaled = StreamTuning.tuned
+        scaled.cropPixelScale = 0.75
+        let viewport = fillPortrait()
+        let full = region(viewport, on: moreSpace, output: whole)
+        let three = region(viewport, on: moreSpace, output: whole, tuning: scaled)
+        XCTAssertEqual(three.rect, full.rect, "the same crop, fewer pixels")
+        XCTAssertEqual(outputSize(three), size(1008, 1872), "1328x2486 × 0.75, aligned up")
+        XCTAssertEqual(try sharpness(three, viewport, on: moreSpace), 0.75 * (try sharpness(full, viewport, on: moreSpace)), accuracy: 0.02)
+        for scale in [0.5, 0.75, 1] {
+            scaled.cropPixelScale = scale
+            for engaged in [false, true] {
+                XCTAssertFalse(region(viewport, on: moreSpace, output: whole, tuning: scaled, nearNative: true,
+                                      cropEngaged: engaged).isWholeDisplay, "gain judged at phone-native: scale \(scale)")
+            }
+        }
+        scaled.cropPixelScale = 0.75
+        let landscape = iPhone17(zoom: 1.5, portrait: false, on: moreSpace)
+        let before = region(landscape, on: moreSpace, output: whole)
+        let after = region(landscape, on: moreSpace, output: whole, tuning: scaled)
+        XCTAssertEqual(after.rect, before.rect)
+        XCTAssertEqual(after.outputWidth % 16, 0)
+        XCTAssertLessThan(after.outputWidth * after.outputHeight, before.outputWidth * before.outputHeight)
+    }
+
+    func testOnlyASameSizeFrameShownAfterTheRequestIsAmbiguous() {
+        typealias Frames = CaptureFrameRegionPolicy
+        let a = CaptureRegion(epoch: 29, x: 32, y: 268, width: 1216, height: 560, outputWidth: 2432, outputHeight: 1200)
+        let b = CaptureRegion(epoch: 33, x: 32, y: 148, width: 1216, height: 600, outputWidth: 2432, outputHeight: 1200)
+        let c = CaptureRegion(epoch: 55, x: 36, y: 340, width: 1208, height: 488, outputWidth: 2416, outputHeight: 976)
+        let move = Frames.Switch(previous: a, next: b, requestedMs: 1000)
+        XCTAssertFalse(Frames.isAmbiguous(displayMs: 990, bufferWidth: 2432, bufferHeight: 1200, inFlight: move), "the old crop")
+        XCTAssertTrue(Frames.isAmbiguous(displayMs: 1010, bufferWidth: 2432, bufferHeight: 1200, inFlight: move))
+        XCTAssertTrue(Frames.isAmbiguous(displayMs: 0, bufferWidth: 2432, bufferHeight: 1200, inFlight: move), "no display time")
+        XCTAssertFalse(Frames.isAmbiguous(displayMs: 1010, bufferWidth: 1600, bufferHeight: 640, inFlight: move), "neither size")
+        let resize = Frames.Switch(previous: b, next: c, requestedMs: 2000)
+        for (width, height) in [(2432, 1200), (2416, 976)] {
+            XCTAssertFalse(Frames.isAmbiguous(displayMs: 2010, bufferWidth: width, bufferHeight: height, inFlight: resize),
+                           "a size change tells by itself")
+        }
+        XCTAssertFalse(Frames.isAmbiguous(displayMs: 1010, bufferWidth: 2432, bufferHeight: 1200, inFlight: nil))
+        // Every ambiguous frame is one `region` leaves untagged, never one it can place.
+        for ms in [0.0, 1000, 1010, 5000] {
+            XCTAssertNil(Frames.region(displayMs: ms, bufferWidth: 2432, bufferHeight: 1200, applied: a, inFlight: move, lastSwitch: nil))
+        }
     }
 }
 

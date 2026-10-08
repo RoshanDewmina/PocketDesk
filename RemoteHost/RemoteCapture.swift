@@ -1057,6 +1057,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     private var applied: CaptureInputs
     private var viewport: ViewportRegion?
     private var appliedRegion: CaptureRegion
+    /// The viewport zoom `appliedRegion` was laid out for (same-zoom hold, ViewportCapturePolicy).
+    private var appliedZoom: Double?
     /// The whole-display output changed, so the next region must not keep a size held for the old one.
     private var heldOutputInvalid = false
     /// The region switch whose `updateConfiguration` has not completed, and the last completed one
@@ -1226,6 +1228,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         inFlightWaiters = waiters
         waiters = []
         let previous = heldOutputInvalid ? nil : appliedRegion
+        let previousZoom = heldOutputInvalid ? nil : appliedZoom
+        let viewportZoom = viewport?.zoom
         heldOutputInvalid = false
         // The pixel budget stays the session rate's: a slower rung must not grow the picture.
         guard let budget = RemoteCaptureConfiguration.outputSize(
@@ -1238,8 +1242,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         }
         let layout = DisplayedPixelsPolicy.layout(
             viewport: viewport, display: geometry, tuning: tuning, budget: budget, sizeFraction: inputs.sizeFraction,
-            previous: previous, applied: appliedRegion, inputsChanged: inputs != applied, held: displayedHold,
-            now: CACurrentMediaTime()
+            previous: previous, previousZoom: previousZoom, applied: appliedRegion, inputsChanged: inputs != applied,
+            held: displayedHold, now: CACurrentMediaTime()
         ) { edge in
             RemoteCaptureConfiguration.outputSize(
                 contentSize: geometry.size, pointPixelScale: geometry.pointPixelScale, quality: inputs.quality,
@@ -1251,6 +1255,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         scheduleDisplayedDwell(at: layout.decision.deadline)
         let geometryChanges = ViewportCapturePolicy.needsReconfiguration(from: appliedRegion, to: region)
         guard inputs != applied || geometryChanges else {
+            appliedZoom = viewportZoom
             publish(region)
             completeConfigurationUpdate(succeeded: true)
             return
@@ -1270,6 +1275,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         if geometryChanges {
             regionSwitchInFlight = CaptureFrameRegionPolicy.Switch(
                 previous: previousRegion, next: region, requestedMs: CaptureTiming.milliseconds(fromMachTicks: updateRequestedAt))
+            peer?.counters.regionSwitched()
         }
         stream.updateConfiguration(configuration) { [self] error in
             queue.async { [self] in
@@ -1293,6 +1299,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
                         cachedDisplayTime: lastBufferDisplayTime, updateRequestedAt: updateRequestedAt,
                         previous: previousRegion, next: region
                     ) { lastBuffer = nil; lastBufferRegion = nil }
+                    appliedZoom = viewportZoom
                     publish(region)
                 } else if requested == inputs {
                     requested = applied
@@ -1470,13 +1477,21 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         #endif
         startup.completeFrame()
         peer?.captureContentChanged()
+        let displayMs = displayTime > 0 ? CaptureTiming.milliseconds(fromMachTicks: displayTime) : 0
+        let bufferWidth = CVPixelBufferGetWidth(buffer), bufferHeight = CVPixelBufferGetHeight(buffer)
+        // Before it becomes the idle re-send's cache: a frame nobody can place must not come back later.
+        if tuning.dropsAmbiguousFrames,
+           CaptureFrameRegionPolicy.isAmbiguous(displayMs: displayMs, bufferWidth: bufferWidth, bufferHeight: bufferHeight,
+                                                inFlight: regionSwitchInFlight) {
+            peer?.counters.regionFrameDropped()
+            return
+        }
         lastBuffer = buffer
         bufferVersion &+= 1
         lastBufferDisplayTime = displayTime
         let timing = sourceTiming.captured(displayTicks: displayTime, atMs: capturedMs)
-        let displayMs = displayTime > 0 ? CaptureTiming.milliseconds(fromMachTicks: displayTime) : 0
         let region = CaptureFrameRegionPolicy.region(
-            displayMs: displayMs, bufferWidth: CVPixelBufferGetWidth(buffer), bufferHeight: CVPixelBufferGetHeight(buffer),
+            displayMs: displayMs, bufferWidth: bufferWidth, bufferHeight: bufferHeight,
             applied: appliedRegion, inFlight: regionSwitchInFlight, lastSwitch: lastRegionSwitch)
         lastBufferRegion = region
         if startup.isReady { deliver(buffer, at: now, displayMs: displayMs, timing: timing, region: region) }

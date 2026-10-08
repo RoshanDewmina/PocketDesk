@@ -183,6 +183,10 @@ struct StreamCounterSnapshot {
     var encoderDropped: Int?
     var encoderDeliveryDrops: Int?
     var encoderSilentDrops: Int?
+    /// Host: capture region switches (`SCStream.updateConfiguration` for a crop rect or output change) and
+    /// frames dropped as untaggable during one (`StreamTuning.cropDropsAmbiguousFrames`) in this sample.
+    var regionSwitches: Int?
+    var regionFramesDropped: Int?
     /// Mac audio source buffers the 120 ms age fence refused in this sample.
     var audioSourceDrops: Int?
     var encoderSubmitted: Int?
@@ -519,6 +523,10 @@ struct StreamStatsReport: Codable, Equatable {
     var encoderDropped: Int?
     var encoderDeliveryDrops: Int?
     var encoderSilentDrops: Int?
+    /// Host: capture region switches (`SCStream.updateConfiguration` for a crop rect or output change) and
+    /// frames dropped as untaggable during one (`StreamTuning.cropDropsAmbiguousFrames`) in this sample.
+    var regionSwitches: Int?
+    var regionFramesDropped: Int?
     /// Mac audio source buffers the 120 ms age fence refused in this sample.
     var audioSourceDrops: Int?
     var encoderSubmitted: Int?
@@ -708,6 +716,8 @@ struct StreamStatsReport: Codable, Equatable {
                 encoderDropped = counters.encoderDropped
                 encoderDeliveryDrops = counters.encoderDeliveryDrops
                 encoderSilentDrops = counters.encoderSilentDrops
+                regionSwitches = counters.regionSwitches
+                regionFramesDropped = counters.regionFramesDropped
                 audioSourceDrops = counters.audioSourceDrops
                 encoderSubmitted = counters.encoderSubmitted
                 encoderSuperseded = counters.encoderSuperseded
@@ -1315,6 +1325,8 @@ final class StreamCounters: @unchecked Sendable {
     private var encoderDropped = 0
     private var encoderDeliveryDrops = 0
     private var encoderSilentDrops = 0
+    private var regionSwitches = 0
+    private var regionFramesDropped = 0
     private var audioSourceDrops = 0
     private var gateSubmitted = 0
     private var gateSuperseded = 0
@@ -1513,6 +1525,16 @@ final class StreamCounters: @unchecked Sendable {
         lock.lock(); encoderDropped += 1; lock.unlock()
     }
 
+    /// Host: the capture asked ScreenCaptureKit for a new region (rect or output size).
+    func regionSwitched() {
+        lock.lock(); regionSwitches += 1; lock.unlock()
+    }
+
+    /// Host: a frame dropped because no region could be tagged during a same-size switch.
+    func regionFrameDropped() {
+        lock.lock(); regionFramesDropped += 1; lock.unlock()
+    }
+
     /// Host: Mac audio source buffers the 120 ms age fence refused (PocketDeskAudioSourceAge).
     func audioSourceDropped(_ count: Int = 1) {
         guard count > 0 else { return }
@@ -1660,6 +1682,8 @@ final class StreamCounters: @unchecked Sendable {
         result.encoderDropped = encode.count > 0 || encoderDropped > 0 ? encoderDropped : nil
         result.encoderDeliveryDrops = encoderDeliveryDrops > 0 ? encoderDeliveryDrops : nil
         result.encoderSilentDrops = encode.count > 0 || encoderSilentDrops > 0 ? encoderSilentDrops : nil
+        result.regionSwitches = regionSwitches > 0 ? regionSwitches : nil
+        result.regionFramesDropped = regionFramesDropped > 0 ? regionFramesDropped : nil
         result.audioSourceDrops = audioSourceDrops > 0 ? audioSourceDrops : nil
         let gateActive = gateSubmitted > 0 || gateSuperseded > 0 || gateRetired > 0 || gateOutputs > 0
         result.encoderSubmitted = gateActive ? gateSubmitted : nil
@@ -1685,6 +1709,8 @@ final class StreamCounters: @unchecked Sendable {
         encoderDropped = 0
         encoderDeliveryDrops = 0
         encoderSilentDrops = 0
+        regionSwitches = 0
+        regionFramesDropped = 0
         audioSourceDrops = 0
         gateSubmitted = 0
         gateSuperseded = 0
