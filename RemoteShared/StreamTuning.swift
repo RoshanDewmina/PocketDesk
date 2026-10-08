@@ -126,6 +126,12 @@ struct StreamTuning: Equatable {
     /// Owned encoder: ask VideoToolbox to favour encode speed over quality (an optional hint; a rejecting
     /// encoder keeps its default). Not offered by the low-latency rate controller.
     var encoderPrioritizeSpeed = false
+    /// Owned encoder: `kVTCompressionPropertyKey_RealTime`. 7 Oct 2026 HEVC bench (M4 Air, paced cadence): off
+    /// halved the still-frame VT p90 (2560 at 60 fps: 21 → 10 ms, gate drops 90 → 2). On until a device A/B.
+    var encoderRealTime = true
+    /// Owned encoder: ExpectedFrameRate never below this (30, 60 or 120; 0 is the session rate). Same bench: 60
+    /// while frames arrived at 30 halved the still-frame VT p90. 0 until a device A/B.
+    var encoderMinExpectedFPS = 0
     /// Owned HEVC encoder: request VideoToolbox's low-latency rate control; creation falls back to the
     /// standard hardware session if it is refused.
     var hevcLowLatency = false
@@ -258,6 +264,9 @@ struct StreamTuning: Equatable {
     static let hevcKey = "PocketDeskHEVC"
     static let h264OnLANKey = "PocketDeskH264OnLAN"
     static let encoderPrioritizeSpeedKey = "PocketDeskEncoderPrioritizeSpeed"
+    static let encoderRealTimeKey = "PocketDeskEncoderRealTime"
+    static let encoderMinExpectedFPSKey = "PocketDeskEncoderMinExpectedFPS"
+    static let encoderMinExpectedFPSValues: Set<Int> = [0, 30, 60, 120]
     static let hevcLowLatencyKey = "PocketDeskHEVCLowLatency"
     static let encoderPeriodicKeyFramesKey = "PocketDeskEncoderPeriodicKeyFrames"
     static let keysOnDemandKey = "PocketDeskKeysOnDemand"
@@ -291,7 +300,8 @@ struct StreamTuning: Equatable {
                                  backdropTrackKey, unlockDisplayRefreshKey, remoteRouteLANProofKey,
                                  displayedPixelsCapKey, displayedPixelsScaleKey, outputLongEdgeKey, fastStartLANKey,
                                  scrollSmoothingKey, scrollTargetsStreamKey, h264OnLANKey,
-                                 cropPixelScaleKey, cropHoldsOutputKey, cropDropsAmbiguousFramesKey]
+                                 cropPixelScaleKey, cropHoldsOutputKey, cropDropsAmbiguousFramesKey,
+                                 encoderRealTimeKey, encoderMinExpectedFPSKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -411,6 +421,13 @@ struct StreamTuning: Equatable {
         if defaults.object(forKey: encoderPrioritizeSpeedKey) != nil {
             tuning.encoderPrioritizeSpeed = defaults.bool(forKey: encoderPrioritizeSpeedKey)
         }
+        if defaults.object(forKey: encoderRealTimeKey) != nil {
+            tuning.encoderRealTime = defaults.bool(forKey: encoderRealTimeKey)
+        }
+        if defaults.object(forKey: encoderMinExpectedFPSKey) != nil {
+            let fps = defaults.integer(forKey: encoderMinExpectedFPSKey)
+            tuning.encoderMinExpectedFPS = encoderMinExpectedFPSValues.contains(fps) ? fps : 0
+        }
         if defaults.object(forKey: hevcLowLatencyKey) != nil {
             tuning.hevcLowLatency = defaults.bool(forKey: hevcLowLatencyKey)
         }
@@ -508,6 +525,8 @@ struct StreamTuning: Equatable {
         if !hevc { parts.append("no HEVC") }
         if h264OnLAN { parts.append("H.264 on LAN") }
         if encoderPrioritizeSpeed { parts.append("encode speed priority") }
+        if !encoderRealTime { parts.append("encoder real time off") }
+        if encoderMinExpectedFPS > 0 { parts.append("expected fps ≥\(encoderMinExpectedFPS)") }
         if hevcLowLatency { parts.append("HEVC low-latency") }
         if encoderPeriodicKeyFrames { parts.append("periodic keys") }
         if keysOnDemand { parts.append("keys on demand") }

@@ -695,3 +695,127 @@ extension OwnedVTEncoderTests {
         }
     }
 }
+
+extension OwnedVTEncoderTests {
+    func testEncoderRealTimeAndExpectedFPSFlagsDefaultToTodayResolveAndReachTheOptions() throws {
+        for key in [StreamTuning.encoderRealTimeKey, StreamTuning.encoderMinExpectedFPSKey] {
+            XCTAssertTrue(StreamTuning.experimentKeys.contains(key), key)
+        }
+        let suite = "OwnedVTEncoderTests.hints.\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let today = StreamTuning.resolve(defaults: defaults)
+        XCTAssertEqual(today, StreamTuning.tuned)
+        XCTAssertTrue(today.encoderRealTime)
+        XCTAssertEqual(today.encoderMinExpectedFPS, 0)
+        XCTAssertTrue(OwnedEncoderOptions(today).realTime)
+        XCTAssertEqual(OwnedEncoderOptions(today).minimumExpectedFPS, 0)
+        for part in ["real time", "expected fps"] { XCTAssertFalse(today.summary.contains(part), today.summary) }
+
+        defaults.set("NO", forKey: StreamTuning.encoderRealTimeKey)
+        defaults.set(60, forKey: StreamTuning.encoderMinExpectedFPSKey)
+        let hinted = StreamTuning.resolve(defaults: defaults)
+        XCTAssertFalse(hinted.encoderRealTime)
+        XCTAssertEqual(hinted.encoderMinExpectedFPS, 60)
+        XCTAssertTrue(hinted.summary.contains("encoder real time off · expected fps ≥60"), hinted.summary)
+        for phoneAsks in [false, true] {
+            let options = OwnedEncoderOptions(hinted, phoneRequestsKeysOnDemand: phoneAsks)
+            XCTAssertFalse(options.realTime)
+            XCTAssertEqual(options.minimumExpectedFPS, 60)
+            var expected = OwnedEncoderOptions(StreamTuning.tuned, phoneRequestsKeysOnDemand: phoneAsks)
+            expected.realTime = false; expected.minimumExpectedFPS = 60
+            XCTAssertEqual(options, expected, "the two hints change nothing else")
+        }
+
+        for (value, resolved) in [(0, 0), (30, 30), (120, 120), (1, 0), (45, 0), (61, 0), (240, 0), (-60, 0)] {
+            defaults.set(value, forKey: StreamTuning.encoderMinExpectedFPSKey)
+            XCTAssertEqual(StreamTuning.resolve(defaults: defaults).encoderMinExpectedFPS, resolved, "\(value)")
+        }
+        defaults.set(true, forKey: StreamTuning.encoderRealTimeKey)
+        defaults.set("fast", forKey: StreamTuning.encoderMinExpectedFPSKey)
+        XCTAssertEqual(StreamTuning.resolve(defaults: defaults), StreamTuning.tuned, "YES and an unknown rate keep today's encoder")
+        defaults.set(false, forKey: StreamTuning.encoderRealTimeKey)
+        defaults.set(true, forKey: StreamTuning.legacyDefaultsKey)
+        XCTAssertEqual(OwnedEncoderOptions(StreamTuning.resolve(defaults: defaults)), OwnedEncoderOptions(), "the legacy switch wins")
+    }
+
+    /// Both H.264 shapes the host negotiates (High 5.1 standard rate control, High 5.2 low-latency, which the Mac
+    /// runs today) and HEVC: a session with either hint starts on hardware with the hint applied, the floor survives
+    /// a rate update, and each 30 fps frame comes out in order before the next is submitted (AllowFrameReordering
+    /// stays false).
+    func testEncoderHintsStartEveryCodecSessionAndEmitEachFrameInOrder() throws {
+        let cases: [(name: String, configuration: any OwnedVideoConfiguration, codec: String)] = [
+            ("H.264 5.1", try XCTUnwrap(OwnedVTConfiguration(parameters: ["packetization-mode": "1", "profile-level-id": "640033"])), "H264"),
+            ("H.264 5.2", try XCTUnwrap(OwnedVTConfiguration(parameters: ["packetization-mode": "1", "profile-level-id": "640034"])), "H264"),
+            ("HEVC", try XCTUnwrap(OwnedHEVCConfiguration(parameters: OwnedHEVCConfiguration.codecInfo.parameters)), "H265")]
+        let hints = [OwnedEncoderOptions(periodicKeyFrames: false, realTime: false), OwnedEncoderOptions(periodicKeyFrames: false, minimumExpectedFPS: 60),
+                     OwnedEncoderOptions(periodicKeyFrames: false, realTime: false, minimumExpectedFPS: 120)]
+        for item in cases {
+            for options in hints {
+                let name = "\(item.name) realTime=\(options.realTime) min=\(options.minimumExpectedFPS)"
+                let encoder = OwnedVTEncoder(configuration: item.configuration, counters: StreamCounters(), inFlightLimit: { 1 }, maximumQPCeiling: { 26 },
+                                             newestFrameWins: { true }, options: { options })
+                defer { _ = encoder.release() }
+                let settings = RTCVideoEncoderSettings()
+                settings.name = item.codec; settings.width = 640; settings.height = 416; settings.startBitrate = 8000
+                settings.maxBitrate = 8000; settings.maxFramerate = 30; settings.qpMax = 30; settings.mode = .screensharing
+                XCTAssertEqual(encoder.startEncode(with: settings, numberOfCores: 1), 0, "\(name) stage=\(encoder.lastStage) status=\(encoder.lastStatus)")
+                XCTAssertNotEqual(encoder.hardwareReported, false, name)
+                XCTAssertEqual(encoder.sessionProperty(kVTCompressionPropertyKey_RealTime) as? Bool, options.realTime, name)
+                XCTAssertEqual(encoder.sessionProperty(kVTCompressionPropertyKey_ExpectedFrameRate) as? Int, max(30, options.minimumExpectedFPS), name)
+                XCTAssertEqual(encoder.setBitrate(6000, framerate: 30), 0, name)
+                XCTAssertEqual(encoder.sessionProperty(kVTCompressionPropertyKey_ExpectedFrameRate) as? Int, max(30, options.minimumExpectedFPS), name)
+                let lock = NSLock(), signal = DispatchSemaphore(value: 0)
+                var stamps: [UInt32] = []
+                encoder.setCallback { image, _ in
+                    lock.lock(); stamps.append(image.timeStamp); lock.unlock(); signal.signal(); return true
+                }
+                var pixels: CVPixelBuffer?
+                XCTAssertEqual(CVPixelBufferCreate(nil, 640, 416, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                    [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+                let buffer = try XCTUnwrap(pixels)
+                let key = [NSNumber(value: RTCFrameType.videoFrameKey.rawValue)]
+                for index in 0..<8 {
+                    CVPixelBufferLockBaseAddress(buffer, [])
+                    for plane in 0..<2 { memset(CVPixelBufferGetBaseAddressOfPlane(buffer, plane), plane == 0 ? Int32(40 + index * 9) : 128, CVPixelBufferGetBytesPerRowOfPlane(buffer, plane) * CVPixelBufferGetHeightOfPlane(buffer, plane)) }
+                    CVPixelBufferUnlockBaseAddress(buffer, [])
+                    let frame = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: 1_000_000_000 + Int64(index) * 33_333_333)
+                    frame.timeStamp = Int32(1000 + index)
+                    XCTAssertEqual(encoder.encode(frame, codecSpecificInfo: nil, frameTypes: index == 0 ? key : []), 0, name)
+                    XCTAssertEqual(signal.wait(timeout: .now() + 2), .success, "\(name): frame \(index) held back")
+                }
+                lock.lock(); defer { lock.unlock() }
+                XCTAssertEqual(stamps, (0..<8).map { UInt32(1000 + $0) }, name)
+            }
+        }
+    }
+
+    /// A 120 floor never declares a rate above the negotiated level, so VideoToolbox cannot write a header the
+    /// level check would reject: the 3840×2160 HEVC capability probe shape and a large H.264 5.2 picture.
+    func testExpectedFrameRateFloorStaysWithinTheNegotiatedLevel() throws {
+        let hevc = try XCTUnwrap(OwnedHEVCConfiguration(parameters: OwnedHEVCConfiguration.codecInfo.parameters))
+        let h264 = try XCTUnwrap(OwnedVTConfiguration(parameters: ["packetization-mode": "1", "profile-level-id": "640034"]))
+        let cases: [(name: String, configuration: any OwnedVideoConfiguration, codec: String, width: Int, height: Int, fps: Int)] = [
+            ("HEVC", hevc, "H265", 3840, 2160, 60), ("H.264 5.2", h264, "H264", 3024, 1964, 60)]
+        for item in cases {
+            let fitting = try XCTUnwrap((1...120).last { item.configuration.fits(width: item.width, height: item.height, fps: $0) })
+            XCTAssertTrue((item.fps..<120).contains(fitting), "\(item.name): \(fitting)")
+            let encoder = OwnedVTEncoder(configuration: item.configuration, counters: StreamCounters(), inFlightLimit: { 1 }, maximumQPCeiling: { 26 },
+                                         newestFrameWins: { true }, options: { OwnedEncoderOptions(periodicKeyFrames: false, minimumExpectedFPS: 120) })
+            defer { _ = encoder.release() }
+            let settings = RTCVideoEncoderSettings()
+            settings.name = item.codec; settings.width = UInt16(item.width); settings.height = UInt16(item.height); settings.startBitrate = 12000
+            settings.maxBitrate = 12000; settings.maxFramerate = UInt32(item.fps); settings.qpMax = 30; settings.mode = .screensharing
+            XCTAssertEqual(encoder.startEncode(with: settings, numberOfCores: 1), 0, "\(item.name) stage=\(encoder.lastStage) status=\(encoder.lastStatus)")
+            XCTAssertEqual(encoder.sessionProperty(kVTCompressionPropertyKey_ExpectedFrameRate) as? Int, fitting, item.name)
+            let signal = DispatchSemaphore(value: 0)
+            encoder.setCallback { _, _ in signal.signal(); return true }
+            var pixels: CVPixelBuffer?
+            XCTAssertEqual(CVPixelBufferCreate(nil, item.width, item.height, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+            let frame = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixels)), rotation: ._0, timeStampNs: 1_000_000_000)
+            frame.timeStamp = 1000
+            XCTAssertEqual(encoder.encode(frame, codecSpecificInfo: nil, frameTypes: [NSNumber(value: RTCFrameType.videoFrameKey.rawValue)]), 0, item.name)
+            XCTAssertEqual(signal.wait(timeout: .now() + 3), .success, "\(item.name): the key frame's header passed the level check")
+        }
+    }
+}
