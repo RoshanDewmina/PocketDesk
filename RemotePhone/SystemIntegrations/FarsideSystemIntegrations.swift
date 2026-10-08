@@ -183,6 +183,7 @@ struct FarsideSystemRoutes: ViewModifier {
             .onChange(of: inbox.pending, initial: true) { _, _ in drain() }
             .onChange(of: alerts.presentation) { _, item in if let item { sheet = .alert(item) } }
             .onChange(of: alerts.showsSettings) { _, shown in if shown { sheet = .settings } }
+            .ownsPhoneTyping(sheetBinding.wrappedValue != nil)
             .sheet(item: sheetBinding, onDismiss: sheetDismissed) { active in
                 switch active {
                 case .alert(let item):

@@ -1,3 +1,4 @@
+import SwiftUI
 import UIKit
 import GameController
 
@@ -320,5 +321,42 @@ final class HardwarePeripherals: ObservableObject {
                 }
             }
         }
+    }
+}
+
+/// Phone-side surfaces that own typing while they are on screen: a sheet's text field, the
+/// recognized-text editor, a system picker's search. They live outside the session view's own
+/// state, so without this the canvas keeps forwarding hardware keys and re-takes first responder
+/// on every SwiftUI update, sending the user's typing to the Mac.
+@MainActor
+final class PhoneTypingClaims: ObservableObject {
+    static let shared = PhoneTypingClaims()
+
+    @Published private(set) var active = false
+    private var owners: Set<UUID> = []
+
+    func set(_ owns: Bool, owner: UUID) {
+        if owns { owners.insert(owner) } else { owners.remove(owner) }
+        if active != !owners.isEmpty { active = !owners.isEmpty }
+    }
+}
+
+private struct PhoneTypingOwner: ViewModifier {
+    let claims: PhoneTypingClaims
+    let owns: Bool
+    @State private var owner = UUID()
+    @State private var visible = false
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { visible = true; claims.set(owns, owner: owner) }
+            .onChange(of: owns) { _, now in claims.set(now && visible, owner: owner) }
+            .onDisappear { visible = false; claims.set(false, owner: owner) }
+    }
+}
+
+extension View {
+    func ownsPhoneTyping(_ owns: Bool = true, claims: PhoneTypingClaims = .shared) -> some View {
+        modifier(PhoneTypingOwner(claims: claims, owns: owns))
     }
 }
