@@ -101,7 +101,7 @@ final class KeysOnDemandTests: XCTestCase {
             XCTAssertEqual(host.keysOnDemandRequested, item.phone.contains(SessionFeature.keysOnDemand), item.name)
         }
         XCTAssertEqual(OwnedEncoderOptions.requestedKeysOnlyInterval, 1_000_000, "the frame interval stays: 0 there hands placement to the encoder")
-        XCTAssertEqual(OwnedEncoderOptions(on), OwnedEncoderOptions(periodicKeyFrames: false), "no phone asked")
+        XCTAssertEqual(OwnedEncoderOptions(on), OwnedEncoderOptions(periodicKeyFrames: false, realTime: false), "no phone asked")
         XCTAssertEqual(OwnedEncoderOptions(StreamTuning.legacy, phoneRequestsKeysOnDemand: true), OwnedEncoderOptions(), "the legacy stream has no requested-keys-only session to change")
         let phone = PeerMedia(isHost: false, servers: [], hevc: false, hevc444: false, keysOnDemand: true)
         defer { phone.close() }

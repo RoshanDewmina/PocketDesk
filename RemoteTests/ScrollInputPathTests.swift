@@ -383,14 +383,19 @@ final class ScrollSmoothingExecutorTests: XCTestCase {
 }
 
 final class ScrollPathSwitchTests: XCTestCase {
-    func testBothSwitchesDefaultOffAreListedAndNamedInTheSummary() {
+    func testSmoothingDefaultsOnTargetingDefaultsOffBothAreListedAndNamedInTheSummary() {
         let suite = "scroll-input-path-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        XCTAssertFalse(StreamTuning.resolve(defaults: defaults).scrollSmoothing)
+        XCTAssertTrue(StreamTuning.resolve(defaults: defaults).scrollSmoothing, "on by default since the 8 Oct 2026 device A/B")
         XCTAssertFalse(StreamTuning.resolve(defaults: defaults).scrollTargetsStream)
-        XCTAssertFalse(StreamTuning.tuned.summary.contains("scroll smoothing"))
+        XCTAssertTrue(StreamTuning.tuned.summary.contains("scroll smoothing"))
         XCTAssertFalse(StreamTuning.tuned.summary.contains("scroll on stream"))
+        XCTAssertFalse(StreamTuning.legacy.scrollSmoothing, "previous tuning posts every scroll on arrival")
+        defaults.set(false, forKey: StreamTuning.scrollSmoothingKey)
+        let off = StreamTuning.resolve(defaults: defaults)
+        XCTAssertFalse(off.scrollSmoothing, "NO turns smoothing off")
+        XCTAssertFalse(off.summary.contains("scroll smoothing"))
         defaults.set(true, forKey: StreamTuning.scrollSmoothingKey)
         defaults.set(true, forKey: StreamTuning.scrollTargetsStreamKey)
         let on = StreamTuning.resolve(defaults: defaults)

@@ -602,7 +602,7 @@ extension OwnedVTEncoderTests {
             XCTAssertTrue(StreamTuning.experimentKeys.contains(key), key)
         }
         XCTAssertEqual(OwnedEncoderOptions(StreamTuning.legacy), OwnedEncoderOptions())
-        XCTAssertEqual(OwnedEncoderOptions(StreamTuning.tuned), OwnedEncoderOptions(periodicKeyFrames: false), "Requested key frames only by default")
+        XCTAssertEqual(OwnedEncoderOptions(StreamTuning.tuned), OwnedEncoderOptions(periodicKeyFrames: false, realTime: false), "Requested key frames only, RealTime off by default")
         XCTAssertFalse(StreamTuning.tuned.summary.contains("periodic keys"))
         XCTAssertEqual(OwnedEncoderOptions(), OwnedEncoderOptions(prioritizeSpeed: false, hevcLowLatency: false, periodicKeyFrames: true))
         let suite = "OwnedVTEncoderTests.options.\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -612,12 +612,12 @@ extension OwnedVTEncoderTests {
         defaults.set("YES", forKey: StreamTuning.hevcLowLatencyKey)
         defaults.set("NO", forKey: StreamTuning.encoderPeriodicKeyFramesKey)
         let on = StreamTuning.resolve(defaults: defaults)
-        XCTAssertEqual(OwnedEncoderOptions(on), OwnedEncoderOptions(prioritizeSpeed: true, hevcLowLatency: true, periodicKeyFrames: false))
-        XCTAssertTrue(on.summary.contains("encode speed priority · HEVC low-latency"), on.summary)
+        XCTAssertEqual(OwnedEncoderOptions(on), OwnedEncoderOptions(prioritizeSpeed: true, hevcLowLatency: true, periodicKeyFrames: false, realTime: false))
+        XCTAssertTrue(on.summary.contains("encode speed priority · encoder real time off · HEVC low-latency"), on.summary)
         defaults.set(false, forKey: StreamTuning.encoderPrioritizeSpeedKey)
         defaults.set("NO", forKey: StreamTuning.hevcLowLatencyKey)
         defaults.set(true, forKey: StreamTuning.encoderPeriodicKeyFramesKey)
-        XCTAssertEqual(OwnedEncoderOptions(StreamTuning.resolve(defaults: defaults)), OwnedEncoderOptions(), "Each switch restores the earlier encoder")
+        XCTAssertEqual(OwnedEncoderOptions(StreamTuning.resolve(defaults: defaults)), OwnedEncoderOptions(realTime: false), "Each switch restores the earlier encoder; RealTime has its own key")
         XCTAssertTrue(StreamTuning.resolve(defaults: defaults).summary.contains("periodic keys"))
     }
 
@@ -697,19 +697,31 @@ extension OwnedVTEncoderTests {
 }
 
 extension OwnedVTEncoderTests {
-    func testEncoderRealTimeAndExpectedFPSFlagsDefaultToTodayResolveAndReachTheOptions() throws {
+    func testEncoderRealTimeDefaultsOffExpectedFPSDefaultsToTodayAndBothResolveAndReachTheOptions() throws {
         for key in [StreamTuning.encoderRealTimeKey, StreamTuning.encoderMinExpectedFPSKey] {
             XCTAssertTrue(StreamTuning.experimentKeys.contains(key), key)
         }
         let suite = "OwnedVTEncoderTests.hints.\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let today = StreamTuning.resolve(defaults: defaults)
-        XCTAssertEqual(today, StreamTuning.tuned)
-        XCTAssertTrue(today.encoderRealTime)
-        XCTAssertEqual(today.encoderMinExpectedFPS, 0)
-        XCTAssertTrue(OwnedEncoderOptions(today).realTime)
-        XCTAssertEqual(OwnedEncoderOptions(today).minimumExpectedFPS, 0)
-        for part in ["real time", "expected fps"] { XCTAssertFalse(today.summary.contains(part), today.summary) }
+        let tuned = StreamTuning.resolve(defaults: defaults)
+        XCTAssertEqual(tuned, StreamTuning.tuned)
+        XCTAssertFalse(tuned.encoderRealTime, "off by default since the 8 Oct 2026 device A/B")
+        XCTAssertEqual(tuned.encoderMinExpectedFPS, 0)
+        XCTAssertFalse(OwnedEncoderOptions(tuned).realTime)
+        XCTAssertEqual(OwnedEncoderOptions(tuned).minimumExpectedFPS, 0)
+        XCTAssertTrue(tuned.summary.contains("encoder real time off"), tuned.summary)
+        XCTAssertFalse(tuned.summary.contains("expected fps"), tuned.summary)
+        XCTAssertTrue(StreamTuning.legacy.encoderRealTime, "previous tuning keeps RealTime on")
+        XCTAssertTrue(OwnedEncoderOptions(StreamTuning.legacy).realTime)
+
+        defaults.set("YES", forKey: StreamTuning.encoderRealTimeKey)
+        let realTime = StreamTuning.resolve(defaults: defaults)
+        XCTAssertTrue(realTime.encoderRealTime, "YES restores RealTime")
+        XCTAssertTrue(OwnedEncoderOptions(realTime).realTime)
+        XCTAssertFalse(realTime.summary.contains("real time"), realTime.summary)
+        var expectedRealTime = StreamTuning.tuned
+        expectedRealTime.encoderRealTime = true
+        XCTAssertEqual(realTime, expectedRealTime, "YES changes nothing else")
 
         defaults.set("NO", forKey: StreamTuning.encoderRealTimeKey)
         defaults.set(60, forKey: StreamTuning.encoderMinExpectedFPSKey)
@@ -730,10 +742,9 @@ extension OwnedVTEncoderTests {
             defaults.set(value, forKey: StreamTuning.encoderMinExpectedFPSKey)
             XCTAssertEqual(StreamTuning.resolve(defaults: defaults).encoderMinExpectedFPS, resolved, "\(value)")
         }
-        defaults.set(true, forKey: StreamTuning.encoderRealTimeKey)
-        defaults.set("fast", forKey: StreamTuning.encoderMinExpectedFPSKey)
-        XCTAssertEqual(StreamTuning.resolve(defaults: defaults), StreamTuning.tuned, "YES and an unknown rate keep today's encoder")
         defaults.set(false, forKey: StreamTuning.encoderRealTimeKey)
+        defaults.set("fast", forKey: StreamTuning.encoderMinExpectedFPSKey)
+        XCTAssertEqual(StreamTuning.resolve(defaults: defaults), StreamTuning.tuned, "NO and an unknown rate keep the tuned encoder")
         defaults.set(true, forKey: StreamTuning.legacyDefaultsKey)
         XCTAssertEqual(OwnedEncoderOptions(StreamTuning.resolve(defaults: defaults)), OwnedEncoderOptions(), "the legacy switch wins")
     }

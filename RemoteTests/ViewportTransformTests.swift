@@ -679,7 +679,12 @@ final class ViewportCaptureGeometryTests: XCTestCase {
         let display = CGSize(width: 1920, height: 1243)
         var portrait = ViewportTransform(sourceSize: display, canvasSize: CGSize(width: 402, height: 874), mode: .fill,
                                          safeInsets: ViewportInsets(top: 62, bottom: 34))
-        XCTAssertTrue(portrait.requestsWholeDisplay, "off by default until the device check")
+        XCTAssertEqual(portrait.baselineFillCrop, BaselineFillCropSwitch.isOn)
+        if UserDefaults.standard.object(forKey: BaselineFillCropSwitch.defaultsKey) == nil {
+            XCTAssertTrue(BaselineFillCropSwitch.isOn, "on by default since the 8 Oct 2026 device A/B")
+        }
+        portrait.baselineFillCrop = false
+        XCTAssertTrue(portrait.requestsWholeDisplay, "the NO key keeps the whole display, as before")
         portrait.baselineFillCrop = true
         XCTAssertFalse(portrait.requestsWholeDisplay, "30 % of the display at 2.1 px per point")
         let request = try XCTUnwrap(portrait.captureRequest(displayScale: 3))
@@ -699,6 +704,7 @@ final class ViewportCaptureGeometryTests: XCTestCase {
         let display = CGSize(width: 1920, height: 1243)
         var portrait = ViewportTransform(sourceSize: display, canvasSize: CGSize(width: 402, height: 874), mode: .fill,
                                          safeInsets: ViewportInsets(top: 62, bottom: 34))
+        portrait.baselineFillCrop = false
         XCTAssertFalse(try XCTUnwrap(portrait.captureRequest(displayScale: 3)).baselineFill, "the key is off")
         portrait.baselineFillCrop = true
         XCTAssertTrue(try XCTUnwrap(portrait.captureRequest(displayScale: 3)).baselineFill)

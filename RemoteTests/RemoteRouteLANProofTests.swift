@@ -1,8 +1,8 @@
 import XCTest
 import Foundation
 
-/// Remote-route LAN proof: off by default on both ends, each end must opt in, and the proof never
-/// gates, restricts or fails the session. A pass is LAN evidence only, never `provenLocalLinkActive`.
+/// Remote-route LAN proof: on by default on both ends since the 8 Oct 2026 device A/B, either end's NO key
+/// turns it off, and the proof never gates, restricts or fails the session. A pass is LAN evidence only, never `provenLocalLinkActive`.
 @MainActor
 final class RemoteRouteLANProofTests: XCTestCase {
     private func defaults(_ values: [String: Bool] = [:]) throws -> UserDefaults {
@@ -16,6 +16,8 @@ final class RemoteRouteLANProofTests: XCTestCase {
     private var bothOn: [String: Bool] {
         [StreamTuning.remoteRouteLANProofKey: true, RemoteRouteLANProofRequest.defaultsKey: true]
     }
+    private var macOff: [String: Bool] { [StreamTuning.remoteRouteLANProofKey: false] }
+    private var phoneOff: [String: Bool] { [RemoteRouteLANProofRequest.defaultsKey: false] }
 
     private func routeMessage(room: String, access: String) throws -> RelayMessage {
         let deadline = Int64((Date().timeIntervalSince1970 + 60) * 1000)
@@ -49,11 +51,23 @@ final class RemoteRouteLANProofTests: XCTestCase {
         XCTAssertTrue(predicate(), description)
     }
 
-    func testFlagsAreOffByDefaultAndTheTuningRecordsTheArm() throws {
+    func testFlagsAreOnByDefaultNoTurnsThemOffAndTheTuningRecordsTheArm() throws {
         let empty = try defaults()
-        XCTAssertFalse(RemoteRouteLANProofRequest.isEnabled(empty))
-        XCTAssertFalse(StreamTuning.resolve(defaults: empty).remoteRouteLANProof)
-        XCTAssertFalse(StreamTuning.resolve(defaults: empty).summary.contains("LAN proof"))
+        XCTAssertTrue(RemoteRouteLANProofRequest.isEnabled(empty), "on by default since the 8 Oct 2026 device A/B")
+        XCTAssertTrue(StreamTuning.resolve(defaults: empty).remoteRouteLANProof, "on by default since the 8 Oct 2026 device A/B")
+        XCTAssertTrue(StreamTuning.resolve(defaults: empty).summary.contains("remote-route LAN proof"))
+        let off = try defaults(macOff.merging(phoneOff) { $1 })
+        XCTAssertFalse(RemoteRouteLANProofRequest.isEnabled(off))
+        XCTAssertFalse(StreamTuning.resolve(defaults: off).remoteRouteLANProof)
+        XCTAssertFalse(StreamTuning.resolve(defaults: off).summary.contains("LAN proof"))
+        let launchOff = try defaults()
+        launchOff.set("NO", forKey: RemoteRouteLANProofRequest.defaultsKey)
+        launchOff.set("NO", forKey: StreamTuning.remoteRouteLANProofKey)
+        XCTAssertFalse(RemoteRouteLANProofRequest.isEnabled(launchOff), "a launch argument arrives as a string and still turns it off")
+        XCTAssertFalse(StreamTuning.resolve(defaults: launchOff).remoteRouteLANProof)
+        XCTAssertFalse(StreamTuning.legacy.remoteRouteLANProof, "previous tuning never runs the proof")
+        let legacy = try defaults([StreamTuning.legacyDefaultsKey: true])
+        XCTAssertFalse(StreamTuning.resolve(defaults: legacy).remoteRouteLANProof)
         let on = try defaults(bothOn)
         XCTAssertTrue(RemoteRouteLANProofRequest.isEnabled(on))
         XCTAssertTrue(StreamTuning.resolve(defaults: on).summary.contains("remote-route LAN proof"))
@@ -225,7 +239,8 @@ final class RemoteRouteLANProofTests: XCTestCase {
     }
 
     func testTheMacAttemptsOnlyWithItsFlagAndThePhonesOffer() async throws {
-        let arms: [([String: Bool], Bool, Bool)] = [([:], true, false), (bothOn, false, false), (bothOn, true, true)]
+        let arms: [([String: Bool], Bool, Bool)] = [(macOff, true, false), ([StreamTuning.legacyDefaultsKey: true], true, false),
+                                                    ([:], false, false), ([:], true, true), (bothOn, false, false), (bothOn, true, true)]
         for (values, offer, attempts) in arms {
             let builds = BuildCounter()
             let rig = try macRig(values, offer: offer, builds: builds)
@@ -248,7 +263,7 @@ final class RemoteRouteLANProofTests: XCTestCase {
     }
 
     func testTheMacStillDropsAnUnsolicitedEndpointButIgnoresALateAnswer() async throws {
-        let off = try macRig([:], offer: true, builds: BuildCounter())
+        let off = try macRig(macOff, offer: true, builds: BuildCounter())
         defer { off.host.stop() }
         try await waitFor("media starts") { off.host.media != nil }
         off.signaling.deliver(try off.seal("localEndpoint", sequence: 2, body: try endpointBody()))
@@ -425,7 +440,8 @@ final class RemoteRouteLANProofTests: XCTestCase {
     }
 
     func testThePhoneOffersOnlyWithItsFlagOnARemoteRoute() throws {
-        for (values, access, offers) in [([String: Bool](), "remote", false), (bothOn, "remote", true), (bothOn, "local", false)] {
+        for (values, access, offers) in [(phoneOff, "remote", false), ([String: Bool](), "remote", true), (bothOn, "remote", true),
+                                         (bothOn, "local", false)] {
             let (phone, _, _, request, _) = try acceptedPhone(values, access: access, builds: BuildCounter())
             defer { phone.stop() }
             XCTAssertEqual(request.kind, "request")
@@ -449,7 +465,7 @@ final class RemoteRouteLANProofTests: XCTestCase {
         XCTAssertEqual(builds.count, 1, "a repeated endpoint is stale, not a second attempt")
         XCTAssertTrue(phone.isRunning, "no path to prove is today's session")
 
-        let (unasked, unaskedSignaling, unaskedCipher, unaskedRequest, unaskedSession) = try acceptedPhone([:], access: "remote", builds: BuildCounter())
+        let (unasked, unaskedSignaling, unaskedCipher, unaskedRequest, unaskedSession) = try acceptedPhone(phoneOff, access: "remote", builds: BuildCounter())
         defer { unasked.stop() }
         unaskedSignaling.deliver(RelayMessage(type: "signal", payload: try unaskedCipher.seal(ProtectedMessage(kind: "localEndpoint",
             request: unaskedRequest.request, session: unaskedSession, sequence: 2, body: try endpointBody()), sender: "host")))

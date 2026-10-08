@@ -529,22 +529,28 @@ final class ViewportCaptureTests: XCTestCase {
                                  "covered pinch/pan must not repeatedly reconfigure and race region status against video")
     }
 
-    func testScrollFixesDefaultOffSupportsTemporaryBooleanLaunchOverrides() throws {
+    func testScrollFixesDefaultOnSupportsTemporaryBooleanLaunchOverrides() throws {
         let name = "ScrollFixesTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name); defaults.setVolatileDomain([:], forName: UserDefaults.argumentDomain) }
-        XCTAssertFalse(ScrollFixesSwitch.enabled(defaults: defaults))
-        defaults.set(true, forKey: ScrollFixesSwitch.defaultsKey)
+        XCTAssertTrue(ScrollFixesSwitch.enabled(defaults: defaults), "on by default since the 8 Oct 2026 device A/B")
+        defaults.set(false, forKey: ScrollFixesSwitch.defaultsKey)
+        XCTAssertFalse(ScrollFixesSwitch.enabled(defaults: defaults), "a stored NO turns it off")
+        defaults.setVolatileDomain([ScrollFixesSwitch.defaultsKey: "YES"], forName: UserDefaults.argumentDomain)
         XCTAssertTrue(ScrollFixesSwitch.enabled(defaults: defaults))
         defaults.setVolatileDomain([ScrollFixesSwitch.defaultsKey: "NO"], forName: UserDefaults.argumentDomain)
         XCTAssertFalse(ScrollFixesSwitch.enabled(defaults: defaults))
-        defaults.setVolatileDomain([ScrollFixesSwitch.defaultsKey: "YES"], forName: UserDefaults.argumentDomain)
-        XCTAssertTrue(ScrollFixesSwitch.enabled(defaults: defaults))
         // On the tested Foundation runtime, removeVolatileDomain leaves this
         // argument dictionary visible; replacing it models a launch without it.
         defaults.setVolatileDomain([:], forName: UserDefaults.argumentDomain)
+        defaults.set(true, forKey: ScrollFixesSwitch.defaultsKey)
+        defaults.setVolatileDomain([ScrollFixesSwitch.defaultsKey: "NO"], forName: UserDefaults.argumentDomain)
+        XCTAssertFalse(ScrollFixesSwitch.enabled(defaults: defaults), "a NO launch argument wins over a stored YES")
+        defaults.setVolatileDomain([:], forName: UserDefaults.argumentDomain)
+        defaults.set(false, forKey: ScrollFixesSwitch.defaultsKey)
+        XCTAssertFalse(ScrollFixesSwitch.enabled(defaults: defaults), "Ordinary launch returns to the stored NO")
         defaults.removeObject(forKey: ScrollFixesSwitch.defaultsKey)
-        XCTAssertFalse(ScrollFixesSwitch.enabled(defaults: defaults), "Ordinary launch returns to the stored default")
+        XCTAssertTrue(ScrollFixesSwitch.enabled(defaults: defaults), "Ordinary launch returns to the default")
     }
 
     func testGoldenCoveredPinchReplayRequiresTheOptInKeepBand() throws {
@@ -1093,8 +1099,10 @@ final class ViewportCaptureTests: XCTestCase {
 
     func testAFillPanAtTheSameZoomKeepsTheOutputAndMovesOnlyTheSourceRect() throws {
         let whole = try output(moreSpace, fps: 60)
-        var holds = StreamTuning.tuned
-        holds.cropHoldsOutput = true
+        let holds = StreamTuning.tuned
+        XCTAssertTrue(holds.cropHoldsOutput, "the hold is the tuned default since the 8 Oct 2026 device A/B")
+        var noHold = StreamTuning.tuned
+        noHold.cropHoldsOutput = false
         let rest = region(fillPortrait(), on: moreSpace, output: whole, tuning: holds)
         XCTAssertEqual(outputSize(rest), size(1328, 2496), "phone-native, 8 % margin, full height")
         XCTAssertFalse(rest.isWholeDisplay)
@@ -1106,9 +1114,9 @@ final class ViewportCaptureTests: XCTestCase {
         XCTAssertEqual(outputSize(pan), outputSize(rest), "same output: no encoder restart")
         XCTAssertLessThan(try sharpness(pan, widened, on: moreSpace), try sharpness(rest, fillPortrait(), on: moreSpace),
                           "stretched into the held output while the finger moves")
-        let today = region(widened, on: moreSpace, output: whole, previous: rest, previousZoom: 2.1094)
+        let today = region(widened, on: moreSpace, output: whole, tuning: noHold, previous: rest, previousZoom: 2.1094)
         XCTAssertNotEqual(outputSize(today), outputSize(rest),
-                          "without the switch the widening changes the output, as today")
+                          "with the switch off the widening changes the output, as before")
         XCTAssertEqual(region(widened, on: moreSpace, output: whole, tuning: holds, previous: rest), today,
                        "no previous zoom (output just changed): no hold")
 
@@ -1119,13 +1127,15 @@ final class ViewportCaptureTests: XCTestCase {
         let pinched = iPhone17(zoom: 2.5, portrait: true, on: moreSpace, epoch: 4)
         let zoomed = region(pinched, on: moreSpace, output: whole, tuning: holds, previous: rest, previousZoom: 2.1094)
         XCTAssertNotEqual(zoomed.outputWidth, rest.outputWidth, "a pinch is not a pan: the output follows the zoom")
-        XCTAssertEqual(zoomed, region(pinched, on: moreSpace, output: whole, previous: rest), "exactly as without the switch")
+        XCTAssertEqual(zoomed, region(pinched, on: moreSpace, output: whole, tuning: noHold, previous: rest), "exactly as without the switch")
     }
 
     func testAPinchOutsWidenedOutputDoesNotOutliveThePinch() throws {
         let whole = try output(moreSpace, fps: 60)
-        var holds = StreamTuning.tuned
-        holds.cropHoldsOutput = true
+        let holds = StreamTuning.tuned
+        XCTAssertTrue(holds.cropHoldsOutput, "the hold is the tuned default since the 8 Oct 2026 device A/B")
+        var noHold = StreamTuning.tuned
+        noHold.cropHoldsOutput = false
         let rest = region(fillPortrait(), on: moreSpace, output: whole, tuning: holds)
         // A continuing pinch-out asks for twice its visible rect at the new zoom: a new zoom, so no hold.
         let pinch = iPhone17(zoom: 1.6, portrait: true, on: moreSpace, epoch: 2)
@@ -1133,10 +1143,10 @@ final class ViewportCaptureTests: XCTestCase {
                                   height: Double(moreSpace.size.height), pixelWidth: 1206, pixelHeight: 2622, zoom: 1.6)
         let widened = region(wide, on: moreSpace, output: whole, tuning: holds, previous: rest, previousZoom: 2.1094)
         XCTAssertFalse(widened.isWholeDisplay)
-        XCTAssertEqual(widened, region(wide, on: moreSpace, output: whole, previous: rest), "as without the switch")
+        XCTAssertEqual(widened, region(wide, on: moreSpace, output: whole, tuning: noHold, previous: rest, previousZoom: 2.1094), "as without the switch")
         // The settled exact rect at that zoom shrinks the crop: sized by the band again, not held at the wide output.
         let settled = region(iPhone17(zoom: 1.6, portrait: true, on: moreSpace, epoch: 3), on: moreSpace, output: whole, tuning: holds, previous: widened, previousZoom: 1.6)
-        XCTAssertEqual(settled, region(iPhone17(zoom: 1.6, portrait: true, on: moreSpace, epoch: 3), on: moreSpace, output: whole, previous: widened))
+        XCTAssertEqual(settled, region(iPhone17(zoom: 1.6, portrait: true, on: moreSpace, epoch: 3), on: moreSpace, output: whole, tuning: noHold, previous: widened, previousZoom: 1.6))
         XCTAssertNotEqual(outputSize(settled), outputSize(widened))
         XCTAssertLessThan(settled.outputWidth, widened.outputWidth)
     }
@@ -1522,7 +1532,10 @@ extension ViewportCaptureTests {
             check(zoomed.update(viewport, at: 10), size(1216, 786), deadline: 10.25, "zoom \(zoom) is a grow, not a crop")
             check(zoomed.update(viewport, at: 10.25), size(2560, 1656), deadline: nil, "zoom \(zoom) at the mode cap")
             var cropping = try replay(cap: true, crop: true)
-            XCTAssertFalse(cropping.update(viewport, at: 0).region.isWholeDisplay, "with cropping on, zoom \(zoom) crops")
+            // The replay takes the process's near-native rule, on with the scroll fixes since the 8 Oct 2026 device
+            // A/B: zoom 1.5 is under its crop gain on this display and stays whole; the build 20261002.2 rule crops it.
+            XCTAssertEqual(cropping.update(viewport, at: 0).region.isWholeDisplay, CropNearNativeSwitch.isOn && zoom < 2,
+                           "with cropping on, zoom \(zoom) crops past the near-native gain")
         }
     }
 

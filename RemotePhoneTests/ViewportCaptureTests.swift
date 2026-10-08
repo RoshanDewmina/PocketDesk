@@ -378,7 +378,7 @@ final class ViewportCaptureTests: XCTestCase {
                        "the settle asks for exactly what is shown")
     }
 
-    func testFillPanWideningIsOffWithoutTheSwitchAndForZoomedCrops() throws {
+    func testFillPanWideningIsOffWithTheSwitchOffAndForZoomedCrops() throws {
         let fillDisplay = CGSize(width: 1920, height: 1243)
         let crop = CGRect(x: 628, y: 0, width: 664, height: 1243)
         for (widens, baselineFill) in [(false, true), (true, false)] {
@@ -391,7 +391,12 @@ final class ViewportCaptureTests: XCTestCase {
             XCTAssertEqual(reporter.region(forDisplay: fillDisplay)?.rect, portraitFill(760).rect,
                            "switch \(widens), baseline Fill \(baselineFill): exactly what is shown, as today")
         }
-        XCTAssertFalse(ViewportReporter().widensFillPans, "off unless the baseline-Fill crop is on")
+        XCTAssertEqual(ViewportReporter().widensFillPans, FillCropPanMarginSwitch.isOn)
+        XCTAssertFalse(FillCropPanMarginSwitch.isOn && !BaselineFillCropSwitch.isOn, "off unless the baseline-Fill crop is on")
+        if UserDefaults.standard.object(forKey: BaselineFillCropSwitch.defaultsKey) == nil,
+           UserDefaults.standard.object(forKey: FillCropPanMarginSwitch.defaultsKey) == nil {
+            XCTAssertTrue(ViewportReporter().widensFillPans, "on with the baseline-Fill crop since the 8 Oct 2026 device A/B")
+        }
     }
 
     /// Continuous pinch/pan with a delayed crop echo: one escape request, then one settle.

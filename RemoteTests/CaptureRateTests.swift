@@ -354,10 +354,24 @@ final class CaptureRateTuningTests: XCTestCase {
 
         let tuned = StreamTuning.resolve(defaults: defaults)
         XCTAssertEqual(tuned.cropPixelScale, 1, "today's phone-native crop")
-        XCTAssertFalse(tuned.cropHoldsOutput)
-        XCTAssertFalse(tuned.cropDropsAmbiguousFrames)
-        for part in ["crop ×", "crop holds output", "crop drops ambiguous"] {
-            XCTAssertFalse(tuned.summary.contains(part), tuned.summary)
+        XCTAssertTrue(tuned.cropHoldsOutput, "on by default since the 8 Oct 2026 device A/B")
+        XCTAssertTrue(tuned.cropDropsAmbiguousFrames, "on by default since the 8 Oct 2026 device A/B")
+        XCTAssertTrue(tuned.dropsAmbiguousFrames)
+        XCTAssertFalse(tuned.summary.contains("crop ×"), tuned.summary)
+        for part in ["crop holds output", "crop drops ambiguous"] {
+            XCTAssertTrue(tuned.summary.contains(part), tuned.summary)
+        }
+        XCTAssertFalse(StreamTuning.legacy.cropHoldsOutput, "previous tuning keeps the output size free")
+        XCTAssertFalse(StreamTuning.legacy.dropsAmbiguousFrames, "previous tuning keeps every frame")
+
+        defaults.set(false, forKey: StreamTuning.cropHoldsOutputKey)
+        defaults.set(false, forKey: StreamTuning.cropDropsAmbiguousFramesKey)
+        let off = StreamTuning.resolve(defaults: defaults)
+        XCTAssertFalse(off.cropHoldsOutput, "NO turns the hold off")
+        XCTAssertFalse(off.cropDropsAmbiguousFrames, "NO turns the drop off")
+        XCTAssertFalse(off.dropsAmbiguousFrames)
+        for part in ["crop holds output", "crop drops ambiguous"] {
+            XCTAssertFalse(off.summary.contains(part), off.summary)
         }
 
         defaults.set(0.75, forKey: StreamTuning.cropPixelScaleKey)
@@ -371,7 +385,6 @@ final class CaptureRateTuningTests: XCTestCase {
             XCTAssertTrue(switched.summary.contains(part), switched.summary)
         }
         XCTAssertEqual(switched.fieldTrials, StreamTuning.tuned.fieldTrials)
-        XCTAssertFalse(tuned.dropsAmbiguousFrames)
         defaults.set(false, forKey: StreamTuning.cropDropsAmbiguousFramesKey)
         XCTAssertTrue(StreamTuning.resolve(defaults: defaults).dropsAmbiguousFrames, "the hold implies the drop")
 
