@@ -80,6 +80,7 @@ struct NativeSessionView: View {
     @State private var miniMap = MiniMapVisibility()
     @State private var miniMapToken = 0
     @ObservedObject private var peripherals = HardwarePeripherals.shared
+    @ObservedObject private var phoneTyping = PhoneTypingClaims.shared
     @State private var lockedMouseRequested = false
     @State private var lockedMouseNotice = ""
     /// Internal keys, no UI: `pointerSize` (small … extraLarge) and `pointerFollow` (smooth, rigid, off).
@@ -127,7 +128,7 @@ struct NativeSessionView: View {
                     }
                 }
             LockedMousePresenter(requested: $lockedMouseRequested,
-                eligible: model.canControl && !model.coordinateInputFenced && scenePhase == .active && !showControls && !showVoiceInput && !keyboardOpen && !panMode,
+                eligible: model.canControl && !model.coordinateInputFenced && scenePhase == .active && !showControls && !showVoiceInput && !keyboardOpen && !panMode && !phoneTyping.active,
                 revision: model.inputRevision &+ revision, gain: Double(sensitivity), remapShortcuts: remapShortcuts,
                 send: { command in noteSessionPillActivity(); return model.gesture(command) },
                 key: { key, modifiers in noteSessionPillActivity(); return model.hardwareKey(key, modifiers: modifiers) },
@@ -265,7 +266,7 @@ struct NativeSessionView: View {
     private var sessionPresentation: AnyView {
         AnyView(sessionChrome
         .sheet(isPresented: controlsSheetPresented) { controlsSheet }
-        .sheet(isPresented: $frozenText.isPresented, onDismiss: { frozenText.cancel() }) { FrozenTextSheet(controller: frozenText) }
+        .sheet(isPresented: $frozenText.isPresented, onDismiss: { frozenText.cancel() }) { FrozenTextSheet(controller: frozenText).ownsPhoneTyping() }
         .onDisappear { frozenText.cancel() }
         .onChange(of: controlsAsOverlay) { _, _ in if showControls { closeControls() } }
         .onChange(of: controlsBlockInput) { _, blocked in
@@ -310,7 +311,7 @@ struct NativeSessionView: View {
         }
         .onChange(of: model.autoKeyboardRevision) { _, value in
             guard autoKeyboardEnabled, value > dismissedAutoKeyboardRevision, !keyboardOpen, !panMode,
-                  !showControls, !showVoiceInput, scenePhase == .active,
+                  !showControls, !showVoiceInput, !phoneTyping.active, scenePhase == .active,
                   (model.canControl || autoKeyboardPreview), model.textEditable, !model.isComposingText,
                   !model.dragging, !model.privacyShield, !model.contentConcealed else { return }
             openKeyboard()
@@ -612,7 +613,7 @@ struct NativeSessionView: View {
                                   middleClickAvailable: model.middleButtonSupported,
                                   momentumScroll: model.momentumScrollSupported,
                                   hostMomentum: model.hostMomentumSupported,
-                                  hardwareKeys: model.canControl && !showControls && !showVoiceInput && !keyboardOpen,
+                                  hardwareKeys: model.canControl && !showControls && !showVoiceInput && !keyboardOpen && !phoneTyping.active,
                                   // Couch has no picture to place an absolute pointer on: relative motion only.
                                   hardwarePointer: !couch && model.canControl && model.absolutePointerSupported
                                     && !controlsBlockInput && !showVoiceInput,
@@ -627,7 +628,7 @@ struct NativeSessionView: View {
                                       return model.pencil(at: source, frame: frame)
                                   },
                                   keyboardFocus: !keyboardOpen && !showControls && !showVoiceInput
-                                    && !primingMicrophone && scenePhase == .active,
+                                    && !primingMicrophone && !phoneTyping.active && scenePhase == .active,
                                   remapShortcuts: remapShortcuts,
                                   onCommand: handle,
                                   onFingerScroll: model.localScroll.enabled && !couch
@@ -1258,7 +1259,7 @@ struct NativeSessionView: View {
 
     private var keyboardButtonEligible: Bool {
         !keyboardOpen && !couch && !panMode && model.canControl && scenePhase == .active &&
-            !showControls && !showOverlaySettings && !showVoiceInput
+            !showControls && !showOverlaySettings && !showVoiceInput && !phoneTyping.active
     }
 
     /// A tap gesture, like the controls handle beside it: the session defers vertical system

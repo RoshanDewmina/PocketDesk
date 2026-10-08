@@ -21,6 +21,7 @@ struct FileTransferRow: View {
     @ObservedObject var files: PhoneFileTransfer
     @State private var importing = false
     @State private var photo: PhotosPickerItem?
+    @State private var pickingPhoto = false
     @State private var loadingPhoto = false
     @State private var browsing = false
 
@@ -35,7 +36,7 @@ struct FileTransferRow: View {
                 }
                 .accessibilityLabel("Send a file to your Mac")
                 .accessibilityIdentifier("remote.files.send")
-                PhotosPicker(selection: $photo, matching: .any(of: [.images, .videos]), preferredItemEncoding: .current) {
+                Button { pickingPhoto = true } label: {
                     Label("Photo", systemImage: "photo").font(.subheadline.weight(.semibold))
                 }
                 .accessibilityLabel("Send a photo or video to your Mac")
@@ -56,11 +57,13 @@ struct FileTransferRow: View {
             }
             Text(caption).font(.footnote).foregroundStyle(Farside.Palette.ash)
         }
-        .sheet(isPresented: $browsing) { FileBrowserView(model: model, browser: model.fileBrowser, files: files) }
+        .sheet(isPresented: $browsing) { FileBrowserView(model: model, browser: model.fileBrowser, files: files).ownsPhoneTyping() }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
             guard case .success(let url) = result else { return }
             model.sendFileToMac(url, securityScoped: true)
         }
+        .photosPicker(isPresented: $pickingPhoto, selection: $photo, matching: .any(of: [.images, .videos]), preferredItemEncoding: .current)
+        .ownsPhoneTyping(importing || pickingPhoto)
         .onChange(of: photo) { _, item in
             guard let item else { return }
             photo = nil
@@ -165,7 +168,7 @@ struct FileTransferCapsule: View {
             return notice.tone == .success ? .success : .warning
         }
         .sheet(item: $files.received) { file in
-            ReceivedFilePreviewView(url: file.url)
+            ReceivedFilePreviewView(url: file.url).ownsPhoneTyping()
         }
     }
 

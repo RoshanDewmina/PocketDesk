@@ -244,4 +244,75 @@ final class LiveCanvasHitTestTests: XCTestCase {
         print("CANVAS-HIT pad=\(pad.frame) hit=\(describe(hit))")
         XCTAssertTrue(hit === pad, "Canvas center must reach the trackpad; got \(describe(hit))")
     }
+
+    @MainActor
+    func testPhoneTypingClaimsStayActiveUntilEveryOwnerLetsGo() {
+        let claims = PhoneTypingClaims(), browser = UUID(), picker = UUID()
+        claims.set(false, owner: browser)
+        XCTAssertFalse(claims.active)
+        claims.set(true, owner: browser); claims.set(true, owner: picker); claims.set(true, owner: picker)
+        XCTAssertTrue(claims.active)
+        claims.set(false, owner: picker)
+        XCTAssertTrue(claims.active, "The folder browser is still open")
+        claims.set(false, owner: browser)
+        XCTAssertFalse(claims.active)
+    }
+
+    /// A phone sheet with a text field (the Mac folder browser's filter) keeps the typing: the canvas
+    /// stops forwarding keys and stops re-taking first responder on session updates, then resumes.
+    @MainActor
+    func testPhoneTypingSheetKeepsKeysOnThePhoneUntilItCloses() throws {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "phone-typing")
+        defer { model.connection.stop() }
+        model.connection.inputPacketSenderForTesting = { _ in true }
+        model.connection.onAuthenticated?()
+        func deliver(_ action: RemoteAction) throws { model.connection.onControl?(try JSONEncoder().encode(action)) }
+        try deliver(RemoteAction(action: "geometry", x: 1920, y: 1243, epoch: 7))
+        let status = RemoteAction(action: "capture", x: 1, epoch: 7, features: SessionFeature.host + [SessionFeature.away], mode: "picture")
+        try deliver(status)
+        try deliver(RemoteAction(action: "viewing", x: 1, epoch: 7))
+        model.frameReceived()
+        XCTAssertTrue(model.canControl, "The fixture grants control")
+        XCTAssertFalse(PhoneTypingClaims.shared.active, "No earlier test left a claim behind")
+        let host = UIHostingController(rootView: PhoneRemoteView(model: model, connection: model.connection).environment(\.scenePhase, .active))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
+        window.windowScene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        model.frameReceived()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        let pad = try XCTUnwrap(trackpad(in: host.view), "Session view never mounted the trackpad")
+        XCTAssertTrue(model.canControl)
+        XCTAssertTrue(pad.hardwareKeys, "A controllable live session sends keys to the Mac")
+        XCTAssertTrue(pad.isFirstResponder, "The canvas holds keyboard focus before the sheet opens")
+
+        let sheet = UIHostingController(rootView: Color.clear.ownsPhoneTyping())
+        let field = UITextField(frame: CGRect(x: 20, y: 80, width: 200, height: 44))
+        sheet.view.addSubview(field)
+        host.present(sheet, animated: false)
+        defer { if host.presentedViewController != nil { host.dismiss(animated: false) } }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        XCTAssertTrue(PhoneTypingClaims.shared.active)
+        XCTAssertFalse(pad.hardwareKeys, "Keys typed into the sheet never reach the Mac")
+        XCTAssertNil(pad.keyCommands, "Escape and ⌘W stay with the sheet")
+        XCTAssertTrue(field.becomeFirstResponder())
+        for _ in 0..<3 {
+            model.objectWillChange.send()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertTrue(field.isFirstResponder, "Session updates must not take focus back from the sheet's field")
+        XCTAssertFalse(pad.isFirstResponder)
+
+        host.dismiss(animated: false)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        try deliver(status); model.frameReceived()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        XCTAssertFalse(PhoneTypingClaims.shared.active)
+        XCTAssertTrue(pad.hardwareKeys, "Keys go to the Mac again once the sheet closes")
+        XCTAssertTrue(pad.isFirstResponder, "The canvas takes keyboard focus back")
+    }
 }
