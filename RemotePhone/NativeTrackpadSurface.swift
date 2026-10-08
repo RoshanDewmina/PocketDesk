@@ -32,6 +32,7 @@ struct NativeTrackpadSurface: UIViewRepresentable {
     /// command with its delta and phase after `onCommand` handled it; a refused one arrives as `cancelled`.
     var onFingerScroll: ((CGSize, String) -> Void)? = nil
     var onPointerMotionEnded: () -> Void
+    var onPressFeedback: ((PressFeedback) -> Void)? = nil
     var onHardwareKey: (String, [String]) -> Bool = { _, _ in false }
     var onHardwareModifiers: ([String]) -> Void = { _ in }
     /// DEBUG probe only: every raw key UIKit delivers, to diagnose keys that never arrive.
@@ -67,6 +68,7 @@ struct NativeTrackpadSurface: UIViewRepresentable {
         }
         view.engine.precisionTarget = precisionTarget
         view.engine.onPointerMotionEnded = onPointerMotionEnded
+        view.engine.onPressFeedback = onPressFeedback
         view.engine.momentumEnabled = momentumScroll
         view.engine.hostMomentumEnabled = hostMomentum
         view.pointer.onCommand = onCommand

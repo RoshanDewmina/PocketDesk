@@ -290,3 +290,133 @@ final class MiddleClickGestureTests: XCTestCase {
                             onCommand: { log.record($0) })
     }
 }
+
+/// The press highlight's touch-down signal (`PocketDeskPressHighlight`): once per pressing touch after the finger has
+/// stayed still and alone for `pressDelay` (or a direct slide pressed), never for pointer travel, scrolls, pinches or
+/// View mode, and nothing at all without a receiver.
+final class PressFeedbackGestureTests: XCTestCase {
+    func testOneSignalPerStillTouchAndNoneForMovesOrTheClick() {
+        let log = CommandLog()
+        var direct: [PressFeedback] = []
+        let input = engine(log, direct: true) { direct.append($0) }
+        input.update([touch(1, 50, 50)], at: 1)
+        input.update([touch(1, 53, 51)], at: 1.03)
+        XCTAssertEqual(direct, [], "Nothing before the finger has rested")
+        input.tick(at: 1.045)
+        input.update([], at: 1.06)
+        input.update([touch(2, 300, 300)], at: 2)
+        input.update([touch(2, 340, 300)], at: 2.02)
+        input.update([touch(2, 380, 300)], at: 2.04)
+        input.update([], at: 2.06)
+        XCTAssertEqual(direct, [.began(CGPoint(x: 50, y: 50)), .began(CGPoint(x: 300, y: 300))],
+                       "A direct tap and a direct slide both press; moving never repeats or withdraws it")
+        XCTAssertEqual(log.trace, ["pointTo", "click1", "pointTo", "dragBegan1", "pointTo", "pointTo", "dragEnded"],
+                       "The Mac gets exactly the commands it got before")
+
+        var trackpad: [PressFeedback] = []
+        let pad = engine(CommandLog(), direct: false) { trackpad.append($0) }
+        pad.update([touch(1, 50, 50)], at: 1)
+        pad.tick(at: 1.045)
+        pad.update([], at: 1.06)
+        pad.update([touch(2, 50, 50)], at: 3)
+        pad.update([touch(2, 80, 50)], at: 3.02)
+        pad.tick(at: 3.05)
+        pad.update([], at: 3.1)
+        pad.update([touch(3, 50, 50)], at: 5)
+        pad.update([], at: 5.03)
+        XCTAssertEqual(trackpad, [.began(nil)], "Quick pointer travel and a quick tap never flash")
+        pad.update([touch(4, 50, 50)], at: 7)
+        pad.tick(at: 7.045)
+        pad.update([touch(4, 90, 50)], at: 7.06)
+        pad.update([], at: 7.1)
+        XCTAssertEqual(trackpad, [.began(nil), .began(nil), .withdrawn], "Travel after the rest withdraws it once")
+    }
+
+    func testScrollPinchThreeFingersLoupeAndViewModeNeverKeepAHighlight() {
+        for direct in [true, false] {
+            var events: [PressFeedback] = []
+            let input = engine(CommandLog(), direct: direct) { events.append($0) }
+            input.update([touch(1, 100, 100)], at: 1)
+            input.update([touch(1, 100, 100), touch(2, 160, 100)], at: 1.03)
+            input.tick(at: 1.05)
+            input.update([touch(1, 100, 140), touch(2, 160, 140)], at: 1.1)
+            input.update([], at: 1.2)
+            input.update([touch(3, 100, 100), touch(4, 160, 100)], at: 2)
+            input.update([touch(3, 80, 100), touch(4, 200, 100)], at: 2.1)
+            input.update([], at: 2.2)
+            input.update([touch(5, 100, 100), touch(6, 130, 100), touch(7, 160, 100)], at: 3)
+            input.update([], at: 3.1)
+            XCTAssertEqual(events, [], "A scroll's first finger, a pinch and three fingers never highlight")
+
+            input.update([touch(8, 100, 100)], at: 4)
+            input.tick(at: 4.045)
+            input.update([touch(8, 100, 100), touch(9, 160, 100)], at: 4.06)
+            input.update([touch(8, 100, 140), touch(9, 160, 140)], at: 4.1)
+            input.update([], at: 4.2)
+            input.update([touch(10, 100, 100)], at: 5)
+            input.tick(at: 5.045)
+            input.update([touch(10, 100, 100), touch(11, 130, 100), touch(12, 160, 100)], at: 5.06)
+            input.update([], at: 5.1)
+            let began = PressFeedback.began(direct ? CGPoint(x: 100, y: 100) : nil)
+            XCTAssertEqual(events, [began, .withdrawn, began, .withdrawn],
+                           "A late second or third finger withdraws the highlight at once")
+        }
+
+        var loupe: [PressFeedback] = []
+        let precise = engine(CommandLog(), direct: true) { loupe.append($0) }
+        precise.configure(enabled: true, panMode: false, revision: 1, sensitivity: 1, pointerScale: 1,
+                          doubleClickInterval: 0.5, direct: true, precision: .always)
+        precise.update([touch(1, 100, 100)], at: 1)
+        precise.tick(at: 1.045)
+        precise.update([], at: 1.06)
+        XCTAssertEqual(loupe, [], "The Precision Tap loupe is its own feedback")
+
+        var viewing: [PressFeedback] = []
+        let view = engine(CommandLog(), direct: false, panMode: true) { viewing.append($0) }
+        view.update([touch(1, 100, 100)], at: 1)
+        view.tick(at: 1.045)
+        view.update([], at: 1.06)
+        let viewOnly = engine(CommandLog(), direct: true, enabled: false) { viewing.append($0) }
+        viewOnly.update([touch(1, 100, 100)], at: 1)
+        viewOnly.tick(at: 1.045)
+        viewOnly.update([], at: 1.06)
+        XCTAssertEqual(viewing, [], "View mode and a view-only session press nothing")
+    }
+
+    func testRejectedPointCancelAndNoReceiverSendNothingExtra() {
+        let log = CommandLog()
+        log.rejectPoint = { $0.y > 500 }
+        var events: [PressFeedback] = []
+        let input = engine(log, direct: true) { events.append($0) }
+        input.update([touch(1, 100, 600)], at: 1)
+        input.tick(at: 1.045)
+        input.update([], at: 1.06)
+        XCTAssertEqual(events, [], "A letterbox band has no Mac point and no highlight")
+        input.update([touch(2, 100, 100)], at: 2)
+        input.tick(at: 2.045)
+        input.cancel()
+        input.cancel()
+        XCTAssertEqual(events, [.began(CGPoint(x: 100, y: 100)), .withdrawn], "A cancel withdraws once")
+
+        let silentLog = CommandLog()
+        let silent = engine(silentLog, direct: true, receiver: nil)
+        silent.update([touch(1, 50, 50)], at: 1)
+        silent.tick(at: 1.045)
+        silent.update([], at: 1.06)
+        XCTAssertEqual(silentLog.trace, ["pointTo", "click1"])
+    }
+
+    private func touch(_ id: UInt64, _ x: CGFloat, _ y: CGFloat = 0) -> NativeGestureEngine.Touch {
+        .init(id: id, point: CGPoint(x: x, y: y))
+    }
+
+    private func engine(_ log: CommandLog, direct: Bool, enabled: Bool = true, panMode: Bool = false,
+                        receiver: ((PressFeedback) -> Void)?) -> NativeGestureEngine {
+        let input = NativeGestureEngine(enabled: enabled, panMode: panMode, revision: 1, sensitivity: 1,
+                                        pointerScale: 1, doubleClickInterval: 0.5, direct: direct,
+                                        onCommand: { log.record($0) })
+        input.clipboardGesturesEnabled = { true }
+        input.onPressFeedback = receiver
+        return input
+    }
+}

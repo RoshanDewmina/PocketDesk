@@ -154,6 +154,7 @@ final class PhoneRemoteModel: ObservableObject {
     let connection: RemoteCoordinator
     let pointerLocator = PointerLocator()
     let pointerOverlay = PointerOverlayModel()
+    let pressHighlight = PressHighlight()
     let clipboard = PhoneClipboard()
     let richClipboard = RichClipboardEndpoint(isHost: false)
     let linkHints = PhoneLinkHintMonitor()

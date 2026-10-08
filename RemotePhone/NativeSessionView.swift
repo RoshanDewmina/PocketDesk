@@ -635,11 +635,23 @@ struct NativeSessionView: View {
                                         model.localScroll.scrolled(delta, phase: phase, pointer: model.pointerOverlay.render?.point)
                                     } : nil,
                                   onPointerMotionEnded: { model.pointerLocator.stopFollowing() },
+                                  // Couch has no picture to highlight on.
+                                  onPressFeedback: model.pressHighlight.enabled && !couch ? showPress : nil,
                                   onHardwareKey: { key, modifiers in noteSessionPillActivity(); return model.hardwareKey(key, modifiers: modifiers) },
                                   onHardwareModifiers: { noteSessionPillActivity(); model.hardwareModifiers = $0 },
                                   onKeyDiagnostic: keyDiagnostic)
                 .accessibilityIdentifier("remote.canvas")
                 .allowsHitTesting(!controlsBlockInput && !showVoiceInput && !model.privacyShield && !model.contentConcealed)
+    }
+
+    /// A direct touch highlights under the finger (the point the engine just sent the pointer to); a trackpad
+    /// touch highlights the drawn pointer.
+    private func showPress(_ feedback: PressFeedback) {
+        switch feedback {
+        case .began(let finger?): model.pressHighlight.begin(at: DirectTouchMapping.sourcePoint(for: finger, in: viewport))
+        case .began(nil): model.pressHighlight.begin(at: model.pointerOverlay.render?.point)
+        case .withdrawn: model.pressHighlight.withdraw()
+        }
     }
 
     private var keyDiagnostic: ((String) -> Void)? {
@@ -888,7 +900,8 @@ struct NativeSessionView: View {
                 PointerOverlayView(model: model.pointerOverlay, viewport: viewport, size: pointerSize)
                 PointerAccentView(model: model.pointerOverlay, viewport: viewport, size: pointerSize,
                                   acceptedClicks: model.acceptedClicks,
-                                  clickKind: ContactRipple.Kind(action: model.lastAcceptedClick), holding: model.dragging,
+                                  clickKind: ContactRipple.Kind(action: model.lastAcceptedClick),
+                                  pressHighlight: model.pressHighlight, holding: model.dragging,
                                   preview: offlineLayoutCheck && LaunchOptions.has("--ui-pointer-accent-preview"))
             }
             .frame(width: rect.width, height: rect.height, alignment: .topLeading)
