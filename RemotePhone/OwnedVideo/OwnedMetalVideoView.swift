@@ -120,6 +120,10 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     private var linkRate = 0
     private var panelMaximumFramesPerSecond = 60
     private var powerStateObserver: NSObjectProtocol?
+    private var linkOutcome: LinkDrawOutcome?
+    private var linkWindow = LinkDiagnosticsWindow()
+    private(set) var linkCallbacks = 0
+    private var linkSummaryTimer: Timer?
     var lowPowerMode: () -> Bool = { ProcessInfo.processInfo.isLowPowerModeEnabled }
     var presentsThroughDisplayLink: Bool { displayLink != nil }
     var displayLinkPaused: Bool {
@@ -196,15 +200,21 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             link.delegate = self
             link.preferredFrameLatency = 1
             displayLink = link
+            syncLinkLayerSize()
             applyRefreshRate()
             link.add(to: .main, forMode: .common)
+            Self.renderLogger.notice("metal link: created and added to main/common · \(self.linkState, privacy: .public)")
             powerStateObserver = NotificationCenter.default.addObserver(forName: .NSProcessInfoPowerStateDidChange,
                 object: nil, queue: .main) { [weak self] _ in self?.applyRefreshRate() }
+            let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in self?.logLinkSummary() }
+            RunLoop.main.add(timer, forMode: .common)
+            linkSummaryTimer = timer
         }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     deinit {
         displayLink?.invalidate()
+        linkSummaryTimer?.invalidate()
         if let powerStateObserver { NotificationCenter.default.removeObserver(powerStateObserver) }
     }
     override func layoutSubviews() {
@@ -212,9 +222,22 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     }
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        guard displayLink != nil, let screen = window?.windowScene?.screen else { return }
+        guard displayLink != nil else { return }
+        guard let screen = window?.windowScene?.screen else {
+            Self.renderLogger.notice("metal link: left the window · \(self.linkState, privacy: .public)")
+            return
+        }
         panelMaximumFramesPerSecond = screen.maximumFramesPerSecond
         applyRefreshRate()
+        syncLinkLayerSize()
+        Self.renderLogger.notice("metal link: attached to a window, panel max \(screen.maximumFramesPerSecond, privacy: .public) Hz · \(self.linkState, privacy: .public)")
+    }
+    /// MTKView hands its `drawableSize` to the layer only from its own draw path, which never runs while the link
+    /// owns the layer, and a link on a 0×0 layer never calls back (simulator probe, 9 Oct 2026). Under the link the
+    /// layer is sized here, kept equal to MTKView's value, which the backing policy and `pictureRect` read.
+    private func syncLinkLayerSize() {
+        guard displayLink != nil, let layer = metal.layer as? CAMetalLayer, layer.drawableSize != metal.drawableSize else { return }
+        layer.drawableSize = metal.drawableSize
     }
     /// Backing pixels ratchet: the drawable keeps its size while the picture aspect stays within 5 % of
     /// its own and it is at least as large as the picture, so a ladder step down, a crop wobble and a
@@ -333,7 +356,9 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             // link's own callback, so the object outlives the callback that is still executing on it.
             displayLink = nil; link.invalidate()
             DispatchQueue.main.async { withExtendedLifetime(link) {} }
+            Self.renderLogger.notice("metal link: invalidated after \(self.linkCallbacks, privacy: .public) callbacks, \(self.drawsPresented, privacy: .public) draws")
         }
+        linkSummaryTimer?.invalidate(); linkSummaryTimer = nil
         if let powerStateObserver { NotificationCenter.default.removeObserver(powerStateObserver); self.powerStateObserver = nil }
         metal.isPaused = true; metal.isHidden = true
         fallback?.isEnabled = false; fallback?.removeFromSuperview(); fallback = nil
@@ -383,15 +408,17 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         }) ?? nil else {
             if pacingDiagnosticsEnabled { pacingDiagnostics.noSubmission += 1 }
             if refused { counters?.takeRefused() }
+            linkOutcome = refused ? .flightsFull : .nothingPending
             return
         }
         let envelope = submission.frame
         guard viewportCoverageAllows(envelope, submissionID: submission.id) else {
             // No decoder drop: only this presentation is withheld, keeping the last safe picture.
             mailbox.requeue(submission.id, frame: envelope, wasNew: submission.isNew)
+            linkOutcome = .coverageWithheld
             return
         }
-        guard let geometry = envelope.geometry else { mailbox.completed(submission.id); invalidate(); return }
+        guard let geometry = envelope.geometry else { linkOutcome = .noGeometry; mailbox.completed(submission.id); invalidate(); return }
         // Any newer picture replaces the local scroll slide outright, even if this draw must retry.
         if submission.isNew, let localScroll {
             localScroll.frameArrived(envelope.receiptID, original: envelope.originalSource, at: ProcessInfo.processInfo.systemUptime)
@@ -404,16 +431,19 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             if pacingDiagnosticsEnabled { pacingDiagnostics.geometryRetries += 1 }
             mailbox.requeue(submission.id, frame: envelope, wasNew: submission.isNew)
             redraw = true
+            linkOutcome = .backingWait
             return
         }
         if view.drawableSize != backing {
             if pacingDiagnosticsEnabled { pacingDiagnostics.backingChanges += 1 }
             view.drawableSize = backing
         }
+        syncLinkLayerSize()
         if let linkDrawable, linkDrawable.texture.width != Int(backing.width) || linkDrawable.texture.height != Int(backing.height) {
             // The link handed this drawable out before the size change; the next callback's has the new size.
             mailbox.requeue(submission.id, frame: envelope, wasNew: submission.isNew)
             redraw = true
+            linkOutcome = .drawableSizeStale
             return
         }
         guard let pixels = envelope.pixels, let pipeline = pipelines[pixels.bgra], let cache,
@@ -421,6 +451,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             mailbox.completed(submission.id)
             showFallbackIfAdmitted(envelope)
             redraw = false
+            linkOutcome = .noPipeline
             return
         }
         let acquisitionStartMs = MachClock.nowMs()
@@ -442,6 +473,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         guard let (descriptor, drawable) = acquired else {
             // Both drawables in flight, or a resize in progress: keep the last picture on screen and
             // retry the same frame next tick rather than covering it with the black fallback view.
+            linkOutcome = .noDrawable
             let now = ProcessInfo.processInfo.systemUptime
             if let since = missingDrawableSince, now - since > 1 {
                 mailbox.completed(submission.id); showFallbackIfAdmitted(envelope); redraw = false; return
@@ -466,7 +498,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         let second = pixels.bgra ? nil : texture(.rg8Unorm, plane: 1,
                             width: CVPixelBufferGetWidthOfPlane(buffer, 1), height: CVPixelBufferGetHeightOfPlane(buffer, 1))
         guard let first, pixels.bgra || second != nil, let encoder = command.makeRenderCommandEncoder(descriptor: descriptor) else {
-            mailbox.completed(submission.id); showFallbackIfAdmitted(envelope); return
+            linkOutcome = .encoderFailed; mailbox.completed(submission.id); showFallbackIfAdmitted(envelope); return
         }
         fallback?.removeFromSuperview(); fallback = nil; redraw = false
         #if targetEnvironment(simulator)
@@ -566,6 +598,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             counters?.drawCommitted(prompt: pacingDrawOrigin == .sourceWake)
             return true
         }
+        linkOutcome = submitted == true ? .drawn : .commitRefused
         if submitted != true {
             mailbox.completed(submission.id)
             if fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, { true }) != true { invalidate() }
@@ -786,7 +819,51 @@ extension OwnedMetalVideoView: CAMetalDisplayLinkDelegate {
     func drawLinkFrame(into drawable: CAMetalDrawable) {
         linkDrawable = drawable
         defer { linkDrawable = nil }
+        linkOutcome = nil
+        let drawableSize = CGSize(width: drawable.texture.width, height: drawable.texture.height)
         draw(in: metal)
+        let outcome: LinkDrawOutcome = linkOutcome ?? (displayLink == nil ? .invalidated : .notReached)
+        linkCallbacks += 1
+        linkWindow.record(outcome)
+        guard linkCallbacks <= 3 else { return }
+        Self.renderLogger.notice("metal link: callback \(self.linkCallbacks, privacy: .public) drawable \(Self.describe(drawableSize), privacy: .public) → \(outcome.rawValue, privacy: .public) · \(self.linkState, privacy: .public)")
+    }
+    fileprivate var linkState: String {
+        let layer = metal.layer as? CAMetalLayer
+        let range = displayLink?.preferredFrameRateRange
+        return "layer \(Self.describe(layer?.drawableSize ?? .zero)) backing \(Self.describe(metal.drawableSize)) bounds \(Self.describe(metal.bounds.size))"
+            + " range \(range.map { "\($0.minimum)-\($0.maximum)/\($0.preferred ?? 0)" } ?? "none") paused \(displayLink?.isPaused ?? false)"
+            + " window \(window != nil) pending \(mailbox.hasPending) draws \(drawsPresented)"
+    }
+    /// Main run loop, every 5 s while the link is on, whether or not it calls back: the one line that says whether
+    /// the link is alive and why its callbacks did or did not draw. A layer that lost its size is also resized here,
+    /// because a link without a usable layer size never calls back to fix it.
+    fileprivate func logLinkSummary() {
+        guard displayLink != nil else { return }
+        let window = linkWindow
+        linkWindow = LinkDiagnosticsWindow()
+        if let layer = metal.layer as? CAMetalLayer, layer.drawableSize != metal.drawableSize {
+            Self.renderLogger.notice("metal link: layer size \(Self.describe(layer.drawableSize), privacy: .public) drifted from backing \(Self.describe(self.metal.drawableSize), privacy: .public); resynced")
+            syncLinkLayerSize()
+        }
+        Self.renderLogger.notice("metal link: 5s callbacks \(window.callbacks, privacy: .public) total \(self.linkCallbacks, privacy: .public) outcomes [\(window.summary, privacy: .public)] · \(self.linkState, privacy: .public)")
+    }
+    private static func describe(_ size: CGSize) -> String { String(format: "%.0fx%.0f", size.width, size.height) }
+}
+
+/// What one link callback did, for the `phone-render` log only.
+enum LinkDrawOutcome: String, CaseIterable {
+    case drawn, nothingPending, flightsFull, coverageWithheld, noGeometry, backingWait, drawableSizeStale
+    case noPipeline, noDrawable, encoderFailed, commitRefused, invalidated, notReached
+}
+
+struct LinkDiagnosticsWindow {
+    private(set) var callbacks = 0
+    private var counts: [LinkDrawOutcome: Int] = [:]
+    mutating func record(_ outcome: LinkDrawOutcome) { callbacks += 1; counts[outcome, default: 0] += 1 }
+    func count(_ outcome: LinkDrawOutcome) -> Int { counts[outcome] ?? 0 }
+    var summary: String {
+        LinkDrawOutcome.allCases.compactMap { outcome in counts[outcome].map { "\(outcome.rawValue) \($0)" } }.joined(separator: ", ")
     }
 }
 

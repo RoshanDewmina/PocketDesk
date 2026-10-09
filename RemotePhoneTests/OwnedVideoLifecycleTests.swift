@@ -827,6 +827,8 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission), defaults: defaults)
         defer { view.drawRequester = { $0.draw() }; view.invalidate() }
         XCTAssertTrue(view.presentsThroughDisplayLink); XCTAssertTrue(view.metal.isPaused); XCTAssertFalse(view.metal.enableSetNeedsDisplay)
+        let linkLayer = try XCTUnwrap(view.metal.layer as? CAMetalLayer)
+        XCTAssertEqual(linkLayer.drawableSize, CGSize(width: 1, height: 1), "a paused MTKView never sizes its layer; a 0×0 layer gets no link callbacks")
         view.displayLinkPaused = true // This test hands the drawables out itself.
         var requests = 0
         view.drawRequester = { _ in requests += 1 }
@@ -859,6 +861,7 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         view.drawLinkFrame(into: try drawable(1))
         XCTAssertEqual(view.drawsPresented, 0); XCTAssertTrue(view.mailbox.hasPending, "a drawable of the old size requeues the frame")
         XCTAssertEqual(view.metal.drawableSize, CGSize(width: 64, height: 64))
+        XCTAssertEqual(linkLayer.drawableSize, CGSize(width: 64, height: 64), "the link's next drawable must have the new size")
         view.drawLinkFrame(into: try drawable(64))
         XCTAssertEqual(view.fallbackCreationCount, 0, "the picture went into the link's drawable, not the compatibility view")
         XCTAssertEqual(view.drawsPresented, 1); XCTAssertEqual(drawn.count, 1); XCTAssertFalse(view.mailbox.hasPending)
@@ -881,6 +884,45 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         XCTAssertFalse(expiring.presentsThroughDisplayLink, "the expired fence tore the link down from its callback")
         XCTAssertTrue(expiring.metal.isHidden)
         await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+    }
+    /// The real link, in a window: its callbacks arrive and draw. Without this the presenter showed nothing on an
+    /// iPhone 17 (9 Oct 2026) while every test that handed drawables in by hand passed.
+    @MainActor
+    func testMetalDisplayLinkCallsBackInAWindowAndDrawsAnOfferedFrame() async throws {
+        let name = "OwnedVideoMetalDisplayLinkLive." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set("YES", forKey: MetalDisplayLinkSwitch.defaultsKey)
+        let admission = VideoPresentationAdmission(identity: identity(), validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission), defaults: defaults)
+        defer { view.invalidate() }
+        try XCTSkipUnless(UIApplication.shared.applicationState == .active, "a display link needs a foreground test host")
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene); window.frame = CGRect(x: 0, y: 0, width: 200, height: 200); window.isHidden = false
+        defer { window.isHidden = true }
+        view.frame = window.bounds; window.addSubview(view); view.layoutIfNeeded()
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 64, 48, kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+        let buffer = try XCTUnwrap(pixels)
+        CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+        view.offer(VideoFrameEnvelope(receiptID: UUID(), identity: admission.identity,
+            frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: 1),
+            arrivalMs: MachClock.nowMs(), marker: nil, originalSource: true, promptDraw: true))
+        let deadline = ProcessInfo.processInfo.systemUptime + 5
+        while view.drawsPresented == 0, ProcessInfo.processInfo.systemUptime < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThan(view.linkCallbacks, 0, "the link called back")
+        XCTAssertGreaterThanOrEqual(view.drawsPresented, 1, "the frame reached a link drawable")
+        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 64, height: 48))
+        XCTAssertEqual((view.metal.layer as? CAMetalLayer)?.drawableSize, CGSize(width: 64, height: 48))
+        XCTAssertEqual(view.fallbackCreationCount, 0)
+    }
+    func testLinkDiagnosticsWindowCountsOutcomesInDeclarationOrder() {
+        var window = LinkDiagnosticsWindow()
+        window.record(.drawableSizeStale); window.record(.drawn); window.record(.nothingPending); window.record(.nothingPending)
+        XCTAssertEqual(window.callbacks, 4); XCTAssertEqual(window.count(.nothingPending), 2)
+        XCTAssertEqual(window.summary, "drawn 1, nothingPending 2, drawableSizeStale 1")
     }
     func testTheLinkRateFollowsThePanelLowPowerModeAndASixtyHertzIdleFloor() {
         XCTAssertEqual(OwnedMetalVideoView.linkRate(active: 120, panelMaximum: 120, lowPower: false, idle: false), 120)
