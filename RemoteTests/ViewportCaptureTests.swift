@@ -1588,20 +1588,32 @@ final class StreamShapeMemoryTests: XCTestCase {
         return StreamShapeMemory(defaults: defaults)
     }
 
-    func testTheFlagDefaultsOffParsesAndReachesTheSummary() throws {
+    func testTheFlagDefaultsOnNoTurnsItOffAndItReachesTheSummary() throws {
         XCTAssertTrue(StreamTuning.experimentKeys.contains(StreamTuning.rememberStreamShapeKey))
         let name = "StreamShapeFlag-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
-        let today = StreamTuning.resolve(defaults: defaults)
-        XCTAssertEqual(today, StreamTuning.tuned)
-        XCTAssertFalse(today.rememberStreamShape)
-        XCTAssertFalse(today.summary.contains("remembered shape"))
+        let tuned = StreamTuning.resolve(defaults: defaults)
+        XCTAssertEqual(tuned, StreamTuning.tuned)
+        XCTAssertTrue(tuned.rememberStreamShape, "on by default since the 9 Oct 2026 device A/B")
+        XCTAssertTrue(tuned.summary.contains("remembered shape"), tuned.summary)
+        XCTAssertFalse(StreamTuning.legacy.rememberStreamShape, "previous tuning never remembers a shape")
+
+        defaults.set(false, forKey: StreamTuning.rememberStreamShapeKey)
+        let off = StreamTuning.resolve(defaults: defaults)
+        XCTAssertFalse(off.rememberStreamShape, "NO turns it off")
+        XCTAssertFalse(off.summary.contains("remembered shape"), off.summary)
+        var expectedOff = StreamTuning.tuned
+        expectedOff.rememberStreamShape = false
+        XCTAssertEqual(off, expectedOff, "NO changes nothing else")
+        XCTAssertEqual(off.fieldTrials, StreamTuning.tuned.fieldTrials)
+        defaults.set("NO", forKey: StreamTuning.rememberStreamShapeKey)
+        XCTAssertFalse(StreamTuning.resolve(defaults: defaults).rememberStreamShape, "a launch argument arrives as a string")
+
         defaults.set(true, forKey: StreamTuning.rememberStreamShapeKey)
-        let on = StreamTuning.resolve(defaults: defaults)
-        XCTAssertTrue(on.rememberStreamShape)
-        XCTAssertTrue(on.summary.contains("remembered shape"), on.summary)
-        XCTAssertEqual(on.fieldTrials, StreamTuning.tuned.fieldTrials)
+        XCTAssertEqual(StreamTuning.resolve(defaults: defaults), StreamTuning.tuned, "YES keeps the tuned default")
+        defaults.set(true, forKey: StreamTuning.legacyDefaultsKey)
+        XCTAssertFalse(StreamTuning.resolve(defaults: defaults).rememberStreamShape, "the legacy switch wins")
     }
 
     func testAShapeIsRememberedPerPhoneAndDisplay() throws {

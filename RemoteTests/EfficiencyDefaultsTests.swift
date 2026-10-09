@@ -12,7 +12,7 @@ final class EfficiencyDefaultsTests: XCTestCase {
     func testNewestFrameWinsIsTheTunedDefaultAndZeroTurnsItOff() throws {
         XCTAssertEqual(StreamTuning.tuned.encoderMaxInFlight, 2)
         XCTAssertNil(StreamTuning.legacy.encoderMaxInFlight)
-        XCTAssertTrue(StreamTuning.tuned.summary.hasSuffix("max refresh · displayed cap · displayed ×1.25 · whole-display capture · crop holds output · crop drops ambiguous · max in-flight 2 · encoder real time off · remote-route LAN proof · scroll smoothing · governor shadow"), StreamTuning.tuned.summary)
+        XCTAssertTrue(StreamTuning.tuned.summary.hasSuffix("max refresh · displayed cap · displayed ×1.25 · whole-display capture · crop holds output · crop drops ambiguous · max in-flight 2 · encoder real time off · remote-route LAN proof · scroll smoothing · remembered shape · governor shadow"), StreamTuning.tuned.summary)
         let (defaults, cleanup) = try defaults()
         defer { cleanup() }
         defaults.set(false, forKey: StreamTuning.encoderPipeliningKey)

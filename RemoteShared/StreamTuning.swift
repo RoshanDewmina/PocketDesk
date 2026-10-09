@@ -193,8 +193,8 @@ struct StreamTuning: Equatable {
     var scrollTargetsStream = false
     /// Host (research3 P4-B): a paired phone's next whole-display or window capture on the same display starts in
     /// the picture mode, client edge and displayed edge it last applied (`StreamShapeMemory`) instead of Balanced
-    /// with no client edge, which cost two reconfigures and an encoder size swap per connect. Off: nothing is
-    /// remembered or applied.
+    /// with no client edge, which cost two reconfigures and an encoder size swap per connect. On by default in
+    /// `tuned` (9 Oct 2026 A/B); `PocketDeskRememberStreamShape NO` turns it off: nothing is remembered or applied.
     var rememberStreamShape = false
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
@@ -222,6 +222,9 @@ struct StreamTuning: Equatable {
         // 8 Oct 2026 on device: the Fill crop's pan edges showed black strips (the backdrop did not hide them);
         // the whole display in Fill was "perfect", text about as sharp. The phone still asks for the crop.
         tuning.viewportCapture = false
+        // 9 Oct 2026 device A/B (build 20261008.2, 10 connects against a same-session baseline): startup capture
+        // reconfigures 2 → 1 per connect and first-second dropped frames 87 → 53, no regression.
+        tuning.rememberStreamShape = true
         return tuning
     }()
     static let legacy: StreamTuning = {
@@ -487,7 +490,9 @@ struct StreamTuning: Equatable {
         tuning.fastStartLAN = defaults.bool(forKey: fastStartLANKey)
         if defaults.object(forKey: scrollSmoothingKey) != nil { tuning.scrollSmoothing = defaults.bool(forKey: scrollSmoothingKey) }
         tuning.scrollTargetsStream = defaults.bool(forKey: scrollTargetsStreamKey)
-        tuning.rememberStreamShape = defaults.bool(forKey: rememberStreamShapeKey)
+        if defaults.object(forKey: rememberStreamShapeKey) != nil {
+            tuning.rememberStreamShape = defaults.bool(forKey: rememberStreamShapeKey)
+        }
         return tuning
     }
 
